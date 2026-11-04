@@ -112,6 +112,28 @@ fn mentions_empty_length(finding: &Finding) -> bool {
 }
 
 #[test]
+fn plain_error_type_keeps_direct_reference_guard() -> Result<(), String> {
+    let body = "        assert_eq!(average(&[]), 0);\n        assert_eq!(average(&[2, 4]), 3);";
+    let declaration = "enum InputError { Empty, TooLong }\n";
+    let positive = finding(declaration, body)?;
+    assert_eq!(positive.class, ExposureClass::Exposed, "{positive:#?}");
+    assert!(mentions_empty_length(&positive));
+    for extra in [
+        "const POINTER: fn(&[u32]) -> u32 = average;",
+        "fn hidden() { let alias = average; let _ = alias(&[1]); }",
+    ] {
+        let actual = finding(&format!("{declaration}{extra}\n"), body)?;
+        assert_eq!(
+            actual.class,
+            ExposureClass::InfectionUnknown,
+            "{extra}: {actual:#?}"
+        );
+        assert!(!mentions_empty_length(&actual), "{extra}: {actual:#?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn an_empty_literal_pinned_exactly_credits_the_boundary() -> Result<(), String> {
     let finding = finding(
         "",

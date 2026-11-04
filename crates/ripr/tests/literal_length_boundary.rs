@@ -125,6 +125,33 @@ fn candidate() -> String {
 }
 
 #[test]
+fn plain_error_type_keeps_literal_reference_guard() -> Result<(), String> {
+    let source = format!("{}\nenum InputError {{ Empty, TooLong }}\n", candidate());
+    let positive = finding(&source)?;
+    assert_eq!(positive.class, ExposureClass::Exposed, "{positive:#?}");
+    for extra in [
+        "const POINTER: fn(&str, usize) -> bool = fits;",
+        "fn hidden() { let alias = fits; let _ = alias(\"abc\", 3); }",
+    ] {
+        let actual = finding(&format!("{source}{extra}\n"))?;
+        assert_eq!(
+            actual.class,
+            ExposureClass::InfectionUnknown,
+            "{extra}: {actual:#?}"
+        );
+        assert!(
+            actual
+                .activation
+                .observed_values
+                .iter()
+                .all(|fact| !fact.text.contains("via as_bytes().len()")),
+            "{extra}: {actual:#?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn retained_literal_byte_length_row_is_credited() -> Result<(), String> {
     let finding = finding(&candidate())?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:#?}");
