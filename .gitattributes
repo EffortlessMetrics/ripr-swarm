@@ -89,11 +89,6 @@ Cargo.lock linguist-generated
 fixtures/**/expected/** linguist-generated
 metrics/public-proof/** linguist-generated
 fixtures/perl-verdict-corpus/packets/** linguist-generated
-# Repo-exposure captures written by `ripr check --format repo-exposure-json` and
-# bound by the honesty gate (content_sha256 plus regeneration from the Cargo
-# subject). The case file that carries their provenance stays counted.
-fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.json linguist-generated
-fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-*.json linguist-generated
 
 # The CRLF hostile-input case stores carriage returns on purpose; the subject
 # file and the diff that edits it must reach the working tree byte for byte.
