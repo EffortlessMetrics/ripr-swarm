@@ -39,17 +39,33 @@ oracle was Go's own `go/parser`.
 | Top-level function and method count equals `go/parser`, per file | 6,035 of 6,035 | 6,035 of 6,035 |
 | Wall time for the corpus (parse only, one thread) | about 16.7 s | about 5.4 s |
 | Generics (`Max[T Num]`, `Stack[T any]`) | parsed; `type_parameter_list` nodes | parsed |
-| Exact span of a changed expression | start and end byte, row and column | start offset only, counted in Unicode scalars; no end offset on nodes |
+| Exact span of a changed expression | start and end byte, row and column | start offset only on AST nodes, counted in Unicode scalars; `tokenize_source` returns token start and end in the same units, not bytes |
 | Comments and directives (`//go:build`, `Code generated`) | first-class `comment` nodes with spans | collected on the file and as doc comments |
 | Raw string containing `//` not mistaken for a comment | correct | correct |
 | Malformed file (`return a +` then a valid function) | `has_error()` true, an `ERROR` node spans the bad token, the next function parses intact | whole-file `Err` with line, column and reason; no partial tree |
 | Complete parse distinguishable from a partial one | yes: `has_error()` and `ERROR` or missing nodes | yes: `Result` |
 | Clean release build of a one-dependency binary | about 14 s, 0.84 MB | about 8 s, 0.82 MB |
-| New crates beyond the current lockfile | `tree-sitter`, `tree-sitter-go`, `tree-sitter-language`, `streaming-iterator`, `regex` family; `cc` is already locked | `gosyn`, `regex` family, `strum`, `unic-*`, `matches` |
+| New crates beyond the current lockfile | `tree-sitter`, `tree-sitter-go`, `tree-sitter-language`, `streaming-iterator`, `regex` family; build dependencies `cc` and `serde_json` are already locked | `gosyn`, `regex` family, `strum`, `unic-*`, `matches` |
 | License | MIT | MIT |
 | MSRV | tree-sitter 0.27 needs Rust 1.90; fits the 1.95 workspace | not declared; edition 2021 |
 | Build requirement | C compiler through a `cc` build script | pure Rust |
 | Maintenance signal | official grammar from the tree-sitter organization | single maintainer, 0.2.x |
+
+Span example (tree-sitter, `a > b` inside `Max[T Num]` in the spike's
+generic fixture): bytes 164..169, row 10, column 4, text `a > b`; the
+`got != c.want` expression in the table-test fixture reports bytes 543..556.
+The stdlib corpus exercises methods with receivers, composite literals,
+switches and table-driven tests; the targeted fixture adds generics, a
+`//go:build` header, a `Code generated` comment, a raw string containing `//`
+and a malformed file.
+
+Reproduction: the harness is disposable and is not kept in the repository.
+To repeat it, create an empty crate with `tree-sitter` 0.27.1,
+`tree-sitter-go` 0.25.0 and `gosyn` 0.2.15, walk `$(go env GOROOT)/src`
+skipping `testdata`, compare per-file function and method declaration counts
+with a small `go/parser` program, and time the parses. An independent
+re-run on 2026-11-04 reproduced the counts, the error behavior and the timing
+ratio (about 3.2x).
 
 Both parsers are correct on the structural counts. The deciding differences
 are spans, recovery, and maintenance, not coverage.
@@ -123,6 +139,10 @@ Reopen this decision if any of the following occurs:
 - `gosyn` gains end spans and partial-tree recovery and the C dependency
   proves costly;
 - a measured parse-time regression appears on a large Go repository pilot.
+
+Policy checks run on this change: `check-doc-index`, `check-doc-artifacts`,
+`check-dependencies`, `check-file-policy` (all pass). `cargo deny` is not run
+here because no Cargo dependency is added; the scaffold PR (#5535) must run it.
 
 ## Not in this ADR
 
