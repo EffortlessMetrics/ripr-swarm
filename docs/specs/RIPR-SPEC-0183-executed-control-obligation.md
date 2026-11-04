@@ -104,7 +104,7 @@ inspect live GitHub, enforce merge eligibility, or audit historical issues.
 ## Required Evidence
 
 - `schemas/ripr/executed-control.schema.json` closes the V1 wire shape.
-- `crates/ripr/src/domain/executed_control.rs` owns validation and semantic
+- `crates/ripr-contract/src/domain/executed_control.rs` owns validation and semantic
   identity.
 - `crates/ripr/src/output/executed_control.rs` owns deterministic JSON and
   bounded Markdown projections of the same packet.
@@ -145,14 +145,14 @@ It does not render `passed`.
 ## Test Mapping
 
 - Fixture: `fixtures/executed-control-contract/`
-- Unit: `crates/ripr/src/domain/executed_control.rs::tests`
+- Unit: `crates/ripr-contract/src/domain/executed_control.rs::tests`
 - Projection: `crates/ripr/src/output/executed_control.rs::tests`
 - Golden/output contract: `fixtures/executed-control-contract/expected/`
 - Proof command: `cargo test -p ripr --lib executed_control`
 
 ## Implementation Mapping
 
-- `crates/ripr/src/domain/executed_control.rs` — obligation/result/packet types
+- `crates/ripr-contract/src/domain/executed_control.rs` — obligation/result/packet types
   and fail-closed validation
 - `crates/ripr/src/output/executed_control.rs` — JSON and Markdown projection
 - `schemas/ripr/executed-control.schema.json` — published wire contract

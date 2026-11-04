@@ -24,7 +24,7 @@ mod workflow_catalog;
 pub(crate) use parse::expect_value;
 #[doc(hidden)]
 pub use parse::extract_global_verbose;
-pub(crate) use suggest::{unknown_argument, unknown_value};
+pub(crate) use suggest::unknown_argument;
 
 /// The command completed. Shared by `Ok(())` paths and by the
 /// `help --json` exit contract (`docs/EXIT_CODES.md`).

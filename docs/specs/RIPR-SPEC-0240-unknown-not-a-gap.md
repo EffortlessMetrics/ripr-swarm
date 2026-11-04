@@ -728,7 +728,7 @@ under `rust_indirect_owner_call_unresolved`:
   A bounded `.map(owner)` chain that the owner pin credits (RIPR-SPEC-0197,
   #9478 slice A) is `exposed` before this limit is consulted; a refused chain
   that still names the owner as a value (async or method owners, non-matching or
-  non-literal expectations, a change invisible at the first input) keeps this
+  non-literal expectations, a change invisible at every input) keeps this
   limit. A chain whose path is unresolved, shadowed by a local binding, or
   qualified to a different same-leaf function is not a value use of the owner and
   is decided by the ordinary classification rules. A call
@@ -1270,8 +1270,8 @@ Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 file in scope and leaves the outcome partial).
 
 Wire strings are pinned by
-`crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
-and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
+`crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
+and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
 
 ## Implementation Mapping
 
@@ -1292,7 +1292,7 @@ and `crates/ripr/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose
   indirect-owner decision.
 - `crates/ripr/src/analysis/language/rust/mod.rs` calls it last in
   `apply_probe_and_oracle_limits`.
-- `crates/ripr/src/domain/language.rs` and `crates/ripr/src/domain/probe.rs`
+- `crates/ripr-contract/src/domain/language.rs` and `crates/ripr-contract/src/domain/probe.rs`
   own the new wire values.
 
 ## Metrics

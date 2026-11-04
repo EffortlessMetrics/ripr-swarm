@@ -1769,6 +1769,20 @@ stops with an explicit unsupported error, a missing or mismatched checksum, bad
 archive or wrong payload exits 1 with no `cargo install` fallback, and the
 installed `ripr` must report exactly the requested version.
 
+### ripr-swarm dogfood comment (`ripr-pr.yml`, #12910)
+
+ripr-swarm runs ripr on its own same-repository, non-draft pull requests and keeps
+one advisory comment per PR, updated in place for each head. The workflow uses
+plain `pull_request` with no secrets. The `analyze` job (read-only token, no
+persisted credentials) builds ripr from the PR's base commit, so the pull request
+cannot change the analyzer that judges it, and runs
+`ripr check --committed --mode draft --format agent` on the head checkout as data.
+The `comment` job holds the only write token, checks out nothing and posts the
+uploaded report as text. Nothing here is a required check or a gate; fork pull
+requests are skipped. The generated adopter workflow above remains the product
+route; this one is lean because `ripr review-comments` and the full CI packet
+exceed their workspace-size ceilings on this repository (tracked in #12940).
+
 ### PR Test Guidance Annotations
 
 RIPR-SPEC-0012 defines the pinned planning contract for the PR-facing

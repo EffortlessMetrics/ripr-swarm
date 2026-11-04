@@ -3131,7 +3131,7 @@ mod plain_hover_summary_tests {
             include_str!("../analysis/classify/flow.rs"),
             include_str!("../analysis/classify/reach.rs"),
             include_str!("../analysis/classify/infection.rs"),
-            include_str!("../domain/classification.rs"),
+            include_str!("../../../ripr-contract/src/domain/classification.rs"),
         ]
         .map(|source| {
             // Cut at the real test module: producers carry earlier item-level

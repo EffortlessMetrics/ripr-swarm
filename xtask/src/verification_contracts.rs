@@ -79,8 +79,8 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
         "executed-control",
         &[producer(
-            "crates/ripr/src/domain/executed_control.rs",
-            "pub(crate) const EXECUTED_CONTROL_SCHEMA_VERSION: &str = \"",
+            "crates/ripr-contract/src/domain/executed_control.rs",
+            "pub const EXECUTED_CONTROL_SCHEMA_VERSION: &str = \"",
             1,
         )],
     ),
@@ -177,8 +177,8 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     (
         "ripr-intervention-study",
         &[producer(
-            "crates/ripr/src/domain/intervention_study.rs",
-            "pub(crate) const RIPR_INTERVENTION_STUDY_SCHEMA_VERSION: &str = \"",
+            "crates/ripr-contract/src/domain/intervention_study.rs",
+            "pub const RIPR_INTERVENTION_STUDY_SCHEMA_VERSION: &str = \"",
             1,
         )],
     ),
