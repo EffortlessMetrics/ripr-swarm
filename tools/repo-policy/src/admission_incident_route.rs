@@ -536,12 +536,16 @@ mod tests {
     #[test]
     fn non_current_basis_refuses_routing() -> Result<(), String> {
         let error = refusal_for(|packet| packet.currentness.basis_is_current = false)?;
-        assert!(matches!(error, RouteErrorV1::PacketNotCurrent(_)), "{error:?}");
+        assert!(
+            matches!(error, RouteErrorV1::PacketNotCurrent(_)),
+            "{error:?}"
+        );
         Ok(())
     }
 
     #[test]
-    fn candidate_head_merge_group_and_observation_mismatches_refuse_routing() -> Result<(), String> {
+    fn candidate_head_merge_group_and_observation_mismatches_refuse_routing() -> Result<(), String>
+    {
         let head = refusal_for(|packet| {
             packet.subject.candidate_head_sha = "sha256:head-other".to_string();
         })?;
