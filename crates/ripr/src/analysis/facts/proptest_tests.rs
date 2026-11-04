@@ -661,6 +661,7 @@ fn same_run_extension_of_a_core_with_property_receipts_equals_a_fresh_build() ->
 {
     let fixture = Fixture::new()?;
     if !proptest_identity_available(&fixture.0) {
+        eprintln!("SKIPPED: same-run extension test did not run (no proptest identity)");
         return Ok(());
     }
     let files = fixture.loaded()?;
@@ -684,7 +685,26 @@ fn same_run_extension_of_a_core_with_property_receipts_equals_a_fresh_build() ->
         1,
         "the core must carry the receipts that used to force a rebuild"
     );
+    let core_source = core
+        .index
+        .files()
+        .get(Path::new(PROPERTY_PATH))
+        .map(|file| std::sync::Arc::clone(&file.source))
+        .ok_or("the core must hold the property file")?;
     let extended = reuse_cached_index_in_run(core, &fixture.0, &files, &[])?;
+    let extended_source = extended
+        .index
+        .files()
+        .get(Path::new(PROPERTY_PATH))
+        .map(|file| std::sync::Arc::clone(&file.source))
+        .ok_or("the extended index must hold the property file")?;
+    // A full rebuild re-parses every file into a fresh allocation; only the
+    // extension keeps the core's parsed file, so this fails if the fast path
+    // is not taken.
+    assert!(
+        std::sync::Arc::ptr_eq(&core_source, &extended_source),
+        "the extension must reuse the core's parsed property file"
+    );
     assert_same(&fresh, &extended.index, true, "same-run extension")?;
     assert_eq!(
         extended.files_content_hash,

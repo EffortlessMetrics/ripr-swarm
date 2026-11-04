@@ -386,9 +386,6 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     });
 }
 
-/// The one same-file definition of `name`, when it is an evidence-only
-/// helper. A second definition (a same-named test, production function or
-/// helper in another module of the file) makes the call ambiguous.
 /// The pass's one manifest inventory plus the per-file answer for
 /// production-role helpers.
 #[derive(Default)]
@@ -397,6 +394,9 @@ struct HelperGate {
     production_files: BTreeMap<PathBuf, bool>,
 }
 
+/// The one same-file definition of `name`, when it is an evidence-only
+/// helper. A second definition (a same-named test, production function or
+/// helper in another module of the file) makes the call ambiguous.
 fn unique_assertion_helper<'facts>(
     functions_by_name: &BTreeMap<String, Vec<&'facts FunctionFact>>,
     name: &str,
