@@ -1,0 +1,12 @@
+# Independent edit coordinates underpin the changed-behavior input (#12918).
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/diff/parse/differential_tests.rs::git_edits_match_generated_line_ranges",
+  "crates/ripr/src/analysis/diff/parse/differential_tests.rs::git_rename_edits_match_generated_line_ranges",
+  "crates/ripr/src/analysis/diff/parse/differential_tests.rs::git_edit_boundary_matrix",
+  "crates/ripr/src/analysis/diff/parse/differential_tests.rs::git_separated_hunks_keep_old_and_new_coordinates_distinct",
+  "crates/ripr/src/analysis/diff/parse/differential_tests.rs::git_binary_deletion_and_pure_rename_are_not_text_edits",
+  "crates/ripr/src/analysis/diff/parse/differential_tests.rs::generated_oracle_rejects_empty_shifted_and_context_credited_results",
+]
+code = ["crates/ripr/src/analysis/diff/parse.rs"]
