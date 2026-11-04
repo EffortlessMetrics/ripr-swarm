@@ -234,6 +234,9 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
                 })
         })
     {
+        // The replacement needs fresh property authority, not the old index.
+        // Release its fact arenas before constructing another full generation.
+        drop(cached);
         return build_cached_index_with_test_harnesses(
             root,
             files,
