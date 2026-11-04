@@ -881,6 +881,26 @@ fn evidence_promotion_corpus_folds_in_case_files_and_rejects_a_repeated_id() -> 
     Ok(())
 }
 
+fn seed_honesty_git_base() -> Result<(), String> {
+    run("git", &["init", "--quiet"])?;
+    run("git", &["add", super::EVIDENCE_PROMOTION_HONESTY_CORPUS])?;
+    run(
+        "git",
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "base",
+        ],
+    )?;
+    run("git", &["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+    Ok(())
+}
+
 #[test]
 fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cases()
 -> Result<(), String> {
@@ -906,6 +926,7 @@ fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cas
         }
 
         let corpus_json = serde_json::json!({
+            "report_digest_required": [],
             "cases": [
                 {
                     "id": "py_non_promoted",
@@ -962,6 +983,7 @@ fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cas
             &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
         );
 
+        seed_honesty_git_base()?;
         super::check_evidence_promotion_honesty(&[])?;
         let summary_path = root.join("target/ripr/reports/corpus-summary.json");
         let summary_text = fs::read_to_string(&summary_path)
@@ -1825,6 +1847,7 @@ fn evidence_promotion_honesty_pass_report_names_clean_guard() -> Result<(), Stri
         }
 
         let corpus_json = serde_json::json!({
+            "report_digest_required": [],
             "cases": [
                 {
                     "id": "py_non_promoted",
@@ -1870,6 +1893,7 @@ fn evidence_promotion_honesty_pass_report_names_clean_guard() -> Result<(), Stri
             &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
         );
 
+        seed_honesty_git_base()?;
         super::check_evidence_promotion_honesty(&[])?;
         let report =
             fs::read_to_string(root.join("target/ripr/reports/evidence-promotion-honesty.md"))
