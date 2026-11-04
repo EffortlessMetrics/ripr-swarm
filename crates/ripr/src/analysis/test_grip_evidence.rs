@@ -5413,7 +5413,10 @@ fn best_oracle(
         // it does not pin this error-variant seam's own variant (`kind-match
         // false`). An exact pin on a sibling variant gets the same grade here,
         // so the record and the stage cannot disagree about one assertion.
+        // Only the exact pin: a broad `is_err()` keeps the strength the
+        // operator configured for it (`oracles.broad_error_strength`).
         let strength = if seam.kind() == SeamKind::ErrorVariant
+            && matches!(oracle.kind, OracleKind::ExactErrorVariant)
             && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             && !oracle_discriminates_seam_in_test(seam, oracle, test, owner_fn, index, pin_syntax)
         {

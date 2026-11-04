@@ -14008,7 +14008,10 @@ fn sibling_variant_pin_reads_weak_in_the_stage_and_the_related_test_record() -> 
 
     let one = evidence("Err(Fault::One)")?;
     let [grip] = one.related_tests.as_slice() else {
-        return Err(format!("one related test expected: {:?}", one.related_tests));
+        return Err(format!(
+            "one related test expected: {:?}",
+            one.related_tests
+        ));
     };
     assert_eq!(grip.oracle_kind, OracleKind::ExactErrorVariant);
     assert_eq!(
