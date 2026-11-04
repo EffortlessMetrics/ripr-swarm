@@ -1,4 +1,4 @@
 <!-- section: Fixed -->
 - Python preview reports unknown infection for a limited loop-selection case
-  with a single integer-sequence value assertion per related test, rather than
+  with only direct integer-sequence value assertions in related tests, rather than
   crediting an unestablished equality boundary (#12954).

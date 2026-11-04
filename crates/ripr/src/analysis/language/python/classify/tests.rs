@@ -4180,6 +4180,9 @@ fn loop_boundary_keeps_identity_assertion_alongside_numeric_pin() -> Result<(), 
         format!(
             "{fixture}def test_both():\n    first, second = Item(5), Item(5)\n    assert largest([1, 5, 3]) == 5\n    assert largest([first, second]) is first\n"
         ),
+        format!(
+            "{fixture}def test_both_reversed():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n    assert largest([1, 5, 3]) == 5\n"
+        ),
     ] {
         let finding = classify_edit_case(
             source,
@@ -4190,5 +4193,26 @@ fn loop_boundary_keeps_identity_assertion_alongside_numeric_pin() -> Result<(), 
         )?;
         assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_multiple_numeric_assertions_in_one_test_remain_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    largest([8, 8])\n    assert largest([1, 5, 3]) == 5\n    assert 7 == largest((2, 7, 4))\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+    assert!(finding.recommended_next_step.is_none(), "{finding:?}");
     Ok(())
 }

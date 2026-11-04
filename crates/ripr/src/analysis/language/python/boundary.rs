@@ -2424,26 +2424,18 @@ pub(super) fn unresolved_loop_list_boundary(
         .collect();
     !oracle_candidates.is_empty()
         && oracle_candidates.iter().all(|candidate| {
-            // A second assertion may observe object identity, even if it is weaker
-            // than the selected numeric pin. Do not discard it as irrelevant.
-            if candidate.test.assertions.len() != 1 {
-                return false;
-            }
-            let Some(assertion) =
-                select_relevant_assertion(&candidate.test.assertions, Some(focus)).assertion()
-            else {
-                return false;
-            };
-            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
-                return false;
-            }
-            // Only the selected assertion supplies inputs. Discarded calls neither
-            // supply nor prevent a witness.
-            rows.iter().any(|row| {
-                row.file == candidate.test.file
-                    && row.line == assertion.line
-                    && is_direct_integer_sequence_assertion(row, owner, candidate)
-            })
+            // Every assertion must independently be a strong direct integer
+            // sequence value pin. In particular, an identity assertion must
+            // not disappear behind the selected stronger numeric assertion.
+            !candidate.test.assertions.is_empty()
+                && candidate.test.assertions.iter().all(|assertion| {
+                    assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                        && rows.iter().any(|row| {
+                            row.file == candidate.test.file
+                                && row.line == assertion.line
+                                && is_direct_integer_sequence_assertion(row, owner, candidate)
+                        })
+                })
         })
 }
 

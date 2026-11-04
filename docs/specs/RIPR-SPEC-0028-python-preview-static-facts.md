@@ -1715,7 +1715,7 @@ adapter contributes:
 For a changed adjacent relational comparison in the closed iterator and
 accumulator selection shape (`best = next(it)` followed by `for x in it`,
 conditional `best = x`, and `return best`), an unresolved boundary is
-`infection_unknown` when each oracle-eligible test has exactly one selected
-strong assertion directly comparing the owner call on an integer list or
-tuple with an integer. The finding carries an infection stop reason and no
+`infection_unknown` when each oracle-eligible test has one or more assertions and each is a
+strong direct comparison of the owner call on an integer list or tuple with
+an integer. The finding carries an infection stop reason and no
 repair suggestion. Other source and test shapes retain their existing behavior.
