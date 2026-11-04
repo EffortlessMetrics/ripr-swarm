@@ -5207,7 +5207,9 @@ Field contract:
   values, such as a predicate-boundary equality call. `related_tests_total` is
   unaffected by ranking.
 - A related test whose only assertion on a returned-value seam is an exact
-  error-variant pin that does not name the `Err(..)` that seam constructs is
+  error-variant pin that does not name the `Err(..)` that seam constructs (this
+  includes a seam that constructs no `Err` at all, such as an `Ok(n)` arm
+  paired with an `Err(Fault::Even)` pin) is
   published as `oracle_kind: exact_error_variant`, `oracle_strength: none`,
   with a summary saying it pins a different arm; the same assertion is skipped
   by the seam's discriminate stage and is not offered as the nearest test to
