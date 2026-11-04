@@ -1,0 +1,1 @@
+editors/vscode/test/managedDownload/rehearse.ts|child_process|1|lsp/editor-test|#9469: test-only fixed-command adapter for existing descriptor binding, packaging, verification, throwaway TLS material and isolated VSIX CLI installation; no shell or publication.
