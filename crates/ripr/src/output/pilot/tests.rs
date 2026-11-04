@@ -978,6 +978,13 @@ fn pilot_ranks_an_unreached_ungripped_seam_whose_activation_is_unknown() {
     unreached.evidence.activate = stage(StageState::Unknown);
     unreached.evidence.activate.summary =
         "No concrete activation values observed for seam `x > 1`".to_string();
+    // The summary quotes the seam expression. A keyword in the expression
+    // (`snapshot_count`) must not read as a snapshot limitation.
+    let mut quoting = classified_in_owner(SeamGripClass::Ungripped, "src/d.rs", "d::k", 13);
+    quoting.evidence.reach = stage(StageState::No);
+    quoting.evidence.activate = stage(StageState::Unknown);
+    quoting.evidence.activate.summary =
+        "No concrete activation values observed for seam `snapshot_count >= 10`".to_string();
     let mut limited = classified_in_owner(SeamGripClass::Ungripped, "src/b.rs", "b::g", 11);
     limited.evidence.reach = stage(StageState::Yes);
     limited.evidence.activate = stage(StageState::Unknown);
@@ -988,11 +995,25 @@ fn pilot_ranks_an_unreached_ungripped_seam_whose_activation_is_unknown() {
     unresolved.evidence.reach = stage(StageState::No);
     unresolved.evidence.activate = stage(StageState::Unknown);
     unresolved.evidence.activate.summary = "Boundary activation operand is a local computed value for seam `x > limit`; add analyzer support before emitting an actionable repair packet".to_string();
-    let entries = [unreached, limited, unresolved];
+    let entries = [unreached, quoting, limited, unresolved];
     let ranked = top_actionable_seams(&entries, 5, None);
-    assert_eq!(ranked.len(), 1);
-    assert_eq!(display_path(ranked[0].seam.file()), "src/a.rs");
+    assert_eq!(
+        ranked_places(&ranked),
+        vec![("a::f".to_string(), 10), ("d::k".to_string(), 13)]
+    );
     assert_eq!(withheld_static_limitations(&entries), 2);
+
+    // The limitation projection agrees with eligibility: the exempt
+    // activation carries no limitation, the producer-named one keeps its.
+    let stages = |entry: &ClassifiedSeam| {
+        crate::output::evidence_record::static_limitations_for(entry)
+            .into_iter()
+            .map(|limitation| limitation.stage)
+            .collect::<Vec<_>>()
+    };
+    assert!(!stages(&entries[0]).contains(&"activate".to_string()));
+    assert!(!stages(&entries[1]).contains(&"activate".to_string()));
+    assert!(stages(&entries[3]).contains(&"activate".to_string()));
 }
 
 #[test]
