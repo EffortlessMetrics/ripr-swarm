@@ -4035,6 +4035,21 @@ mod tests {
             product.iter().any(|f| f.canonical_gap.is_some()),
             "ordinary product retains a canonical gap: {product:?}"
         );
+        // The same source must be probeable when provider identity is not verified.
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck={version='1',optional=true}\n",
+        )?;
+        let unverified =
+            RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+        assert!(
+            unverified
+                .findings
+                .iter()
+                .any(|f| f.probe.location.line == 5),
+            "unverified generator expression must be probeable: {:?}",
+            unverified.findings
+        );
         fs::remove_dir_all(root).map_err(|error| error.to_string())?;
         Ok(())
     }
