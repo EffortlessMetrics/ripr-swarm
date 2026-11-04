@@ -219,9 +219,9 @@ pub(crate) fn render_finding_digest_with_config(
         } else {
             "Missing check"
         };
-        // `decision.rs` builds these entries as `Missing discriminator value:
+        // `decision.rs` builds these entries as `Missing check value:
         // <value>`, which restates the label the renderer is about to print:
-        // `Missing discriminator: Missing discriminator value: X`. Print the
+        // `Missing discriminator: Missing check value: X`. Print the
         // value alone. Entries that are not value-shaped ("No strong
         // discriminator was detected") carry no such prefix and are unchanged.
         // `evidence_lines.rs` strips the same prefix for the same reason.
