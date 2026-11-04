@@ -22304,10 +22304,13 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
     Ok(())
 }
 
-/// #12610: a predicate-boundary seam must not treat an adapter-fed error read
-/// as a discriminator when the test supplies the compared value itself.
+/// #12610: a predicate-boundary seam must not treat an error read taken
+/// through a replacing adapter (`map_err(|_| Fault::Odd)`) as a discriminator:
+/// the test writes the compared `Fault::Odd`, so the assertion passes whatever
+/// the owner returns. Without the refusal in `oracle_discriminates_seam` this
+/// seam reads `discriminate: yes` (strong oracle), so the test witnesses it.
 #[test]
-fn adapter_fed_or_does_not_discriminate_predicate_boundary_seam() -> Result<(), String> {
+fn map_err_replaced_error_does_not_discriminate_predicate_boundary_seam() -> Result<(), String> {
     let source = r#"
 #[derive(Debug, PartialEq)]
 pub enum Fault { Odd, Even }
@@ -22321,7 +22324,7 @@ mod tests {
     use super::*;
     #[test]
     fn masked_odd() {
-        assert_eq!(parse_masked(1).or(Err(Fault::Odd)).unwrap_err(), Fault::Odd);
+        assert_eq!(parse_masked(1).map_err(|_| Fault::Odd).unwrap_err(), Fault::Odd);
     }
 }
 "#;
@@ -22336,7 +22339,7 @@ mod tests {
     assert_ne!(
         evidence.discriminate.state,
         StageState::Yes,
-        "adapter-fed masked_odd must not discriminate the boundary: {}",
+        "map_err-replaced masked_odd must not discriminate the boundary: {}",
         evidence.discriminate.summary
     );
     Ok(())

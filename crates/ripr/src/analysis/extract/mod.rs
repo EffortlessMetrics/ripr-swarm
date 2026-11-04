@@ -26,11 +26,11 @@ pub(crate) use mask::{
     rust_identity_spans, string_literal_spans,
 };
 pub(crate) use oracles::{
-    LazyDecls, OracleTextShape, assertion_oracle_text, classify_assertion, classify_assertion_with,
-    equality_assertion_arguments, err_return_guard_oracles, err_return_guard_twin,
-    extract_assertions, extract_assertions_in, extract_line_scanned_oracles,
-    guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
-    is_exact_membership_any_assertion, is_inequality_assertion,
+    LazyDecls, OracleTextShape, asserted_outcome_independent_of_owner, assertion_oracle_text,
+    classify_assertion, classify_assertion_with, equality_assertion_arguments,
+    err_return_guard_oracles, err_return_guard_twin, extract_assertions, extract_assertions_in,
+    extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,
+    has_oracle_text_shape, is_exact_membership_any_assertion, is_inequality_assertion,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
     outer_assertion_condition, retain_reached_oracles, terminal_err_return_guard_oracle,
     uncompared_unwrap_err, unwrap_err_bound_variables,

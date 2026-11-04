@@ -258,13 +258,7 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
     // `receiver_keeps_call_error` already refuses those for the uncompared
     // case. Outer grouping is looked through.
     let is_error_read = |operand: &str| {
-        let mut operand = operand.trim();
-        while operand.starts_with('(')
-            && group_end(operand, 0) == Some(operand.len().saturating_sub(1))
-        {
-            operand = operand[1..operand.len() - 1].trim();
-        }
-        let masked = mask_comments_and_strings(operand);
+        let masked = mask_comments_and_strings(peel_grouping(operand));
         // `map_err` keeps an `Ok` an `Ok` (so the uncompared-error reader
         // accepts it, method or UFCS form) but replaces the error, which is
         // what this pin reads.
@@ -278,6 +272,39 @@ pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
             && expression_pins_specific_error(&comparable_expression(expected))
     };
     pins_against(left, right) || pins_against(right, left)
+}
+
+/// Looks through outer grouping parentheses around an assertion operand.
+fn peel_grouping(operand: &str) -> &str {
+    let mut operand = operand.trim();
+    while operand.starts_with('(') && group_end(operand, 0) == Some(operand.len().saturating_sub(1))
+    {
+        operand = operand[1..operand.len() - 1].trim();
+    }
+    operand
+}
+
+/// True when an equality assertion compares an outcome the test wrote itself:
+/// an `Err(..)` constructor handed to a value-supplying adapter, or an error
+/// read (`.unwrap_err()` / `.expect_err(..)`) taken through an adapter that
+/// replaces the owner's error. Such an assertion can pass whatever the owner
+/// returns, so repo seam discrimination refuses to credit it (#12359, #12610).
+/// This is the one owner for that reading: the diff-scoped oracle extraction
+/// and the repo seam grip both ask it.
+pub(crate) fn asserted_outcome_independent_of_owner(line: &str) -> bool {
+    if err_constructor_feeds_value_adapter(line) {
+        return true;
+    }
+    let oracle_text = assertion_oracle_text(line);
+    let line = oracle_text.as_deref().unwrap_or(line);
+    let Some(args) = equality_assertion_arguments(line) else {
+        return false;
+    };
+    args.iter().any(|operand| {
+        let masked = mask_comments_and_strings(peel_grouping(operand));
+        (masked.contains(".unwrap_err(") || masked.contains(".expect_err("))
+            && has_error_replacing_adapter(&masked)
+    })
 }
 
 /// Whether the error read goes through an adapter that can replace the error
