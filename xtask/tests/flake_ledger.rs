@@ -97,6 +97,13 @@ fn ledger_violations(ledger: &str, sources: &str) -> Vec<String> {
         {
             violations.push(format!("{at}: duplicate id"));
         }
+        if let Some(issue) = entry.get("issue")
+            && issue.as_integer().is_none_or(|number| number <= 0)
+        {
+            violations.push(format!(
+                "{at}: `issue` must be a positive integer, got {issue}"
+            ));
+        }
         if let Some(flag) = entry.get("timing_dependent")
             && flag.as_bool().is_none()
         {
@@ -175,7 +182,9 @@ fn join_violations(ledger: &str, snapshot: &str) -> Vec<String> {
                 "snapshot #{number}: title mentions a flake but `flaky` is false"
             ));
         }
-        issues.insert(number, (state.to_string(), flaky));
+        if issues.insert(number, (state.to_string(), flaky)).is_some() {
+            violations.push(format!("snapshot #{number}: duplicate issue number"));
+        }
     }
     let rows = table(&ledger, "flake");
     let named: BTreeSet<i64> = rows
@@ -444,6 +453,51 @@ fn timing_dependent_must_be_a_boolean() {
     let good = format!("{GOOD}timing_dependent = true\n");
     assert_eq!(
         ledger_violations(&good, "fn guard_exists() {}"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn malformed_snapshot_entries_fail_the_join() {
+    let missing_field = "[[issue]]\nnumber = 7\nstate = \"open\"\ntitle = \"t\"\n";
+    let violations = join_violations(OPEN_ROW, missing_field);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("needs number, state, flaky and title")),
+        "{violations:?}"
+    );
+    let bad_state = SNAPSHOT.replace("\"open\"", "\"reopened\"");
+    let violations = join_violations(OPEN_ROW, &bad_state);
+    assert!(
+        violations.iter().any(|v| v.contains("state must be")),
+        "{violations:?}"
+    );
+    let duplicate = format!("{SNAPSHOT}{SNAPSHOT}");
+    let violations = join_violations(OPEN_ROW, &duplicate);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("duplicate issue number")),
+        "{violations:?}"
+    );
+    assert_eq!(join_violations(OPEN_ROW, SNAPSHOT), Vec::<String>::new());
+}
+
+#[test]
+fn a_non_integer_or_nonpositive_issue_value_fails_the_ledger() {
+    for bad in ["\"12\"", "0", "-3", "1.5"] {
+        let row = format!("{GOOD}issue = {bad}\n");
+        assert!(
+            ledger_violations(&row, "fn guard_exists() {}")
+                .iter()
+                .any(|v| v.contains("`issue` must be a positive integer")),
+            "{bad}"
+        );
+    }
+    let ok = format!("{GOOD}issue = 12\n");
+    assert_eq!(
+        ledger_violations(&ok, "fn guard_exists() {}"),
         Vec::<String>::new()
     );
 }

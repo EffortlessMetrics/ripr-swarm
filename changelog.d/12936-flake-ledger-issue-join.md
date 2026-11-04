@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- The flake ledger now covers the 14 open intermittent-test issues recorded in a checked-in issue snapshot, and `xtask/tests/flake_ledger.rs` fails when an open flaky issue has no ledger row or a row disagrees with its issue state; wall-clock-bound rows carry `timing_dependent = true` (#12936).
+- The flake ledger now has rows for 16 open intermittent-test issues, and `xtask/tests/flake_ledger.rs` joins it to a hand-curated, checked-in issue snapshot (not auto-complete: issues missing from the snapshot are not detected), failing when an open flaky snapshot issue has no ledger row or a row disagrees with its issue's recorded state; wall-clock-bound rows carry `timing_dependent = true` (#12936).

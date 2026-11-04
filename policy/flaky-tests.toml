@@ -16,6 +16,7 @@ test = "analysis::language::typescript::tests::analyze_diff_collapses_test_extra
 lane = "rust-coverage (cargo test: tests are threads of one process)"
 class = "shared-state"
 status = "fixed"
+issue = 11702
 first_seen = "2026-10-31"
 evidence = ["run 41195638303 (main 3371ea49)", "run 41190928102 (main 049bd0a6)", "run 41188789260 (main 404a80d0)"]
 symptom = "parse_worker_failed limitation appears in an unrelated TypeScript test; the main coverage lane was red on 3 of 4 completed runs."
@@ -92,7 +93,7 @@ issue = 12791
 first_seen = "2026-11-03"
 evidence = ["run 41623401829 (PR #12768 head 5db78cd8, passed on re-request)"]
 symptom = "ripr agent repair --phase after refused with attempt_incomparable because the before-phase baseline was recorded ambiguous, on a change that cannot reach the test."
-root_cause = "Not established: a before-phase baseline race versus a real intermittent defect. #12842 (merged) touched the edit-cage staged-publication path and references #12791; the issue is still open, so confirm the cause before moving this row to fixed."
+root_cause = "Not established: a before-phase baseline race versus a real intermittent defect. #12842 (merged, titled for #12791) accepts the destination-plus-staging-name pair an interrupted writer leaves, which is a candidate cause of the ambiguous baseline; no post-fix recurrence check is recorded, so the issue is still open and this row stays open until one is."
 
 [[flake]]
 id = "vscode-seam-hover-timeout"
@@ -254,3 +255,27 @@ first_seen = "2026-09-10"
 evidence = ["#3742 investigation of 2026-09-13 (PRs #3731-#3738)"]
 symptom = "A rotating family of failures under parallel cargo builds on Windows that pass on Linux CI."
 root_cause = "Dominant class is unhardened fixture git plus wall-clock assertions, second class fixed-path collisions (see #3742 for file:line evidence). One row for the family because #3742 owns it as one."
+
+[[flake]]
+id = "cache-export-relative-root-enoent"
+test = "cli::commands::cache_command::tests::export_preserves_relative_analysis_root_identity"
+lane = "Rust-only feature lane"
+class = "shared-state"
+status = "open"
+issue = 12989
+first_seen = "2026-11-04"
+evidence = ["run 41820189616 (job 126541132053, PR #12962 head ce72f78b)"]
+symptom = "Error: \"inspect export root: No such file or directory (os error 2)\" on a PR unrelated to the change."
+root_cause = "Suspected, unverified: the test uses a relative analysis root, so it may depend on the process-wide current directory or shared temp state and race with parallel tests. Not the Windows input-witness refusal tracked by #12421."
+
+[[flake]]
+id = "lsp-did-save-retries-windows-load"
+test = "lsp::tests::did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire"
+lane = "Windows full-suite run (cargo test -p ripr --lib lsp::)"
+class = "wall-clock-load"
+status = "open"
+issue = 9804
+first_seen = "2026-10-22"
+evidence = ["#9804 report: two failing full-suite runs while validating #9803 (no run id recorded)"]
+symptom = "Error: \"expected the first refresh to fail\" with only queued and started refresh notices observed; passes standalone and fails identically on a clean base."
+root_cause = "Not established: the test is #[serial] but its over-the-wire refresh-failure window is wall-clock sensitive under CPU contention with about 128 non-serial tests."
