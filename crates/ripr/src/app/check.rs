@@ -1092,7 +1092,7 @@ fn invoke_perl_lsp_producer(
     );
     match wait_result {
         crate::git::ChildWait::Exited(status) => {
-            if crate::analysis::cancellation::cli_interrupted()
+            if crate::analysis::cancellation::cli_interrupted_after_exit(&status)
                 && let Err(cancelled) = crate::analysis::cancellation::checkpoint()
             {
                 return Err(staging.settled_failure(cancelled));

@@ -69,3 +69,15 @@ first_seen = "2026-11-02"
 evidence = ["run 41311936942 (fc68d7f, failed 2 of 2)", "run 41394117143 (c6a7e5a, passed 3 of 3)", "run 41583153155 (dfa023b8, failed in the nofeatures pass with export_preserves_relative_analysis_root_identity)"]
 symptom = "Cache export refuses mid-test with \"workspace inputs changed during export\"; since the #12442 diagnostic the refusal names the moved input, which was `seam limit` in run 41583153155."
 root_cause = "Not established: the export input-witness check observes an input (the seam limit) move during the test's own export. #12421 owns the investigation."
+
+[[flake]]
+id = "managed-sigint-exporter-failure-misclassified"
+test = "ripr::chaos_interrupted_runs managed_producer::interruption::managed_sigint_reaps_partial_and_repeats"
+lane = "Test Analytics (cargo nextest run --workspace --all-features)"
+class = "ordering-race"
+status = "fixed"
+first_seen = "2026-11-03"
+evidence = ["run 41655332710", "run 41700144757", "run 41733219808", "run 41755758372 (managed_sigint_names_retained_directory)", "run 41769026807"]
+symptom = "An interrupted check reports `Perl facts exporter exited with status signal: 2 (SIGINT) (non-zero)` and `other languages continue` instead of a cancellation; 5 of 9 main runs failed (#12935)."
+root_cause = "A group-delivered SIGINT reaps the managed exporter before the CLI has run its own handler, so the exit was classified before the CLI interrupt flag was set. The exit is now decided from the flag, awaited for a bounded grace when the producer died by SIGINT under a flag-owning token."
+guard = "producer_sigint_death_is_cancellation_once_the_cli_flag_arrives"
