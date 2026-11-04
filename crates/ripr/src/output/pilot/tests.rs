@@ -969,6 +969,24 @@ fn pilot_ranking_uses_is_static_limited_not_class_alone_for_gap_classes() {
 }
 
 #[test]
+fn pilot_ranks_an_unreached_ungripped_seam_whose_activation_is_unknown() {
+    // #5497: with no test reaching the seam, `activate: unknown` is the
+    // missing test, not a limitation. The pilot answer key confirms these
+    // seams by mutation, so withholding them cost every seam-tier pick.
+    let mut unreached = classified_in_owner(SeamGripClass::Ungripped, "src/a.rs", "a::f", 10);
+    unreached.evidence.reach = stage(StageState::No);
+    unreached.evidence.activate = stage(StageState::Unknown);
+    let mut limited = classified_in_owner(SeamGripClass::Ungripped, "src/b.rs", "b::g", 11);
+    limited.evidence.reach = stage(StageState::Yes);
+    limited.evidence.activate = stage(StageState::Unknown);
+    let entries = [unreached, limited];
+    let ranked = top_actionable_seams(&entries, 5, None);
+    assert_eq!(ranked.len(), 1);
+    assert_eq!(display_path(ranked[0].seam.file()), "src/a.rs");
+    assert_eq!(withheld_static_limitations(&entries), 1);
+}
+
+#[test]
 fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
     // #5497: nothing ranks, but the withheld seams are named, not dropped.
     let entries = [
@@ -2373,7 +2391,7 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
                 "{test_file}\n{json}"
             );
             assert!(
-                terminal.contains("none ranked: 1 seam were withheld"),
+                terminal.contains("none ranked: 1 spot were withheld"),
                 "{test_file}\n{terminal}"
             );
         }

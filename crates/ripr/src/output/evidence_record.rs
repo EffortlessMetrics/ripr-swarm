@@ -993,6 +993,13 @@ fn alignment_confidence_for(
 }
 
 pub(crate) fn is_static_limited(entry: &ClassifiedSeam) -> bool {
+    // Activation cannot be established for a seam no test reaches. That
+    // `activate: unknown` follows from `reach: no`; it is the missing-test
+    // gap itself, not evidence the analyzer failed to establish, so it must
+    // not read as a static limitation (#5497: the pilot answer key confirms
+    // these `ungripped` seams by mutation).
+    let activation_follows_absent_reach = matches!(entry.evidence.reach.state, StageState::No)
+        && matches!(entry.evidence.activate.state, StageState::Unknown);
     cross_language_oracle_visibility_unresolved(entry)
         || cross_language_test_target_unresolved(entry)
         || matches!(entry.class, SeamGripClass::Opaque)
@@ -1004,7 +1011,11 @@ pub(crate) fn is_static_limited(entry: &ClassifiedSeam) -> bool {
             &entry.evidence.discriminate,
         ]
         .iter()
-        .any(|stage| matches!(stage.state, StageState::Opaque | StageState::Unknown))
+        .enumerate()
+        .any(|(index, stage)| {
+            let skipped = activation_follows_absent_reach && index == 1;
+            !skipped && matches!(stage.state, StageState::Opaque | StageState::Unknown)
+        })
 }
 
 fn weak_related_oracle(entry: &ClassifiedSeam) -> bool {
