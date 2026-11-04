@@ -1,10 +1,17 @@
 //! Shared behavior-evidence witness and parity corpus (#4790 / RIPR-SPEC-0204).
 //!
-//! This module is an additive projection over existing producer facts. It does
-//! not recompute stage meaning, public classes, actionability, cache
-//! generation, or route readiness. Existing classifiers remain authoritative.
+//! `language_projection` defines the adapter-to-shared-witness contract
+//! (#6405 / #5532 PR A). This module is an additive projection over existing
+//! producer facts. It does not recompute stage meaning, public classes,
+//! actionability, cache generation, or route readiness. Existing classifiers
+//! remain authoritative.
 
 mod adapters;
+mod language_projection;
+#[cfg(test)]
+mod language_projection_contract_tests;
+#[cfg(test)]
+mod language_projection_fixtures;
 #[cfg(test)]
 mod parity;
 mod relations;
@@ -268,7 +275,7 @@ fn hex_digest(canonical: &[u8]) -> String {
     format!("sha256:{hex}")
 }
 
-fn sort_unique(values: &mut Vec<String>) {
+pub(in crate::analysis::witness) fn sort_unique(values: &mut Vec<String>) {
     values.sort();
     values.dedup();
 }
@@ -296,7 +303,7 @@ fn earliest_unresolved_edge(witness: &BehaviorEvidenceWitnessV1) -> Option<Unres
     })
 }
 
-fn normalize_semantic_text(text: &str) -> String {
+pub(in crate::analysis::witness) fn normalize_semantic_text(text: &str) -> String {
     text.trim()
         .trim_end_matches([',', ';'])
         .split_whitespace()

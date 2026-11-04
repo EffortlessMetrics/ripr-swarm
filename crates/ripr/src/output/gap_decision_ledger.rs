@@ -2704,7 +2704,7 @@ fn gap_record_from_python_no_repair_card_finding(
             "static evidence cannot bind `{operand}` to a test input, so the boundary equality cannot become a repair target"
         )
     } else if first_missing_discriminator_value(finding).is_none() {
-        "static evidence names no concrete missing discriminator".to_string()
+        "static evidence names no concrete missing check".to_string()
     } else {
         "its test placement or related-test evidence is incomplete".to_string()
     };

@@ -46,7 +46,7 @@
         {"kind":"error_variant","text":"Result::Err(UnitError::Blank)","line":11}
       ],
       "evidence": ["Complete propagation witness reaches error variant: Result::Err(UnitError::Blank)", "No assertion found on related tests", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_unit: blank_input_is_unknown", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
-      "missing": ["Missing discriminator value: UnitError::Blank", "No detected assertion observes the changed value, error, field, or effect", "No exact error variant discriminator was detected", "No relevant oracle was detected"],
+      "missing": ["Missing check value: UnitError::Blank", "No detected assertion observes the changed value, error, field, or effect", "No exact error variant discriminator was detected", "No relevant oracle was detected"],
       "assertion_texts": {
         "21": "assert_eq!(parse_unit(\"\"), Err(UnitError::Unknown));"
       },
@@ -150,7 +150,7 @@
         {"kind":"match_arm","text":"_ =>","line":11}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: _ =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No related test call selects arm `_ =>`; observed `raw` values: `\"\"`", "Related tests appear to reach parse_unit: blank_input_is_unknown"],
-      "missing": ["Missing discriminator value: _", "No strong discriminator was detected"],
+      "missing": ["Missing check value: _", "No strong discriminator was detected"],
       "assertion_texts": {
         "21": "assert_eq!(parse_unit(\"\"), Err(UnitError::Unknown));"
       },

@@ -1,9 +1,13 @@
-//! Change-verification plan projection (#5163, VP1).
+//! Change-verification planning projections (#5162 programme; VP1 projection #5163).
 //!
-//! Additive pure projection over witness and grip producer facts. Does not
-//! change public classification, CLI output, or cache behavior.
+//! Pure, process-free verification-plan models. Snapshot acquisition,
+//! materialization, and provider execution remain external authorities
+//! (cargo-allow / cargo-proof). The projection is additive over witness and grip
+//! producer facts and does not change public classification, CLI output, or cache
+//! behavior.
 
 mod projection;
+pub(crate) mod snapshot_binding;
 
 #[cfg(test)]
 mod tests;
