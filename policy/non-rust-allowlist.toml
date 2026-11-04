@@ -491,6 +491,15 @@ reason = "Committed blind-journey executor decision receipt (RIPR-SPEC-0205, #46
 covered_by = ["cargo xtask blind-journey-execute", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "policy/fixture_expected_classes.json"
+kind = "fixture_class_coverage_ratchet"
+owner = "test-infra"
+surface = "repo"
+classification = "metadata"
+reason = "Per-language minimum authored fixture class declarations, checked against SPEC.md independently of regenerated goldens (#12928)."
+covered_by = ["cargo xtask check-fixture-contracts", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "policy/*.toml"
 kind = "policy_metadata"
 owner = "repo-policy"
