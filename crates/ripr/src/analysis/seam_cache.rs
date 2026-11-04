@@ -668,9 +668,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// credits the changed `T(e)` tail (#12796).
 /// `1.153`: a bounded `.map(owner)` iterator chain with a resolved owner path and
 /// matching literal `Vec` expectation credits through the owner-return pin (#9478).
-/// `1.154`: a macro-generated test borrows the module scopes at its invocation
-/// unless its expansion declares its own import, item or non-`let` binding
-/// (#12320). Old entries carry the earlier owner resolution.
+/// `1.154`: a bare `assert_matches!` around an inherent owner call reads the
+/// unplaced receiver withhold (#10666). Old entries keep the unnamed gap.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.154";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -866,7 +865,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.154";
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
 /// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
-/// `0.156`: same macro-generated-test invocation scopes as full `1.154` (#12320).
+/// `0.156`: same unplaced `assert_matches!` withhold as full `1.154` (#10666).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.156";
 
 /// Compact-classified seam cache schema. This cache stores the same
@@ -1064,7 +1063,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.156";
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
 /// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
-/// `0.156`: same macro-generated-test invocation scopes as full `1.154` (#12320).
+/// `0.156`: same unplaced `assert_matches!` withhold as full `1.154` (#10666).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.156";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
@@ -5976,7 +5975,7 @@ mod tests {
         // 1.150 -> 1.151: renamed assertion-macro imports name the macro limit (#12779).
         // 1.151 -> 1.152: a tuple `.0` pin credits the changed `T(e)` tail (#12796).
         // 1.152 -> 1.153: bounded `.map(owner)` chains credit via the owner pin (#9478).
-        // 1.153 -> 1.154: macro-generated tests borrow invocation-site scopes (#12320).
+        // 1.153 -> 1.154: a bare `assert_matches!` around an inherent owner call reads the unplaced receiver withhold (#10666).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.154");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6112,7 +6111,7 @@ mod tests {
         // 0.152 -> 0.153: same renamed-assertion-import limit as full 1.151 (#12779).
         // 0.153 -> 0.154: same tuple-projection pin as full 1.152 (#12796).
         // 0.154 -> 0.155: same path-value crediting as full 1.153 (#9478).
-        // 0.155 -> 0.156: same invocation-scope change as full 1.154 (#12320).
+        // 0.155 -> 0.156: same unplaced `assert_matches!` withhold as full 1.154 (#10666).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.156");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.156");
     }
