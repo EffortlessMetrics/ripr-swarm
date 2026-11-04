@@ -399,10 +399,10 @@ pub(super) fn match_helper_owner_call(
     };
     let direct_indices: BTreeSet<usize> = indices.into_iter().flatten().copied().collect();
     let mut all_indices = direct_indices.clone();
-    if owner.free_function {
-        if let Some(extra) = context.tests_by_helper_owner_call_name.get(&owner.name) {
-            all_indices.extend(extra.iter().copied());
-        }
+    if owner.free_function
+        && let Some(extra) = context.tests_by_helper_owner_call_name.get(&owner.name)
+    {
+        all_indices.extend(extra.iter().copied());
     }
     for test_index in &all_indices {
         if owner.free_function

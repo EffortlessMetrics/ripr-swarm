@@ -576,60 +576,52 @@ fn renamed_call_local_shadow(caller: &TestSummary, alias: &str, line: usize) -> 
             if ast::ClosureExpr::can_cast(ancestor.kind()) || ast::Fn::can_cast(ancestor.kind()) {
                 return None;
             }
-            if let Some(guard) = ast::IfExpr::cast(ancestor.clone()) {
-                if let (Some(ast::Expr::LetExpr(binding)), Some(then_branch)) =
+            if let Some(guard) = ast::IfExpr::cast(ancestor.clone())
+                && let (Some(ast::Expr::LetExpr(binding)), Some(then_branch)) =
                     (guard.condition(), guard.then_branch())
-                {
-                    if then_branch
+                && then_branch
+                    .syntax()
+                    .text_range()
+                    .contains_range(call.syntax().text_range())
+                && binding.pat().is_some_and(|pat| binds(pat.syntax()))
+            {
+                shadowed = true;
+            }
+            if let Some(arm) = ast::MatchArm::cast(ancestor.clone())
+                && arm.pat().is_some_and(|pat| binds(pat.syntax()))
+                && (arm.expr().is_some_and(|expr| {
+                    expr.syntax()
+                        .text_range()
+                        .contains_range(call.syntax().text_range())
+                }) || arm.guard().is_some_and(|guard| {
+                    guard
                         .syntax()
                         .text_range()
                         .contains_range(call.syntax().text_range())
-                        && binding.pat().is_some_and(|pat| binds(pat.syntax()))
-                    {
-                        shadowed = true;
-                    }
-                }
+                }))
+            {
+                shadowed = true;
             }
-            if let Some(arm) = ast::MatchArm::cast(ancestor.clone()) {
-                if arm.pat().is_some_and(|pat| binds(pat.syntax()))
-                    && (arm.expr().is_some_and(|expr| {
-                        expr.syntax()
-                            .text_range()
-                            .contains_range(call.syntax().text_range())
-                    }) || arm.guard().is_some_and(|guard| {
-                        guard
-                            .syntax()
-                            .text_range()
-                            .contains_range(call.syntax().text_range())
-                    }))
-                {
-                    shadowed = true;
-                }
+            if let Some(loop_expr) = ast::ForExpr::cast(ancestor.clone())
+                && loop_expr.pat().is_some_and(|pat| binds(pat.syntax()))
+                && loop_expr.loop_body().is_some_and(|body| {
+                    body.syntax()
+                        .text_range()
+                        .contains_range(call.syntax().text_range())
+                })
+            {
+                shadowed = true;
             }
-            if let Some(loop_expr) = ast::ForExpr::cast(ancestor.clone()) {
-                if loop_expr.pat().is_some_and(|pat| binds(pat.syntax()))
-                    && loop_expr.loop_body().is_some_and(|body| {
-                        body.syntax()
-                            .text_range()
-                            .contains_range(call.syntax().text_range())
-                    })
-                {
-                    shadowed = true;
-                }
-            }
-            if let Some(loop_expr) = ast::WhileExpr::cast(ancestor.clone()) {
-                if let (Some(ast::Expr::LetExpr(binding)), Some(body)) =
+            if let Some(loop_expr) = ast::WhileExpr::cast(ancestor.clone())
+                && let (Some(ast::Expr::LetExpr(binding)), Some(body)) =
                     (loop_expr.condition(), loop_expr.loop_body())
-                {
-                    if body
-                        .syntax()
-                        .text_range()
-                        .contains_range(call.syntax().text_range())
-                        && binding.pat().is_some_and(|pat| binds(pat.syntax()))
-                    {
-                        shadowed = true;
-                    }
-                }
+                && body
+                    .syntax()
+                    .text_range()
+                    .contains_range(call.syntax().text_range())
+                && binding.pat().is_some_and(|pat| binds(pat.syntax()))
+            {
+                shadowed = true;
             }
             if let Some(list) = ast::StmtList::cast(ancestor) {
                 if list
