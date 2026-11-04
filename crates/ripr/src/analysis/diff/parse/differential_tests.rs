@@ -160,10 +160,10 @@ fn exercise_edit(
     rename: bool,
 ) -> Result<(), String> {
     let repo = Repository::new()?;
-    let removed: Vec<_> = (0..removed_count)
+    let mut removed: Vec<_> = (0..removed_count)
         .map(|line| format!("old value {line}"))
         .collect();
-    let added: Vec<_> = (0..added_count)
+    let mut added: Vec<_> = (0..added_count)
         .map(|line| format!("new value {line}"))
         .collect();
     let old_path = "before space.rs";
@@ -180,12 +180,24 @@ fn exercise_edit(
             "Git did not generate the required edit/rename: {patch}"
         ));
     }
+    let mut start = prefix + 1;
+    if !newline && suffix == 0 && prefix > 0 && (removed.is_empty() || added.is_empty()) {
+        // Inserting/removing an EOF block also changes the preceding line's
+        // terminator: it moves between the last (unterminated) position and
+        // an interior (terminated) position. Git therefore replaces that
+        // prefix line as well, even though its text is unchanged. Derive this
+        // from the generated file bytes, never from the patch headers.
+        let boundary = format!("unchanged prefix {:04}", prefix - 1);
+        removed.insert(0, boundary.clone());
+        added.insert(0, boundary);
+        start = prefix;
+    }
     let parsed = parse_unified_diff_with_metadata(&patch);
-    check_edit(&parsed, new_path, prefix + 1, &removed, &added)
+    check_edit(&parsed, new_path, start, &removed, &added)
         .map_err(|error| format!("{error}\nGit patch:\n{patch}"))?;
     let bounded = super::stream::parse_bounded_lines_scoped(patch.lines(), 100, 10_000, |_| true)
         .map_err(|error| error.to_string())?;
-    check_edit(&bounded, new_path, prefix + 1, &removed, &added)
+    check_edit(&bounded, new_path, start, &removed, &added)
         .map_err(|error| format!("bounded {error}\nGit patch:\n{patch}"))?;
     if parsed.renamed_file_count != usize::from(rename) {
         return Err(format!("wrong rename count: {parsed:?}"));
