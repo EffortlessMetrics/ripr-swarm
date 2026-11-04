@@ -34,3 +34,35 @@ snapshot command; they do not run package builds or network actions.
 - treat partial or stale rehearsal as a ship verdict;
 - rebuild packages inside the snapshot command;
 - collapse supply-chain producers into one synthetic pass row.
+
+## Plan-only extension (#1781)
+
+`rehearsal-receipt.plan.json` is illustrative schema 1.1 planning data. It
+shares the existing receipt kind and Rust model with 1.0, adding a required
+`plan` block. The block binds the source tree, host OS/architecture, plan-only
+profile, read/tool inventory, empty write/cache inventories and explicit
+no-mutation observations. All present components are `not_run` without artifact
+digests; empty server/install inventories establish no coverage.
+
+The schema is `schemas/ripr/readiness-rehearsal-plan.schema.json`. Schema 1.0
+fixtures remain valid and serialize without `plan`; 1.0 with plan metadata and
+1.1 without it are refused. Old 1.0 readers reject 1.1 instead of accepting new
+semantics silently. Other profiles/versions require a separately reviewed
+contract extension. #4850 retains executed component fan-in.
+
+`cargo xtask readiness-rehearsal --sha HEAD --plan --json` emits to stdout only
+and requires clean current HEAD (including no untracked files). It performs
+read-only Git and identity-file inspection; it creates no report, cache, package
+or installation. `--plan` and explicit `--sha` are required. Execution options
+are unavailable. Callers may retain stdout outside the source tree; redirecting
+inside tracked/untracked source before invocation makes the cleanliness check
+refuse. The two cleanliness observations do not lock out concurrent writers;
+run in an exclusively owned checkout. No generated timestamp enters the receipt.
+
+Consuming schema 1.1 leaves rehearsal-derived toolchain, package/install and
+supply-chain dimensions `not_proven`. Existing independent evidence adapters
+retain their own authorities. Plan-only receipt data cannot promote readiness,
+even when a caller bypasses parsing. Tests challenge missing/unknown metadata,
+mutation claims, unsupported profiles, false component passes, deterministic
+planning and CLI refusal. Source tests and this fixture never establish artifact
+or platform qualification.

@@ -1,0 +1,87 @@
+{
+  "schema_version": "1.1",
+  "kind": "readiness_no_publish_rehearsal_receipt",
+  "source_sha": "161e97dfdf94979f73629ef6c417bc16294c49a8",
+  "tree_clean": true,
+  "identity": {
+    "cargo_lock_digest": "sha256:b31b72867f3ae9a6e67197d293185cb4ecc0fbb9472a0b34ac90d37e85f51765",
+    "package_lock_digest": "sha256:f0c87f90ccae731d67d910261d6472f4daca712433227aadfc233addbadbc44b",
+    "rust_toolchain_digest": "sha256:48e029bb0b480b4b3bab15cb3de843dbfd6a7b9497163cc79c3af1d3026440bb",
+    "crate_version": "0.11.0",
+    "extension_version": "0.11.0"
+  },
+  "crate_package": {
+    "status": "not_run",
+    "limitation": "plan only; owning component producer has not executed"
+  },
+  "installed_binary": {
+    "status": "not_run",
+    "limitation": "plan only; owning component producer has not executed"
+  },
+  "vsix": {
+    "status": "not_run",
+    "limitation": "plan only; owning component producer has not executed"
+  },
+  "limitations": [
+    "Illustrative plan fixture, not observed execution or artifact evidence."
+  ],
+  "non_claims": [
+    "not package/install readiness, qualification, candidate freeze or release authority"
+  ],
+  "published_channels": [],
+  "plan": {
+    "source_tree": "1111111111111111111111111111111111111111",
+    "host_os": "linux",
+    "host_arch": "x86_64",
+    "profile": "plan_only",
+    "reads": [
+      "git HEAD/tree/status (including untracked files)",
+      "Cargo.toml",
+      "crates/ripr/Cargo.toml",
+      "Cargo.lock",
+      "rust-toolchain.toml",
+      "editors/vscode/package.json",
+      "editors/vscode/package-lock.json"
+    ],
+    "writes": [],
+    "cache_roots": [],
+    "tools": [
+      "git (read-only)"
+    ],
+    "prohibited_operations": [
+      "build",
+      "install",
+      "network",
+      "registry/marketplace publication",
+      "tag",
+      "release",
+      "deployment",
+      "version change",
+      "signing",
+      "credentials",
+      "candidate freeze"
+    ],
+    "tags_created": [],
+    "versions_changed": false,
+    "candidate_frozen": false,
+    "release_cut": false,
+    "release_authority": false,
+    "signing_performed": false,
+    "credentials_accessed": false,
+    "deployments_performed": false
+  },
+  "dependency_policy": {
+    "status": "not_run",
+    "limitation": "plan only; owning component producer has not executed"
+  },
+  "sbom": {
+    "status": "not_run",
+    "limitation": "plan only; owning component producer has not executed"
+  },
+  "provenance_plan": {
+    "status": "not_run",
+    "limitation": "plan only; owning component producer has not executed"
+  },
+  "server_artifacts": [],
+  "install_smokes": []
+}

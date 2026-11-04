@@ -5,8 +5,16 @@ use std::process::Command;
 use super::model::IdentityInputs;
 
 pub(crate) fn git_rev_parse(rev: &str) -> Result<String, String> {
+    git_object(rev, "commit")
+}
+
+pub(crate) fn git_source_tree(rev: &str) -> Result<String, String> {
+    git_object(rev, "tree")
+}
+
+fn git_object(rev: &str, object_kind: &str) -> Result<String, String> {
     let output = Command::new("git")
-        .args(["rev-parse", "--verify", &format!("{rev}^{{commit}}")])
+        .args(["rev-parse", "--verify", &format!("{rev}^{{{object_kind}}}")])
         .output()
         .map_err(|err| format!("failed to run git rev-parse: {err}"))?;
     if !output.status.success() {
@@ -20,6 +28,7 @@ pub(crate) fn git_rev_parse(rev: &str) -> Result<String, String> {
 
 pub(crate) fn git_worktree_clean() -> Result<bool, String> {
     let output = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .args(["status", "--porcelain"])
         .output()
         .map_err(|err| format!("failed to run git status: {err}"))?;
