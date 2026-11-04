@@ -5116,6 +5116,28 @@ mod tests {
         std::fs::hard_link(&destination, dir.join("after.tmp-1-1"))
             .map_err(|error| error.to_string())?;
         let packet = r#"{"seam_id":"seam:sample","allowed_edit_surface":["tests/target.rs"],"forbidden_files":[]}"#;
+        let different_id = RepairAttemptId::parse("repair-attempt-fedcba9876543210fedcba98")?;
+        let mut prior_scope = edit_cage_policy_from_packet(packet, "seam:sample")?;
+        include_resolved_explicit_store_operational_write(
+            &mut prior_scope,
+            &root,
+            Some(store),
+            Some(&different_id),
+            RepairAttemptStoreAccess::Open,
+        )?;
+        // The existing custom-store rule scopes writes to the selected attempt;
+        // an older outside-target attempt is inventoried but not writable.
+        assert!(
+            !prior_scope
+                .expected_operational_writes
+                .iter()
+                .any(|rule| rule.matches(&format!(
+                    "custom-attempts/{}/artifacts/after.json",
+                    id.as_str()
+                )))
+        );
+        prior_scope.artifact_store = None;
+        assert!(!crate::edit_cage::capture_attempt_baseline(&root, &prior_scope)?.is_ambiguous());
         let mut policy = edit_cage_policy_from_packet(packet, "seam:sample")?;
         include_resolved_explicit_store_operational_write(
             &mut policy,
@@ -5141,6 +5163,59 @@ mod tests {
         policy.artifact_store = None;
         assert!(crate::edit_cage::capture_attempt_baseline(&root, &policy)?.is_ambiguous());
         policy.artifact_store = Some(resolved.locator().to_string());
+        // Persist the serialized (legacy-shaped) baseline and load it through
+        // the actual retained-attempt authority, not a manually supplied path.
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow).map_err(|error| error.to_string())?;
+        let before = workflow.join("before.json");
+        let packet_path = workflow.join("packet.json");
+        let baseline_path = workflow.join("baseline.json");
+        let snapshot = crate::testing::verify_fixture::mint_repo_exposure_snapshot(
+            &root,
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped"
+            )]),
+        )?;
+        std::fs::write(&before, snapshot).map_err(|error| error.to_string())?;
+        std::fs::write(&packet_path, packet).map_err(|error| error.to_string())?;
+        write_edit_cage_baseline(&root, &baseline_path, &policy)?;
+        let prepared = begin_repair_attempt_with(BeginRepairAttemptOptions {
+            root: &root,
+            root_argument: &root,
+            seam_id: "seam:sample",
+            sources: &[
+                BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &before,
+                },
+                BeforeArtifactSource {
+                    role: "agent_packet",
+                    path: &packet_path,
+                },
+                BeforeArtifactSource {
+                    role: "edit_cage_baseline",
+                    path: &baseline_path,
+                },
+            ],
+            expected_repository_head: None,
+            next_command_suffix: None,
+            store: Some(store),
+        })?;
+        let retained =
+            load_edit_cage_baseline_from(&root, Some(store), &prepared.manifest.repair_attempt_id)?;
+        assert_eq!(
+            retained.policy().artifact_store.as_deref(),
+            Some("custom-attempts")
+        );
+        assert!(
+            crate::edit_cage::evaluate_repository_edit_cage_with_delta(&retained)?
+                .0
+                .comparable
+        );
         let staged = format!("custom-attempts/{}/artifacts/after.tmp-1-1", id.as_str());
         run_git(&root, &["add", "--", &staged]).map_err(|error| error.to_string())?;
         assert!(crate::edit_cage::capture_attempt_baseline(&root, &policy)?.is_ambiguous());

@@ -5300,6 +5300,24 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn source_tree_staging_pair_makes_capture_ambiguous() -> Result<(), String> {
+        let fixture = git_fixture("source-pair-capture")?;
+        fs::hard_link(
+            fixture.root.join("src/pricing.rs"),
+            fixture.root.join("src/pricing.tmp-1-1"),
+        )
+        .map_err(|error| error.to_string())?;
+        let mut policy = policy()?;
+        policy.selected_target = CagePathRule::exact("src/pricing.rs")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("src/pricing.rs")?];
+        policy.forbidden_paths.clear();
+        policy.artifact_store = Some("target/ripr/repair-attempts".to_string());
+        assert!(capture_attempt_baseline(&fixture.root, &policy)?.is_ambiguous());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn artifact_pair_refuses_symlinked_store_ancestor() -> Result<(), String> {
         use std::os::unix::fs::symlink;
         let fixture = git_fixture("artifact-symlink")?;
