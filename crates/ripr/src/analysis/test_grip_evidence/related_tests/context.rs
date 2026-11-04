@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::analysis::test_grip_evidence) enum HelperPathOutcome {
     Legacy,
-    Proven,
+    Established,
     Blocked,
     Unsettled,
 }
@@ -752,7 +752,7 @@ impl<'a> CompactGripContext<'a> {
             return *answer;
         }
         let answer = if self.renamed_helper_reaches_owner(test, owner) {
-            HelperPathOutcome::Proven
+            HelperPathOutcome::Established
         } else if let Some(identity) =
             crate::analysis::classify::shared_owner_call_identity(self.index, owner)
         {
@@ -2155,7 +2155,7 @@ fn generic_shadow_graph_path_outcome(
         PathResult::None => HelperPathOutcome::Legacy,
         PathResult::Blocked => HelperPathOutcome::Blocked,
         PathResult::Unsettled | PathResult::BlockedUnsettled => HelperPathOutcome::Unsettled,
-        PathResult::Possible => HelperPathOutcome::Proven,
+        PathResult::Possible => HelperPathOutcome::Established,
     }
 }
 
