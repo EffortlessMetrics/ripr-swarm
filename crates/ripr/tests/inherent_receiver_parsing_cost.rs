@@ -454,6 +454,112 @@ fn full_and_compact_reporting_agree_on_grip_counts() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), String> {
+    let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-scope-shadow/src/lib.rs")).map_err(|e| e.to_string())?;
+    let module = source
+        .replace(
+            "fn route_read_as_object<helpers: Foreign>()",
+            "fn route_read_as_object()",
+        )
+        .replace("route_read_as_object::<Fake>()", "route_read_as_object()");
+    let anchored = source.replace(
+        "    helpers::read_as_object()",
+        "    crate::helpers::read_as_object()",
+    );
+    let mixed = source.replace(
+        "    helpers::read_as_object()",
+        "    let _ = helpers::read_as_object(); crate::helpers::read_as_object()",
+    );
+    let unrelated = source
+        .replace(
+            "trait Foreign",
+            "mod other { pub fn read_as_object() -> Option<u32> { Some(7) } }\ntrait Foreign",
+        )
+        .replace(
+            "    helpers::read_as_object()",
+            "    let _ = other::read_as_object(); helpers::read_as_object()",
+        );
+    let intermediate = source.replace("fn route_read_as_object<helpers: Foreign>() -> Option<u32> {\n    helpers::read_as_object()\n}", "fn middle_read_as_object<helpers: Foreign>() -> Option<u32> { helpers::read_as_object() }\nfn route_read_as_object<helpers: Foreign>() -> Option<u32> { middle_read_as_object::<helpers>() }");
+    let alias = source
+        .replace(
+            "trait Foreign",
+            "use crate::helpers::read_as_object as actual_read;\ntrait Foreign",
+        )
+        .replace(
+            "    helpers::read_as_object()",
+            "    let _ = helpers::read_as_object(); actual_read()",
+        );
+    let intermediate_mixed = intermediate
+        .replace(
+            "trait Foreign",
+            "mod other { pub fn read_as_object() -> Option<u32> { Some(7) } }\ntrait Foreign",
+        )
+        .replace(
+            "{ helpers::read_as_object() }",
+            "{ let _ = other::read_as_object(); helpers::read_as_object() }",
+        );
+    for (case, src, expected) in [
+        ("shadow", &source, false),
+        ("module", &module, true),
+        ("anchored", &anchored, true),
+        ("mixed", &mixed, true),
+        ("unrelated", &unrelated, false),
+        ("intermediate", &intermediate, false),
+        ("alias", &alias, true),
+        ("intermediate_mixed", &intermediate_mixed, false),
+    ] {
+        let temp = Fixture {
+            root: std::env::temp_dir().join(format!("ripr-shadow-{}-{case}", std::process::id())),
+        };
+        std::fs::create_dir_all(temp.root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(temp.root.join("Cargo.toml"), "[package]\nname = \"shadow-control\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
+        std::fs::write(temp.root.join("src/lib.rs"), src).map_err(|e| e.to_string())?;
+        let run = |format: &str| -> Result<serde_json::Value, String> {
+            let result = Command::new(env!("CARGO_BIN_EXE_ripr"))
+                .args(["check", "--root"])
+                .arg(&temp.root)
+                .args(["--mode", "draft", "--format", format, "--quiet"])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !result.status.success() {
+                return Err(format!(
+                    "{case}: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                ));
+            }
+            serde_json::from_slice(&result.stdout).map_err(|e| e.to_string())
+        };
+        let full = run("repo-exposure-json")?;
+        let compact = run("repo-exposure-summary-json")?;
+        let seams = full["seams"].as_array().ok_or("missing seams")?;
+        let seam = seams
+            .iter()
+            .find(|s| {
+                s["owner"] == "src/lib.rs::helpers::read_as_object"
+                    && s["expression"] == "value.as_object()"
+            })
+            .ok_or("missing module helper seam")?;
+        assert_eq!(
+            seam["evidence"]["reach"] == "yes",
+            expected,
+            "{case}: {seam}"
+        );
+        assert_eq!(
+            seam["grip_class"] == "strongly_gripped",
+            expected,
+            "{case}: {seam}"
+        );
+        for (class, count) in compact["metrics"]["grip_class"]
+            .as_object()
+            .ok_or("missing compact counts")?
+        {
+            assert_eq!(full["metrics"][class], *count, "{case}: {class}");
+        }
+    }
+    Ok(())
+}
+
 /// Wall-time probe for #8005. Ignored: it measures rather than asserts, so
 /// CI never runs it; the numbers it emits are the retained samples behind
 /// the parsing-cost decision. Run explicitly, in the profile under study:

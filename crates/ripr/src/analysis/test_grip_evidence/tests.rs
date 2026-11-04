@@ -20692,7 +20692,32 @@ fn generic_qualifier_does_not_credit_same_named_module_helper() -> Result<(), St
             "fn route_read_as_object()",
         )
         .replace("route_read_as_object::<Fake>()", "route_read_as_object()");
-    for (source, expected) in [(&shadow, false), (&module, true)] {
+    let anchored = shadow.replace(
+        "    helpers::read_as_object()",
+        "    crate::helpers::read_as_object()",
+    );
+    let mixed = shadow.replace(
+        "    helpers::read_as_object()",
+        "    let _ = helpers::read_as_object(); crate::helpers::read_as_object()",
+    );
+    let unrelated = shadow
+        .replace(
+            "trait Foreign",
+            "mod other { pub fn read_as_object() -> Option<u32> { Some(7) } }\ntrait Foreign",
+        )
+        .replace(
+            "    helpers::read_as_object()",
+            "    let _ = other::read_as_object(); helpers::read_as_object()",
+        );
+    let intermediate = shadow.replace("fn route_read_as_object<helpers: Foreign>() -> Option<u32> {\n    helpers::read_as_object()\n}", "fn middle_read_as_object<helpers: Foreign>() -> Option<u32> { helpers::read_as_object() }\nfn route_read_as_object<helpers: Foreign>() -> Option<u32> { middle_read_as_object::<helpers>() }");
+    for (source, expected) in [
+        (&shadow, false),
+        (&module, true),
+        (&anchored, true),
+        (&mixed, true),
+        (&unrelated, false),
+        (&intermediate, false),
+    ] {
         let file = PathBuf::from("src/lib.rs");
         let index = index_from_files(&[(file.clone(), source)])?;
         let seams = inventory_seams_from_index(&[file], &index);
@@ -20719,6 +20744,10 @@ fn generic_qualifier_does_not_credit_same_named_module_helper() -> Result<(), St
             "{}",
             source
         );
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(seam, &context);
+        assert_eq!(compact.reach.state, evidence.reach.state, "{source}");
+        assert_eq!(compact.activate.state, evidence.activate.state, "{source}");
     }
     Ok(())
 }
