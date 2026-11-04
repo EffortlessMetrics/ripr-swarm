@@ -2745,28 +2745,14 @@ fn activate_evidence(
     let helper_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
         && owner_fn.is_some_and(|owner_fn| {
-            let bound_owner = matches!(
-                owner_fn.item.container,
-                crate::analysis::facts::FunctionContainer::Free
-                    | crate::analysis::facts::FunctionContainer::Inherent { .. }
-            );
             activation_credited.iter().any(|indexed| {
-                if bound_owner {
-                    indexed.has_bound_helper_owner(owner_fn)
-                        || (indexed.has_bound_affinity_owner(owner_fn)
-                            && has_owner_call_via_target_affinity(
-                                indexed,
-                                owner_name,
-                                target_affinity_tokens.as_ref(),
-                            ))
-                } else {
-                    has_owner_call_via_one_hop_helper(indexed, owner_name)
-                        || has_owner_call_via_target_affinity(
+                indexed.has_bound_helper_owner(owner_fn)
+                    || (indexed.has_bound_affinity_owner(owner_fn)
+                        && has_owner_call_via_target_affinity(
                             indexed,
                             owner_name,
                             target_affinity_tokens.as_ref(),
-                        )
-                }
+                        ))
             })
         });
     let ambiguous_constructor_field_owner = !owner_name.is_empty()
@@ -3069,10 +3055,6 @@ fn call_may_reach_owner(call: &CallFact, owner_fn: &FunctionSummary) -> bool {
     call.name == owner_fn.name
         && (owner_fn.impl_context != FunctionImplContext::Free
             || call_text_may_call_free_function(&call.text, &owner_fn.name))
-}
-
-fn has_owner_call_via_one_hop_helper(indexed: &CompactTest<'_>, owner_name: &str) -> bool {
-    indexed.helper_owner_call_names.contains(owner_name)
 }
 
 fn has_owner_call_via_target_affinity(
@@ -3626,39 +3608,15 @@ fn compact_activate_evidence(
     let free_owner = owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
     let direct_owner_call = !owner_name.is_empty()
         && activation_credited.iter().any(|indexed| {
-            if free_owner {
-                (indexed.call_names.contains(owner_name)
-                    && test_calls_free_function(indexed.test, owner_name))
-                    || owner_fn.is_some_and(|owner| indexed.has_bound_helper_owner(owner))
-                    || (owner_fn.is_some_and(|owner| indexed.has_bound_affinity_owner(owner))
-                        && has_owner_call_via_target_affinity(
-                            indexed,
-                            owner_name,
-                            target_affinity_tokens.as_ref(),
-                        ))
-            } else if owner_fn.is_some_and(|owner| {
-                matches!(
-                    owner.item.container,
-                    crate::analysis::facts::FunctionContainer::Inherent { .. }
-                )
-            }) {
-                indexed.call_names.contains(owner_name)
-                    || owner_fn.is_some_and(|owner| indexed.has_bound_helper_owner(owner))
-                    || (owner_fn.is_some_and(|owner| indexed.has_bound_affinity_owner(owner))
-                        && has_owner_call_via_target_affinity(
-                            indexed,
-                            owner_name,
-                            target_affinity_tokens.as_ref(),
-                        ))
-            } else {
-                indexed.call_names.contains(owner_name)
-                    || indexed.helper_owner_call_names.contains(owner_name)
-                    || has_owner_call_via_target_affinity(
+            (indexed.call_names.contains(owner_name)
+                && (!free_owner || test_calls_free_function(indexed.test, owner_name)))
+                || owner_fn.is_some_and(|owner| indexed.has_bound_helper_owner(owner))
+                || (owner_fn.is_some_and(|owner| indexed.has_bound_affinity_owner(owner))
+                    && has_owner_call_via_target_affinity(
                         indexed,
                         owner_name,
                         target_affinity_tokens.as_ref(),
-                    )
-            }
+                    ))
         });
     let ambiguous_constructor_field_owner = !owner_name.is_empty()
         && related

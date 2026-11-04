@@ -574,6 +574,7 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::nominal_associated_helpers_keep_bound_entries_and_hops",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::associated_helper_type_paths_keep_real_modules_and_imports",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::helper_credit_keeps_exact_static_associated_terminal_owner",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::unresolved_trait_helper_terminals_do_not_borrow_namesake_credit",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_namespace.rs::helper_scope_type_parameters_preserve_bare_imported_function_calls",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::receiver_bound_helper_keeps_its_own_leaf_despite_free_name_collision",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::same_named_helper_declarations_do_not_exchange_leaf_payloads",

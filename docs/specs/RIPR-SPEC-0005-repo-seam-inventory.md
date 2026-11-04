@@ -399,6 +399,10 @@ Resolved entry and terminal owner identities remain attached through ordinary an
 target-affinity relations and through full and compact activation. Plain nominal
 associated-function paths use the same module/type scope authority; generic
 instantiation and type aliases remain outside that bounded path reader.
+Every helper-credit route requires a resolved terminal identity. Trait/default,
+local and unknown declarations that this bounded resolver cannot establish do
+not regain helper credit through a spelling fallback; their existing direct-call
+and explicitly unresolved-dispatch routes remain separate.
 Type-only declarations do not intercept bare value calls, and value-only
 declarations do not intercept module/type path prefixes.
 Free-owner graph edges share lexical binding and value-shadow

@@ -402,13 +402,7 @@ pub(super) fn match_helper_owner_call(
         return;
     };
     for test_index in indices {
-        if owner.function.is_some_and(|function| {
-            matches!(
-                function.item.container,
-                crate::analysis::facts::FunctionContainer::Free
-                    | crate::analysis::facts::FunctionContainer::Inherent { .. }
-            )
-        }) && !owner.function.is_some_and(|function| {
+        if !owner.function.is_some_and(|function| {
             context
                 .tests
                 .get(*test_index)
@@ -463,15 +457,9 @@ pub(super) fn match_target_affinity_owner_call(
             continue;
         };
         if !test_assertion_mentions_any_target_token(test, target_tokens)
-            || (owner.function.is_some_and(|function| {
-                matches!(
-                    function.item.container,
-                    crate::analysis::facts::FunctionContainer::Free
-                        | crate::analysis::facts::FunctionContainer::Inherent { .. }
-                )
-            }) && !owner
+            || !owner
                 .function
-                .is_some_and(|function| test.has_bound_affinity_owner(function)))
+                .is_some_and(|function| test.has_bound_affinity_owner(function))
             || (owner.inherent_receiver
                 && !owner.inherent_owner.is_some_and(|function| {
                     context.inherent_helper_reaches_owner(*test_index, function)

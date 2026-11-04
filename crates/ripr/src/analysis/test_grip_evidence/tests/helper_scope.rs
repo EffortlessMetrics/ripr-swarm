@@ -507,3 +507,33 @@ fn helper_credit_keeps_exact_static_associated_terminal_owner() -> Result<(), St
     }
     Ok(())
 }
+
+#[test]
+fn unresolved_trait_helper_terminals_do_not_borrow_namesake_credit() -> Result<(), String> {
+    for (declarations, call, owners) in [
+        (
+            "trait Probe { fn leaf_value() -> Option<u32>; }\nstruct Real;\nimpl Probe for Real { fn leaf_value() -> Option<u32> { Some(7) } }\nstruct Decoy;\nimpl Probe for Decoy { fn leaf_value() -> Option<u32> { Some(7) } }",
+            "Real::leaf_value()",
+            [
+                "src/lib.rs::impl Probe for Real::leaf_value",
+                "src/lib.rs::impl Probe for Decoy::leaf_value",
+            ],
+        ),
+        (
+            "trait Real { fn leaf_value() -> Option<u32> { Some(7) } }\ntrait Decoy { fn leaf_value() -> Option<u32> { Some(7) } }\nstruct Value; impl Real for Value {} impl Decoy for Value {}",
+            "<Value as Real>::leaf_value()",
+            [
+                "src/lib.rs::trait Real::leaf_value",
+                "src/lib.rs::trait Decoy::leaf_value",
+            ],
+        ),
+    ] {
+        let source = format!(
+            "{declarations}\nfn read_leaf_value() -> Option<u32> {{ {call} }}\n#[test] fn observes_real() {{ assert_eq!(read_leaf_value(), Some(7)); }}\n"
+        );
+        // The bounded helper resolver does not establish trait dispatch. It
+        // must not turn that uncertainty into credit for either namesake.
+        assert_exact_helper_owner_credit(&source, &[(owners[0], false), (owners[1], false)])?;
+    }
+    Ok(())
+}
