@@ -80,31 +80,56 @@ for boards, instruments, and the ingest format, and
 
 ## Current Baseline
 
-The following baseline was observed during the planning-doc pass:
+The fixture lab is present: `cargo xtask fixtures` and `cargo xtask goldens
+check` exercise committed examples. The committed
+[`dx-scoreboard` baseline](../metrics/dx-scoreboard/baseline.json) names its
+analyzer revision, runner and population; it is a retained observation, not a
+current release measurement. Its first-run board has seven `not_measured`
+metrics, including time to first useful result. It cannot establish a current
+first-run or installed-user outcome. Use a fresh, identity-bound receipt for
+the selected candidate and its actual channels; do not treat missing data as
+zero or aggregate fixture success as release qualification.
 
-```text
-Production/test panic-family inventory:
-  1 production expect() call site in crates/ripr/src/lsp.rs.
-  13 test unwrap() call sites across CLI, analysis, and LSP tests.
-  4 additional string-pattern matches intentionally detect unwrap/expect usage
-    in analyzed Rust code and are not panic-family call sites.
+## Proposed release ladder
 
-CI:
-  Rust job runs fmt, check, clippy, test, package list, and publish dry-run.
-  VS Code job runs npm ci, compile, and package.
+These are **proposed discussion criteria**, not approved release gates,
+support promotions, or a current readiness assessment. Issue
+[#12908](https://github.com/EffortlessMetrics/ripr-swarm/issues/12908) asks
+the owner to decide the bars. Existing candidate selection, qualification,
+support-tier and ship-authorization contracts remain authoritative. Evaluate
+each row only on a named candidate, language, surface, corpus and channel;
+preserve the denominator, failures, unknowns and receipt identity. A missing,
+failed or incomplete instrument is not a pass. Higher levels include the
+earlier rows; none follows automatically from a score.
 
-Fixture lab:
-  Not yet present.
+| Proposed level | Numeric criterion | Instrument and boundary |
+| --- | --- | --- |
+| R0: installable and honest | 100% of a nonempty, predeclared channel/platform set complete their installed first-run check; 0 of the 12 missing-repository probes return a false clean result. | Candidate-bound first-run install/qualification receipts and `trust.false_clean_on_bad_input` in the [DX scoreboard](../benchmarks/dx_scoreboard/README.md). Retain the full intended matrix and any excluded or unavailable cells with reasons; #12909 owns the incomplete matrix. The nightly's published crates.io install is not by itself selected-candidate proof. The 12 probes test that narrow bad-input set, not all failure modes. |
+| R1: reliable | 0 detected self-contradictions in every row of a nonempty, predeclared corpus; 0 unsafe and 0 unbound commands in the paste corpus. | `trust.self_contradictions`, `paste.unsafe_commands`, and `paste.unbound_commands` from `cargo xtask dx-scoreboard`; retain every selected row, including unavailable rows, and report partial scans as incomplete. This is a sampled guard, not a general reliability rate. |
+| R2: useful | First useful result within 300 seconds for every journey in a nonempty, predeclared first-run set; top-recommendation precision at least 0.6 on a nonempty, explicitly identified mutation spot-check population. | Ingest `first_run.v1` and `ripr-mutation-spot-check-v2` into the scoreboard. The time instrument ends at the first successful check, so independent review must establish whether its output is useful; precision counts scored pilot recommendations in the sampled population, not all findings. Mutation join coverage is a separate metric. |
+| R3: critical | At least 5 unique real installed CLI/packaged VS Code attempts across at least 3 repositories, including at least 1 exact attempt ending `improved` or `closed`. | The existing [Rust gap repair promotion contract](status/SUPPORT_TIERS.md#rust-gap-repair-promotion-contract), governed trust report, and installed pilot receipts. Include wrong targets, refusals, timeouts and unsuccessful attempts in the denominator; an owner decision and all other promotion conditions remain necessary. |
 
-Root changelog:
-  Added by PR 0.
+The numeric bars reuse existing scoreboard targets and the Rust promotion
+contract. The proposed mapping below is an evaluation scope, not an assignment
+of a current R-level or a change to support tier. A language without an
+applicable instrument or installed receipt is **not measured** at that level;
+Rust evidence cannot be borrowed for a different language.
+The missing-repository and paste probes are global CLI checks; their results
+alone do not establish any language's analysis or repair behavior. The current
+first-run harness walks Rust crates and the mutation spot-check uses
+`cargo-mutants`; other languages need their own applicable instruments.
 
-ADR/spec scaffolding:
-  Added by PR 0.
-```
+| Language/surface | Current support boundary | Proposed evaluation mapping |
+| --- | --- | --- |
+| Rust exposure and repair | `usable alpha` | R0–R3 on the named Rust scope; R3 additionally requires the existing promotion decision and full governed corpus. |
+| Python static facts; selected repair routing | `preview`; selected routing `usable alpha` | Language-specific first-run and mutation criteria are not measured by the current Rust instruments. Separate Python journeys and corpus are needed for R0–R2; R3 also needs a Python real-repair and installed-user protocol. |
+| TypeScript and JavaScript | `preview` | Language-specific first-run and mutation criteria are not measured by the current Rust instruments. Separate journeys and corpus are needed for R0–R2; R3 also needs a language-specific real-repair and installed-user protocol. |
+| Perl | `preview` routing; released producer combination not yet available | R0 and higher are not established for released Perl analysis; use the producer and receipt prerequisites in the [support map](status/SUPPORT_TIERS.md#current-support-map). |
 
-Future PRs should replace more of this prose baseline with generated counts as
-the fixture lab and analyzer reports become executable.
+See the [support map](status/SUPPORT_TIERS.md#current-support-map) for the
+complete per-surface limits and [preview promotion criteria](policy/PREVIEW_PROMOTION_CRITERIA.md)
+for the separate policy signoff. Proposed ladder thresholds do not replace
+either authority.
 
 ## Anti-Metrics
 

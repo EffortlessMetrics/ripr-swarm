@@ -23,6 +23,13 @@ real-repository route yield and ordinary-user success. The support-tier
 promotion contract requires real repair and installed-user evidence; adding
 a roadmap entry or passing a fixture does not promote support.
 
+The [proposed release ladder](METRICS.md#proposed-release-ladder) connects
+install, honesty, reliability and usefulness measurements to those support
+boundaries. Its numeric bars await the owner's decision; missing first-run,
+per-language or candidate evidence does not confer a level. The current
+0.11 tracking issue is [#12830](https://github.com/EffortlessMetrics/ripr-swarm/issues/12830),
+and the exact candidate and release transaction remain separate decisions.
+
 The shared product target remains:
 
 ```text
