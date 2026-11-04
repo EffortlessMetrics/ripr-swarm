@@ -4216,3 +4216,74 @@ fn loop_boundary_multiple_numeric_assertions_in_one_test_remain_unknown() -> Res
     assert!(finding.recommended_next_step.is_none(), "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn loop_boundary_qualified_direct_call_is_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "import src.subject as subject\n\ndef test_largest():\n    assert subject.largest([1, 5, 3]) == 5\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_same_line_numeric_assertions_are_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for assertion in [
+        "assert largest([1, 5, 3]) == 5; assert largest([2, 7, 4]) == 7",
+        "assert largest([1, 5, 3]) == 5 and largest([2, 7, 4]) == 7",
+    ] {
+        let tests =
+            format!("from src.subject import largest\n\ndef test_largest():\n    {assertion}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_same_line_identity_keeps_prior_classification() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let fixture = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key): self.key = key\n    def __gt__(self, other): return self.key > other.key\n    def __ge__(self, other): return self.key >= other.key\n\n";
+    for assertion in [
+        "assert largest([1, 5, 3]) == 5; assert largest([first, second]) is first",
+        "assert largest([1, 5, 3]) == 5 and largest([first, second]) is first",
+    ] {
+        let tests = format!(
+            "{fixture}def test_largest():\n    first, second = Item(5), Item(5)\n    {assertion}\n"
+        );
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}

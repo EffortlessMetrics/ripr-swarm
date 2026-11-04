@@ -2460,46 +2460,62 @@ fn is_direct_integer_sequence_assertion(
     ) else {
         return false;
     };
-    let [Stmt::Assert(assertion)] = module.body.as_slice() else {
-        return false;
-    };
-    if assertion.msg.is_some() {
-        return false;
+    fn callee_name(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Name(name) => Some(name.id.to_string()),
+            Expr::Attribute(attribute) => Some(format!(
+                "{}.{}",
+                callee_name(&attribute.value)?,
+                attribute.attr
+            )),
+            _ => None,
+        }
     }
-    let Expr::Compare(compare) = assertion.test.as_ref() else {
-        return false;
-    };
-    let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
-    else {
-        return false;
-    };
-    let observed = if integer(right) {
-        compare.left.as_ref()
-    } else if integer(&compare.left) {
-        right
-    } else {
-        return false;
-    };
-    let Expr::Call(call) = observed else {
-        return false;
-    };
-    let Expr::Name(callee) = call.func.as_ref() else {
-        return false;
-    };
-    if !owner_call_names(owner, candidate.test, false)
-        .iter()
-        .any(|name| name == callee.id.as_str())
-        || !call.keywords.is_empty()
-    {
-        return false;
+    fn value_pin(expr: &Expr, owner: &PythonOwner, candidate: &PythonRelatedCandidate<'_>) -> bool {
+        if let Expr::BoolOp(boolean) = expr {
+            return matches!(boolean.op, ast::BoolOp::And)
+                && !boolean.values.is_empty()
+                && boolean
+                    .values
+                    .iter()
+                    .all(|value| value_pin(value, owner, candidate));
+        }
+        let Expr::Compare(compare) = expr else {
+            return false;
+        };
+        let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+        else {
+            return false;
+        };
+        let observed = if integer(right) {
+            compare.left.as_ref()
+        } else if integer(&compare.left) {
+            right
+        } else {
+            return false;
+        };
+        let Expr::Call(call) = observed else {
+            return false;
+        };
+        let Some(callee) = callee_name(&call.func) else {
+            return false;
+        };
+        if !owner_call_names(owner, candidate.test, false).contains(&callee)
+            || !call.keywords.is_empty()
+        {
+            return false;
+        }
+        let [argument] = call.args.as_slice() else {
+            return false;
+        };
+        let elements = match argument {
+            Expr::List(list) => &list.elts,
+            Expr::Tuple(tuple) => &tuple.elts,
+            _ => return false,
+        };
+        !elements.is_empty() && elements.iter().all(integer)
     }
-    let [argument] = call.args.as_slice() else {
-        return false;
-    };
-    let elements = match argument {
-        Expr::List(list) => &list.elts,
-        Expr::Tuple(tuple) => &tuple.elts,
-        _ => return false,
-    };
-    !elements.is_empty() && elements.iter().all(integer)
+    !module.body.is_empty() && module.body.iter().all(|statement| {
+        matches!(statement, Stmt::Assert(assertion) if assertion.msg.is_none() && value_pin(&assertion.test, owner, candidate))
+    })
 }
