@@ -6329,8 +6329,22 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
     }
 
     fn list_compact_cache_entries(root: &Path) -> Result<Vec<PathBuf>, String> {
-        let dir = compact_cache_dir_under(root);
-        list_entries(&dir)
+        // A completed compact generation may be monolithic or windowed.
+        // Count authoritative entries, not the number of staged shard files.
+        let mut entries = Vec::new();
+        for (dir, sharded) in RepoSeamFactCache::at_compact_classified(root).entry_dirs() {
+            for entry in list_entries(&dir)? {
+                if sharded {
+                    let manifest = entry.join("manifest.json");
+                    if manifest.is_file() {
+                        entries.push(manifest);
+                    }
+                } else {
+                    entries.push(entry);
+                }
+            }
+        }
+        Ok(entries)
     }
 
     fn list_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
