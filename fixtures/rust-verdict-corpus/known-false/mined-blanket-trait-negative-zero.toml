@@ -1,4 +1,0 @@
-case = "mined-blanket-trait-negative-zero"
-issue = 6732
-accepted_growth = 6732
-reason = "mined-blanket-trait-negative-zero: #6732 credits one-hop blanket trait reach (HelperOwnerCall) to impl Render for f64, but the pinned assert_eq on to_text() output still leaves discriminate weak (observation_unverified on the changed return expression), so the row stays gap/false_actionable until oracle binding improves."

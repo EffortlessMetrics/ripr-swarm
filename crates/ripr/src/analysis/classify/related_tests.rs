@@ -226,19 +226,8 @@ impl RelatedTestCandidateIndex {
         }
         candidates.common_tokens = CommonTestTokens::new(index.tests());
         candidates.unseen_reach = super::UnseenReachNames::build(index);
-        for owner in index
-            .functions()
-            .iter()
-            .map(|function| function.name.as_str())
-            .collect::<BTreeSet<_>>()
-        {
-            let proxies = super::transitive_reach::blanket_proxy_call_names_for_owner(index, owner);
-            if !proxies.is_empty() {
-                candidates
-                    .blanket_proxy_call_names
-                    .insert(owner.to_string(), proxies);
-            }
-        }
+        candidates.blanket_proxy_call_names =
+            super::transitive_reach::blanket_proxy_call_names_by_owner(index);
 
         candidates
     }
@@ -1535,7 +1524,17 @@ fn find_related_tests_with_candidates<'a>(
                     && owner_fn.is_some_and(|owner| !path_is_absolute_form(&owner.file))
             }
         };
+        // The indexed prefilter holds every owner some blanket impl entry
+        // calls on `self`; any other owner skips the per-test function scan.
+        let blanket_entry_possible = match candidates {
+            RelatedTestCandidates::Indexed(candidate_index) => candidate_index
+                .blanket_proxy_call_names
+                .contains_key(owner_name),
+            #[cfg(test)]
+            RelatedTestCandidates::FullScan => true,
+        };
         let reaches_owner_through_blanket_impl = test_in_owner_package
+            && blanket_entry_possible
             && owner_fn.is_some_and(|owner| {
                 super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(
                     test, owner, index,

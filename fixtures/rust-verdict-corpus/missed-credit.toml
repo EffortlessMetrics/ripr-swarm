@@ -185,6 +185,10 @@ case = "method-hop-multi-caller-both-reached"
 reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
 
 [[entry]]
+case = "mined-blanket-trait-negative-zero"
+reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
+
+[[entry]]
 case = "mined-bool-property-read-u32"
 reason = "Tests discriminate the change but ripr abstains because propagation is not established: the owner is reached through a caller that does not forward its result, or the flow is not syntactically obvious (#12773; parent #12766). Delete this entry when the row credits."
 

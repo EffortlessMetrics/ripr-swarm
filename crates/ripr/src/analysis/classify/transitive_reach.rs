@@ -25,7 +25,7 @@ use crate::analysis::classify::call_identity::{
 };
 use crate::analysis::facts::{CallFact, FunctionContainer, FunctionSummary, RustIndex, TestFact};
 use crate::domain::StaticLimitKind;
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
@@ -3579,13 +3579,14 @@ fn blanket_impl_entry_reaches_owner(
     blanket_impl_body_calls_self_method(entry, owner_name)
 }
 
-/// Call names of blanket trait impl entries whose body calls `owner_name` on
-/// `self`. Used only as a conservative related-test candidate prefilter.
-pub(in crate::analysis) fn blanket_proxy_call_names_for_owner(
+/// For every method name that a blanket trait impl entry calls on `self`, the
+/// sorted, deduplicated names of those entries, built in one pass over the
+/// functions. Used only as a conservative related-test candidate prefilter:
+/// an owner absent from the map has no blanket entry that could reach it.
+pub(in crate::analysis) fn blanket_proxy_call_names_by_owner(
     index: &RustIndex,
-    owner_name: &str,
-) -> Vec<String> {
-    let mut names = BTreeSet::new();
+) -> BTreeMap<String, Vec<String>> {
+    let mut by_owner: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for entry in index.functions() {
         let Some(header) = blanket_impl_header(entry) else {
             continue;
@@ -3593,11 +3594,19 @@ pub(in crate::analysis) fn blanket_proxy_call_names_for_owner(
         if blanket_impl_type_param(&header).is_none() {
             continue;
         }
-        if blanket_impl_body_calls_self_method(entry, owner_name) {
-            names.insert(entry.name.clone());
+        for call in calls_of(entry) {
+            if self_method_call(&call.text, &call.name) {
+                by_owner
+                    .entry(call.name.clone())
+                    .or_default()
+                    .insert(entry.name.clone());
+            }
         }
     }
-    names.into_iter().collect()
+    by_owner
+        .into_iter()
+        .map(|(owner, names)| (owner, names.into_iter().collect()))
+        .collect()
 }
 
 /// #6732: the test calls a blanket trait impl method on a receiver that resolves
@@ -6394,6 +6403,49 @@ fn real() {}
             &render_f64,
             &index,
         ));
+    }
+
+    #[test]
+    fn blanket_proxy_names_are_built_in_one_pass_keyed_by_owner() {
+        let render_f64 = make_impl_fn(
+            "render",
+            "impl Render for f64",
+            vec![("render_inner", "self.render_inner()")],
+        );
+        let to_text = make_impl_fn(
+            "to_text",
+            "impl <T: Render> ToText for T",
+            vec![("render", "self.render()")],
+        );
+        let to_label = make_impl_fn(
+            "to_label",
+            "impl <T: Render> ToLabel for T",
+            vec![("render", "self.render()"), ("other", "other.helper()")],
+        );
+        // Not a blanket impl: a concrete impl calling `self.render()`.
+        let concrete = make_impl_fn(
+            "show",
+            "impl Show for Point",
+            vec![("render", "self.render()")],
+        );
+        // A blanket impl calling `render` on something other than `self`.
+        let free_call = make_impl_fn(
+            "to_free",
+            "impl <T: Render> ToFree for T",
+            vec![("render", "render(self)")],
+        );
+        let index = index_with(
+            vec![render_f64, to_text, to_label, concrete, free_call],
+            Vec::new(),
+        );
+        let map = blanket_proxy_call_names_by_owner(&index);
+        assert_eq!(
+            map.get("render"),
+            Some(&vec!["to_label".to_string(), "to_text".to_string()]),
+            "{map:?}"
+        );
+        assert!(!map.contains_key("render_inner"), "{map:?}");
+        assert!(!map.contains_key("helper"), "{map:?}");
     }
 
     #[test]
