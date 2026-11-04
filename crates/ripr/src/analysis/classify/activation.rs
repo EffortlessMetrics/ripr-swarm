@@ -4437,17 +4437,18 @@ fn names_field_access(masked: &str, path: &str) -> bool {
     })
 }
 
-/// Whether the unmasked `raw` text captures `ident` inline in a format
-/// string (`{c}`, `{c:?}`, `{c:#?}`, `{c.field}`), which masking removes.
-/// Any `{` + `ident` + one of `}` `:` `.` counts, comments included (fail
-/// closed).
+/// Whether the unmasked `raw` text may capture `ident` inline in a format
+/// string (`{c}`, `{c:?}`, `{c :?}`, `{c }`, `{c:>10}`, `{c.field}`, or a
+/// `\`-newline continuation inside the string), which masking removes. Fails
+/// closed: `{` + `ident` followed by anything but an identifier character
+/// counts, comments included.
 fn names_format_capture(raw: &str, ident: &str) -> bool {
     let needle = format!("{{{ident}");
     raw.match_indices(&needle).any(|(at, name)| {
         raw[at + name.len()..]
             .chars()
             .next()
-            .is_some_and(|ch| matches!(ch, '}' | ':' | '.'))
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
     })
 }
 
