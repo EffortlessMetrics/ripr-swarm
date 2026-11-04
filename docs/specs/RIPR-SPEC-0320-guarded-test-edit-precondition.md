@@ -50,6 +50,38 @@ one existing assertion expression/node in one recognized Rust test file
 - apply-time helpers (`verify_source_text`, `verify_document_version`,
   `client_supports_guarded_edit`) that reuse the same reasons.
 
+One invariant check, `ExactTestEditPrecondition::validate`, sits behind both the
+builder (which runs it on its own output) and any decoded document, so a decoded
+or mutated value is held to the builder's rules:
+
+- **Identity.** `EditInstructionId` is `edit-instruction:` plus a 16-hex FNV-1a 64
+  digest over `(key, 0x00, value, 0x00)` pairs, in this order: `canonical_gap`,
+  `seam`, `instruction_semantic`, `instruction_instance`, `workspace`,
+  `repository_head`, `input`, `snapshot`, `config`, `base_revision`,
+  `document_version`, `test_file` (normalized), `test_selector`,
+  `original_digest` (the SHA-256 of the original text), `replacement`, `range`
+  (`sl:sc-el:ec`). An absent optional input hashes as `none`, a present one as
+  `some:<value>`. `validate` recomputes it, so a changed input under a minted id
+  is rejected. The corpus holds the expected ids as literals derived by an
+  independent reference of this paragraph, not copied from the builder.
+- **Validation evidence.** Parse and format validation must both be `passed`.
+  `failed` names `parse_validation_failed` / `format_validation_failed`;
+  `not_run`, including an omitted field, is `source_precondition_missing`.
+- **Target.** `test_file` must be a contained, normalized Rust test source: a
+  `.rs` file under a `tests` directory segment or named `*_test.rs` /
+  `*_tests.rs`, with no absolute root, drive prefix, empty, `.` or `..` segment.
+  The sole allowed edit surface must equal it.
+- **Source.** The original text and/or its `sha256:` digest (64 lowercase hex)
+  must be retained, and agree when both are. `verify_source_text` compares the
+  current text with the retained text, or with its SHA-256 when only the digest
+  is retained.
+- **Capability.** Both required client capabilities must be true.
+
+Visibility: `domain::guarded_edit` is a `#[doc(hidden)]` public module, like
+`domain::context_packet`, so the documented path is importable by sibling
+adapters. Its items are recorded in `policy/public_api.txt`; the contract stays
+proposed with ADR 0025, and no consumer emits an edit from it yet.
+
 Forbidden in v1: create/delete/rename, imports, fixtures/setup, control flow,
 production files, multi-file edits, generated tests, provider calls, and
 automatic test execution.
@@ -84,6 +116,12 @@ automatic test execution.
 3. Ambiguous site, required import, stale snapshot, preview limitation,
    production target, parse failure, or multi-file surface each return
    `GuardedEditUnavailable` with the named reason and no precondition.
+4. A parse or format validation that did not run (or was omitted) mints nothing.
+5. A test path that traverses (`tests/../src/lib.rs`), is not Rust
+   (`tests/readme.md`) or leaves the root (`../other/tests/demo.rs`) mints
+   nothing, and a decoded precondition mutated to any of those is rejected.
+6. Changing only the document version, the instruction instance or any snapshot
+   identity field changes the `EditInstructionId`.
 
 ## Test Mapping
 

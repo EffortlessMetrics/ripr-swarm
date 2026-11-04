@@ -10,6 +10,11 @@ tests = [
   "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_corpus_cases",
   "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_rejects_stale_and_production_targets",
   "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_document_and_source_checks",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_id_binds_every_governed_input",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_requires_passed_validation_evidence",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_decoded_dto_is_validated_like_the_builder",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_test_path_must_be_a_contained_rust_test_source",
+  "crates/ripr/src/domain/guarded_edit.rs::tests::fix_instruction_guarded_edit_digest_only_representation_verifies_against_the_digest",
 ]
 fixtures = [
   "fixtures/boundary_gap/expected/guarded-edit-precondition/corpus.json",

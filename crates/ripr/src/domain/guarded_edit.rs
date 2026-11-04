@@ -298,12 +298,43 @@ pub fn sha256_digest(text: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(text.as_bytes()))
 }
 
+/// Normalizes a repository-relative path to forward slashes and returns it only
+/// when it is contained: no absolute root, drive prefix, empty, `.` or `..`
+/// segment. A path that escapes or aliases another path is never normalized into
+/// an edit surface.
+fn contained_relative_path(path: &str) -> Option<String> {
+    let normalized = path.trim().replace('\\', "/");
+    if normalized.is_empty() || normalized.starts_with('/') {
+        return None;
+    }
+    let mut segments = normalized.split('/');
+    let first = segments.clone().next().unwrap_or("");
+    if first.contains(':') {
+        return None;
+    }
+    if segments.any(|segment| segment.is_empty() || segment == "." || segment == "..") {
+        return None;
+    }
+    Some(normalized)
+}
+
+/// A contained, normalized Rust test source path: a `.rs` file under a `tests`
+/// directory segment, or named `*_test.rs` / `*_tests.rs`. `tests/readme.md`,
+/// `tests/../src/lib.rs` and `../other/tests/demo.rs` are not recognized.
 pub fn is_recognized_rust_test_source_file(path: &str) -> bool {
-    let normalized = path.replace('\\', "/");
-    normalized.starts_with("tests/")
-        || normalized.contains("/tests/")
-        || normalized.ends_with("_test.rs")
-        || normalized.ends_with("_tests.rs")
+    let Some(normalized) = contained_relative_path(path) else {
+        return false;
+    };
+    let Some(file_name) = normalized.rsplit('/').next() else {
+        return false;
+    };
+    if !file_name.ends_with(".rs") || file_name == ".rs" {
+        return false;
+    }
+    let under_tests_dir = normalized
+        .rsplit_once('/')
+        .is_some_and(|(directory, _)| directory.split('/').any(|segment| segment == "tests"));
+    under_tests_dir || file_name.ends_with("_test.rs") || file_name.ends_with("_tests.rs")
 }
 
 pub fn try_build_exact_test_edit_precondition(
@@ -385,32 +416,27 @@ pub fn try_build_exact_test_edit_precondition(
             ));
         }
     };
-    if input.parse_validation_status == GuardedEditValidationStatus::Failed {
-        return Err(GuardedEditUnavailable::new(
-            GuardedEditUnavailableReason::ParseValidationFailed,
-        ));
-    }
-    if input.format_validation_status == GuardedEditValidationStatus::Failed {
-        return Err(GuardedEditUnavailable::new(
-            GuardedEditUnavailableReason::FormatValidationFailed,
-        ));
-    }
+    check_validation_evidence(
+        input.parse_validation_status,
+        input.format_validation_status,
+    )?;
     if input.verification_command_refs.is_empty() || input.receipt_command_refs.is_empty() {
         return Err(GuardedEditUnavailable::new(
             GuardedEditUnavailableReason::SourcePreconditionMissing,
         ));
     }
 
-    let edit_instruction_id = mint_edit_instruction_id(input);
     let original_source_digest = sha256_digest(original_text);
     let canonical_gap_id = input
         .canonical_item
         .as_ref()
         .map(|item| item.as_str().to_string());
 
-    let precondition = ExactTestEditPrecondition {
+    let mut precondition = ExactTestEditPrecondition {
         schema_version: EXACT_TEST_EDIT_PRECONDITION_SCHEMA_VERSION.to_string(),
-        edit_instruction_id,
+        // Replaced below from the precondition's own fields, so the builder and
+        // `validate` derive the identity from the same governed inputs.
+        edit_instruction_id: EditInstructionId(String::new()),
         identity: input.identity.clone(),
         canonical_gap_id,
         seam_id: input.seam_id.clone(),
@@ -435,11 +461,55 @@ pub fn try_build_exact_test_edit_precondition(
             .map(|claim| (*claim).to_string())
             .collect(),
     };
+    precondition.edit_instruction_id = expected_edit_instruction_id(&precondition)?;
     precondition.validate()?;
     Ok(precondition)
 }
 
+/// Both validations must have run and passed for the exact edit. `NotRun` is
+/// missing evidence, not a pass, so an omitted field cannot mint.
+fn check_validation_evidence(
+    parse: GuardedEditValidationStatus,
+    format: GuardedEditValidationStatus,
+) -> Result<(), GuardedEditUnavailable> {
+    match parse {
+        GuardedEditValidationStatus::Passed => {}
+        GuardedEditValidationStatus::Failed => {
+            return Err(GuardedEditUnavailable::new(
+                GuardedEditUnavailableReason::ParseValidationFailed,
+            ));
+        }
+        GuardedEditValidationStatus::NotRun => {
+            return Err(GuardedEditUnavailable::with_detail(
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
+                "parse validation did not run",
+            ));
+        }
+    }
+    match format {
+        GuardedEditValidationStatus::Passed => Ok(()),
+        GuardedEditValidationStatus::Failed => Err(GuardedEditUnavailable::new(
+            GuardedEditUnavailableReason::FormatValidationFailed,
+        )),
+        GuardedEditValidationStatus::NotRun => Err(GuardedEditUnavailable::with_detail(
+            GuardedEditUnavailableReason::SourcePreconditionMissing,
+            "format validation did not run",
+        )),
+    }
+}
+
+/// `sha256:` followed by 64 lowercase hex digits, the shape `sha256_digest`
+/// produces.
+fn is_valid_sha256_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    })
+}
+
 impl ExactTestEditPrecondition {
+    /// The single invariant check for a precondition, whether built here or
+    /// decoded from a document. The builder calls it on its own output, so a
+    /// decoded or mutated value is held to exactly the builder's rules.
     pub fn validate(&self) -> Result<(), GuardedEditUnavailable> {
         if self.schema_version != EXACT_TEST_EDIT_PRECONDITION_SCHEMA_VERSION {
             return Err(GuardedEditUnavailable::with_detail(
@@ -448,20 +518,15 @@ impl ExactTestEditPrecondition {
             ));
         }
         self.assertion_range.validate()?;
-        if self.original_source_text.is_none() && self.original_source_digest.is_none() {
+        if self.test_selector.trim().is_empty() || self.test_file.trim().is_empty() {
             return Err(GuardedEditUnavailable::new(
                 GuardedEditUnavailableReason::SourcePreconditionMissing,
             ));
         }
-        if let (Some(text), Some(digest)) = (
-            self.original_source_text.as_deref(),
-            self.original_source_digest.as_deref(),
-        ) {
-            if sha256_digest(text) != digest {
-                return Err(GuardedEditUnavailable::new(
-                    GuardedEditUnavailableReason::SourceTextMismatch,
-                ));
-            }
+        if !is_recognized_rust_test_source_file(&self.test_file) {
+            return Err(GuardedEditUnavailable::new(
+                GuardedEditUnavailableReason::OutsideAllowedEditSurface,
+            ));
         }
         if self.allowed_edit_surface.len() != 1 {
             return Err(GuardedEditUnavailable::new(
@@ -473,6 +538,33 @@ impl ExactTestEditPrecondition {
                 GuardedEditUnavailableReason::OutsideAllowedEditSurface,
             ));
         }
+        if self.original_source_text.is_none() && self.original_source_digest.is_none() {
+            return Err(GuardedEditUnavailable::new(
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
+            ));
+        }
+        if let Some(digest) = self.original_source_digest.as_deref()
+            && !is_valid_sha256_digest(digest)
+        {
+            return Err(GuardedEditUnavailable::with_detail(
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
+                "original_source_digest is not a sha256 digest",
+            ));
+        }
+        if let (Some(text), Some(digest)) = (
+            self.original_source_text.as_deref(),
+            self.original_source_digest.as_deref(),
+        ) && sha256_digest(text) != digest
+        {
+            return Err(GuardedEditUnavailable::new(
+                GuardedEditUnavailableReason::SourceTextMismatch,
+            ));
+        }
+        if self.original_source_text.as_deref() == Some("") {
+            return Err(GuardedEditUnavailable::new(
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
+            ));
+        }
         if self.must_not_change.is_empty()
             || self.exact_replacement_text.trim().is_empty()
             || self.verification_command_refs.is_empty()
@@ -480,6 +572,22 @@ impl ExactTestEditPrecondition {
         {
             return Err(GuardedEditUnavailable::new(
                 GuardedEditUnavailableReason::SourcePreconditionMissing,
+            ));
+        }
+        check_validation_evidence(self.parse_validation_status, self.format_validation_status)?;
+        if !self.required_client_capability.workspace_edit
+            || !self
+                .required_client_capability
+                .ripr_editor_guarded_test_edit
+        {
+            return Err(GuardedEditUnavailable::new(
+                GuardedEditUnavailableReason::ClientCapabilityMissing,
+            ));
+        }
+        if expected_edit_instruction_id(self)? != self.edit_instruction_id {
+            return Err(GuardedEditUnavailable::with_detail(
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
+                "edit_instruction_id does not match the governed inputs",
             ));
         }
         Ok(())
@@ -499,22 +607,37 @@ pub fn verify_document_version(
     }
 }
 
+/// Compares the current document text with the retained original. When the
+/// original text was dropped and only its digest is retained, the current text's
+/// SHA-256 is compared instead; with neither, nothing can be verified.
 pub fn verify_source_text(
     precondition: &ExactTestEditPrecondition,
     current_text: &str,
 ) -> Result<(), GuardedEditUnavailable> {
-    let expected = precondition
-        .original_source_text
-        .as_deref()
-        .ok_or_else(|| {
-            GuardedEditUnavailable::new(GuardedEditUnavailableReason::SourcePreconditionMissing)
-        })?;
-    if expected != current_text {
-        return Err(GuardedEditUnavailable::new(
-            GuardedEditUnavailableReason::SourceTextMismatch,
-        ));
+    let mismatch = || GuardedEditUnavailable::new(GuardedEditUnavailableReason::SourceTextMismatch);
+    match (
+        precondition.original_source_text.as_deref(),
+        precondition.original_source_digest.as_deref(),
+    ) {
+        (Some(expected), digest) => {
+            if expected != current_text {
+                return Err(mismatch());
+            }
+            match digest {
+                Some(digest) if sha256_digest(current_text) != digest => Err(mismatch()),
+                _ => Ok(()),
+            }
+        }
+        (None, Some(digest)) => {
+            if !is_valid_sha256_digest(digest) || sha256_digest(current_text) != digest {
+                return Err(mismatch());
+            }
+            Ok(())
+        }
+        (None, None) => Err(GuardedEditUnavailable::new(
+            GuardedEditUnavailableReason::SourcePreconditionMissing,
+        )),
     }
-    Ok(())
 }
 
 pub fn client_supports_guarded_edit(
@@ -530,33 +653,91 @@ pub fn client_supports_guarded_edit(
     }
 }
 
-fn mint_edit_instruction_id(input: &GuardedEditBuildInput) -> EditInstructionId {
-    let canonical = input
-        .canonical_item
-        .as_ref()
-        .map(|item| item.as_str())
-        .unwrap_or("");
+/// Derives the edit instruction identity from the precondition's own governed
+/// inputs: the snapshot identity, instruction identities, document version, the
+/// original source (by digest), the target, the range and the replacement.
+/// Changing any of them changes the identity, as `identity/catalog.rs` records
+/// for a snapshot-bound edit instruction. Absent optional inputs hash differently
+/// from empty ones.
+fn expected_edit_instruction_id(
+    precondition: &ExactTestEditPrecondition,
+) -> Result<EditInstructionId, GuardedEditUnavailable> {
+    let original = match (
+        precondition.original_source_digest.as_deref(),
+        precondition.original_source_text.as_deref(),
+    ) {
+        (Some(digest), _) => digest.to_string(),
+        (None, Some(text)) => sha256_digest(text),
+        (None, None) => {
+            return Err(GuardedEditUnavailable::new(
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
+            ));
+        }
+    };
+    let optional = |value: Option<&str>| match value {
+        Some(value) => format!("some:{value}"),
+        None => "none".to_string(),
+    };
+    let identity = &precondition.identity;
+    let range = &precondition.assertion_range;
     let digest = identity_digest(&[
-        ("canonical_item", canonical),
-        ("test_file", &normalize_path(&input.test_file)),
-        ("test_selector", &input.test_selector),
         (
-            "original",
-            input.original_source_text.as_deref().unwrap_or(""),
+            "canonical_gap",
+            &optional(precondition.canonical_gap_id.as_deref()),
         ),
-        ("replacement", &input.exact_replacement_text),
+        ("seam", &optional(precondition.seam_id.as_deref())),
+        (
+            "instruction_semantic",
+            &optional(
+                precondition
+                    .instruction_semantic_id
+                    .as_ref()
+                    .map(|id| id.as_str()),
+            ),
+        ),
+        (
+            "instruction_instance",
+            &optional(
+                precondition
+                    .instruction_instance_id
+                    .as_ref()
+                    .map(|id| id.as_str()),
+            ),
+        ),
+        (
+            "workspace",
+            &optional(identity.workspace_identity.as_deref()),
+        ),
+        (
+            "repository_head",
+            &optional(identity.repository_head.as_deref()),
+        ),
+        ("input", &optional(identity.input_identity.as_deref())),
+        ("snapshot", &optional(identity.snapshot_identity.as_deref())),
+        ("config", &optional(identity.config_identity.as_deref())),
+        (
+            "base_revision",
+            &optional(identity.base_revision.as_deref()),
+        ),
+        (
+            "document_version",
+            &precondition
+                .document_version
+                .map_or_else(|| "none".to_string(), |version| format!("some:{version}")),
+        ),
+        ("test_file", &normalize_path(&precondition.test_file)),
+        ("test_selector", &precondition.test_selector),
+        ("original_digest", &original),
+        ("replacement", &precondition.exact_replacement_text),
         (
             "range",
             &format!(
                 "{}:{}-{}:{}",
-                input.assertion_range.start_line,
-                input.assertion_range.start_character,
-                input.assertion_range.end_line,
-                input.assertion_range.end_character
+                range.start_line, range.start_character, range.end_line, range.end_character
             ),
         ),
     ]);
-    EditInstructionId(format!("edit-instruction:{digest:016x}"))
+    Ok(EditInstructionId(format!("edit-instruction:{digest:016x}")))
 }
 
 fn identity_digest(parts: &[(&str, &str)]) -> u64 {
@@ -577,7 +758,7 @@ fn identity_digest(parts: &[(&str, &str)]) -> u64 {
 }
 
 fn normalize_path(path: &str) -> String {
-    path.replace('\\', "/")
+    contained_relative_path(path).unwrap_or_else(|| path.replace('\\', "/"))
 }
 
 #[cfg(test)]
@@ -716,38 +897,30 @@ mod tests {
                     let expected = case
                         .get("precondition")
                         .ok_or_else(|| format!("{id}: missing precondition"))?;
-                    let mut expected_value = expected.clone();
-                    if let Some(obj) = expected_value.as_object_mut() {
-                        obj.insert(
-                            "edit_instruction_id".to_string(),
-                            serde_json::Value::String(
-                                built.edit_instruction_id.as_str().to_string(),
-                            ),
-                        );
-                        if let Some(digest) = &built.original_source_digest {
-                            obj.insert(
-                                "original_source_digest".to_string(),
-                                serde_json::Value::String(digest.clone()),
-                            );
-                        }
-                    }
                     let built_value = serde_json::to_value(&built)
                         .map_err(|error| format!("{id}: encode built: {error}"))?;
-                    if built_value.get("edit_instruction_id")
-                        != expected_value.get("edit_instruction_id")
-                    {
-                        return Err(format!("{id}: edit_instruction_id drift"));
-                    }
+                    // The expected identity and digest are literals derived by an
+                    // independent reference (RIPR-SPEC-0320), never copied from
+                    // this build's output, so a hash that stops binding an input
+                    // shows up as drift.
                     for key in [
                         "schema_version",
+                        "edit_instruction_id",
+                        "original_source_digest",
                         "test_file",
                         "exact_replacement_text",
                         "test_selector",
                     ] {
-                        if built_value.get(key) != expected_value.get(key) {
-                            return Err(format!("{id}: field `{key}` mismatch"));
+                        if expected.get(key).is_none() {
+                            return Err(format!("{id}: corpus missing `{key}`"));
+                        }
+                        if built_value.get(key) != expected.get(key) {
+                            return Err(format!("{id}: field `{key}` drift"));
                         }
                     }
+                    built.validate().map_err(|unavailable| {
+                        format!("{id}: built precondition invalid: {unavailable:?}")
+                    })?;
                 }
                 "unavailable" => {
                     let unavailable = match try_build_exact_test_edit_precondition(&input) {
@@ -807,6 +980,315 @@ mod tests {
         if client_supports_guarded_edit(true, false).is_ok() {
             return Err("expected cap miss".to_string());
         }
+        Ok(())
+    }
+
+    fn built() -> Result<ExactTestEditPrecondition, String> {
+        try_build_exact_test_edit_precondition(&sample_input())
+            .map_err(|unavailable| format!("{unavailable:?}"))
+    }
+
+    fn id_of(input: &GuardedEditBuildInput) -> Result<String, String> {
+        try_build_exact_test_edit_precondition(input)
+            .map(|p| p.edit_instruction_id.as_str().to_string())
+            .map_err(|unavailable| format!("{unavailable:?}"))
+    }
+
+    fn reason_of(input: &GuardedEditBuildInput) -> Result<GuardedEditUnavailableReason, String> {
+        match try_build_exact_test_edit_precondition(input) {
+            Err(unavailable) => Ok(unavailable.reason),
+            Ok(_) => Err("expected unavailable".to_string()),
+        }
+    }
+
+    /// The identity is snapshot-bound (identity/catalog.rs): every governed
+    /// input changes it, each perturbation on its own.
+    #[test]
+    fn fix_instruction_guarded_edit_id_binds_every_governed_input() -> Result<(), String> {
+        let baseline = id_of(&sample_input())?;
+        assert_eq!(baseline, id_of(&sample_input())?, "deterministic");
+        type Perturb = (&'static str, fn(&mut GuardedEditBuildInput));
+        let perturbations: Vec<Perturb> = vec![
+            ("document_version", |i| i.document_version = Some(4)),
+            ("document_version removed", |i| i.document_version = None),
+            ("instruction_instance_id", |i| {
+                i.instruction_instance_id =
+                    InstructionInstanceId::parse("instruction-instance:abc").ok();
+            }),
+            ("instruction_semantic_id", |i| {
+                i.instruction_semantic_id =
+                    InstructionSemanticId::parse("instruction-semantic:abc").ok();
+            }),
+            ("workspace_identity", |i| {
+                i.identity.workspace_identity = Some("ws:other".into())
+            }),
+            ("repository_head", |i| {
+                i.identity.repository_head = Some("def456".into())
+            }),
+            ("input_identity", |i| {
+                i.identity.input_identity = Some("input:2".into())
+            }),
+            ("snapshot_identity", |i| {
+                i.identity.snapshot_identity = Some("snap:2".into())
+            }),
+            ("config_identity", |i| {
+                i.identity.config_identity = Some("cfg:2".into())
+            }),
+            ("base_revision", |i| {
+                i.identity.base_revision = Some("base:2".into())
+            }),
+            ("snapshot_identity removed", |i| {
+                i.identity.snapshot_identity = None
+            }),
+            ("seam_id", |i| i.seam_id = Some("seam:other".into())),
+            ("range", |i| i.assertion_range.end_character = 29),
+            ("replacement", |i| {
+                i.exact_replacement_text = "assert_eq!(a, b);".into()
+            }),
+            ("original text", |i| {
+                i.original_source_text = Some("assert!(other.is_err());".into())
+            }),
+            ("test_selector", |i| {
+                i.test_selector = "tests/demo.rs::other".into()
+            }),
+        ];
+        for (name, perturb) in perturbations {
+            let mut input = sample_input();
+            perturb(&mut input);
+            let changed = id_of(&input)?;
+            assert_ne!(changed, baseline, "id must change when {name} changes");
+        }
+        // An absent optional input is not the same as an empty one.
+        let mut empty = sample_input();
+        empty.identity.config_identity = Some(String::new());
+        let mut absent = sample_input();
+        absent.identity.config_identity = None;
+        assert_ne!(id_of(&empty)?, id_of(&absent)?, "empty vs absent");
+        Ok(())
+    }
+
+    #[test]
+    fn fix_instruction_guarded_edit_requires_passed_validation_evidence() -> Result<(), String> {
+        for (name, parse, format, expected) in [
+            (
+                "parse not run",
+                GuardedEditValidationStatus::NotRun,
+                GuardedEditValidationStatus::Passed,
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
+            ),
+            (
+                "format not run",
+                GuardedEditValidationStatus::Passed,
+                GuardedEditValidationStatus::NotRun,
+                GuardedEditUnavailableReason::SourcePreconditionMissing,
+            ),
+            (
+                "parse failed",
+                GuardedEditValidationStatus::Failed,
+                GuardedEditValidationStatus::Passed,
+                GuardedEditUnavailableReason::ParseValidationFailed,
+            ),
+            (
+                "format failed",
+                GuardedEditValidationStatus::Passed,
+                GuardedEditValidationStatus::Failed,
+                GuardedEditUnavailableReason::FormatValidationFailed,
+            ),
+        ] {
+            let mut input = sample_input();
+            input.parse_validation_status = parse;
+            input.format_validation_status = format;
+            assert_eq!(reason_of(&input)?, expected, "{name}");
+        }
+        // Omitted fields default to NotRun and must not mint (serde default).
+        let omitted: GuardedEditBuildInput = serde_json::from_value(serde_json::json!({
+            "test_selector": "tests/demo.rs::t",
+            "test_file": "tests/demo.rs",
+            "original_source_text": "assert!(x);",
+            "exact_replacement_text": "assert_eq!(x, 1);",
+            "allowed_edit_surface": ["tests/demo.rs"],
+            "must_not_change": ["src/lib.rs"],
+            "verification_command_refs": ["v"],
+            "receipt_command_refs": ["r"],
+        }))
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            reason_of(&omitted)?,
+            GuardedEditUnavailableReason::SourcePreconditionMissing,
+            "omitted validation fields"
+        );
+        Ok(())
+    }
+
+    /// A decoded or mutated precondition is held to the builder's rules.
+    #[test]
+    fn fix_instruction_guarded_edit_decoded_dto_is_validated_like_the_builder() -> Result<(), String>
+    {
+        let valid = serde_json::to_value(built()?).map_err(|e| e.to_string())?;
+        let decode =
+            |mutate: &dyn Fn(&mut serde_json::Value)| -> Result<ExactTestEditPrecondition, String> {
+                let mut value = valid.clone();
+                mutate(&mut value);
+                serde_json::from_value(value).map_err(|e| e.to_string())
+            };
+        decode(&|_| {})?
+            .validate()
+            .map_err(|unavailable| format!("unmutated decode must validate: {unavailable:?}"))?;
+        let mutations: Vec<(&str, Box<dyn Fn(&mut serde_json::Value)>)> = vec![
+            (
+                "production test_file and surface",
+                Box::new(|v| {
+                    v["test_file"] = "src/lib.rs".into();
+                    v["allowed_edit_surface"] = serde_json::json!(["src/lib.rs"]);
+                }),
+            ),
+            (
+                "traversal test_file",
+                Box::new(|v| {
+                    v["test_file"] = "tests/../src/lib.rs".into();
+                    v["allowed_edit_surface"] = serde_json::json!(["tests/../src/lib.rs"]);
+                }),
+            ),
+            (
+                "parse failed",
+                Box::new(|v| v["parse_validation_status"] = "failed".into()),
+            ),
+            (
+                "format failed",
+                Box::new(|v| v["format_validation_status"] = "failed".into()),
+            ),
+            (
+                "parse not run",
+                Box::new(|v| v["parse_validation_status"] = "not_run".into()),
+            ),
+            (
+                "format not run",
+                Box::new(|v| v["format_validation_status"] = "not_run".into()),
+            ),
+            (
+                "empty selector",
+                Box::new(|v| v["test_selector"] = "  ".into()),
+            ),
+            (
+                "workspace_edit disabled",
+                Box::new(|v| {
+                    v["required_client_capability"]["workspace_edit"] = false.into();
+                }),
+            ),
+            (
+                "guarded edit capability disabled",
+                Box::new(|v| {
+                    v["required_client_capability"]["ripr_editor_guarded_test_edit"] = false.into();
+                }),
+            ),
+            (
+                "replacement changed under a minted id",
+                Box::new(|v| {
+                    v["exact_replacement_text"] = "assert!(true);".into();
+                }),
+            ),
+            (
+                "document_version changed under a minted id",
+                Box::new(|v| v["document_version"] = 9.into()),
+            ),
+            (
+                "snapshot identity changed under a minted id",
+                Box::new(|v| {
+                    v["identity"]["snapshot_identity"] = "snap:other".into();
+                }),
+            ),
+            (
+                "digest malformed",
+                Box::new(|v| v["original_source_digest"] = "sha256:xyz".into()),
+            ),
+            (
+                "digest mismatches retained text",
+                Box::new(|v| {
+                    v["original_source_digest"] = sha256_digest("something else").into();
+                }),
+            ),
+            (
+                "two edit surfaces",
+                Box::new(|v| {
+                    v["allowed_edit_surface"] =
+                        serde_json::json!(["tests/demo.rs", "tests/other.rs"]);
+                }),
+            ),
+        ];
+        for (name, mutate) in mutations {
+            let decoded = decode(&*mutate)?;
+            assert!(
+                decoded.validate().is_err(),
+                "mutation must be rejected: {name}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fix_instruction_guarded_edit_test_path_must_be_a_contained_rust_test_source() {
+        for accepted in [
+            "tests/demo.rs",
+            "crates/ripr/tests/demo.rs",
+            "tests\\demo.rs",
+            "src/widget_test.rs",
+            "src/widget_tests.rs",
+        ] {
+            assert!(is_recognized_rust_test_source_file(accepted), "{accepted}");
+        }
+        for rejected in [
+            "tests/../src/lib.rs",
+            "tests/readme.md",
+            "../other/tests/demo.rs",
+            "/tests/demo.rs",
+            "C:/tests/demo.rs",
+            "tests//demo.rs",
+            "tests/./demo.rs",
+            "tests/",
+            "tests",
+            "",
+            "src/lib.rs",
+            "mytests/demo.rs",
+            "tests/.rs",
+        ] {
+            assert!(!is_recognized_rust_test_source_file(rejected), "{rejected}");
+        }
+    }
+
+    #[test]
+    fn fix_instruction_guarded_edit_digest_only_representation_verifies_against_the_digest()
+    -> Result<(), String> {
+        let full = built()?;
+        // Text and digest retained.
+        verify_source_text(&full, "assert!(result.is_err());")
+            .map_err(|unavailable| format!("text present: {unavailable:?}"))?;
+        assert!(verify_source_text(&full, "assert!(result.is_ok());").is_err());
+        // Only the digest retained (the passive representation).
+        let mut digest_only = full.clone();
+        digest_only.original_source_text = None;
+        digest_only
+            .validate()
+            .map_err(|unavailable| format!("digest-only must validate: {unavailable:?}"))?;
+        verify_source_text(&digest_only, "assert!(result.is_err());")
+            .map_err(|unavailable| format!("digest-only match: {unavailable:?}"))?;
+        assert_eq!(
+            verify_source_text(&digest_only, "assert!(result.is_ok());")
+                .err()
+                .map(|u| u.reason),
+            Some(GuardedEditUnavailableReason::SourceTextMismatch)
+        );
+        // A malformed retained digest never verifies.
+        let mut malformed = digest_only.clone();
+        malformed.original_source_digest = Some("sha256:00".to_string());
+        assert!(malformed.validate().is_err());
+        assert!(verify_source_text(&malformed, "assert!(result.is_err());").is_err());
+        // Neither retained: nothing to verify against.
+        let mut neither = digest_only;
+        neither.original_source_digest = None;
+        assert_eq!(
+            verify_source_text(&neither, "x").err().map(|u| u.reason),
+            Some(GuardedEditUnavailableReason::SourcePreconditionMissing)
+        );
         Ok(())
     }
 }
