@@ -468,16 +468,17 @@ pub(crate) use test_styles::attributes_define_test;
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;
 pub use index::{FactSlice, FileData, FileFactsView};
+pub(crate) use local_test_alias::imported_test_alias_crate;
 #[cfg(test)]
 pub(crate) use model::OwnedRustIndex;
 pub use model::{
     CallFact, CallText, FileFacts, FunctionContainer, FunctionFact, FunctionImplContext,
     FunctionItemFact, FunctionSourceRole, FunctionSummary, HarnessLimitationFact,
     HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact, LetBindingFact,
-    LiteralFact, ModuleDeclarationFact, ModulePathTarget, OracleFact, ProbeShapeFact,
-    ProbeShapeKind, ResolvedIncludeParent, ReturnFact, RustIncludeLimitation, RustIndex,
-    SourceRoleProvenance, SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind, SourceText,
-    TestFact, TestSummary, UnresolvedPropertyMacroFact,
+    LiteralFact, MacroGeneratedOrigin, ModuleDeclarationFact, ModulePathTarget, OracleFact,
+    ProbeShapeFact, ProbeShapeKind, ResolvedIncludeParent, ReturnFact, RustIncludeLimitation,
+    RustIndex, SourceRoleProvenance, SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind,
+    SourceText, TestFact, TestSummary, UnresolvedPropertyMacroFact,
 };
 // Hot evidence loops hash each indexed file once and validate by digest.
 pub(crate) use model::WorkspaceFileAuthority;

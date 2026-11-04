@@ -175,7 +175,7 @@ jobs:
             while IFS= read -r -d '' path; do
               case "$path" in
                 CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) reason=release_surface; return 0 ;;
-                docs/specs/*|docs/handoffs/*|*.md) ;;
+                docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
                 *) return 0 ;;
               esac
             done < "$changed"
@@ -208,6 +208,7 @@ jobs:
       changed_files: ${{ steps.candidate.outputs.changed_files }}
       changed_lines: ${{ steps.candidate.outputs.changed_lines }}
       labels: ${{ steps.entry.outputs.labels }}
+      trusted_sha: ${{ steps.trusted.outputs.sha }}
       pr: ${{ steps.entry.outputs.pr }}
       head: ${{ steps.entry.outputs.head }}
       queue_entry: ${{ steps.entry.outputs.queue_entry }}
@@ -253,7 +254,7 @@ jobs:
           trusted="$GITHUB_WORKSPACE/.admission-trusted"
           [[ "$TRUSTED_ADMISSION_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse
           [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] || refuse
-          for name in action.yml candidate_admission.py release_cut_admission.py; do
+          for name in action.yml candidate_admission.py release_cut_admission.py review_disposition.py; do
             path=".github/actions/pr-candidate-admission/$name"
             [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] || refuse
             expected="$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" || refuse
@@ -326,6 +327,20 @@ jobs:
           docs-only: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}
           max-changed-files: '160'
           max-changed-lines: '3000'
+      # #8157: a source review of record must attest the exact head. Refuse at
+      # request time so a missing attestation does not cost a full test run; the
+      # Result job repeats the read from the same trusted bundle after the tests.
+      - name: Require source review disposition at request time
+        if: github.event_name == 'pull_request' && steps.candidate.outputs.status == 'admitted'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.entry.outputs.pr }}
+          PR_HEAD: ${{ steps.entry.outputs.head }}
+        run: |
+          set -euo pipefail
+          python3 -I .admission-trusted/.github/actions/pr-candidate-admission/review_disposition.py --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$PR_HEAD"
       # Unresolved review threads fail the end-of-run eligibility recheck about an
       # hour later, after every test shard went green. Refuse at request time
       # instead, naming the threads. A read failure is only a warning: the final
@@ -606,6 +621,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Check out trusted admission bundle for the review recheck
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.admission.outputs.trusted_sha }}
+          path: .admission-trusted
+          sparse-checkout: .github/actions/pr-candidate-admission
+          persist-credentials: false
+      - name: Recheck source review disposition for the admitted head
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.admission.outputs.pr }}
+          EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
+          TRUSTED_ADMISSION_SHA: ${{ needs.admission.outputs.trusted_sha }}
+        run: |
+          set -euo pipefail
+          trusted="$GITHUB_WORKSPACE/.admission-trusted"
+          path=.github/actions/pr-candidate-admission/review_disposition.py
+          # Same immutable-source binding as the admission job's bundle check.
+          [[ "$TRUSTED_ADMISSION_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::trusted admission SHA is missing"; exit 1; }
+          [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] && [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] \
+            && [ "$(git hash-object --no-filters "$trusted/$path")" = "$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" ] \
+            || { echo "::error::trusted review-disposition verifier differs from the immutable source"; exit 1; }
+          python3 -I "$trusted/$path" --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$EXPECTED_HEAD"
       - name: Recheck initially admitted eligibility
         id: eligibility
         if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))

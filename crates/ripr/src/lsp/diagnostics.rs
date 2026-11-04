@@ -881,6 +881,7 @@ fn push_unlisted_language_not_analyzed(
         diagnostics.push(language_not_analyzed_diagnostic(
             language,
             &relative.to_string_lossy().replace('\\', "/"),
+            &super::config::LspAnalysisConfig::default(),
         ));
     }
 }
@@ -1697,6 +1698,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     );
     append_unavailable_language_diagnostics(
         &root,
+        config,
         &unavailable_adapter,
         language_view.as_ref(),
         &mut grouped,
@@ -1948,6 +1950,7 @@ pub(super) fn withheld_preview_diagnostic(
 /// `language_adapter_unavailable` limitation `check` and MCP report.
 fn append_unavailable_language_diagnostics(
     root: &Path,
+    config: &super::config::LspAnalysisConfig,
     coverage: &super::state::UnavailableAdapterCoverage,
     view: Option<&LanguageCompletenessView>,
     grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
@@ -1962,13 +1965,17 @@ fn append_unavailable_language_diagnostics(
         grouped
             .entry(uri)
             .or_default()
-            .push(language_not_analyzed_diagnostic(language, path));
+            .push(language_not_analyzed_diagnostic(language, path, config));
     }
 }
 
 /// The marker for one changed file of a language whose adapter is not enabled.
-pub(super) fn language_not_analyzed_diagnostic(language: LanguageId, path: &str) -> Diagnostic {
-    let recovery = super::backend::language_adapter_not_enabled_recovery(language);
+pub(super) fn language_not_analyzed_diagnostic(
+    language: LanguageId,
+    path: &str,
+    config: &super::config::LspAnalysisConfig,
+) -> Diagnostic {
+    let recovery = super::backend::language_adapter_not_enabled_recovery(language, Some(config), 1);
     let name = language.as_str();
     Diagnostic {
         range: Range::default(),
@@ -4998,7 +5005,11 @@ mod seam_diagnostic_tests {
             return Err("overflow catalog metadata drifted".to_string());
         }
 
-        let unsupported = language_not_analyzed_diagnostic(LanguageId::Python, "src/lib.py");
+        let unsupported = language_not_analyzed_diagnostic(
+            LanguageId::Python,
+            "src/lib.py",
+            &LspAnalysisConfig::default(),
+        );
         let Some(NumberOrString::String(unsupported_code)) = unsupported.code.as_ref() else {
             return Err(format!(
                 "unsupported diagnostic must emit a string code, got {:?}",

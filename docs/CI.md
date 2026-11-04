@@ -98,6 +98,17 @@ unresolved review threads, naming each thread, so the author learns in seconds
 instead of after the roughly hour-long run. It is an early courtesy only: a read
 failure is a warning, and the late recheck above remains the authority.
 
+Source review disposition (#8157): a `merge-ready` request also needs a current-head
+source review attestation, read by `review_disposition.py` from the immutable trusted
+admission bundle (the PR base for pull requests, the group base for queue entries; the
+script is covered by the bundle hash check). The admission job refuses at request
+time; the Result job repeats the read before the eligibility recheck. A trusted
+(OWNER/MEMBER/COLLABORATOR) reviewer must post a native APPROVED, or a COMMENT whose
+first line is the readiness marker with an allowed tail; a trusted reviewer's later
+negative or `CHANGES_REQUESTED` review refuses. The marker line is the binding signal;
+free-prose retraction on later lines is best-effort (#12835). The PR author can still
+self-attest (unchanged), and retractions posted as issue comments are not read.
+
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
 establish that this is the head a reviewer judged ready, and its premise (GitHub's
@@ -1361,6 +1372,25 @@ not qualified, as are PRs without the `merge-ready` label (no request was made);
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
 the `mergeable_state` column.
+
+### Issue Staleness Watchdog
+
+Open investigation issues often cite repo-rooted `path:line` evidence that
+decays as `main` moves (#5079). `.github/workflows/issue-staleness-watchdog.yml`
+runs weekly (Monday 06:17 UTC) plus on `workflow_dispatch`, lists open issues,
+extracts up to five rooted path citations per issue, and asks the commits API
+whether each cited path changed after the issue was filed. On a positive signal
+it applies `status/needs-reverify` and posts or edits exactly one comment marked
+`<!-- issue-staleness-watchdog -->`; it never closes an issue or removes the
+label. Bounds mirror the PR watchdog caps in spirit: ≤50 newly labeled issues
+per sweep, ≤300 commits-API calls, and a per-sweep step-summary table as the
+audit trail. Issues are ordered oldest first across the whole list, and the
+start of each sweep rotates by one run's worth of issues (300 calls / 5 paths)
+per week, so unchanged issues cannot spend the commits budget ahead of later
+ones forever. A `refresh` dispatch input re-checks issues that
+already carry the label and updates the owned comment only.
+`xtask/tests/issue_staleness_watchdog.rs` replays the sweep script against a
+fake `gh`.
 
 ### Main Health Sentinel
 
