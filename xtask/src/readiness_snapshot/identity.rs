@@ -60,7 +60,10 @@ pub(crate) fn git_worktree_clean() -> Result<bool, String> {
     if filters.status.code() != Some(1) || !filters.stdout.is_empty() {
         return Err("could not establish absence of clean/process filter helpers".to_string());
     }
-    let index = git_output(&["ls-files", "--stage", "-v", "-z", "--", ":/"])?;
+    let root = git_toplevel()?;
+    let root = root.to_str().ok_or("source root is not UTF-8")?;
+    // No pathspec: inherited literal/glob modes cannot narrow this inventory.
+    let index = git_output(&["-C", root, "ls-files", "--stage", "-v", "-z"])?;
     if !index.status.success() {
         return Err("could not inspect source index flags and modes".to_string());
     }
@@ -96,9 +99,17 @@ pub(crate) fn git_toplevel() -> Result<PathBuf, String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    Ok(PathBuf::from(
-        String::from_utf8_lossy(&output.stdout).trim().to_string(),
-    ))
+    let root =
+        std::str::from_utf8(&output.stdout).map_err(|_| "source root is not UTF-8".to_string())?;
+    let root = root
+        .strip_suffix('\n')
+        .ok_or("git root output has no line terminator")?;
+    #[cfg(windows)]
+    let root = root.strip_suffix('\r').unwrap_or(root);
+    if root.is_empty() {
+        return Err("git root output is empty".to_string());
+    }
+    Ok(PathBuf::from(root))
 }
 
 pub(crate) fn tree_clean_for_subject(source_sha: &str) -> Result<bool, String> {

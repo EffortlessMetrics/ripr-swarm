@@ -17,8 +17,11 @@ impl Fixture {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| e.to_string())?
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("rehearsal-identity-{}-{stamp}", std::process::id()));
+        let suffix = if cfg!(unix) { " " } else { "" };
+        let root = std::env::temp_dir().join(format!(
+            "rehearsal-identity-{}-{stamp}{suffix}",
+            std::process::id()
+        ));
         fs::create_dir_all(&root).map_err(|e| e.to_string())?;
         let fixture = Self {
             root,
