@@ -652,9 +652,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// file defines a macro of that name (#12720).
 /// `1.147`: a multi-line `assert_ok_eq!` / `assert_some_eq!` of a literal is
 /// nominated like its one-line form and reads `exact_value` / strong under the
-/// same owner-pin gates (RIPR-SPEC-0197, #12394). Old entries keep `unknown`.
 /// `1.148`: an exact error-variant pin is no oracle on a returned-value seam it
 /// cannot see (#12722).
+/// same owner-pin gates (RIPR-SPEC-0197, #12394). Old entries keep `unknown`.
 /// `1.149`: a doc example registers as a test only when no gate on an enclosing
 /// `mod`, `impl`, `trait` or `mod name;` declaration may leave it uncompiled (#12453).
 /// `1.150`: a pinned literal that neither the owner before the diff nor after
@@ -670,9 +670,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// matching literal `Vec` expectation credits through the owner-return pin (#9478).
 /// `1.154`: a bare `assert_matches!` around an inherent owner call reads the
 /// unplaced receiver withhold (#10666). Old entries keep the unnamed gap.
-/// `1.155`: the repo-wide audit credits a claims `assert_ok_eq!` / `assert_some_eq!`
+/// `1.155`: a macro-generated test borrows its invocation-site name scopes only
+/// when its expansion declares nothing that could rebind a callee (#12320).
+/// `1.156`: the repo-wide audit credits a claims `assert_ok_eq!` / `assert_some_eq!`
 /// statement through the same owner-pin decision as `ripr check` (#12394).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.155";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.156";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -860,16 +862,17 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.155";
 /// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
 /// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
 /// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
-/// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
 /// `0.150`: same error-pin refusal as full `1.148` (#12722).
+/// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
 /// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
 /// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
 /// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
 /// `0.156`: same unplaced `assert_matches!` withhold as full `1.154` (#10666).
-/// `0.157`: same audit claims-payload crediting as full `1.155` (#12394).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.157";
+/// `0.157`: same generated-test invocation-scope rule as full `1.155` (#12320).
+/// `0.158`: same audit claims-payload crediting as full `1.156` (#12394).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.158";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1059,16 +1062,17 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.157";
 /// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
 /// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
 /// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
-/// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
 /// `0.150`: same error-pin refusal as full `1.148` (#12722).
+/// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
 /// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
 /// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
 /// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
 /// `0.156`: same unplaced `assert_matches!` withhold as full `1.154` (#10666).
-/// `0.157`: same audit claims-payload crediting as full `1.155` (#12394).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.157";
+/// `0.157`: same generated-test invocation-scope rule as full `1.155` (#12320).
+/// `0.158`: same audit claims-payload crediting as full `1.156` (#12394).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.158";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5980,6 +5984,7 @@ mod tests {
         // 1.151 -> 1.152: a tuple `.0` pin credits the changed `T(e)` tail (#12796).
         // 1.152 -> 1.153: bounded `.map(owner)` chains credit via the owner pin (#9478).
         // 1.153 -> 1.154: a bare `assert_matches!` around an inherent owner call reads the unplaced receiver withhold (#10666).
+        // 1.154 -> 1.155: macro-generated tests borrow invocation-site name scopes only when the expansion declares nothing (#12320).
         // 1.154 -> 1.155: the audit credits claims payload equality via the owner pin (#12394).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.155");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -6117,6 +6122,7 @@ mod tests {
         // 0.153 -> 0.154: same tuple-projection pin as full 1.152 (#12796).
         // 0.154 -> 0.155: same path-value crediting as full 1.153 (#9478).
         // 0.155 -> 0.156: same unplaced `assert_matches!` withhold as full 1.154 (#10666).
+        // 0.156 -> 0.157: same generated-test invocation-scope rule as full 1.155 (#12320).
         // 0.156 -> 0.157: same audit claims-payload crediting as full 1.155 (#12394).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.157");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.157");
