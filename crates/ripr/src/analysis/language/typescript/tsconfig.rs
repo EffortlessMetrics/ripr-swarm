@@ -94,6 +94,8 @@ pub(crate) struct TsAliasMap {
     tsconfig_loaded: bool,
     /// Selected config and the exact bounded inputs used to compile its map.
     config_inputs: Vec<(PathBuf, [u8; 32])>,
+    /// Extensionless candidates known absent when their `.json` fallback loaded.
+    absent_config_inputs: Vec<PathBuf>,
     /// In-workspace package names (#4554), consulted after `paths`.
     ///
     /// Shared, not owned: every cache miss hands the map to the parse worker,
@@ -280,6 +282,7 @@ impl TsAliasMap {
         self.base_url_absolute.hash(&mut first);
         self.tsconfig_loaded.hash(&mut first);
         self.config_inputs.hash(&mut first);
+        self.absent_config_inputs.hash(&mut first);
         let mut literals: Vec<(&String, &Option<String>)> = self.literal_entries.iter().collect();
         literals.sort();
         for (key, value) in literals {
@@ -302,6 +305,7 @@ impl TsAliasMap {
         }
         self.tsconfig_loaded.hash(&mut second);
         self.config_inputs.hash(&mut second);
+        self.absent_config_inputs.hash(&mut second);
         self.base_url_absolute.hash(&mut second);
         self.base_url.hash(&mut second);
         self.no_base_url.hash(&mut second);
@@ -362,6 +366,10 @@ impl TsAliasMap {
             .is_some_and(|(path, _)| Some(path) == selected.as_ref())
             && self.config_inputs.iter().all(|(path, expected)| {
                 read_config_capped(path).is_ok_and(|text| config_digest(&text) == *expected)
+            })
+            && self.absent_config_inputs.iter().all(|path| {
+                std::fs::symlink_metadata(path)
+                    .is_err_and(|err| err.kind() == std::io::ErrorKind::NotFound)
             })
     }
 
@@ -800,6 +808,7 @@ fn merge_compiler_options(
     text: &str,
     visited: &mut Vec<PathBuf>,
     inputs: &mut Vec<(PathBuf, [u8; 32])>,
+    absent_inputs: &mut Vec<PathBuf>,
     visits: &mut usize,
     depth: usize,
 ) -> Result<MergedCompilerOptions, TsAliasMapBlocker> {
@@ -842,16 +851,33 @@ fn merge_compiler_options(
                 return Err(TsAliasMapBlocker::ExtendsUnsupported);
             }
             let mut base_path = config_dir.join(target);
-            if base_path.extension().is_none() {
-                base_path.set_extension("json");
+            if base_path.parent() != Some(config_dir) {
+                return Err(TsAliasMapBlocker::ExtendsUnsupported);
             }
-            if base_path.parent() != Some(config_dir) || !base_path.is_file() {
+            if base_path.extension().is_none() {
+                match std::fs::symlink_metadata(&base_path) {
+                    Ok(metadata) if metadata.file_type().is_file() => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        absent_inputs.push(base_path.clone());
+                        base_path.set_extension("json");
+                    }
+                    _ => return Err(TsAliasMapBlocker::ExtendsUnsupported),
+                }
+            }
+            if !base_path.is_file() {
                 return Err(TsAliasMapBlocker::ExtendsUnsupported);
             }
             let base_text = read_config_capped(&base_path)
                 .map_err(|_read_err| TsAliasMapBlocker::ExtendsUnsupported)?;
-            let base =
-                merge_compiler_options(&base_path, &base_text, visited, inputs, visits, depth + 1)?;
+            let base = merge_compiler_options(
+                &base_path,
+                &base_text,
+                visited,
+                inputs,
+                absent_inputs,
+                visits,
+                depth + 1,
+            )?;
             // Later array entries override earlier ones; the extending
             // config itself is applied after the whole chain.
             if base.base_url.is_some() {
@@ -880,8 +906,16 @@ fn parse_alias_map(
     text: &str,
 ) -> Result<TsAliasMap, TsAliasMapBlocker> {
     let mut inputs = Vec::new();
-    let merged =
-        merge_compiler_options(config_path, text, &mut Vec::new(), &mut inputs, &mut 0, 0)?;
+    let mut absent_inputs = Vec::new();
+    let merged = merge_compiler_options(
+        config_path,
+        text,
+        &mut Vec::new(),
+        &mut inputs,
+        &mut absent_inputs,
+        &mut 0,
+        0,
+    )?;
     if merged.base_url.is_none() && merged.paths.is_none() {
         return Err(TsAliasMapBlocker::IncompleteConfig);
     }
@@ -972,6 +1006,7 @@ fn parse_alias_map(
         glob_entries,
         tsconfig_loaded: true,
         config_inputs: inputs,
+        absent_config_inputs: absent_inputs,
         packages: Default::default(),
         digest: Default::default(),
     })
@@ -1208,71 +1243,6 @@ fn is_safe_relative(p: &Path) -> bool {
     use std::path::Component;
     p.components()
         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
-}
-
-/// Whether an unselected config could redirect this bare specifier.
-/// Unknown configs and inherited mappings are conservative. A baseUrl-only
-/// config preserves fallback when it has no matching in-directory target.
-pub(crate) fn config_file_may_remap(path: &Path, specifier: &str) -> bool {
-    let Ok(text) = read_config_capped(path) else {
-        return true;
-    };
-    let Ok(normalized) = strip_jsonc(&text) else {
-        return true;
-    };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&normalized) else {
-        return true;
-    };
-    if !value.is_object() || value.get("extends").is_some() || value.get("references").is_some() {
-        return true;
-    }
-    let Some(options) = value.get("compilerOptions") else {
-        return false;
-    };
-    if !options.is_object() || options.get("paths").is_some() || options.get("rootDirs").is_some() {
-        return true;
-    }
-    let Some(base) = options.get("baseUrl") else {
-        return false;
-    };
-    // We do not model compiler options that can alter baseUrl lookup.
-    if options.as_object().is_some_and(|options| {
-        options
-            .keys()
-            .any(|key| !matches!(key.as_str(), "baseUrl" | "strict"))
-    }) {
-        return true;
-    }
-    let Some(base) = base.as_str() else {
-        return true;
-    };
-    if !is_safe_relative(Path::new(base)) || !is_safe_relative(Path::new(specifier)) {
-        return true;
-    }
-    let Some(dir) = path.parent() else {
-        return true;
-    };
-    let candidate = dir.join(base).join(specifier);
-    let stripped = dir.join(base).join(strip_ts_ext(specifier));
-    let may_exist = |candidate: &Path| match std::fs::symlink_metadata(candidate) {
-        Ok(_) => true,
-        Err(err) => err.kind() != std::io::ErrorKind::NotFound,
-    };
-    if may_exist(&candidate) || may_exist(&stripped) {
-        return true;
-    }
-    [
-        ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".json", ".d.ts", ".d.mts",
-        ".d.cts",
-    ]
-    .iter()
-    .any(|ext| {
-        [&candidate, &stripped].iter().any(|path| {
-            let mut probe = path.as_os_str().to_os_string();
-            probe.push(ext);
-            may_exist(Path::new(&probe))
-        })
-    })
 }
 
 /// Strip the file extension from a path string, preserving the rest.
@@ -1733,6 +1703,41 @@ mod tests {
                 "{label} must not credit the wrong owner"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn extensionless_extends_prefers_exact_file_and_tracks_absence() -> Result<(), String> {
+        let root = temp_dir("extends-exact");
+        write(&root, "tsconfig.json", r#"{"extends":"./base"}"#);
+        write(
+            &root,
+            "base.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./decoy/*"]}}}"#,
+        );
+        write(&root, "decoy/owner.ts", "export function owner() {}");
+        write(&root, "intended/owner.ts", "export function owner() {}");
+        let fallback = load_alias_map(&root).ok_or("fallback")?;
+        assert_eq!(
+            fallback.resolve("@/owner"),
+            Some(PathBuf::from("decoy/owner.ts"))
+        );
+        assert!(fallback.config_is_current(&root));
+        write(
+            &root,
+            "base",
+            r#"{"compilerOptions":{"paths":{"@/*":["./intended/*"]}}}"#,
+        );
+        assert!(
+            !fallback.config_is_current(&root),
+            "new exact target invalidates fallback map"
+        );
+        let exact = load_alias_map(&root).ok_or("exact target")?;
+        assert_eq!(
+            exact.resolve("@/owner"),
+            Some(PathBuf::from("intended/owner.ts"))
+        );
+        assert!(exact.config_is_current(&root));
         Ok(())
     }
 

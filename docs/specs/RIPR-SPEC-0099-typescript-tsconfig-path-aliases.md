@@ -74,7 +74,7 @@ OFF preserved the existing conservative behavior; the amendment above flips it t
 every ambiguity:
 
 - Missing file, JSONC parse error, or absence of both `baseUrl` and `paths` fails closed. Without `baseUrl`, only explicitly relative templates are supported; unsupported winning keys remain blockers.
-- `references` present fails closed. `extends` chains are followed up to 8 hops and 256 total config visits only when every target is a relative path in the same directory as the extending config (#11204): bases merge first, a declared `paths` object replaces the inherited one whole (as `tsc` treats it, even when empty), and `baseUrl` is the nearest declaration. Package-name or cross-directory bases, cycles, and missing targets fail closed.
+- `references` present fails closed. `extends` chains are followed up to 8 hops and 256 total config visits only when every target is a relative path in the same directory as the extending config (#11204): bases merge first, a declared `paths` object replaces the inherited one whole (as `tsc` treats it, even when empty), and `baseUrl` is the nearest declaration. For a supported extensionless `extends` target, an existing exact file takes precedence over the `.json` fallback; if the fallback is used, later appearance of the exact file invalidates the loaded map. Package-name or cross-directory bases, cycles, and missing targets fail closed.
 - Empty or multi-entry `paths` value array, or a template with more than one
   `*` â†’ retain the literal/single-wildcard key as an unresolved blocker. A
   broader alias must not take over the blocked key's imports.
@@ -118,12 +118,13 @@ endings preserves supported alias and `tsconfig.json` build-output mappings.
 
 Amendment (#12754, #12760): the loader still selects only the workspace-root
 config. Before crediting an alias, the resolver checks bounded ancestor configs
-and withholds the root map when an alternate config may redirect the import,
-including inherited or unreadable configurations. A selected inherited input is
-exempt only when its effective alias map agrees with the selected config. A
-baseUrl-only alternate retains root fallback when the bounded probe finds no
-competing target and no unmodeled lookup options. Uncertainty remains unresolved;
-no different project is selected. A specifier not owned by a root alias can
+and withholds the root map when an alternate config could own the importer,
+even if it has no `paths`: a standalone program need not inherit root aliases.
+A selected inherited input is exempt only when its effective alias map agrees
+with the selected config. A nested config that directly extends the selected root `.json` config by
+parent-directory steps, with no overrides and no symlink components, is also
+equivalent. Without a competing config,
+root fallback remains available. Uncertainty remains unresolved; no different project is selected. A specifier not owned by a root alias can
 still fall through to workspace packages. Full per-package resolution remains a
 Non-Goal.
 

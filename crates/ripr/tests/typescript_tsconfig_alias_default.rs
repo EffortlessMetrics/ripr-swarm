@@ -154,3 +154,102 @@ fn config_relative_paths_without_base_url_are_credited() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn standalone_nested_config_does_not_credit_root_owner() -> Result<(), String> {
+    let subject = Subject::create("[languages]\nenabled = [\"rust\", \"typescript\"]\n")?;
+    std::fs::write(
+        subject.0.join("tsconfig.json"),
+        r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(subject.0.join("test/tsconfig.json"), "{}").map_err(|e| e.to_string())?;
+    let json: serde_json::Value =
+        serde_json::from_str(&subject.json()?).map_err(|e| e.to_string())?;
+    let findings = json
+        .get("findings")
+        .and_then(|v| v.as_array())
+        .ok_or("missing findings")?;
+    let finding = findings
+        .iter()
+        .find(|finding| {
+            finding.pointer("/probe/file").and_then(|v| v.as_str()) == Some("src/pricing.ts")
+                && finding
+                    .pointer("/probe/owner")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|owner| owner.ends_with("::discountRate"))
+        })
+        .ok_or_else(|| format!("missing changed owner: {json}"))?;
+    if finding.get("classification").and_then(|v| v.as_str()) != Some("no_static_path") {
+        return Err(format!(
+            "nested program must not credit root owner: {finding}"
+        ));
+    }
+    if finding
+        .get("related_tests")
+        .and_then(|v| v.as_array())
+        .is_some_and(|rows| {
+            rows.iter()
+                .any(|row| row.get("file").and_then(|v| v.as_str()) == Some("test/pricing.test.ts"))
+        })
+    {
+        return Err(format!(
+            "nested program incorrectly related the test: {finding}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn extensionless_extends_prefers_existing_exact_config() -> Result<(), String> {
+    let subject = Subject::create("[languages]\nenabled = [\"rust\", \"typescript\"]\n")?;
+    std::fs::write(subject.0.join("tsconfig.json"), r#"{"extends":"./base"}"#)
+        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        subject.0.join("base"),
+        r#"{"compilerOptions":{"paths":{"@/*":["./src/intended/*"]}}}"#,
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        subject.0.join("base.json"),
+        r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(subject.0.join("src/intended")).map_err(|e| e.to_string())?;
+    std::fs::write(subject.0.join("src/intended/pricing.ts"), "export function discountRate(tier: string): number { return tier === \"pro\" ? 0.2 : 0; }\n").map_err(|e| e.to_string())?;
+    let classification = || -> Result<String, String> {
+        let json: serde_json::Value =
+            serde_json::from_str(&subject.json()?).map_err(|e| e.to_string())?;
+        let findings = json
+            .get("findings")
+            .and_then(|v| v.as_array())
+            .ok_or("missing findings")?;
+        let finding = findings
+            .iter()
+            .find(|finding| {
+                finding.pointer("/probe/file").and_then(|v| v.as_str()) == Some("src/pricing.ts")
+                    && finding
+                        .pointer("/probe/owner")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|owner| owner.ends_with("::discountRate"))
+            })
+            .ok_or_else(|| format!("missing changed owner: {json}"))?;
+        finding
+            .get("classification")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| format!("missing classification: {finding}"))
+    };
+    assert_eq!(
+        classification()?,
+        "no_static_path",
+        "exact config must not credit decoy"
+    );
+    std::fs::remove_file(subject.0.join("base")).map_err(|e| e.to_string())?;
+    assert_eq!(
+        classification()?,
+        "exposed",
+        "absent exact config must use base.json"
+    );
+    Ok(())
+}
