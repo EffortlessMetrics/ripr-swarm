@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use proptest::prelude::*;
 
-use crate::testing::fixture_git::{fixture_git_ok, fixture_git_stdout};
+use crate::testing::fixture_git::{fixture_git_ok, fixture_git_stdout, remove_fixture_tree};
 
 use super::{ParsedDiff, parse_unified_diff_with_metadata};
 
@@ -75,7 +75,7 @@ impl Repository {
 
 impl Drop for Repository {
     fn drop(&mut self) {
-        if let Err(error) = std::fs::remove_dir_all(&self.0) {
+        if let Err(error) = remove_fixture_tree(&self.0) {
             eprintln!("remove owned diff oracle {}: {error}", self.0.display());
         }
     }
