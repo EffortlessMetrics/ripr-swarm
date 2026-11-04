@@ -655,3 +655,41 @@ fn same_run_reuse_serves_identical_files_without_rebuilding_property_authority()
     );
     Ok(())
 }
+
+#[test]
+fn same_run_extension_of_a_core_with_property_receipts_equals_a_fresh_build() -> Result<(), String>
+{
+    let fixture = Fixture::new()?;
+    if !proptest_identity_available(&fixture.0) {
+        return Ok(());
+    }
+    let files = fixture.loaded()?;
+    let paths = files
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    let fresh = build_index(&fixture.0, &paths)?;
+    assert_state(&fresh, true, "fresh")?;
+    // The admission core holds the property file (so it carries receipts) but
+    // not the file the main index adds, as in the diff pipeline.
+    let core_files = files
+        .iter()
+        .filter(|(path, _)| path != Path::new("tests/ordinary.rs"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let core =
+        build_index_from_loaded_files_with_cache_and_test_harnesses(&fixture.0, &core_files, &[])?;
+    assert_eq!(
+        core.index.proptest_receipts.len(),
+        1,
+        "the core must carry the receipts that used to force a rebuild"
+    );
+    let extended = reuse_cached_index_in_run(core, &fixture.0, &files, &[])?;
+    assert_same(&fresh, &extended.index, true, "same-run extension")?;
+    assert_eq!(
+        extended.files_content_hash,
+        build_index_from_loaded_files_with_cache_and_test_harnesses(&fixture.0, &files, &[])?
+            .files_content_hash
+    );
+    Ok(())
+}
