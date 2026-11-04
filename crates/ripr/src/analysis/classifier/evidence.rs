@@ -48,8 +48,8 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     pub(in crate::analysis) direct_rows: Vec<RelatedTest>,
     pub(in crate::analysis) reach: StageEvidence,
     pub(in crate::analysis) infect: StageEvidence,
-    /// Every related assertion pins a tuple-method result, but its literal
-    /// inputs produce equal values across the two versions (#12808).
+    /// Every related test calls the tuple method on literal inputs that
+    /// produce equal fields across the two versions (#12808).
     pub(in crate::analysis) tuple_invisible: bool,
     pub(in crate::analysis) propagate: StageEvidence,
     /// The credited fixture-specific pin has read its actual receiver data.
