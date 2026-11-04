@@ -6,6 +6,13 @@
   "report_cache_schema_pins": [],
   "report_digest_exemptions": [],
   "report_digest_required": [
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-operand-return.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-preceding-return.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-missing-expected.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-wrong-receiver.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-helper-type-shadow-qualified-control.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-helper-type-shadow-transitive.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
@@ -25,7 +32,8 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json"
   ],
   "cases": [
     {
@@ -11837,43 +11845,43 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::helpers::read_as_object",
           "expression": "value.as_object()",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
+          "grip_class": "activation_unknown",
+          "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::read_as_object",
           "expression": "Some(7)",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
+          "grip_class": "activation_unknown",
+          "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
@@ -11881,6 +11889,15 @@
           "expression": "helpers::read_as_object()",
           "grip_class": "strongly_gripped",
           "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::helpers::read_as_object",
+          "expression": "value.as_object()",
+          "test": "decoy",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "same_test_file"
         }
       ]
     },
@@ -17759,6 +17776,58 @@
         { "type": "must_not_report_clean" },
         { "type": "expected_finding_count", "count": 1 },
         { "type": "expected_class", "class": "no_static_path" }
+      ]
+    },
+    {
+      "id": "rust_repo_helper_type_shadow_transitive",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-helper-type-shadow-transitive.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/helper-type-shadow-transitive",
+      "vector": "bound_intermediate_helper_required_before_free_leaf_credit",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::leaf_value",
+          "expression": "Some(7)",
+          "grip_class": "activation_unknown",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::leaf_value",
+          "expression": "Some(7)",
+          "test": "decoy",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "same_test_file"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_helper_type_shadow_qualified_control",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-helper-type-shadow-qualified-control.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/helper-type-shadow-qualified-control",
+      "vector": "bound_intermediate_helper_required_before_free_leaf_credit",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::leaf_value",
+          "expression": "Some(7)",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::leaf_value",
+          "expression": "Some(7)",
+          "test": "decoy",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "helper_owner_call"
+        }
       ]
     }
   ]

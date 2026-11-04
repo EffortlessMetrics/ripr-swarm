@@ -11566,27 +11566,43 @@ pub(in crate::analysis) fn same_file_free_helper_call_reaches_owner(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> bool {
-    if caller.file != helper.file
-        || index
-            .files()
-            .get(&helper.file)
-            .is_none_or(|facts| facts.used_lexical_fallback)
+    caller.file == helper.file
+        && free_helper_call_reaches_definition(caller, helper, prefix, index, syntax)
+}
+
+/// A helper graph may cross a verified crate module edge. Keep the same value
+/// binding, source and target-declaration refusals as same-file admission.
+pub(in crate::analysis) fn free_helper_call_reaches_definition(
+    caller: &TestSummary,
+    helper: &FunctionSummary,
+    prefix: Option<&str>,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    if index
+        .files()
+        .get(&helper.file)
+        .is_none_or(|facts| facts.used_lexical_fallback)
     {
         return false;
     }
-    let Some(identity) = super::call_identity::shared_same_file_helper_identity(index, helper)
-    else {
-        return false;
-    };
-    let qualifier = prefix.map(path_prefix_segments).unwrap_or_default();
-    if identity.resolve_same_file_call(caller, index, &qualifier) != CallTarget::Owner {
+    if index
+        .files()
+        .get(&caller.file)
+        .is_none_or(|facts| facts.used_lexical_fallback)
+    {
         return false;
     }
-    let masked_body = mask_comments_and_strings(&caller.body);
-    if prefix.is_none()
-        && (test_body_shadows_owner(caller, &helper.name)
-            || binds_outside_let(&masked_body, &helper.name)
-            || bound_by_macro(&masked_body, &helper.name))
+    let qualifier = prefix.map(path_prefix_segments).unwrap_or_default();
+    let target = if caller.file == helper.file {
+        super::call_identity::shared_same_file_helper_identity(index, helper)
+            .map(|identity| identity.resolve_same_file_call(caller, index, &qualifier))
+    } else {
+        super::call_identity::shared_solo_owner_call_identity(index, helper)
+            .map(|identity| identity.resolve_call(caller, index, &qualifier))
+    };
+    if target != Some(CallTarget::Owner)
+        || (prefix.is_none() && !free_helper_name_is_unshadowed(caller, &helper.name))
     {
         return false;
     }
@@ -11606,6 +11622,17 @@ pub(in crate::analysis) fn same_file_free_helper_call_reaches_owner(
         index,
         syntax,
     )
+}
+
+/// The value-binding refusals shared by named and import-renamed helper calls.
+pub(in crate::analysis) fn free_helper_name_is_unshadowed(
+    caller: &TestSummary,
+    name: &str,
+) -> bool {
+    let masked_body = mask_comments_and_strings(&caller.body);
+    !test_body_shadows_owner(caller, name)
+        && !binds_outside_let(&masked_body, name)
+        && !bound_by_macro(&masked_body, name)
 }
 
 /// Whether the file declares a type alias `type name`.

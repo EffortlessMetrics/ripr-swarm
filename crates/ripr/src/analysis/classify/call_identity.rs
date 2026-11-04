@@ -433,7 +433,7 @@ fn shared_call_identity(
 
 /// [`shared_owner_call_identity`] for an owner that may have no rival
 /// (#9218): the identity used to settle a qualified call's spelled path.
-fn shared_solo_owner_call_identity(
+pub(super) fn shared_solo_owner_call_identity(
     index: &RustIndex,
     owner: &FunctionSummary,
 ) -> Option<std::sync::Arc<OwnerCallIdentity>> {

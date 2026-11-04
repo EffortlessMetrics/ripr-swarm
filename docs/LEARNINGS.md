@@ -3577,3 +3577,15 @@ mir_borrowck is diffuse (115 s over 76,536 bodies), mono breadth is 673,763
 instances — no single hotspot, so targeted simplification (option 3) is
 contraindicated as the primary lever; the ~5 GB gap to ≤8 GB must come from
 cfg(test) extraction and/or the crate split.
+
+## 2026-11-04: Helper name graphs do not establish callable bindings (#12891)
+
+A same-spelled function type parameter could turn a module helper that never
+runs into `helper_owner_call` and `strongly_gripped` repository evidence. Reject
+the edge at both graph producers before propagation and activation projections;
+filtering only related-test rows leaves score consumers exposed. Enclosing impl
+and trait parameters also bind the type/module namespace. Keep value-shadow and
+target-declaration refusals when extending lexical resolution across files, and
+do not let import fallback or an uppercase intermediate path restore a refused
+edge. The honesty corpus pairs `helper-type-shadow-transitive` with
+`helper-type-shadow-qualified-control`; the latter retains real helper credit.

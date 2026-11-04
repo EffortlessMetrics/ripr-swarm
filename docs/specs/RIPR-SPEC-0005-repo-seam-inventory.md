@@ -390,8 +390,12 @@ intermediate free-function hop must contain an executable call bound to the
 candidate's actual module/function declaration. The existing helper-name graph
 only supplies candidates. Caller-scope memos distinguish function names even
 when declarations share a line; an ambiguous same-name/same-line lookup refuses.
-Function type-parameter names also refuse borrowing a same-spelled module or
-nominal receiver type, without resolving any type argument or value flow.
+Function, enclosing impl and trait type-parameter names refuse borrowing a
+same-spelled module or nominal receiver type, without resolving any type argument
+or value flow. Free-owner graph edges share lexical binding and value-shadow
+refusals before propagation, including imported and cross-file calls. A rejected
+intermediate edge cannot regain free-owner credit through the any-spelling graph;
+explicit crate/module paths and genuinely bound helper calls remain eligible.
 Explicit foreign paths, wrong imports, dormant local
 helpers and unplaced bindings cannot borrow a same-named root helper's owner
 credit. Genuine root/imported helpers and same-name inherent wrapper delegation

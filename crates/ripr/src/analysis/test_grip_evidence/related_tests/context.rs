@@ -1,4 +1,5 @@
 use super::*;
+use crate::analysis::facts::FunctionContainer;
 use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::test_grip_evidence::owner_result_binding::ParsedTestFile;
 use crate::analysis::test_grip_evidence::shared_grips::SharedGrips;
@@ -1567,6 +1568,8 @@ pub(in crate::analysis::test_grip_evidence) struct SharedIndexTables {
     owner_names_by_module_path: OwnerNamesByModulePath,
     owner_names_by_package_and_module_path: OwnerNamesByPackageAndModulePath,
     production_owner_names: BTreeSet<String>,
+    free_functions_by_name: BTreeMap<String, Vec<usize>>,
+    free_edge_bindings: Mutex<BTreeMap<(String, usize, String), bool>>,
 }
 
 impl SharedIndexTables {
@@ -1596,7 +1599,18 @@ impl SharedIndexTables {
             owner_names_by_package_and_module_path,
             production_owner_names,
         ) = rest;
+        let mut free_functions_by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (position, function) in index.functions().iter().enumerate() {
+            if function.item.container == FunctionContainer::Free {
+                free_functions_by_name
+                    .entry(function.name.clone())
+                    .or_default()
+                    .push(position);
+            }
+        }
         Self {
+            free_functions_by_name,
+            free_edge_bindings: Mutex::new(BTreeMap::new()),
             function_names_by_file,
             module_import_aliases_by_file,
             direct_function_import_aliases_by_file,
@@ -1605,6 +1619,52 @@ impl SharedIndexTables {
             owner_names_by_package_and_module_path,
             production_owner_names,
         }
+    }
+
+    /// A spelling is only a candidate edge. Resolve free calls in the caller's
+    /// lexical scope before either graph can propagate them or score activation.
+    /// Renamed imports are admitted separately by the scoped import authority.
+    fn retain_bound_free_edges(
+        &self,
+        calls: &mut BTreeSet<String>,
+        caller: &FunctionSummary,
+        index: &RustIndex,
+    ) {
+        let body = helper_call_view(caller);
+        calls.retain(|name| {
+            let Some(candidates) = self.free_functions_by_name.get(name) else {
+                return true;
+            };
+            if !caller.calls.iter().any(|call| call.name == *name) {
+                return true;
+            }
+            let key = (caller.id.0.clone(), caller.start_line, name.clone());
+            if let Some(answer) = memo(&self.free_edge_bindings).get(&key) {
+                return *answer;
+            }
+            let answer = candidates.iter().any(|position| {
+                free_helper_call_resolves(&body, &index.functions()[*position], index)
+            });
+            memo(&self.free_edge_bindings).insert(key, answer);
+            answer
+        });
+    }
+}
+
+fn helper_call_view(caller: &FunctionSummary) -> TestSummary {
+    TestSummary {
+        name: caller.name.clone(),
+        file: caller.file.clone(),
+        start_line: caller.start_line,
+        end_line: caller.end_line,
+        body: caller.body.clone(),
+        calls: caller.calls.clone(),
+        assertions: Vec::new(),
+        literals: Vec::new(),
+        attrs: caller.attrs.clone(),
+        nested_fn_names: caller.nested_fn_names.clone(),
+        let_bindings: caller.let_bindings.clone(),
+        generated: None,
     }
 }
 
@@ -1691,6 +1751,8 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
             // evidence the call text itself cannot show (#6713 review).
             free_owner_calls.extend(imported_owner_calls);
         }
+        shared.retain_bound_free_edges(&mut owner_calls, function, index);
+        free_owner_calls.retain(|name| owner_calls.contains(name));
         if owner_calls.is_empty() {
             continue;
         }
@@ -2033,7 +2095,7 @@ impl TargetAffinityOwnerCalls {
             else {
                 continue;
             };
-            let owner_calls = target_affinity_direct_owner_calls_for_function(
+            let mut owner_calls = target_affinity_direct_owner_calls_for_function(
                 function,
                 local_function_names,
                 shared.module_import_aliases_by_file.get(&function.file),
@@ -2046,6 +2108,7 @@ impl TargetAffinityOwnerCalls {
                 &shared.owner_names_by_module_path,
                 shared.owner_names_by_package_and_module_path.get(&package),
             );
+            shared.retain_bound_free_edges(&mut owner_calls, function, index);
             if owner_calls.is_empty() {
                 continue;
             }
@@ -2250,11 +2313,15 @@ pub(in crate::analysis::test_grip_evidence) fn direct_imported_owner_calls_for_f
     let Some(unambiguous_production_owner_names) = unambiguous_production_owner_names else {
         return BTreeSet::new();
     };
+    let caller = helper_call_view(function);
     function
         .calls
         .iter()
         .filter(|call| call.name != function.name)
-        .filter(|call| call_text_contains_named_call(&call.text, &call.name))
+        .filter(|call| call_text_contains_unqualified_named_call(&call.text, &call.name))
+        .filter(|call| {
+            crate::analysis::classify::free_helper_name_is_unshadowed(&caller, &call.name)
+        })
         .filter_map(|call| {
             direct_function_import_aliases
                 .get(&call.name)
@@ -3809,7 +3876,8 @@ fn call_text_contains_unqualified_named_call(text: &str, name: &str) -> bool {
         {
             return false;
         }
-        text[start + name.len()..].trim_start().starts_with('(')
+        let after = text[start + name.len()..].trim_start();
+        after.starts_with('(') || after.starts_with("::<")
     })
 }
 

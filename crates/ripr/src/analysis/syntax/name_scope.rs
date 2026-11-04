@@ -169,8 +169,12 @@ pub(crate) fn fn_call_has_local_binding(source: &str, offset: usize, name: &str)
 /// Declared type-parameter names share the type/module path namespace. This
 /// records names only; it does not resolve their bounds or inferred arguments.
 pub(crate) fn function_type_param_names(function: &ast::Fn) -> BTreeSet<String> {
+    type_param_names(function)
+}
+
+fn type_param_names(item: &impl HasGenericParams) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
-    if let Some(parameters) = function.generic_param_list() {
+    if let Some(parameters) = item.generic_param_list() {
         for parameter in parameters.generic_params() {
             if let ast::GenericParam::TypeParam(parameter) = parameter
                 && let Some(name) = parameter.name()
@@ -284,6 +288,20 @@ pub(super) fn name_scopes_in_tree(
                 }
             }
             scopes.push(scope);
+        } else if let Some(item) = ast::Impl::cast(ancestor.clone()) {
+            scopes.push(NameScope {
+                modules: modules_of(&ancestor),
+                fn_body: true,
+                defines: type_param_names(&item),
+                ..NameScope::default()
+            });
+        } else if let Some(item) = ast::Trait::cast(ancestor.clone()) {
+            scopes.push(NameScope {
+                modules: modules_of(&ancestor),
+                fn_body: true,
+                defines: type_param_names(&item),
+                ..NameScope::default()
+            });
         } else if let Some(module) = ast::Module::cast(ancestor.clone()) {
             let mut scope = NameScope {
                 modules: modules_of(&ancestor),
@@ -300,8 +318,8 @@ pub(super) fn name_scopes_in_tree(
         } else if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
             scopes.push(name_scope_for_file(&file));
         }
-        // An `impl` or `trait` binds nothing a path call could name; an
-        // associated fn's scope continues at its enclosing module.
+        // Associated items inherit their impl/trait type parameters before
+        // lookup continues at the enclosing module.
     }
     Some(NameScopes { scopes })
 }

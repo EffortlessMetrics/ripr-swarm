@@ -1,4 +1,5 @@
 mod boolean_owner_pin;
+mod helper_scope;
 mod module_extraction;
 mod shared_execution_context;
 mod warm_entrypoint;

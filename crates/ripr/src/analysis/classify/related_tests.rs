@@ -5606,7 +5606,7 @@ pub(in crate::analysis) fn free_helper_call_resolves(
                 .split_whitespace()
                 .collect::<String>()
         });
-        super::owner_pin::same_file_free_helper_call_reaches_owner(
+        super::owner_pin::free_helper_call_reaches_definition(
             caller,
             helper,
             prefix.as_deref(),
