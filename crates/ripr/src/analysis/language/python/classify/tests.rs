@@ -7,6 +7,45 @@ use super::classify_change_with_source;
 use crate::domain::{ExposureClass, Finding, OracleStrength, StageState};
 use std::path::Path;
 
+// #12948: both ranges are empty for zero, so the exact output pin cannot
+// distinguish the edit. Three enters the loop and distinguishes 6 from 3.
+#[test]
+fn changed_range_requires_a_differing_iteration_sequence() -> Result<(), String> {
+    let before = "    for i in range(1, n + 1):";
+    let after = "    for i in range(1, n):";
+    let source =
+        format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n");
+    for (argument, expected, exposed) in [(0, 0, false), (-1, 0, false), (3, 6, true)] {
+        let tests = format!(
+            "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to({argument}) == {expected}\n"
+        );
+        let file = Path::new("src/subject.py");
+        let owners = extract_owners(file, &source);
+        let tests = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        assert_eq!(tests.len(), 1);
+        let finding = classify_change_with_source(
+            file,
+            3,
+            after,
+            Some(before),
+            &owners,
+            &tests,
+            Some(&source),
+        )
+        .ok_or("range edit must produce a finding")?;
+        assert_eq!(finding.related_tests.len(), 1);
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "input {argument}: {finding:?}"
+        );
+        if !exposed {
+            assert_ne!(finding.ripr.infect.state, StageState::Yes);
+        }
+    }
+    Ok(())
+}
+
 // #7312: independently authored from CPython ebf955df7a89ed0c7968f79faec1de49f61ed7cb
 // Lib/unittest/case.py::assertListEqual and test_unittest/test_case.py::testEquality.
 #[test]
@@ -4052,4 +4091,114 @@ fn assertion_helper_field_exposed_row_carries_preview_adapter_basis_only() -> Re
     );
     assert!(why.contains("not on the same scale as Rust"), "{why}");
     Ok(())
+}
+
+#[test]
+fn changed_range_withholds_equal_sums_and_unreadable_shapes() -> Result<(), String> {
+    for (before_range, after_range, argument, update, exposed) in [
+        (
+            "range(0, n + 1, 2)",
+            "range(0, n, 2)",
+            "3",
+            "acc += i",
+            false,
+        ),
+        (
+            "range(0, n + 1, 2)",
+            "range(0, n, 2)",
+            "4",
+            "acc += i",
+            true,
+        ),
+        (
+            "range(n, -1, -1)",
+            "range(n, 0, -1)",
+            "0",
+            "acc += i",
+            false,
+        ),
+        ("range(1, n + 1)", "range(1, n)", "3", "acc += 0", false),
+        ("range(1, n + 1)", "range(1, n)", "value", "acc += i", false),
+        (
+            "range(1, n + 1, 0)",
+            "range(1, n, 0)",
+            "3",
+            "acc += i",
+            false,
+        ),
+        ("range(1, n + 1)", "range(1, n * 2)", "3", "acc += i", false),
+    ] {
+        let before = format!("    for i in {before_range}:");
+        let after = format!("    for i in {after_range}:");
+        let source =
+            format!("def sum_to(n):\n    acc = 0\n{after}\n        {update}\n    return acc\n");
+        let tests = format!(
+            "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to({argument}) == 6\n"
+        );
+        let finding = classify_range_case(&source, &tests, 3, &before, &after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{before_range} -> {after_range} at {argument}, {update}: {finding:?}"
+        );
+        if !exposed {
+            assert_eq!(finding.class, ExposureClass::StaticUnknown);
+            assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+            assert_eq!(
+                finding.static_limit_kind,
+                Some(crate::domain::StaticLimitKind::UnsupportedSyntax)
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_range_does_not_trust_rebound_inputs_or_a_shadowed_builtin() -> Result<(), String> {
+    let before = "    for i in range(1, n + 1):";
+    let after = "    for i in range(1, n):";
+    for (prefix, body_prefix) in [("range = custom\n\n", ""), ("", "    n = 0\n")] {
+        let source = format!(
+            "{prefix}def sum_to(n):\n{body_prefix}    acc = 0\n{after}\n        acc += i\n    return acc\n"
+        );
+        let tests =
+            "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to(3) == 6\n";
+        let finding = classify_range_case(
+            &source,
+            tests,
+            if prefix.is_empty() { 4 } else { 5 },
+            before,
+            after,
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+fn classify_range_case(
+    source: &str,
+    tests: &str,
+    line: usize,
+    before: &str,
+    after: &str,
+) -> Result<Finding, String> {
+    assert_eq!(source.lines().nth(line - 1), Some(after));
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    assert_eq!(tests.len(), 1);
+    classify_change_with_source(
+        file,
+        line,
+        after,
+        Some(before),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "range edit must produce a finding".to_string())
 }

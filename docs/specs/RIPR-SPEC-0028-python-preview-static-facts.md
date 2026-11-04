@@ -1658,6 +1658,29 @@ cannot evaluate no longer hides a false one (`vip and total > 1000`); this
 also applies to live guarded lines and only moves a verdict from `exposed` to
 `weakly_exposed`.
 
+
+## Changed Range Header Amendment (#12948)
+
+A strong exact-value assertion on an owner does not establish that a changed
+`range(...)` header affects that call. An empty range, or an added iteration
+whose contribution is zero, can leave the returned result unchanged.
+
+The Python adapter retains existing oracle credit for a changed bare `range`
+header only when a strong related literal-input call establishes distinct old
+and new integer sums in this closed owner shape: initialize one accumulator to
+zero, iterate a bare `range` with one to three readable integer arguments,
+perform only `acc += item`, then return `acc`. The range builtin and bound
+parameters must remain intact. Literal bounds and the existing bounded integer
+offset reader are supported; checked arithmetic refuses overflow without
+walking or allocating the range.
+
+Without that witness, the change carries `unsupported_syntax`, unknown
+infection and a non-exposed classification. Missing old text, unreadable
+inputs, zero steps, rebinding, other loop bodies and unavailable owner source
+remain unresolved. This does not add a repair-packet producer or change the
+packet validator. The Rust range-bound producer in RIPR-SPEC-0370 remains a
+separate proposed contract.
+
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python

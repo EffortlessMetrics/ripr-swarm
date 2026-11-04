@@ -381,6 +381,7 @@ mod known_equality_helpers;
 mod loop_walk;
 mod message_pin;
 mod module_value;
+mod range_activation;
 mod test_local_literal;
 mod type_guard;
 mod wrapped_call;

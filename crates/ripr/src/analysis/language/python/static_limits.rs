@@ -344,6 +344,16 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `missing_import_graph`: the changed line calls an imported symbol; the Python preview adapter does not build an import graph or resolve imported implementation semantics.".to_string(),
         });
     }
+    if let Some(limit) = super::range_activation::changed_range_limit(
+        line_text,
+        old_line_text,
+        owner,
+        owner_source,
+        related_candidates,
+        focus,
+    ) {
+        return Some(limit);
+    }
     if contains_lambda_keyword(trimmed) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,

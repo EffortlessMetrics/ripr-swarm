@@ -1,0 +1,11 @@
+[[behavior]]
+id = "RIPR-SPEC-0028"
+name = "changed Python range headers require distinct returned sums for an exact pin"
+spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
+tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_requires_a_differing_iteration_sequence",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_withholds_equal_sums_and_unreadable_shapes",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_does_not_trust_rebound_inputs_or_a_shadowed_builtin",
+]
+code = ["crates/ripr/src/analysis/language/python/range_activation.rs", "crates/ripr/src/analysis/language/python/static_limits.rs"]
+metrics = ["unit_test_pass_rate"]
