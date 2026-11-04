@@ -1282,7 +1282,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // is a different category and is excluded above). Verify also that there is
     // actually a related test with an oracle-eligible file we can use.
     let related_test =
-        crate::output::related_test_miss::strongest_related_test(&finding.related_tests)?;
+        crate::output::related_test_miss::typescript_script_preview_related_test(finding)?;
     let test_file = related_test.file.display().to_string().replace('\\', "/");
     if test_file.is_empty() {
         return None;

@@ -278,9 +278,9 @@ inclusive match head: the `match` keyword through the scrutinee, or the arm
 pattern and guard through `=>`. Separate arm-body lines do not touch that head.
 Token anchors, seam IDs and calibration spans stay unchanged. The coverage
 survives cached facts and classifications. When the change has no ranked seam, pilot says the
-recommendation is elsewhere in the repo, says why no seam on the change ranks
+gap is not on a line you changed, says why no seam on the change ranks
 (pilot withholds its seams as static limitations, they are already gripped,
-intentional or suppressed, the seam limit left seams unanalyzed, the change is
+intentional or suppressed, the pilot limit left spots unchecked, the change is
 in a file pilot's repo-wide ranking leaves out by design (a Cargo build script,
 repository automation under `xtask/`, or a crate source declared outside
 `src`, which only diff analysis covers, also named after a reason drawn from
@@ -610,6 +610,18 @@ then those leftover files are gone and the partial summaries do not present
 them as this run's outputs.
 ```
 
+### Pilot default extension honors total wall budget
+
+```text
+Given the default 30000 ms pilot budget with an automatic extension on the
+same run,
+when analysis still has not finished when the combined budget elapses,
+then ripr cancels promptly and writes the timeout partial summary without
+running for multiples of the stated budget alone,
+and `ripr help pilot` states the total default wall budget including the
+extension and cancel grace.
+```
+
 ### Pilot names languages its Rust scan did not rank
 
 ```text
@@ -692,8 +704,7 @@ body does not mark that match head as changed.
 
 Given a branch whose change touches no ranked seam,
 when a user runs ripr pilot,
-then pilot says the top recommendation is elsewhere in the repo, not part of
-the current change, and names ripr check for the change itself.
+then pilot says the top gap is not on a line you changed, and names ripr check for the change itself.
 
 Given a branch whose changed lines hold only seams pilot withholds as static
 limitations (opaque or an unknown class),
@@ -939,6 +950,9 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/output/pilot/tests.rs::timeout_summary_json_is_partial_and_points_to_retry`
 - `crates/ripr/src/output/pilot/tests/timeout_retry.rs::timeout_json_retry_preserves_format_and_unknown_analysis`
 - `crates/ripr/tests/cli_smoke/pilot_timeout_retry.rs::timeout_json_retry_replays_as_json_from_a_foreign_directory`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_default_extension_wall_clock_stays_within_total_budget`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::pilot_extension_notice_fires_at_first_phase_boundary`
+- `crates/ripr/tests/cli_smoke/pilot_wall_budget.rs::many_function_pilot_hard_timeout_exits_within_cancel_grace`
 - `crates/ripr/src/output/pilot/tests.rs::timeout_summary_md_explains_partial_status_and_retry_command`
 - `crates/ripr/tests/cli_smoke.rs::pilot_accepts_python_project_without_ripr_config`
 - `crates/ripr/tests/cli_smoke.rs::pilot_projects_python_repair_card_for_git_diff`

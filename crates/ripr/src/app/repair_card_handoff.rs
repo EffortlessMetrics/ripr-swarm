@@ -24,7 +24,8 @@ use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::RepoSeam;
 use crate::analysis::repair_route::{
-    RepairRouteReadiness, RepairTargetSelection, repair_packet_eligibility,
+    RepairRouteReadiness, RepairTargetSelection, collection_contents_check_suggestion,
+    repair_packet_eligibility,
 };
 use crate::config::RiprConfig;
 use crate::domain::{
@@ -464,6 +465,10 @@ pub(crate) fn assemble_repair_card(
     // the shared seam producer. The card reads that same producer so a repair
     // that prints an assertion shape never also says there is none.
     let seam_assertion = suggested_assertion_for_classified_seam(entry);
+    // #12711: a route that proposes a pushed collection's contents check
+    // names that check, the one the stub writes, instead of "none".
+    let seam_assertion =
+        seam_assertion.or_else(|| collection_contents_check_suggestion(entry, readiness));
     let mut instruction = facts
         .witness
         .map(FixInstructionSummary::from_witness)
@@ -1534,6 +1539,34 @@ mod tests {
     }
 
     #[test]
+    fn card_names_the_contents_check_only_for_a_ready_headline_push() -> Result<(), String> {
+        // #12711: the card (the repair brief and hover read it) suggests the
+        // contents check for a ready push, and not once the class parks it.
+        const SUGGESTION: &str = "an exact check of the full contents of `buf`";
+        for (class, wanted) in [
+            (SeamGripClass::WeaklyGripped, true),
+            (SeamGripClass::Suppressed, false),
+            (SeamGripClass::Intentional, false),
+            (SeamGripClass::StronglyGripped, false),
+        ] {
+            let entry = crate::analysis::repair_route::marked_push_seam_for_tests(class);
+            let packet = packet_for(&entry);
+            let card = assemble_repair_card(&facts_for(&entry, &packet))?;
+            let named = card
+                .assertion_goal_detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains(SUGGESTION));
+            if named != wanted {
+                return Err(format!(
+                    "{class:?}: card names the contents check {named}, want {wanted}: {:?}",
+                    card.assertion_goal_detail
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn card_assertion_matches_the_seam_producer_when_the_witness_has_none() -> Result<(), String> {
         let entry = own_file_inline_entry();
         let packet = packet_for(&entry);
@@ -1819,7 +1852,7 @@ mod tests {
             },
             confidence: 0.5,
             evidence: Vec::new(),
-            missing: vec!["Missing discriminator value: amount == discount_threshold".to_string()],
+            missing: vec!["Missing check value: amount == discount_threshold".to_string()],
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),
