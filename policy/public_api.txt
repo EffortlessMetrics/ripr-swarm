@@ -30,6 +30,9 @@
 # cargo xtask repair-card-usability-report, cargo xtask check-public-api.
 
 pub const ripr::app::repair_card_usability::REPAIR_CARD_USABILITY_SCHEMA_VERSION
+pub const ripr::domain::guarded_edit::EXACT_TEST_EDIT_PRECONDITION_SCHEMA_VERSION
+pub const ripr::domain::guarded_edit::GUARDED_EDIT_CLAIM_BOUNDARY
+pub const ripr::domain::guarded_edit::GUARDED_EDIT_NON_CLAIMS
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_INLINE_DETAIL_BYTES
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_DOCUMENT
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE
@@ -78,6 +81,9 @@ pub enum ripr::lsp::diagnostic_budget::OmittedDiagnosticReason
 # docs/EXIT_CODES.md; covered_by: cargo test -p ripr --lib cli,
 # cargo xtask check-public-api.
 pub enum ripr::cli::CommandError
+pub enum ripr::domain::guarded_edit::EditInstructionIdParseError
+pub enum ripr::domain::guarded_edit::GuardedEditUnavailableReason
+pub enum ripr::domain::guarded_edit::GuardedEditValidationStatus
 pub fn ripr::analysis::run_analysis
 pub fn ripr::analysis::run_repo_analysis
 pub fn ripr::app::pr_evidence::reject_pr_evidence_error_packet
@@ -87,6 +93,12 @@ pub fn ripr::app::render_check
 pub fn ripr::cli::run
 # Explicit once-per-process standalone signal ownership (#7618); ordinary run preserves caller policy.
 pub fn ripr::cli::run_with_interrupt_handling
+pub fn ripr::domain::guarded_edit::client_supports_guarded_edit
+pub fn ripr::domain::guarded_edit::is_recognized_rust_test_source_file
+pub fn ripr::domain::guarded_edit::sha256_digest
+pub fn ripr::domain::guarded_edit::try_build_exact_test_edit_precondition
+pub fn ripr::domain::guarded_edit::verify_document_version
+pub fn ripr::domain::guarded_edit::verify_source_text
 # Global verbose stripping owner (#5009): owner cli; reason: the binary
 # startup route strips the global flag before MCP routing and must call the
 # same single-pass extraction as `ripr::cli::run`, so the owner is
@@ -141,6 +153,7 @@ pub mod ripr::cli
 pub mod ripr::config
 pub mod ripr::domain
 pub mod ripr::domain::context_packet
+pub mod ripr::domain::guarded_edit
 pub mod ripr::domain::language_availability
 pub mod ripr::lsp
 pub mod ripr::lsp::diagnostic_budget
@@ -168,6 +181,13 @@ pub struct ripr::app::CheckOutput
 pub struct ripr::domain::context_packet::ContextPacket
 pub struct ripr::domain::context_packet::ContextPacketProbe
 pub struct ripr::domain::context_packet::ContextPacketRipr
+pub struct ripr::domain::guarded_edit::EditInstructionId
+pub struct ripr::domain::guarded_edit::ExactTestEditPrecondition
+pub struct ripr::domain::guarded_edit::GuardedEditBuildInput
+pub struct ripr::domain::guarded_edit::GuardedEditIdentity
+pub struct ripr::domain::guarded_edit::GuardedEditUnavailable
+pub struct ripr::domain::guarded_edit::NegotiatedSourceRange
+pub struct ripr::domain::guarded_edit::RequiredClientCapability
 pub struct ripr::domain::language_availability::LanguageAvailabilityInput
 pub struct ripr::domain::language_availability::LanguageAvailabilityReport
 pub struct ripr::lsp::diagnostic_budget::DiagnosticBudget
@@ -323,6 +343,8 @@ pub use ripr::domain::CandidateRelation
 pub use ripr::domain::CanonicalDelta
 pub use ripr::domain::CanonicalEvidenceState
 pub use ripr::domain::CanonicalNextActionV1
+pub use ripr::domain::CanonicalItemId
+pub use ripr::domain::CanonicalItemParseError
 pub use ripr::domain::CardCurrentnessGoal
 pub use ripr::domain::CommandAuthorityBoundary
 pub use ripr::domain::CommandCostClass
@@ -352,6 +374,7 @@ pub use ripr::domain::ExpectedResultParser
 pub use ripr::domain::ExposureClass
 pub use ripr::domain::Finding
 pub use ripr::domain::FindingCanonicalGap
+pub use ripr::domain::FixInstructionIdentityContext
 pub use ripr::domain::FixInstructionState
 pub use ripr::domain::FixInstructionSummary
 pub use ripr::domain::FlowSinkFact
@@ -368,6 +391,10 @@ pub use ripr::domain::GitObjectId
 pub use ripr::domain::GitTreeish
 pub use ripr::domain::IDENTITY_REGISTRY_JSON_PATH
 pub use ripr::domain::IDENTITY_REGISTRY_MARKDOWN_PATH
+pub use ripr::domain::InstructionIdentityParseError
+pub use ripr::domain::InstructionInstanceId
+pub use ripr::domain::InstructionSemanticId
+pub use ripr::domain::InstructionSnapshotCurrentness
 pub use ripr::domain::LanguageFileCount
 pub use ripr::domain::LanguageId
 pub use ripr::domain::LanguageStatus
@@ -435,6 +462,9 @@ pub use ripr::domain::StdinPolicy
 pub use ripr::domain::StopReason
 pub use ripr::domain::Summary
 pub use ripr::domain::SymbolId
+pub use ripr::domain::TestCandidateNextRoute
+pub use ripr::domain::TestCandidateRow
+pub use ripr::domain::TestCandidateSet
 pub use ripr::domain::TestEvidenceEntry
 pub use ripr::domain::TestEvidenceSummary
 pub use ripr::domain::VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION

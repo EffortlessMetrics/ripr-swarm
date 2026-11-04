@@ -16,6 +16,12 @@ const TEST_COVERED_BY_LIST_TIMEOUT: Duration = Duration::from_mins(5);
 /// almost all of its wall clock building; that must not be charged against
 /// the list cap or reported as an unresolved `covered_by` pointer (#4141).
 const TEST_COVERED_BY_BUILD_TIMEOUT: Duration = Duration::from_mins(30);
+
+/// The longest single Cargo build `check_file_policy` itself allows. A caller
+/// that bounds the whole check with a shorter deadline cuts the check off
+/// inside its own documented budget (#12510).
+#[cfg(test)]
+pub(crate) const FILE_POLICY_COVERED_BY_BUILD_BUDGET: Duration = TEST_COVERED_BY_BUILD_TIMEOUT;
 const COVERED_BY_INSTRUMENT_PREFIX: &str = "covered_by_instrument_timeout:";
 /// Infrastructure state: the spawn timed out while Cargo was blocked on a
 /// build/package lock held by another process (#8793). Still an instrument
@@ -245,6 +251,37 @@ fn validate_test_covered_by(
     validate_test_covered_by_recorded(path, commands, &mut Vec::new())
 }
 
+/// Announce a Cargo child on stderr before and after it runs. A caller that
+/// outlives its own deadline (the isolated policy-facade test, #12510) carries
+/// this stream in its diagnostic, so a stall names the Cargo command it was
+/// inside and how long earlier ones took instead of only the phase.
+fn announce_cargo_child<T>(label: &str, run: impl FnOnce() -> T) -> T {
+    announce_cargo_child_to(&mut std::io::stderr(), label, run)
+}
+
+fn announce_cargo_child_to<T>(
+    out: &mut impl std::io::Write,
+    label: &str,
+    run: impl FnOnce() -> T,
+) -> T {
+    // Diagnostics only: a failed stderr write must not change the check.
+    let _ = writeln!(out, "policy cargo child start: {label}");
+    let started = std::time::Instant::now();
+    let result = run();
+    let _ = writeln!(
+        out,
+        "policy cargo child done after {}s: {label}",
+        started.elapsed().as_secs()
+    );
+    result
+}
+
+/// Names the exact Cargo invocation, so two stalled selectors with the same
+/// description stay distinguishable.
+fn cargo_child_label(description: &str, args: &[String]) -> String {
+    format!("{description}: cargo {}", args.join(" "))
+}
+
 fn validate_test_covered_by_recorded(
     path: &str,
     commands: &[FilePolicyTestCommand],
@@ -253,19 +290,27 @@ fn validate_test_covered_by_recorded(
     let host = FilePolicyHost::current()?;
     // Cargo serializes builds on the target-dir lock, so the per-selector
     // preparations below compile one package at a time. One combined build
-    // lets Cargo schedule them together; it only pre-fills the cache.
-    if let Some(args) = combined_preparation_args(commands, host) {
-        let captured = capture_output_with_timeout(
-            "cargo",
-            &args,
-            &[],
-            TEST_COVERED_BY_BUILD_TIMEOUT,
-            "test-valued covered_by combined build",
+    // per package set lets Cargo schedule each set's targets together; it
+    // only pre-fills the cache.
+    for args in combined_preparation_builds(commands, host) {
+        let captured = announce_cargo_child(
+            &cargo_child_label("test-valued covered_by combined build", &args),
+            || {
+                capture_output_with_timeout(
+                    "cargo",
+                    &args,
+                    &[],
+                    TEST_COVERED_BY_BUILD_TIMEOUT,
+                    "test-valued covered_by combined build",
+                )
+            },
         );
         diagnostics.push(CommandDiagnostic::captured("cargo", &args, &captured));
     }
     validate_test_covered_by_recorded_with(path, commands, host, diagnostics, |spawn| {
-        capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
+        announce_cargo_child(&cargo_child_label(spawn.description, &spawn.args), || {
+            capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
+        })
     })
 }
 
@@ -313,19 +358,31 @@ fn validate_test_covered_by_recorded_with(
     })
 }
 
-/// One `cargo test --no-run` covering every applicable selector whose build
-/// is only `-p`, `--bin`, `--test` and lock flags. Selectors with any other
-/// shape are left to their own preparation. This is a cache fill, not
-/// evidence: a failure here is ignored and each selector still builds,
-/// lists and fails under its own spawn.
-fn combined_preparation_args(
+/// One `cargo test --no-run` per package set, each covering every applicable
+/// selector of that set whose build is only `-p`, `--bin`, `--test` and lock
+/// flags. Selectors with any other shape are left to their own preparation. A
+/// set with a single selector is also left to its own preparation. This is a
+/// cache fill, not evidence: a failure here is ignored and each selector still
+/// builds, lists and fails under its own spawn.
+///
+/// The sets are built separately on purpose. `-p ripr` in test mode adds
+/// ripr's dev-dependencies, which changes the features of crates `xtask`
+/// also uses (`tokio`, `libc`, `getrandom`). On Windows that made Cargo
+/// recompile the `xtask` binary, about 95 s, every time the build switched
+/// between `-p xtask` and `-p ripr -p xtask` (#12245). Keeping `xtask`
+/// selectors out of any build that selects `ripr` leaves them with the same
+/// build that `cargo xtask` made.
+fn combined_preparation_builds(
     commands: &[FilePolicyTestCommand],
     host: FilePolicyHost,
-) -> Option<Vec<String>> {
-    let mut packages = BTreeSet::new();
-    let mut bins = BTreeSet::new();
-    let mut tests = BTreeSet::new();
-    let mut merged = 0usize;
+) -> Vec<Vec<String>> {
+    #[derive(Default)]
+    struct Group {
+        bins: BTreeSet<String>,
+        tests: BTreeSet<String>,
+        merged: usize,
+    }
+    let mut groups = BTreeMap::<BTreeSet<String>, Group>::new();
     for selector in commands {
         if selector.host.is_some_and(|declared| declared != host)
             || !is_cargo_test_command(&selector.command)
@@ -361,23 +418,30 @@ fn combined_preparation_args(
             }
         }
         if mergeable && !command_packages.is_empty() {
-            packages.extend(command_packages);
-            bins.extend(command_bins);
-            tests.extend(command_tests);
-            merged += 1;
+            let group = groups.entry(command_packages).or_default();
+            group.bins.extend(command_bins);
+            group.tests.extend(command_tests);
+            group.merged += 1;
         }
     }
-    if merged < 2 {
-        return None;
-    }
-    let mut args = vec!["test".to_string(), "--no-run".to_string()];
-    for (flag, values) in [("-p", packages), ("--bin", bins), ("--test", tests)] {
-        for value in values {
-            args.push(flag.to_string());
-            args.push(value);
-        }
-    }
-    Some(args)
+    groups
+        .into_iter()
+        .filter(|(_, group)| group.merged >= 2)
+        .map(|(packages, group)| {
+            let mut args = vec!["test".to_string(), "--no-run".to_string()];
+            for package in packages {
+                args.push("-p".to_string());
+                args.push(package);
+            }
+            for (flag, values) in [("--bin", group.bins), ("--test", group.tests)] {
+                for value in values {
+                    args.push(flag.to_string());
+                    args.push(value);
+                }
+            }
+            args
+        })
+        .collect()
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -651,6 +715,31 @@ fn validate_test_covered_by_with(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cargo_child_announcements_name_start_finish_and_the_exact_selector() {
+        let args = |name: &str| ["test", "--test", name].map(String::from).to_vec();
+        let a = super::cargo_child_label("test-valued covered_by enumeration", &args("mcp_stdio"));
+        let b = super::cargo_child_label("test-valued covered_by enumeration", &args("causal"));
+        assert_ne!(a, b, "same description must still differ by selector");
+        let mut out = Vec::new();
+        let value = super::announce_cargo_child_to(&mut out, &a, || 7);
+        assert_eq!(value, 7);
+        let text = String::from_utf8_lossy(&out).into_owned();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        assert_eq!(
+            lines[0],
+            "policy cargo child start: test-valued covered_by enumeration: cargo test --test mcp_stdio"
+        );
+        assert!(
+            lines[1].starts_with("policy cargo child done after ")
+                && lines[1].ends_with(
+                    "s: test-valued covered_by enumeration: cargo test --test mcp_stdio"
+                ),
+            "{text}"
+        );
+    }
+
     use std::time::Duration;
 
     use super::COVERED_BY_INSTRUMENT_PREFIX;
@@ -697,7 +786,7 @@ mod tests {
     }
 
     #[test]
-    fn covered_by_combined_preparation_merges_only_plain_build_shapes() {
+    fn covered_by_combined_preparation_builds_each_package_set_apart() {
         let commands = [
             common(1, "cargo test -p xtask --bin xtask alpha"),
             common(2, "cargo test -p ripr --locked --test mcp_stdio"),
@@ -705,29 +794,44 @@ mod tests {
             common(4, "cargo test --workspace"),
             common(5, "cargo test -p ripr --doc"),
             common(6, "cargo test -p windows_only --test w"),
+            common(7, "cargo test -p xtask --test policy_all"),
         ];
         let mut windows = commands.to_vec();
         windows[5].host = Some(FilePolicyHost::Windows);
+        // `xtask` selectors never share a build with `ripr`: selecting
+        // `ripr` in test mode adds its dev-dependencies' features and makes
+        // Cargo recompile the `xtask` binary on Windows (#12245).
         assert_eq!(
-            super::combined_preparation_args(&windows, FilePolicyHost::Unix),
-            Some(argv(
-                "test --no-run -p ripr -p xtask --bin xtask --test causal_delta_fixture --test mcp_stdio"
-            ))
+            super::combined_preparation_builds(&windows, FilePolicyHost::Unix),
+            vec![
+                argv("test --no-run -p ripr --test causal_delta_fixture --test mcp_stdio"),
+                argv("test --no-run -p xtask --bin xtask --test policy_all"),
+            ]
         );
-        assert_eq!(
-            super::combined_preparation_args(&commands[..1], FilePolicyHost::Unix),
-            None,
+        assert!(
+            super::combined_preparation_builds(&commands[..1], FilePolicyHost::Unix).is_empty(),
             "a single selector needs no combined build"
         );
-        assert_eq!(
-            super::combined_preparation_args(
+        assert!(
+            super::combined_preparation_builds(
+                &[
+                    common(1, "cargo test -p xtask --bin xtask alpha"),
+                    common(2, "cargo test -p ripr --test mcp_stdio"),
+                ],
+                FilePolicyHost::Unix,
+            )
+            .is_empty(),
+            "one selector per package set needs no combined build"
+        );
+        assert!(
+            super::combined_preparation_builds(
                 &[
                     common(1, "cargo test --bin xtask alpha"),
                     common(2, "cargo test --test mcp_stdio"),
                 ],
                 FilePolicyHost::Unix,
-            ),
-            None,
+            )
+            .is_empty(),
             "selectors without -p cannot be merged"
         );
     }

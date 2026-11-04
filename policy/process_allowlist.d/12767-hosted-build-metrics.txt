@@ -1,0 +1,2 @@
+xtask/tests/rust_gate_workflow_contract.rs|Command::new|1|hosted-build-metrics-tests|#12767: Linux-only source replay runs the literal serialized-build Bash under GNU timeout with owned Cargo/timer/free/sleep/awk/Git stand-ins. Five-second deadline, private scratch, no compilation, network, credentials or production spawn; stdout/stderr are captured and the child is reaped before scratch cleanup.
+xtask/tests/rust_gate_workflow_contract.rs|use std::process::Command|1|hosted-build-metrics-tests|#12767: import for the bounded source replay above.

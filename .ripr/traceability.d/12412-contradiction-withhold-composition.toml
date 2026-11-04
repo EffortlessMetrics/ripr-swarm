@@ -1,0 +1,14 @@
+# Registers the #12412 contradiction-withholding composition controls under
+# RIPR-SPEC-0108: the diff-surface unit test for the credited-reach gate and
+# the three honesty-corpus crate fixtures (lone #10980/#11012 control,
+# discriminating composed control, mates-only no-over-withhold control).
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::file_mate_composition_cannot_restore_infection_credit_beside_a_withheld_test",
+]
+fixtures = [
+  "fixtures/rust_contradiction_composed_file_mates",
+  "fixtures/rust_contradiction_lone_test",
+  "fixtures/rust_contradiction_mates_only",
+]

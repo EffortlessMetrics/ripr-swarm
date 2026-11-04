@@ -40,10 +40,10 @@ Machine-readable schemas live under `schemas/`:
 | [`schemas/ripr/rust-repair-trust-corpus.schema.json`](../../schemas/ripr/rust-repair-trust-corpus.schema.json) | Authorized Rust repair attempt corpus of record. |
 | [`schemas/ripr/ripr-intervention-study.schema.json`](../../schemas/ripr/ripr-intervention-study.schema.json) | Preregistration-only matched RIPR intervention-study protocol. |
 | [`schemas/ripr/repair-attempt.schema.json`](../../schemas/ripr/repair-attempt.schema.json) | Durable `ripr agent repair` attempt manifest and its terminal edit-cage verdict. |
-| [`schemas/ripr/ripr-agent-capability.schema.json`](../../schemas/ripr/ripr-agent-capability.schema.json) | Reserved `riprAgent` capability advertisement; no live producer. |
-| [`schemas/ripr/ripr-agent-request.schema.json`](../../schemas/ripr/ripr-agent-request.schema.json) | Reserved `riprAgent` request envelope; no live producer. |
-| [`schemas/ripr/ripr-agent-success.schema.json`](../../schemas/ripr/ripr-agent-success.schema.json) | Reserved `riprAgent` success envelope; no live producer. |
-| [`schemas/ripr/ripr-agent-error.schema.json`](../../schemas/ripr/ripr-agent-error.schema.json) | Reserved `riprAgent` error envelope; no live producer. |
+| [`schemas/ripr/ripr-agent-capability.schema.json`](../../schemas/ripr/ripr-agent-capability.schema.json) | experimental/private riprAgent capability; live VS Code–bounded producer only. |
+| [`schemas/ripr/ripr-agent-request.schema.json`](../../schemas/ripr/ripr-agent-request.schema.json) | experimental/private riprAgent request envelope; fixture vocabulary only. |
+| [`schemas/ripr/ripr-agent-success.schema.json`](../../schemas/ripr/ripr-agent-success.schema.json) | experimental/private riprAgent success envelope; not emitted by the live handler. |
+| [`schemas/ripr/ripr-agent-error.schema.json`](../../schemas/ripr/ripr-agent-error.schema.json) | experimental/private riprAgent error envelope; not emitted by the live handler. |
 | [`schemas/ripr/executed-control.schema.json`](../../schemas/ripr/executed-control.schema.json) | Executed-control obligation, result, and packet vocabulary. |
 
 The schema set and valid fixture packets are checked by:
