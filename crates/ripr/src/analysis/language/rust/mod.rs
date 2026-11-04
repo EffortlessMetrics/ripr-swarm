@@ -3052,7 +3052,17 @@ impl RustAdapter {
                 // MCP readiness refusal stays `static_limitation`; a finding
                 // without a derivable discriminator keeps the typed refusal
                 // too — no evidence is manufactured here.
-                if finding.static_limit_kind.is_none() {
+                // #11545: verified generator stimulus is visible uncertainty,
+                // not a canonical product-test gap. Preserve the classifier's
+                // refusal through the public pipeline using producer identity.
+                if finding.static_limit_kind.is_none()
+                    && !(probe.after.is_some()
+                        && crate::analysis::facts::is_generator_subject(
+                            &index,
+                            &changed.path,
+                            probe.location.line,
+                        ))
+                {
                     finding.canonical_gap = probe_shape::canonical_rust_gap_for(
                         &changed.path,
                         probe.owner.as_ref(),
@@ -3991,6 +4001,56 @@ mod tests {
             "diff and repo producers must derive the same identity for the same seam"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn repo_omits_generator_stimulus_but_keeps_product_gap() -> Result<(), String> {
+        let root = temp_root("generator-repo-gap")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck='1'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "use quickcheck::Arbitrary;\nstruct Pair(u8);\nimpl quickcheck::Arbitrary for Pair {\n    fn arbitrary(g: &mut quickcheck::Gen) -> Self {\n        Pair(u8::arbitrary(g).wrapping_add(2))\n    }\n}\npub fn product(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
+        )?;
+        let result = RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+        assert!(
+            result.findings.iter().all(|f| f.probe.location.line != 5),
+            "generator evidence is not a repo-wide production subject: {:?}",
+            result.findings
+        );
+        let product: Vec<_> = result
+            .findings
+            .iter()
+            .filter(|f| f.probe.location.line == 9)
+            .collect();
+        assert!(
+            !product.is_empty(),
+            "product subject must be seeded: {:?}",
+            result.findings
+        );
+        assert!(
+            product.iter().any(|f| f.canonical_gap.is_some()),
+            "ordinary product retains a canonical gap: {product:?}"
+        );
+        // The same source must be probeable when provider identity is not verified.
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck={version='1',optional=true}\n",
+        )?;
+        let unverified =
+            RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+        assert!(
+            unverified
+                .findings
+                .iter()
+                .any(|f| f.probe.location.line == 5),
+            "unverified generator expression must be probeable: {:?}",
+            unverified.findings
+        );
+        fs::remove_dir_all(root).map_err(|error| error.to_string())?;
         Ok(())
     }
 

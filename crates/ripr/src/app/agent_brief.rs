@@ -827,10 +827,13 @@ fn relation_confidence_priority(confidence: RelationConfidence) -> u8 {
 /// and the four `*_unknown` classes) names evidence the analyzer could not
 /// establish, so selecting it would send the agent to repair a gap that may
 /// not exist; pilot withholds the same classes from its ranking (#5497,
-/// #6775). Omitted seams are named in warnings, never silently dropped
-/// (`AgentBriefOmission`).
-fn is_agent_actionable(class: SeamGripClass) -> bool {
-    class.is_headline_eligible() && !class.is_static_limitation()
+/// #6775). Gap-class seams that [`is_static_limited`] marks as static
+/// limitations are omitted for the same reason. Omitted seams are named in
+/// warnings, never silently dropped (`AgentBriefOmission`).
+fn is_agent_actionable(entry: &ClassifiedSeam) -> bool {
+    entry.class.is_headline_eligible()
+        && !entry.class.is_static_limitation()
+        && !crate::output::evidence_record::is_static_limited(entry)
 }
 
 /// Whether an explicitly named seam renders an agent result (packet,
@@ -847,6 +850,9 @@ fn is_agent_result_visible(class: SeamGripClass) -> bool {
 enum AgentBriefOmission {
     ConfiguredOff(SeamGripClass),
     NotActionable(SeamGripClass),
+    /// A gap-class seam whose evidence stages are opaque or unknown
+    /// ([`is_static_limited`]); the class alone would read as a repairable gap.
+    EvidenceLimited(SeamGripClass),
 }
 
 impl AgentBriefOmission {
@@ -857,7 +863,13 @@ impl AgentBriefOmission {
         ) {
             return Some(Self::ConfiguredOff(entry.class));
         }
-        if !is_agent_actionable(entry.class) {
+        if !is_agent_actionable(entry) {
+            if entry.class.is_headline_eligible()
+                && !entry.class.is_static_limitation()
+                && crate::output::evidence_record::is_static_limited(entry)
+            {
+                return Some(Self::EvidenceLimited(entry.class));
+            }
             return Some(Self::NotActionable(entry.class));
         }
         None
@@ -872,6 +884,10 @@ impl AgentBriefOmission {
             ),
             Self::NotActionable(class) => format!(
                 "is {} and is not included in agent brief results",
+                class.as_str()
+            ),
+            Self::EvidenceLimited(class) => format!(
+                "is {} but its evidence is opaque or unknown at a stage, so it is a static limitation and is not included in agent brief results",
                 class.as_str()
             ),
         }
@@ -892,6 +908,10 @@ impl AgentBriefOmission {
             ),
             Self::NotActionable(class) => format!(
                 "{count} more matching {noun} {verb} {} and not included in agent brief results",
+                class.as_str()
+            ),
+            Self::EvidenceLimited(class) => format!(
+                "{count} more matching {noun} {verb} {} with opaque or unknown evidence (static limitations) and not included in agent brief results",
                 class.as_str()
             ),
         }
@@ -2331,5 +2351,38 @@ weakly_gripped = "off"
                 "{class:?} omission must be named honestly"
             );
         }
+    }
+
+    #[test]
+    fn agent_brief_omits_gap_class_seams_when_is_static_limited_marks_them() {
+        let mut limited = classified(
+            "src/pricing.rs",
+            88,
+            "pricing::discounted_total",
+            "amount >= discount_threshold",
+            SeamGripClass::WeaklyGripped,
+        );
+        limited.evidence.propagate = stage(StageState::Unknown);
+        let gap = classified(
+            "src/pricing.rs",
+            101,
+            "pricing::taxed_total",
+            "amount >= tax_threshold",
+            SeamGripClass::Ungripped,
+        );
+        let seams = vec![limited, gap];
+        let selection = select(
+            &seams,
+            &AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/pricing.rs")]),
+            3,
+        );
+        assert_eq!(selection.top_seams.len(), 1);
+        assert_eq!(selection.top_seams[0].seam.class, SeamGripClass::Ungripped);
+        assert!(
+            selection.warnings.iter().any(|warning| warning
+                .contains("is weakly_gripped but its evidence is opaque or unknown at a stage")),
+            "{:?}",
+            selection.warnings
+        );
     }
 }
