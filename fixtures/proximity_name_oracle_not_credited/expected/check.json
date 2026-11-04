@@ -46,7 +46,7 @@
         {"kind":"error_variant","text":"Result::Err(ParseError::MalformedSource)","line":9}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse: rejects_at_sign"],
-      "missing": ["Missing discriminator value: ParseError::MalformedSource", "No exact error variant discriminator was detected"],
+      "missing": ["Missing check value: ParseError::MalformedSource", "No exact error variant discriminator was detected"],
       "assertion_texts": {
         "5": "assert!(try_parse(\"@bad\").is_err());",
         "6": "assert_eq!(variant, ParseError::MalformedSource);"
@@ -185,7 +185,7 @@
         {"kind":"error_variant","text":"Result::Err(ParseError::MalformedSource)","line":9}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(ParseError::MalformedSource)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach try_parse: rejects_at_sign"],
-      "missing": ["Missing discriminator value: ParseError::MalformedSource", "No strong discriminator was detected"],
+      "missing": ["Missing check value: ParseError::MalformedSource", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "assert!(try_parse(\"@bad\").is_err());",
         "6": "assert_eq!(variant, ParseError::MalformedSource);"

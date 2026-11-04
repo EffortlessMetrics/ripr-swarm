@@ -180,3 +180,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — type_header_bound_not_field (15)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless type_header_bound_not_field --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

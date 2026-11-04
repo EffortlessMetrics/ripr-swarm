@@ -19,6 +19,9 @@
 //!   serialized `params` value as one opaque blob; any larger payload is
 //!   rejected before handler work begins. Additional riprAgent handlers must
 //!   register their own typed bounds here before they land.
+//! - Workspace-folder membership and disclosure: bounded in
+//!   `lsp/workspace_folder_bounds.rs` (#4483, RIPR-SPEC-0139); admission
+//!   runs in `WorkspaceFolderSet` before any mutation.
 //! - `textDocument/didOpen` / `didSave` document text: bounded by the
 //!   transport message cap, which was sized for exactly this class.
 //!

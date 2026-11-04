@@ -295,3 +295,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — human_full_shared_parse_port (23)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -129,7 +129,10 @@ fn top_seam_json(
         "line": seam.display_line(),
         "expression": seam.expression(),
         "grip_class": entry.class.as_str(),
-        "severity": config.severity().for_seam(entry.class).as_str(),
+        "severity": config
+            .severity_for_file(seam.file())
+            .for_seam(entry.class)
+            .as_str(),
         "headline_eligible": entry.class.is_headline_eligible(),
         "why_now": {
             "reason": selected.why_now.reason.as_str(),
@@ -141,7 +144,10 @@ fn top_seam_json(
             "activate": evidence.activate.state.as_str(),
             "propagate": evidence.propagate.state.as_str(),
             "observe": evidence.observe.state.as_str(),
-            "discriminate": evidence.discriminate.state.as_str(),
+            "discriminate": crate::output::gap_vocabulary::seam_discriminate_evidence_token(
+                entry.class,
+                &evidence.discriminate.state,
+            ),
         },
         "recommended_test": {
             "name": recommended.name,

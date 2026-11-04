@@ -538,7 +538,13 @@ mod tests {
         const CASE: &str = "isolated_child_signal_before_checkpoint_is_rejected";
         if in_child(CASE)? {
             mark(CASE, "started");
-            signal_hook::low_level::raise(signal_hook::consts::SIGINT)
+            // A bare `raise` is a no-op when the test process was started with
+            // SIGINT ignored or blocked (`nohup`, a detached background job,
+            // some CI and IDE runners), because both are inherited through
+            // spawn and exec (#12875). The default-handler emulation restores
+            // the default action, unblocks the signal and then raises it, so
+            // the child dies by SIGINT whatever it inherited.
+            signal_hook::low_level::emulate_default_handler(signal_hook::consts::SIGINT)
                 .map_err(|error| error.to_string())?;
             return Err("unregistered SIGINT unexpectedly returned".to_string());
         }

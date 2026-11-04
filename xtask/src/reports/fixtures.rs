@@ -143,6 +143,15 @@ enum GoldenCheckRun {
 }
 
 fn golden_check_run() -> Result<GoldenCheckRun, String> {
+    if let Err(err) = preparation::ensure_ready() {
+        let violations = vec![err];
+        let provenance = golden_drift_provenance();
+        let message = goldens_check_failure_message(&[], &violations, &provenance);
+        return Ok(GoldenCheckRun::Failed {
+            message,
+            violations,
+        });
+    }
     let run_set = collect_golden_runs()?;
     // #8614: warn (do not fail) when a fixture input's working-tree endings
     // differ from its normalized form; `goldens bless` refuses on the same
@@ -721,6 +730,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                 name,
                 "active-goal-authority-audit"
                     | "actionable-gap-outcomes-corpus"
+                    | "admission_incident_route"
                     | "blind_journey_contract"
                     | "cache-payload-tamper-recovery"
                     | "blind_journey_execute"
@@ -732,6 +742,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "cross-language-oracle-graph-corpus"
                     | "cross-language-edge-registry-corpus"
                     | "adapter-substrate-qualification-corpus"
+                    | "dotnet-evidence-contract-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
                     | "editor_first_pr_bridge"
@@ -748,8 +759,11 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "issue_lifecycle_contract_plan"
                     | "issue_lifecycle_intake"
                     | "issue_lifecycle_real_rows"
+                    | "incomplete_diff_corpus"
                     | "github_unanalyzed_states"
                     | "orchestration_attempt_receipts"
+                    | "packaged_repair_parity"
+                    | "packaged-repair-parity"
                     | "perl_lsp_facts_exporter"
                     | "perl-real-repo-evals"
                     | "perl_packet_contract_migration"
@@ -758,6 +772,8 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "python-judged-pr-panel"
                     | "python-real-repo-evals"
                     | "real-repair-attempts"
+                    | "readiness-snapshot"
+                    | "repair_funnel"
                     | "rust-verdict-corpus"
                     | "typescript-verdict-corpus"
                     | "python-verdict-corpus"
@@ -783,6 +799,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
                     | "user-surface-projection-alignment"
+                    | "verification_run_snapshot_binding"
             )
         })
 }
@@ -1075,9 +1092,7 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
             normalize_path(path)
         ));
     }
-    if name == preparation::FIXTURE {
-        preparation::ensure_ready()?;
-    }
+    preparation::ensure_ready()?;
 
     let actual_dir = Path::new("target")
         .join("ripr")
@@ -3277,14 +3292,14 @@ mod tests {
 
     #[test]
     fn precommit_goldens_treat_only_preparation_failures_as_an_environment_gap() {
-        let gap = "fixture dependency preparation failed for owner_return_pin_fallible_literal\nenvironment: X\nerror".to_string();
+        let gap = "fixture dependency preparation failed for locked owner-return golden fixtures\nenvironment: X\nerror".to_string();
         let drift = "drift for fixture `rust_map_overwrite_count` [human.txt]".to_string();
         let other = "fixture contract violation".to_string();
 
         assert_eq!(
             super::classify_precommit_goldens(std::slice::from_ref(&gap)),
             Some(super::PrecommitGoldens::EnvironmentGap(vec![
-                "fixture dependency preparation failed for owner_return_pin_fallible_literal"
+                "fixture dependency preparation failed for locked owner-return golden fixtures"
                     .to_string()
             ]))
         );
@@ -4492,9 +4507,9 @@ mod tests {
         let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
         let untied_list = transitional::NO_SEAM_UNTIED_SURFACES;
         let gripped_list = transitional::NO_SEAM_GRIPPED_SURFACES;
-        if untied_list.len() != 44 || gripped_list.len() != 92 {
+        if untied_list.len() != 44 || gripped_list.len() != 94 {
             return Err(format!(
-                "expected 44 untied and 92 gripped surfaces, got {} and {}",
+                "expected 44 untied and 94 gripped surfaces, got {} and {}",
                 untied_list.len(),
                 gripped_list.len()
             ));
