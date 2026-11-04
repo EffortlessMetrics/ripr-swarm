@@ -442,6 +442,7 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
     }
     if let Some(intent) = selected.get("focused_proof_intent").and_then(Value::as_str) {
         out.push_str(&format!("- Focused proof intent: {intent}\n"));
+        crate::output::placeholder_assertion::push_fill_in_note(out, "  ", intent);
     }
     let labels = proof_path_labels(selected);
     if let Some(command) = string_path(selected, &["repair_command"]) {
@@ -534,6 +535,7 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         }
         if let Some(assertion) = repair.get("suggested_assertion").and_then(Value::as_str) {
             out.push_str(&format!("- Assertion: `{assertion}`\n"));
+            crate::output::placeholder_assertion::push_fill_in_note(out, "  ", assertion);
         }
         out.push('\n');
     }

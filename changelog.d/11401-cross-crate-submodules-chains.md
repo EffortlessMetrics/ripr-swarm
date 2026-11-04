@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A change reached through another workspace crate is now also followed when the call is spelled through a public module of that crate (`wscore::pricing::discount(..)` or `use wscore::pricing::discount;`) and through a chain of more than one crate (`app` calls `mid`, which calls `wscore`), so a test that pins the changed value through such wrappers reads as noticed and `ripr repair` does not start a repair for it; private, attributed or ambiguous modules, a rebound crate name and a transformed argument or result stay unreached (#11401).

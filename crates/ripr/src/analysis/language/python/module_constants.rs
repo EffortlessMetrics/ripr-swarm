@@ -37,7 +37,7 @@ use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use super::{PythonImport, PythonTest, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use rustpython_parser::{Mode, Tok, lexer::lex};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -693,15 +693,36 @@ pub(super) fn apply_foreign_module_attribute_writes(
     if tests.is_empty() || writes_by_file.iter().all(|(_, writes)| writes.is_empty()) {
         return;
     }
+    // Index the writes by (module, attribute) once so each test looks up the
+    // few modules it can be imported as. Scanning every write for every test
+    // cost tests x writes (django: seconds per check). Two distinct writer
+    // files per key are enough: a test excludes at most its own file.
+    let mut index: HashMap<&str, HashMap<&str, Vec<&Path>>> = HashMap::new();
+    for (file, writes) in writes_by_file {
+        for write in writes {
+            let files = index
+                .entry(write.module.as_str())
+                .or_default()
+                .entry(write.attribute.as_str())
+                .or_default();
+            if files.len() < 2 && !files.contains(&file.as_path()) {
+                files.push(file.as_path());
+            }
+        }
+    }
     for test in tests {
         let modules = test_module_import_paths(&test.file);
-        let mut attributes: Vec<String> = writes_by_file
-            .iter()
-            .filter(|(file, _)| file != &test.file)
-            .flat_map(|(_, writes)| writes)
-            .filter(|write| write_targets_modules(write, &modules))
-            .map(|write| write.attribute.clone())
-            .collect();
+        let mut attributes: Vec<String> = Vec::new();
+        for module in modules.iter().map(String::as_str).chain(["*"]) {
+            let Some(by_attribute) = index.get(module) else {
+                continue;
+            };
+            for (attribute, files) in by_attribute {
+                if files.iter().any(|file| *file != test.file.as_path()) {
+                    attributes.push((*attribute).to_string());
+                }
+            }
+        }
         if attributes.is_empty() {
             continue;
         }
@@ -731,10 +752,6 @@ pub(super) fn module_attribute_writes(
     });
     writes.dedup();
     writes
-}
-
-fn write_targets_modules(write: &PythonModuleAttributeWrite, modules: &[String]) -> bool {
-    write.module == "*" || modules.iter().any(|module| module == &write.module)
 }
 
 /// Import paths under which a test file can be the target of `<mod>.NAME`.
