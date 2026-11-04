@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1",
   "kind": "adapter_substrate_qualification_corpus",
-  "spec": "RIPR-SPEC-0379-adapter-substrate-qualification-v1.md",
+  "spec": "RIPR-SPEC-0422-adapter-substrate-qualification-v1.md",
   "description": "Schema fixtures for adapter substrate qualification receipts (#6382).",
   "cases": [
     {

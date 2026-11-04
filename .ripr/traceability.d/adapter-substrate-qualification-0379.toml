@@ -1,8 +1,8 @@
 # Adapter-substrate qualification receipt contract (#6382).
 [[behavior]]
-id = "RIPR-SPEC-0379"
+id = "RIPR-SPEC-0422"
 name = "Adapter substrate qualification receipt v1"
-spec = "docs/specs/RIPR-SPEC-0379-adapter-substrate-qualification-v1.md"
+spec = "docs/specs/RIPR-SPEC-0422-adapter-substrate-qualification-v1.md"
 tests = [
   "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::corpus_cases_cover_substrate_acceptance_matrix",
   "crates/ripr/src/provider_contract/adapter_substrate/tests.rs::every_substrate_class_has_a_constructible_shape",
@@ -24,7 +24,7 @@ code = [
   "crates/ripr/src/provider_contract/adapter_substrate/digest.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0379-adapter-substrate-qualification-v1.md",
+  "docs/specs/RIPR-SPEC-0422-adapter-substrate-qualification-v1.md",
 ]
 metrics = [
   "unit_test_pass_rate",

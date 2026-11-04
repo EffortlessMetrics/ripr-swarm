@@ -1,4 +1,4 @@
-# RIPR-SPEC-0379: Adapter Substrate Qualification Receipt V1
+# RIPR-SPEC-0422: Adapter Substrate Qualification Receipt V1
 
 Status: accepted
 
@@ -107,7 +107,7 @@ on limitation messages.
 
 ## Test Mapping
 
-See `.ripr/traceability.toml` behavior `RIPR-SPEC-0379`.
+See `.ripr/traceability.toml` behavior `RIPR-SPEC-0422`.
 
 ## Implementation Mapping
 

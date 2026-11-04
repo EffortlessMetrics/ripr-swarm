@@ -1,6 +1,6 @@
 # Fixture: adapter-substrate-qualification-corpus
 
-Spec: RIPR-SPEC-0379
+Spec: RIPR-SPEC-0422
 
 This manifest-only fixture pins versioned adapter-substrate qualification
 receipt documents for #6382 before substrate ADR normalization (#6384).
