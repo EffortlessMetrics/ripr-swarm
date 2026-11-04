@@ -1711,7 +1711,10 @@ change.
    after `field:` on the changed line (the diff's old text for the old
    version) is read as an integer expression over the owner's parameters, in
    the field's declared integer type, which must match the parameters' type.
-   When the pinned struct literal gives the field a decimal integer that
+   Straight-line `let name = expr;` bindings above the field are substituted
+   into it (`let n = n + 1;` above `retries: n + 1` reads as `(n + 1) + 1`); a
+   guard, a mutation, a `mut` or typed binding, or a binding inside the
+   literal leaves the owner unread. When the pinned struct literal gives the field a decimal integer that
    neither version computes for the call's literal arguments, the pin does not
    credit; the other fields of the literal are not read. This applies to
    `assert_eq!` and the claims `assert_ok_eq!` / `assert_some_eq!` alike.

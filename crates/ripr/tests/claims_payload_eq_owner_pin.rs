@@ -813,6 +813,8 @@ fn run(root_dir: &std::path::Path, case: &Case, family: &str) -> Result<Outcome,
 
 const FIELD_OWNER: &str = "#[derive(Debug, PartialEq)]\npub struct Config {\n    pub retries: u32,\n}\npub fn config(n: u32) -> Result<Config, ()> {\n    Ok(Config { retries: n + 1 })\n}\n";
 const FIELD_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@ pub struct Config {\n     pub retries: u32,\n }\n pub fn config(n: u32) -> Result<Config, ()> {\n-    Ok(Config { retries: n + 2 })\n+    Ok(Config { retries: n + 1 })\n }\n";
+const FIELD_LET_OWNER: &str = "#[derive(Debug, PartialEq)]\npub struct Config {\n    pub retries: u32,\n}\npub fn config(n: u32) -> Result<Config, ()> {\n    let n = n + 1;\n    Ok(Config { retries: n + 1 })\n}\n";
+const FIELD_LET_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,6 +4,6 @@ pub struct Config {\n }\n pub fn config(n: u32) -> Result<Config, ()> {\n     let n = n + 1;\n-    Ok(Config { retries: n + 2 })\n+    Ok(Config { retries: n + 1 })\n }\n";
 const FIELD_OPTION_OWNER: &str = "#[derive(Debug, PartialEq)]\npub struct Config {\n    pub retries: u32,\n}\npub fn config(n: u32) -> Option<Config> {\n    Some(Config { retries: n + 1 })\n}\n";
 const FIELD_OPTION_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@ pub struct Config {\n     pub retries: u32,\n }\n pub fn config(n: u32) -> Option<Config> {\n-    Some(Config { retries: n + 2 })\n+    Some(Config { retries: n + 1 })\n }\n";
 
@@ -827,7 +829,7 @@ fn claims_payload_equality_pins_a_whole_value_field() -> Result<(), String> {
     let ok_import = "use claims::assert_ok_eq;";
     let some_import = "use claims::assert_some_eq;";
     // (name, owner, diff, imports, body, assert_eq twin, credited)
-    let rows: [(&str, &str, &str, &str, &str, &str, bool); 10] = [
+    let rows: [(&str, &str, &str, &str, &str, &str, bool); 13] = [
         (
             "ok_new_value",
             FIELD_OWNER,
@@ -909,6 +911,37 @@ fn claims_payload_equality_pins_a_whole_value_field() -> Result<(), String> {
             "assert_eq!(config(2), Ok(Other { retries: 3 }));",
             false,
         ),
+        // `let n = n + 1;` rebinds the parameter: with call arg 2 the new
+        // value is 4 and the old 5. Read on the changed line alone, the
+        // field would look like 3 / 4 and the legitimate old-value pin 5
+        // would be withheld while the neither-version 3 credited.
+        (
+            "ok_old_value_after_rebinding",
+            FIELD_LET_OWNER,
+            FIELD_LET_DIFF,
+            ok_import,
+            "assert_ok_eq!(config(2), Config { retries: 5 });",
+            "assert_eq!(config(2), Ok(Config { retries: 5 }));",
+            true,
+        ),
+        (
+            "ok_new_value_after_rebinding",
+            FIELD_LET_OWNER,
+            FIELD_LET_DIFF,
+            ok_import,
+            "assert_ok_eq!(config(2), Config { retries: 4 });",
+            "assert_eq!(config(2), Ok(Config { retries: 4 }));",
+            true,
+        ),
+        (
+            "ok_neither_after_rebinding",
+            FIELD_LET_OWNER,
+            FIELD_LET_DIFF,
+            ok_import,
+            "assert_ok_eq!(config(2), Config { retries: 3 });",
+            "assert_eq!(config(2), Ok(Config { retries: 3 }));",
+            false,
+        ),
         (
             "expected_through_a_binding",
             FIELD_OWNER,
@@ -936,26 +969,27 @@ fn claims_payload_equality_pins_a_whole_value_field() -> Result<(), String> {
         } else {
             ("unknown", "none")
         };
-        eprintln!("CLAIMS {name}: {claims:?}");
-        if !name.contains("neither") {
-            assert_eq!(
-                (claims.oracle.0.as_str(), claims.oracle.1.as_str()),
-                expected,
-                "{name}: {claims:?}"
-            );
-        }
-        if !credited && !name.contains("neither") {
+        assert_eq!(
+            (claims.oracle.0.as_str(), claims.oracle.1.as_str()),
+            expected,
+            "{name}: {claims:?}"
+        );
+        if !credited {
             assert_ne!(claims.class, "exposed", "{name}: {claims:?}");
         }
         // The unwrapped twin on the same subject credits every row the
-        // claims form credits, so the claims reading adds no new reach.
+        // claims form credits, so the claims reading adds no new reach; it
+        // withholds a pin neither owner version computes too (it credited it
+        // before #12394 item 5, #12864).
+        let twin = run(
+            &root_dir.join("twin"),
+            &case(name, twin),
+            "field_construction",
+        )?;
         if credited {
-            let twin = run(
-                &root_dir.join("twin"),
-                &case(name, twin),
-                "field_construction",
-            )?;
             assert_eq!(twin.class, "exposed", "{name}: {twin:?}");
+        } else if name.ends_with("neither_version") || name.ends_with("neither_after_rebinding") {
+            assert_ne!(twin.class, "exposed", "{name}: {twin:?}");
         }
     }
     Ok(())

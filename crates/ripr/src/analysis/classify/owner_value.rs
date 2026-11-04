@@ -534,8 +534,8 @@ impl ClosedChange {
         }
         let after_line = definition.lines().nth(changed_line)?;
         Some(Self {
-            after: scalar_field_owner(definition, name, after_line, field, field_ty)?,
-            before: scalar_field_owner(definition, name, before, field, field_ty)?,
+            after: scalar_field_owner(definition, name, changed_line, after_line, field, field_ty)?,
+            before: scalar_field_owner(definition, name, changed_line, before, field, field_ty)?,
         })
     }
 
@@ -548,19 +548,72 @@ impl ClosedChange {
 }
 
 /// The owner `fn name(<its parameters>) -> field_ty { <initializer of field on
-/// line> }`: the struct field read as the scalar the subset evaluates.
+/// line> }`: the struct field read as the scalar the subset evaluates. The
+/// straight-line `let name = expr;` bindings before the changed line are
+/// substituted into the initializer, so `let n = n + 1;` above
+/// `retries: n + 1` reads as `(n + 1) + 1`. Any other statement before the
+/// changed line (a guard, a mutation, a typed or `mut` binding) leaves the
+/// owner unread, since the initializer would then name a value this reader
+/// does not know.
 fn scalar_field_owner(
     definition: &str,
     name: &str,
+    changed_line: usize,
     line: &str,
     field: &str,
     field_ty: &str,
 ) -> Option<ClosedOwner> {
     let range = range_of(field_ty)?;
-    let initializer = field_initializer(line, field)?;
+    let mut initializer = field_initializer(line, field)?;
     let masked = crate::analysis::extract::mask_comments_and_strings(definition);
     let item = masked.find(&format!("fn {name}"))?;
     let signature_end = masked[item..].find(')')? + item;
+    let lines: Vec<&str> = masked.lines().collect();
+    let signature_line = masked[..item].matches('\n').count();
+    let open_line = (signature_line..lines.len()).find(|at| lines[*at].contains('{'))?;
+    let mut bindings: Vec<(String, String)> = Vec::new();
+    let mut in_literal = false;
+    for text in lines.get(open_line + 1..changed_line).unwrap_or_default() {
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if !in_literal && let Some(binding) = text.strip_prefix("let ") {
+            let (bound, expr) = binding.split_once('=')?;
+            let (bound, expr) = (bound.trim(), expr.trim().strip_suffix(';')?.trim());
+            if !is_identifier(bound) || expr.is_empty() || expr.contains(['=', '{', ';']) {
+                return None;
+            }
+            let expr = substitute(expr, &bindings);
+            bindings.retain(|(known, _)| known != bound);
+            bindings.push((bound.to_string(), expr));
+            continue;
+        }
+        // The first other line must open the literal the changed line is in;
+        // the lines after it are field initializers and may bind nothing.
+        if !in_literal {
+            let keyword = text.split_whitespace().next().unwrap_or("");
+            if !text.contains('{')
+                || matches!(
+                    keyword,
+                    "if" | "match" | "while" | "for" | "loop" | "unsafe" | "return" | "fn"
+                )
+            {
+                return None;
+            }
+            in_literal = true;
+        }
+        let assigns = text
+            .replace("==", "")
+            .replace("!=", "")
+            .replace("<=", "")
+            .replace(">=", "")
+            .contains('=');
+        if text.contains("let ") || assigns {
+            return None;
+        }
+    }
+    initializer = substitute(&initializer, &bindings);
     let source = format!(
         "{} ) -> {field_ty} {{ {initializer} }}",
         masked[item..signature_end].trim_end()
@@ -568,6 +621,43 @@ fn scalar_field_owner(
     let owner = ClosedOwner::read(&source, name)?;
     (owner.range == range && owner.guards.is_empty() && matches!(owner.tail, Ret::Plain(_)))
         .then_some(owner)
+}
+
+fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// `text` with each identifier a binding names replaced, once and in one pass,
+/// by that binding's parenthesized expression.
+fn substitute(text: &str, bindings: &[(String, String)]) -> String {
+    let mut out = String::new();
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at].is_ascii_alphabetic() || bytes[at] == b'_' {
+            let start = at;
+            while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+                at += 1;
+            }
+            let word = &text[start..at];
+            match bindings.iter().find(|(known, _)| known == word) {
+                Some((_, expr)) => {
+                    out.push('(');
+                    out.push_str(expr);
+                    out.push(')');
+                }
+                None => out.push_str(word),
+            }
+        } else {
+            out.push(bytes[at] as char);
+            at += 1;
+        }
+    }
+    out
 }
 
 /// The text of `field`'s initializer on `line`: after `field:` up to the
@@ -720,6 +810,106 @@ mod tests {
         // A multi-line old text, or none.
         assert!(field_change("", "u32").is_none());
         assert!(field_change("a\nb", "u32").is_none());
+    }
+
+    /// #12865 review: a `let n = n + 1;` above the field rebinds the
+    /// parameter, so the field reads through it in both directions.
+    #[test]
+    fn a_straight_line_rebinding_is_resolved_into_the_field() {
+        let owner = "pub fn config(n: u32) -> Result<Config, ()> {\n    let n = n + 1;\n    Ok(Config { retries: n + 1 })\n}\n";
+        let read = |definition: &str, changed_line, before: &str| {
+            ClosedChange::read_field(definition, "config", changed_line, before, "retries", "u32")
+        };
+        let change = read(owner, 2, "    Ok(Config { retries: n + 2 })");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        // config(2): new (2 + 1) + 1 = 4, old (2 + 1) + 2 = 5.
+        assert!(!change.provably_unpinned("config", "config(2)", "4"));
+        assert!(!change.provably_unpinned("config", "config(2)", "5"));
+        // 3 is what the changed line alone would compute, and no version does.
+        assert!(change.provably_unpinned("config", "config(2)", "3"));
+        // A second binding sees the first; a later one shadows an earlier name.
+        let chained = "pub fn config(n: u32) -> Result<Config, ()> {\n    let a = n + 1;\n    let n = a * 2;\n    Ok(Config { retries: n + 1 })\n}\n";
+        let Some(chained) = read(chained, 3, "    Ok(Config { retries: n + 2 })") else {
+            return;
+        };
+        // config(2): a = 3, n = 6, new 7, old 8.
+        assert!(!chained.provably_unpinned("config", "config(2)", "7"));
+        assert!(!chained.provably_unpinned("config", "config(2)", "8"));
+        assert!(chained.provably_unpinned("config", "config(2)", "4"));
+        // Anything else before the field leaves the owner unread: a guard, a
+        // mutation, a `mut` or typed binding, a binding inside the literal.
+        for before_field in [
+            "    if n == 0 {\n        return Err(());\n    }\n",
+            "    n += 1;\n",
+            "    let mut n = n + 1;\n",
+            "    let n: u32 = n + 1;\n",
+            "    let n = n + 1; let m = 2;\n",
+        ] {
+            let definition = format!(
+                "pub fn config(n: u32) -> Result<Config, ()> {{\n{before_field}    Ok(Config {{ retries: n + 1 }})\n}}\n"
+            );
+            let changed = 1 + before_field.matches('\n').count();
+            assert!(
+                read(&definition, changed, "    Ok(Config { retries: n + 2 })").is_none(),
+                "{before_field:?}"
+            );
+        }
+    }
+
+    const REBOUND: &str = "pub fn config(n: u32) -> Result<Config, ()> {\n    let n = n + 1;\n    Ok(Config { retries: n + 1 })\n}\n";
+
+    /// #12865 review: a `let` above the literal rebinds the parameter the
+    /// field reads, so the versions are `(n + 1) + 1` and `(n + 1) + 2`.
+    #[test]
+    fn a_rebinding_above_the_field_is_resolved_not_ignored() {
+        let change = ClosedChange::read_field(
+            REBOUND,
+            "config",
+            2,
+            "    Ok(Config { retries: n + 2 })",
+            "retries",
+            "u32",
+        );
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        // config(2): new 4, old 5. 3 (the value read without the `let`) and 9
+        // are neither; 4 and 5 each tell the versions apart.
+        assert!(change.provably_unpinned("config", "config(2)", "3"));
+        assert!(change.provably_unpinned("config", "config(2)", "9"));
+        assert!(!change.provably_unpinned("config", "config(2)", "4"));
+        assert!(!change.provably_unpinned("config", "config(2)", "5"));
+    }
+
+    #[test]
+    fn a_statement_the_reader_cannot_follow_leaves_the_owner_unread() {
+        let read = |body: &str| {
+            let definition = format!(
+                "pub fn config(n: u32) -> Result<Config, ()> {{\n{body}    Ok(Config {{ retries: n + 1 }})\n}}\n"
+            );
+            let line = definition.lines().count() - 2;
+            ClosedChange::read_field(
+                &definition,
+                "config",
+                line,
+                "    Ok(Config { retries: n + 2 })",
+                "retries",
+                "u32",
+            )
+            .is_some()
+        };
+        assert!(read(""));
+        assert!(read("    let m = n * 2;\n"));
+        // A guard, a mutation, a `mut` or typed binding, a block value.
+        assert!(!read("    if n == 0 {\n        return Err(());\n    }\n"));
+        assert!(!read("    let mut n = n;\n"));
+        assert!(!read("    let n: u32 = n + 1;\n"));
+        assert!(!read("    let n = { n + 1 };\n"));
+        assert!(!read("    n += 1;\n"));
     }
 
     #[test]
