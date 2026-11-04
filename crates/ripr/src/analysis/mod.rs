@@ -52,6 +52,7 @@ pub(crate) mod repair_route;
 pub(crate) mod resource_cost;
 mod rust_index;
 pub(crate) mod rust_snapshot_files;
+pub(crate) mod scip;
 pub(crate) mod seam_cache;
 mod seam_classification;
 mod seam_inventory;
