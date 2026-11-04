@@ -2,6 +2,7 @@ pub mod analysis_execution_identity;
 pub mod candidate_relation;
 pub mod canonical_item;
 pub mod causal_delta;
+pub mod change_verification_plan;
 pub mod classification;
 pub mod command_spec;
 pub mod confidence_basis;
@@ -40,6 +41,16 @@ pub use canonical_item::{CanonicalItemId, CanonicalItemParseError};
 pub use causal_delta::{
     AttributionBasis, CanonicalDelta, CanonicalEvidenceState, ComparisonConfidence,
     ComparisonCoverage, DeltaAttribution, GapState, compare_fixture_delta,
+};
+pub use change_verification_plan::{
+    CHANGE_VERIFICATION_PLAN_CLAIM_BOUNDARY, CHANGE_VERIFICATION_PLAN_SCHEMA_VERSION,
+    ChangeVerificationPlanChangedSubject, ChangeVerificationPlanCommand,
+    ChangeVerificationPlanCompleteness, ChangeVerificationPlanImpactedTest,
+    ChangeVerificationPlanStageStates, ChangeVerificationPlanSubjectIdentity,
+    ChangeVerificationPlanTestIdentity, ChangeVerificationPlanUncoveredSubject,
+    ChangeVerificationPlanV1, ChangeVerificationPlanValidatingTest,
+    ChangeVerificationPlanWidenedObligation, PlanRelationEvidenceClass, VerificationCommandPurpose,
+    VerificationObligationKind, WidenedObligationScope,
 };
 pub use classification::ExposureClass;
 pub use classification::{
