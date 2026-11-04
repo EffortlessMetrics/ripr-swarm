@@ -1,0 +1,1 @@
+- Credit same-file named-constant predicate boundaries when the compared input is a parameter field assigned at the owner call (`CURRENT > manifest.version`), instead of leaving them `infection_unknown` (#6671).
