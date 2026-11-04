@@ -1576,7 +1576,7 @@ mod tests {
         let notice = crate::core_error::CoreError::base_unresolvable(
             "the base `deadbeef` does not resolve to a commit",
         )
-        .refusal_notice();
+        .refusal_notice(&crate::config::config_error_summary);
         let rendered = render_refusal_sarif(&notice, std::path::Path::new("."), Some("deadbeef"));
         let sarif = parse_json(&rendered)?;
         if sarif["version"] != Value::String("2.1.0".to_string()) {
@@ -3743,7 +3743,7 @@ weakly_gripped = "note"
         let notice = crate::core_error::CoreError::base_unresolvable(
             "the base `deadbeef` does not resolve to a commit",
         )
-        .refusal_notice();
+        .refusal_notice(&crate::config::config_error_summary);
         let rendered = render_refusal_sarif(&notice, std::path::Path::new("repo%41"), None);
         let sarif = parse_json(&rendered)?;
         let root = sarif

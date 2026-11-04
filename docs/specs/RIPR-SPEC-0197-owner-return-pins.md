@@ -3181,17 +3181,16 @@ assertions. This repair shares the existing callback without that larger migrati
 ### Bounded `.map(owner)` iterator chains (#9478 slice A)
 
 An `assert_eq!` whose one operand is a bounded iterator chain and whose other
-operand is a literal `Vec` is admitted as a call of the owner on the chain's
-first input when all of these hold: the chain's input is a literal integer
+operand is a literal `Vec` is admitted as a call of the owner on the first
+literal input at which the changed behavior is visible when all of these hold: the chain's input is a literal integer
 sequence read through `.into_iter()`, `.iter()` or `.iter_mut()`; its adapter is
 one `.map(owner)` with a simple owner path, followed by `.collect::<Vec<_>>()`;
 the path resolves to the owner by the same owner-identity gates as a direct
 call (a qualified path must resolve through the shared call identity); the
 owner body folds each input to exactly the expected literal elements; and the
-changed behavior is visible at the first input (the representative call), so a
-change that is invisible there is refused even when a later input would show it
-(#12841). Unresolved,
-shadowed, foreign same-name, non-literal, closure, generic-adapter and
+changed behavior is visible at some input: the first input where it is visible
+is the representative call, and a change invisible at every input is refused
+(#12841). Unresolved, shadowed, foreign same-name, non-literal, closure, generic-adapter and
 non-matching chains are refused. The owner pin credits before the function-value
 limit (RIPR-SPEC-0240) is consulted, so the limit needs no bounded-chain
 exception. A refused chain that still names the owner as a value keeps that

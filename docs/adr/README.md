@@ -33,3 +33,4 @@ PR. They should be short, dated, and focused on consequences.
 | [0024](0024-windows-probe-job-helper.md) | proposed | Replace the Windows PowerShell probe wrapper with a small native Job-object helper built on safe `process-wrap` (no `unsafe` exception). |
 | [0025](0025-go-parser-substrate.md) | proposed | Use `tree-sitter` with `tree-sitter-go` as the Go syntax substrate (exact spans, local error recovery). |
 | [0026](0026-guarded-test-only-edit-boundary.md) | proposed | Propose one guarded, opt-in, test-only assertion replacement edit class with versioned preconditions (#1902); no edit emission in this slice; acceptance remains a pending design decision on #1902. |
+| [0027](0027-one-user-facing-package-lockstep-support-crates.md) | accepted | One user-facing package (`ripr`); internal support crates published in lockstep when compiler-unit evidence requires a split. Supersedes ADR 0001's packaging clause. |

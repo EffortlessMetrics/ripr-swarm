@@ -254,7 +254,7 @@ counterpart for side effects.
   inputs; `named_integer_bound` resolves a named bound.
 - `crates/ripr/src/analysis/classify/activation.rs::missing_guard_entry_discriminator`
   applies the RIPR-SPEC-0229 refusals and emits the fact.
-- `crates/ripr/src/domain/probe.rs::GUARD_UNENTERED_REASON_PREFIX` and
+- `crates/ripr-contract/src/domain/probe.rs::GUARD_UNENTERED_REASON_PREFIX` and
   `is_unselected_input_reason` share the reason between the analyzer, the
   infection stage (`classify/infection.rs`), the foreign-identity
   withholding (`classifier/evidence.rs`) and the renderers
