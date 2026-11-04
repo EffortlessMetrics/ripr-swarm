@@ -105,6 +105,7 @@ mod schema_producer_sweep;
 mod verification_allocation_adapter;
 mod verification_allocation_policy;
 mod verification_contracts;
+mod verification_plan_corpus;
 mod verify_test_shards;
 mod version;
 mod windows_advisory;
