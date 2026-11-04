@@ -35,6 +35,29 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
     let hosted = block(caller, "jobs", 0)
         .and_then(|jobs| block(jobs, "rust-github", 2))
         .unwrap_or("");
+    let detector = block(caller, "jobs", 0)
+        .and_then(|jobs| block(jobs, "detect-docs-only", 2))
+        .unwrap_or("");
+    let admission = block(caller, "jobs", 0)
+        .and_then(|jobs| block(jobs, "admission", 2))
+        .unwrap_or("");
+    let scope = admission
+        .split_once("      - name: Select admitted qualification scope\n")
+        .map(|(_, tail)| tail.split("\n      - name: ").next().unwrap_or(""))
+        .unwrap_or("");
+    // #12437 selects history-sync's full qualification scope inside admission.
+    // A main push still needs the detector's `false` to reach the hosted job:
+    // the changed guard is not merely a new spelling of the old output.
+    if !detector.contains("docs_only=false reason=not_pull_request")
+        || !admission.contains("      docs_only: ${{ steps.scope.outputs.docs_only }}\n")
+        || !scope.contains("DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}")
+        || !scope.contains("DOCS_ONLY=false")
+        || !scope.contains("pull_request:admitted:history_sync_admitted:validated")
+        || !scope.contains("echo \"docs_only=$DOCS_ONLY\" >> \"$GITHUB_OUTPUT\"")
+    {
+        findings
+            .push("admission scope no longer preserves the main-push hosted cache writer opportunity");
+    }
     for required in [
         "    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n",
         "    uses: ./.github/workflows/rust-gates.yml\n",
@@ -54,7 +77,7 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
     });
     if guard.as_deref()
         != Some(
-            "!cancelled() && needs.admission.result == 'success' && needs.detect-docs-only.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))",
+            "!cancelled() && needs.admission.result == 'success' && needs.detect-docs-only.result == 'success' && needs.admission.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))",
         )
     {
         findings.push("hosted job eligibility changed; requalify the main writer opportunity");
@@ -116,6 +139,36 @@ fn retiring_main_push_is_not_cache_continuity() {
     // lifecycle and a pre-merge ref cannot satisfy the producer's save guard.
     assert!(retired.contains("  workflow_dispatch:"));
     assert!(retired.contains("types: [labeled]"));
+}
+
+#[test]
+fn admission_scope_cannot_remove_the_main_push_cache_writer() {
+    for changed in [
+        CALLER.replace(
+            "docs_only=false reason=not_pull_request",
+            "docs_only=true reason=not_pull_request",
+        ),
+        CALLER.replace(
+            "docs_only: ${{ steps.scope.outputs.docs_only }}",
+            "docs_only: 'true'",
+        ),
+        CALLER.replace(
+            "DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}",
+            "DOCS_ONLY: 'true'",
+        ),
+        CALLER.replace(
+            "pull_request:admitted:history_sync_admitted:validated",
+            "push:admitted:history_sync_admitted:validated",
+        ),
+    ] {
+        assert_ne!(changed, CALLER, "negative must mutate the actual workflow");
+        assert!(
+            continuity_findings(&changed, PRODUCER)
+                .iter()
+                .any(|finding| finding.contains("main-push hosted cache writer opportunity")),
+            "scope mutation did not invalidate cache-writer evidence"
+        );
+    }
 }
 
 #[test]

@@ -1207,8 +1207,17 @@ fn sync_result(
     evidence: &str,
     extra: &[(&str, &str)],
 ) -> Result<(bool, String), String> {
+    let admitted_sync = reason == "history_sync_admitted";
     let mut overrides = vec![
         ("ADMISSION_REASON", reason),
+        (
+            "ADMISSION_HISTORY_SYNC",
+            if admitted_sync { "validated" } else { "" },
+        ),
+        (
+            "HISTORY_SYNC_LIVE_RESULT",
+            if admitted_sync { "success" } else { "skipped" },
+        ),
         ("ADMISSION_HEAD", PR_HEAD),
         ("MOCK_PR", SYNC_LIVE_PR),
         ("CX43_RESULT", "skipped"),
@@ -1243,6 +1252,23 @@ fn history_sync_skip_qualifies_only_for_a_history_sync_admission_of_the_same_hea
         report.contains(&format!("- github pr evidence: `{record}`")),
         "{report}"
     );
+    // The positive needs the actual admission profile, protected live
+    // authorization/composition outcome, and full non-docs qualification.
+    // A successful job with a missing or downgraded authority cannot confer it.
+    for (name, value, reason) in [
+        ("ADMISSION_HISTORY_SYNC", "", "consistent exact-head admission"),
+        ("ADMISSION_HISTORY_SYNC", "rejected", "consistent exact-head admission"),
+        ("DOCS_ONLY", "true", "full product scope"),
+        (
+            "HISTORY_SYNC_LIVE_RESULT",
+            "failure",
+            "authorization or composition continuity",
+        ),
+    ] {
+        let (success, report) = sync_result("history_sync_admitted", &record, &[(name, value)])?;
+        assert!(!success, "{name}={value:?} was accepted: {report}");
+        assert!(report.contains(reason), "{report}");
+    }
     // The same typed skip under any other admission reason fails the Result.
     for reason in ["candidate_current_unique_bounded", "fixture", ""] {
         let (success, report) = sync_result(reason, &record, &[])?;
@@ -1320,6 +1346,8 @@ fn history_sync_skip_cannot_qualify_a_merge_group() -> Result<(), String> {
         "admitted",
         &[
             ("ADMISSION_REASON", "history_sync_admitted"),
+            ("ADMISSION_HISTORY_SYNC", "validated"),
+            ("HISTORY_SYNC_LIVE_RESULT", "success"),
             ("ADMISSION_HEAD", PR_HEAD),
             ("CX43_RESULT", "skipped"),
             ("CPX42_RESULT", "skipped"),
