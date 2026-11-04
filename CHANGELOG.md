@@ -5832,6 +5832,10 @@ are scoped or reviewed.
 
 ### Internal / CI
 
+- `cargo xtask mutation-spot-check` receipts (`ripr-mutation-spot-check-v2`,
+  additive, no version bump) now carry generated `recall_of_missed` and
+  `seam_coverage` summary rows, and `--rederive-summaries <json>` recomputes
+  them offline from a recorded receipt (#12900).
 - Verdict-corpus case batches and lockfile/summary/relabel bookkeeping that
   previously sat in Added and Fixed. Analyzer behavior proven by a corpus
   case stays in the user-facing section that describes it (#7674,
