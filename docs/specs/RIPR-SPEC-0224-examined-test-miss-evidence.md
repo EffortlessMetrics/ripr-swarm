@@ -19,6 +19,7 @@ Linked issues:
 - #5498 (Perl findings list tests without a reason)
 - #5566 (promote to a language-neutral related-test miss contract)
 - #5445 (Python, TypeScript and Perl related tests without a reason)
+- #6889 (TypeScript residual no-assertion admission forms)
 
 Support-tier impact:
 
@@ -520,8 +521,8 @@ actionability. For Python, a `conftest.py` on the test's directory chain that
 declares an `autouse` fixture, a `pytest_runtest_*` hook or `pytest_plugins`,
 or a test-item hook (`pytest_collection_modifyitems` and similar), or that imports names from any module outside a short standard-library list (the name may be an autouse fixture or hook), builds an autouse fixture decorator, aliases the fixture decorator or an external fixture, star-imports or imports relatively, passes `**options` to `fixture`, or that could not be read, withholds `extraction_complete_no_assertion` from
 every test in its scope (#6657). For the Python `no_assertion` miss a conftest that declares any fixture or `pytest_*` hook, or has a top-level call, taints every test below it as well. Remaining blind spots (dynamically registered
-plugins, plugins or `usefixtures` set in pytest ini `addopts`, TypeScript setup files; Python bare sibling modules are recorded per test and withhold the Python `no_assertion` row) are tracked in #6657
-and #6889.
+plugins, plugins or `usefixtures` set in pytest ini `addopts`, TypeScript setup files and neutrally named colocated helpers; Python bare sibling modules are recorded per test and withhold the Python `no_assertion` row) are tracked in #6657
+and #6889. TypeScript admission withholds `extraction_complete_no_assertion` for AVA's default `failWithoutAssertions`, thenable `reject` aliasing, a describe/loop parameter that shadows a production import, and a sibling test that assigns an enclosing name (#6889).
 
 ### Family-relevant assertion selection (Python)
 
@@ -764,7 +765,7 @@ actionability or rendered output.
 
 | Surface | Responsibility |
 | --- | --- |
-| `crates/ripr/src/domain/probe.rs` | `RelatedTestMiss`, `RelatedTest::miss`, `Finding::oracle_related_tests` |
+| `crates/ripr-contract/src/domain/probe.rs` | `RelatedTestMiss`, `RelatedTest::miss`, `Finding::oracle_related_tests` |
 | `crates/ripr/src/analysis/classify/reveal.rs` | retain examined tests; set assertion-level misses; ranking |
 | `crates/ripr/src/analysis/classifier/finding.rs` | class-level misses |
 | `crates/ripr/src/analysis/language/perl/mod.rs` | Perl v1 `observation_unconfirmed` rows |

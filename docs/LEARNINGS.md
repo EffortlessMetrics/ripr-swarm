@@ -3,6 +3,75 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-11-03: Backlog-campaign merge operations: funnel order, label discipline, dual runs, one writer, exact-head review
+
+Nov 1-3 backlog-campaign triage across a crowded PR funnel distilled five
+operational rules for merge work on `ripr-swarm`:
+
+- Triage in funnel order: `mergeable_state` first (BLOCKED/BEHIND/DIRTY stop
+  before any CI read), then required-on-exact-head status, then review
+  threads. Read mergeability via REST; the GraphQL `mergeStateStatus` field
+  lags reality by 5-35 min after pushes and label changes, so a stale
+  BLOCKED/UNSTABLE read must be re-checked before acting on it.
+- Cycle `merge-ready` deliberately, never rapidly. Fast remove/re-add
+  manufactures superseded FAILURE+SUCCESS check pairs on the same head that
+  poison the rollup into UNSTABLE and burn a full qualification each lap.
+  Remove the label, confirm the removal landed, let in-flight runs settle,
+  re-add, then confirm a single fresh run started.
+- Expect dual runs on one head. A label cycle or push-while-queued routinely
+  leaves a SUCCESS and a FAILURE side by side on the same SHA. Compare
+  latest-per-check-name before diagnosing: a superseded FAILURE beside a
+  newer SUCCESS for the same workflow is funnel noise, not a product signal.
+- One writer per owner-active branch. When a lane owner is mid-repair, do
+  recon read-only (status, checks, threads) and hand findings back;
+  concurrent pushes, label flips or thread resolves from a second writer
+  invalidate the owner's exact-head evidence and force re-qualification.
+- Exact-head review checklist before any merge judgment: (1) diffstat scope
+  matches the claimed objective, no drive-by files; (2) no gate, policy,
+  public-API or workflow-trigger changes hiding in the diff; (3) required
+  checks green on the published head itself, not a sibling SHA or an older
+  base; (4) all threads read back, including outdated unresolved inlines.
+  Never dispatch workflows manually to help a funnel along; the label route
+  owns CI requests.
+
+## 2026-11-03: A gate that builds the merge base fails every PR when main is broken; re-runs cannot fix it (#12466)
+
+The rust-gates base-matcher step checks out the merge-base worktree and compiles it, so an uncompilable base fails EVERY PR, including the repair: the E0061 arity break (combined #12322 + #12357 merge without a combined build) kept the verified-green head of #12466 red on pre-fix base code, and main healed only via #12496. Distinguish candidate failure from harness-on-broken-base by comparing the merge-ref content against the failing compile unit; a re-run tests the same broken base. Resolution needs an owner decision (admin merge or harness fail-open, cf. #12759), not another retry.
+
+## 2026-11-03: Label-cycle re-queues can reuse a stale merge ref; verify the tested SHA (#12471)
+
+Removing and re-adding `merge-ready` does not recompute GitHub's merge ref; the run tests the SHA computed at creation (seen on #12271 and #12471). Before attributing any re-queued failure, compare the run's tested merge SHA against the current head. A push recomputes the ref; a label toggle alone never does (same family as the #11875 entry below and the draft-to-ready re-route note under the #7150 entry).
+
+## 2026-11-03: A `CANCELLED` run with no failed steps is a supersede-cancel, not an infra kill (docs/CI.md)
+
+Cancellations showing no failed steps and no logs are supersede-cancels from concurrency cancel-in-progress (documented in `docs/CI.md`), not runner deaths; true preemption shows exit 143 mid-step with partial logs. Open a product repair lane for neither without that distinguishing evidence: a supersede-cancel means "a newer run replaced this one," and a logless cancel carries no failure signal at all.
+
+## 2026-11-03: Adjudicate each bot-thread claim against current source before replying (#12492)
+
+Bot claims must be verified one by one against current source: all 3 of 3 checked on #12492 were real, including a fail-open; other threads came back mixed. Unverified agree-replies and a premature REVIEW_READY on an unreviewed head (#12736) must be superseded in writing with exact resume conditions. Agreement without source evidence is endorsement of an unread diff.
+
+## 2026-11-03: Re-derive schema version numbers from current main at rebase time (#12460)
+
+Main moves fast (cache schema 1.136 to 1.148 in days), so a rebased schema bump must re-derive the next free number from current main, never assume the pre-rebase one; the collision recurred 3x across #12376/#12460. At rebase time, re-check `CACHE_SCHEMA_VERSION` plus its sharded and compact twins together; bumping one twin against a stale number re-collides on the next gate.
+
+## 2026-11-02: A step timeout below the job cap is not leftover time (#12338)
+
+Shard 3 of `windows-advisory-shards.yml` was cancelled at the 80-minute job
+cap with no log twice (runs 39854834481, 41359717895). The lane already had a
+44-minute nextest watchdog, a 55-minute step timeout, streamed `tail -F`
+output, and `always()` summarize/upload (#9812, #12096). None of those fire
+when warmup has already consumed most of the job: the step clock starts when
+the test step starts, the job clock started at checkout, and a job-cap cancel
+tears the runner down before `always()` upload. GitHub then returned
+BlobNotFound for the job log.
+
+Durable rules: (1) a watchdog that must leave an artifact has to bound itself
+by *remaining job time minus an upload reserve*, not by a fixed duration from
+step start; (2) write a heartbeat of in-flight SLOW/TIMEOUT rows during the
+wait so the next hang names a test even if the log blob is lost; (3) do not
+treat `timeout-minutes` on a step plus `if: always()` on upload as proof that
+a job-cap cancel will keep evidence.
+
 ## 2026-10-14: One path can spell three ways on Windows; compare at a shared owner (#7937)
 
 Fifteen lib tests failed deterministically on Windows at a Linux-green main.
@@ -3388,3 +3457,174 @@ Durable rules:
 - Pair every negative assertion with a positive control built from the same
   fixture shape, or the negative can pass because the comparison is
   unsatisfiable.
+
+## 2026-11-02: Experiential feel-checks are a distinct oracle from code review
+
+Round 11 of the convergence campaign ran six experiential lanes — real
+subjects, verbatim output quotes, wall-clock timings, gut ratings, and an
+honesty lens over the rendered results — and filed nine issues, among them
+two analyzer-semantic defects: contradictory-fold withholding lost under
+file-mate composition, where unrelated tests flipped `infection_unknown` to
+`exposed(1.00)` while citing the self-contradictory test as a strong oracle
+(fixed along the #12412/#12559 line, with the composed case graduated into
+the RIPR-SPEC-0108 honesty corpus), and inserted-guard diffs recommending a
+boundary value that discriminated nothing (`amount == 0` passed on both
+sides, #12414). The same lanes surfaced projection and inconsistency defects
+across the JSON, human, LSP and MCP surfaces. The exact-head review sweeps
+over the same period read more than 120 PRs and did not surface this class.
+
+Reviews read diffs; feel lanes exercise the product and record what it
+actually says. Different oracles find different defect classes — the
+repository's own reviewers-add-value-through-different-oracles principle,
+applied to the product itself.
+
+Durable rules:
+
+- Run experiential lanes between feature waves, not only after a defect is
+  already suspected; do not substitute review coverage for feel coverage
+  when certifying a wave.
+- Treat a rendered-surface claim (JSON field, human line, LSP diagnostic,
+  MCP payload) as unverified until some oracle has quoted the actual bytes.
+## 2026-11-01: Premises rot at fleet velocity
+
+The Oct 29 – Nov 2 convergence campaign (~140 agent-lane merges) measured how
+fast a researched premise decays on a moving main. Three of ten investigation
+briefs had their central hypothesis falsified at implementation time, and four
+of six open owner decisions dissolved before any ruling — main merged the
+resolution while the decision was still waiting on the #11501 ledger. The
+sharpest instance: #11770 was filed 2026-10-31 15:55Z with live, reproducible
+evidence — two named renderer strings, "…there is no seam to start a repair
+from…" (`app/navigation.rs`) and the `kind: static_unknown` state-token rows
+in default human text — and main reworded both the same day, via #11764
+(18:41Z, `kind: unclear`) and #10297 (22:34Z, "no gap to start a repair
+from"), well inside the ~31-hour premise-rot window the campaign measured.
+The 2026-05-04 "Step 0 Premise Check" still holds, but at fleet velocity a
+check at session start is not sufficient.
+
+Durable rules:
+
+- Re-verify every premise against current `origin/main` at the moment of
+  filing AND at the moment of ruling, not only when the session starts. An
+  anchor that no longer matches the brief at code time is a stop-and-record,
+  not an improvisation prompt.
+- Prefer class-keyed process rules over string-keyed ones. A rule naming two
+  specific renderer strings decayed within hours of being filed; the
+  class-keyed version — "new fixture goldens inherit live renderer wording" —
+  does not, because it keys on the mechanism, not the wording.
+
+## 2026-11-01: A green compile is not a green product — run the built tests
+
+In the same campaign, a Windows compile break (#11187-era) masked two runtime
+test failures behind it: once the break was repaired, `cargo test --no-run`
+went green while 2 of the 4 `capture_error` tests still failed at runtime.
+The defect was not a compile error at all — the tests hard-coded Unix
+single-quoted refspecs where the producer quotes with `shell_arg` (host-aware
+single quotes on Unix, double quotes on Windows), so only executing the built
+test binary could observe it. #11608 fixed the quoting ("host-aware quoting
+and printed paths in Windows-failing tests", #11444). This is the
+compile-specific sibling of the 2026-07-25 "A green check is not evidence"
+entry: there the passing signal was a platform-blind branch; here it was a
+build gate standing in for the oracle.
+
+Durable rule: after any compile repair or test enablement, execute the
+affected tests, not just the compile. `--no-run` proves the code compiles; it
+proves nothing about the assertions inside it.
+
+## 2026-11-07: A re-requested CI run can test a stale merge - read the merge ref (#11875)
+
+A PR's hosted qualification failed identically across three `merge-ready`
+re-requests on a Python test its one-file comment/test diff could not
+affect. The cause was not flake: GitHub kept testing merge-ref
+`refs/pull/11875/merge` pinned at an old main (`9230fe145`), which predated
+the owning repair (#11918) even though main already contained it. Re-requests
+do not always recompute the test merge.
+
+Durable rules: (1) when a failure survives re-requests unchanged, fetch the
+PR's merge ref and check the expected fix is an ancestor of its main side
+before attributing anything; (2) merging latest main into the candidate
+refreshes the head and forces recomputation — behind-only merges are still
+discouraged in general, but a provably stale test merge is a concrete reason,
+not unrelated movement; (3) verify the owned repair is actually in the merge
+tree under test, not merely landed on main.
+
+## 2026-11-07: PR admission checks literal template lines - validate the body first (#11875)
+
+The `merge-ready` qualification refused admission with
+`claim_identity_missing` because a shortened PR body dropped the template's
+`Governing issue or accepted claim:` and `Acceptance delta (one sentence):`
+lines — even though the same information existed elsewhere in the body. The
+checker parses lines, not meaning.
+
+Durable rule: before requesting CI on a new PR, confirm the body contains the
+exact required template lines (copy from `.github/pull_request_template.md`);
+a reworded equivalent fails closed.
+
+## 2026-11-07: Downgrade guard rules only on affirmative foreign evidence (#11244)
+
+The TypeScript effect-branch observation guard confirmed any strong assertion
+whose observed expression merely did not name the owner (`classifier.rs`
+side-channel arm) — including assertions on genuinely unrelated values —
+while the value branch explicitly failed closed on the same shape. The
+asymmetry was spec-blessed ("may be a side channel"), which made the tests
+pass and the heuristic wrong in exactly one direction (false clean).
+
+Durable rules: (1) a confirm-on-absence rule ("does not name X, therefore
+observes") needs an affirmative-foreignness gate before it can downgrade —
+downgrade only on positive foreign evidence (foreign callee, foreign-bound
+initializer), never on mere absence of linkage; (2) unit-test-only signals
+cannot be downgrade requirements — `scope_bindings` is empty in unit tests,
+so absence there must keep confirming; (3) every guard tightening ships as a
+red/green pair: a red test that fails before (unrelated assertion downgrades)
+and a green control that must not move (bare-local channel keeps confirming)
+— the pair, not the golden count, is what proves the boundary moved the
+right way.
+
+## 2026-11-03: A stale issue body re-runs a rejected experiment; check all-state PRs first (#11594)
+
+#11594's body still said "Not started; no code written" after PR #11861 had
+measured the nextest-archive experiment and #11968 had removed the steps with
+an explicit stop decision. An agent following the body alone would re-run a
+rejected ~6.5 GiB experiment. Before starting any issue-prescribed
+experiment, check all-state PRs and comments for prior measurement or stop
+decisions; when step outcomes land, reconcile the governing body (done for
+#11594 on 2026-11-03). Evidence: PR #11861 (measurement), PR #11968
+(removal with stop conditions).
+
+## 2026-11-03: Windows-local binary sizes do not transfer to Linux-hosted (#11594)
+
+`x86_64-pc-windows-msvc` splits debuginfo into `.pdb` (local sample: 2.7-5.3
+MB PDB next to 0.7-1.3 MB EXE) while Linux ELF carries DWARF inline, and
+whether PDBs ride in a nextest archive is undecidable from nextest 0.9.132
+help (no include knob; later verified: zero `.pdb` entries in the local
+archive). Treat local numbers as relative-only (binary ranking, zstd curve
+shape); absolute GiB and strip/debug deltas need Linux-hosted confirmation.
+
+## 2026-11-03: Nextest count: partitions are deprecated upstream; hash: won on measured evidence (#12777, #12784)
+
+`count:` is per-binary round-robin (uneven, unstable). Upstream nextest docs
+recommend `slice:` (global round-robin) or `hash:` (stable placement), but a
+same-day lane settled it with stronger evidence: #12777 projected
+count/slice/hash from run 41553610419's real JUnit using nextest 0.9.149's
+pinned partitioner source (`xxh64(test_name) % 4`) — slowest shard slice
+1336 s (the two longest cases stay together), hash 1302 s (they separate),
+count 1589 s — and #12784 qualified native `hash:N/4` on a real hosted run
+(merged 2026-11-03). Do not propose `slice:` over `hash:` without beating
+that measurement. Switch touch list (as executed): `rust-test-shards.yml`,
+`verify_test_shards.rs` + tests (exact-command contract now refuses
+non-hash modes), `rust_gate_workflow_contract.rs`, help/allowlist/docs
+wording; `linux-nextest-shards.yml` (count: timing baseline) and
+`windows-advisory-shards.yml` (different profile) stayed out.
+
+## 2026-11-03: There is no [profile.test] section; test inherits dev (#12726)
+
+`Cargo.toml:171-221` has no `[profile.test]`; test inherits dev
+(`debug=line-tables-only`, `opt-level=0`, default `codegen-units=256`,
+incremental on, strip none) plus `dev.package.*` opt overrides. No
+policy/workflow pins test debuginfo, size, or backtraces, so profile
+experiments need no policy change. Note dev's default 256 codegen units also
+inflates peak rustc memory, linking archive-size work to the #12726
+compiler-memory work. Self-profile attribution (2026-11-03, same head):
+mir_borrowck is diffuse (115 s over 76,536 bodies), mono breadth is 673,763
+instances — no single hotspot, so targeted simplification (option 3) is
+contraindicated as the primary lever; the ~5 GB gap to ≤8 GB must come from
+cfg(test) extraction and/or the crate split.

@@ -109,6 +109,9 @@ mod partial_preview_disclosure;
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
 mod pilot_timeout_retry;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/pilot_wall_budget.rs"]
+mod pilot_wall_budget;
 #[cfg(all(feature = "lang-rust", feature = "lang-python"))]
 #[path = "cli_smoke/portable_diff_paths.rs"]
 mod portable_diff_paths;
@@ -22239,24 +22242,46 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                         assert_eq!(related[0]["file"], "tests/partial.rs", "{seam}");
                     }
                 }
-                assert_eq!(
-                    summary["top_actionable_seams"][0]["line"], expected_line,
-                    "{summary}"
-                );
-                assert_eq!(
-                    summary["top_actionable_seams"][0]["kind"], "match_arm",
-                    "{summary}"
-                );
-                assert_eq!(
-                    summary["current_change"]["actionable_seams_in_change"], 1,
-                    "{summary}"
-                );
-                assert_eq!(
-                    summary["current_change"]["top_recommendation_in_change"], true,
-                    "{summary}"
-                );
-                assert!(stdout.contains("current change: part of it"), "{stdout}");
-                assert!(md.contains("- Current change: part of it"), "{md}");
+                if partial {
+                    assert_eq!(summary["withheld_static_limitations_total"], 3, "{summary}");
+                    let top = summary["top_actionable_seams"]
+                        .as_array()
+                        .ok_or("missing top_actionable_seams")?;
+                    assert!(
+                        top.iter()
+                            .all(|seam| seam["kind"].as_str() != Some("match_arm")),
+                        "match_arm seams are static limitations with partial tests: {summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["actionable_seams_in_change"], 0,
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["top_recommendation_in_change"], false,
+                        "{summary}"
+                    );
+                    assert!(stdout.contains("withheld: 3 spots"), "{stdout}");
+                    assert!(md.contains("Withheld: 3 spots"), "{md}");
+                } else {
+                    assert_eq!(
+                        summary["top_actionable_seams"][0]["line"], expected_line,
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["top_actionable_seams"][0]["kind"], "match_arm",
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["actionable_seams_in_change"], 1,
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["top_recommendation_in_change"], true,
+                        "{summary}"
+                    );
+                    assert!(stdout.contains("current change: part of it"), "{stdout}");
+                    assert!(md.contains("- Current change: part of it"), "{md}");
+                }
             }
             let warm = run_ripr_with_env(
                 &[
@@ -22304,15 +22329,26 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                 Some(1),
                 "{summary}"
             );
-            assert_eq!(
-                summary["top_actionable_seams"][0]["line"], expected_line,
-                "{summary}"
-            );
-            assert_eq!(
-                summary["current_change"]["top_recommendation_in_change"], true,
-                "{summary}"
-            );
-            assert!(md.contains("ranked 1 of 5 seams"), "{md}");
+            if partial {
+                assert_ne!(
+                    summary["top_actionable_seams"][0]["kind"], "match_arm",
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["top_recommendation_in_change"], false,
+                    "{summary}"
+                );
+            } else {
+                assert_eq!(
+                    summary["top_actionable_seams"][0]["line"], expected_line,
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["top_recommendation_in_change"], true,
+                    "{summary}"
+                );
+            }
+            assert!(md.contains("ranked 1 of "), "{md}");
         }
         ignore_remove_dir_all(&root);
         ignore_remove_dir_all(&out);

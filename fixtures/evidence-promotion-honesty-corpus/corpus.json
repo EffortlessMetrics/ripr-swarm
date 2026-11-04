@@ -3,7 +3,62 @@
   "kind": "evidence_promotion_honesty_corpus",
   "spec": "RIPR-SPEC-0108",
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
+  "report_cache_schema_pins": [],
+  "report_digest_exemptions": [],
+  "report_digest_required": [
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json"
+  ],
   "cases": [
+    {
+      "id": "typescript_push_escaped_nondiscriminator",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_push_escaped_nondiscriminator",
+      "vector": "escaped_expected_value_does_not_match_changed_argument",
+      "probe_family": "side_effect",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "weakly_exposed"},
+        {"type": "expected_oracle", "kind": "exact_value", "strength": "strong"}
+      ]
+    },
+    {
+      "id": "typescript_push_argument_length",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_push_argument_length",
+      "vector": "count_does_not_pin_changed_argument",
+      "probe_family": "side_effect",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "weakly_exposed"},
+        {"type": "expected_oracle", "kind": "exact_value", "strength": "strong"}
+      ]
+    },
     {
       "id": "typescript_mock_count_alias",
       "language": "typescript",
@@ -11176,6 +11231,15 @@
           "file": "src/lib.rs",
           "oracle_strength": "none",
           "relation_reason": "same_test_file"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::parse_pinned",
+          "expression": "Ok(n)",
+          "test": "pinned_even",
+          "file": "src/lib.rs",
+          "oracle_strength": "none",
+          "relation_reason": "direct_owner_call"
         }
       ]
     },
@@ -11200,6 +11264,834 @@
           "expression": "1024.0",
           "grip_class": "strongly_gripped",
           "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_async_fn_activated_unsupported_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-activated-unsupported",
+      "vector": "repo_exposure_inherent_async_fn_activated_unsupported_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_as_object",
+          "expression": "JsonValue::Object(7).as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_async_fn_entry_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-entry",
+      "vector": "repo_exposure_inherent_async_fn_entry_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "weakly_gripped",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "weakly_gripped",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "weakly_gripped",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "weakly_gripped",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_as_object",
+          "expression": "JsonValue::Object(7).as_object()",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_async_fn_intermediate_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-intermediate",
+      "vector": "repo_exposure_inherent_async_fn_intermediate_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::load_as_object",
+          "expression": "JsonValue::Object(7).as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_load_as_object",
+          "expression": "load_as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_read_load_as_object",
+          "expression": "read_load_as_object()",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_read_load_as_object",
+          "expression": "Some(7)",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_async_fn_last_hop_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-last-hop",
+      "vector": "repo_exposure_inherent_async_fn_last_hop_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::load_as_object",
+          "expression": "JsonValue::Object(7).as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_as_object",
+          "expression": "load_as_object()",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_as_object",
+          "expression": "Some(7)",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_async_fn_method_entry_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-entry",
+      "vector": "repo_exposure_inherent_async_fn_method_entry_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "weakly_gripped",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "weakly_gripped",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "weakly_gripped",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "weakly_gripped",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::read_as_object",
+          "expression": "value.as_object()",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_async_fn_method_last_hop_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-last-hop",
+      "vector": "repo_exposure_inherent_async_fn_method_last_hop_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::load_as_object",
+          "expression": "value.as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_load_as_object",
+          "expression": "value.load_as_object()",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_load_as_object",
+          "expression": "Some(7)",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_async_fn_operand_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-operand",
+      "vector": "repo_exposure_inherent_async_fn_operand_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_as_object",
+          "expression": "JsonValue::Object(7).as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_receiver_async_operand_helper_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand-helper",
+      "vector": "repo_exposure_inherent_receiver_async_operand_helper_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_as_object",
+          "expression": "value.as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_receiver_async_operand_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand",
+      "vector": "repo_exposure_inherent_receiver_async_operand_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_receiver_dormant_body_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-dormant-body",
+      "vector": "repo_exposure_inherent_receiver_dormant_body_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_receiver_foreign_helper_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-foreign-helper",
+      "vector": "repo_exposure_inherent_receiver_foreign_helper_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::as_object",
+          "expression": "Some(7)",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_as_object",
+          "expression": "value.as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_receiver_free_helper_identity_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-free-helper-identity",
+      "vector": "repo_exposure_inherent_receiver_free_helper_identity_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_as_object",
+          "expression": "value.as_object()",
+          "grip_class": "ungripped",
+          "reach": "no"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::foreign::read_as_object",
+          "expression": "Some(7)",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_receiver_helper_scope_shadow_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-scope-shadow",
+      "vector": "repo_exposure_inherent_receiver_helper_scope_shadow_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::helpers::read_as_object",
+          "expression": "value.as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_as_object",
+          "expression": "Some(7)",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::route_read_as_object",
+          "expression": "helpers::read_as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_receiver_helper_type_parameter_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-type-parameter",
+      "vector": "repo_exposure_inherent_receiver_helper_type_parameter_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl Alien::as_object",
+          "expression": "Some(7)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::Object",
+          "expression": "Alien",
+          "grip_class": "activation_unknown",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_as_object",
+          "expression": "value.as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_receiver_local_wrapper_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-local-wrapper",
+      "vector": "repo_exposure_inherent_receiver_local_wrapper_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl Wrapper::as_object",
+          "expression": "value.as_object()",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_receiver_macro_discard_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-macro-discard",
+      "vector": "repo_exposure_inherent_receiver_macro_discard_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "activation_unknown",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "activation_unknown",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "activation_unknown",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "activation_unknown",
+          "reach": "weak"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_inherent_receiver_module_type_shadow_credit_matches_fixture",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-module-type-shadow",
+      "vector": "repo_exposure_inherent_receiver_module_type_shadow_owner_credit_follows_the_fixture_spec",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "match self",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Self::Object(value) =>",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "Some(*value)",
+          "grip_class": "opaque",
+          "reach": "weak"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl JsonValue::as_object",
+          "expression": "_ =>",
+          "grip_class": "opaque",
+          "reach": "weak"
         }
       ]
     },

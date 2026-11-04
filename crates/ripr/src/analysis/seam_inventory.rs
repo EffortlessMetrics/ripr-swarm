@@ -48,7 +48,7 @@ use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::RiprConfig;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 pub(crate) const REPO_EXPOSURE_SEAM_LIMIT_ENV: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
@@ -261,6 +261,30 @@ impl From<&SeamLimitInfo> for CachedSeamLimitInfo {
     }
 }
 
+pub(crate) fn seam_facts_cache_miss_message(compact: bool) -> &'static str {
+    if compact {
+        "ripr: no usable compact cache entry for this workspace state; running the full compact classified walk"
+    } else {
+        "ripr: no usable cache entry for this workspace state; running the full classified walk"
+    }
+}
+
+/// Set once by an invocation that already announced the full-repo audit path
+/// (`ripr check --format repo-*`, #4945). Only those runs print the miss
+/// notice: the same inventory also backs `agent stub`, `continue`, `pilot` and
+/// the editor, whose stderr contracts (and `RIPR_QUIET`) must not change.
+static ANNOUNCE_CACHE_MISS: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn announce_seam_facts_cache_misses() {
+    ANNOUNCE_CACHE_MISS.store(true, Ordering::Relaxed);
+}
+
+fn disclose_seam_facts_cache_miss(compact: bool) {
+    if ANNOUNCE_CACHE_MISS.load(Ordering::Relaxed) {
+        eprintln!("{}", seam_facts_cache_miss_message(compact));
+    }
+}
+
 /// Walk production Rust files at `root` and emit per-seam evidence and
 /// classification. This is the input to `output/repo-exposure-report-v1`.
 /// The discard hook in `inventory_seams_at` from #237 is replaced by
@@ -424,6 +448,9 @@ fn inventory_classified_seams_report_collect(
             }
             CacheLoad::Miss => {
                 trace_latency_phase("cache_load", "miss", cache_started.elapsed());
+                // The stat-only key is rebuilt from the same inputs; the
+                // post-collect load below is the one authoritative miss, so
+                // disclose there and print once per run (#12505).
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
@@ -491,6 +518,7 @@ fn inventory_classified_seams_report_collect(
         }
         CacheLoad::Miss => {
             trace_latency_phase("cache_load", "miss", cache_started.elapsed());
+            disclose_seam_facts_cache_miss(false);
         }
         CacheLoad::CorruptIgnored { reason } => {
             trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
@@ -966,6 +994,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
             }
             CacheLoad::Miss => {
                 trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
+                // Disclosed once at the post-collect load below (#12505).
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase(
@@ -1004,6 +1033,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         }
         CacheLoad::Miss => {
             trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
+            disclose_seam_facts_cache_miss(true);
         }
         CacheLoad::CorruptIgnored { reason } => {
             trace_latency_phase(
@@ -4475,6 +4505,20 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
+
+    #[test]
+    fn seam_facts_cache_miss_messages_name_each_family_walk() {
+        assert!(
+            seam_facts_cache_miss_message(false).contains("full classified walk"),
+            "{}",
+            seam_facts_cache_miss_message(false)
+        );
+        assert!(
+            seam_facts_cache_miss_message(true).contains("compact classified walk"),
+            "{}",
+            seam_facts_cache_miss_message(true)
+        );
+    }
 
     #[test]
     fn cache_receipt_retains_producer_order_and_portable_failure_rows() {

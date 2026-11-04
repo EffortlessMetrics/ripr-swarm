@@ -197,6 +197,12 @@ Test discovery:
   `describe` names, the placeholder `<computed title, line N>`, and the line
   of the registration. A string literal or a substitution-free template keeps
   its text.
+- a Vitest `test.for(rows)(title, fn)` / `it.for(rows)(title, fn)`
+  registration is not indexed (the table call and the title/callback call
+  are not decomposed), so an active, non-empty, non-skipped one is disclosed
+  as the `test.for registration` shape of
+  `typescript_test_extraction_partial` instead of being silently lost; an
+  empty table, a skip option and an unrelated `.for` helper are not (#10757).
 - a registration the extractor drops makes the analysis partial
   (`typescript_test_extraction_partial`) only when a test in that file can be
   related to the diff. The test index is workspace-wide, so the disclosure is

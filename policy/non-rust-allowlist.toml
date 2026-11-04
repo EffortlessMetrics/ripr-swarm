@@ -750,6 +750,15 @@ reason = "Controlled inputs, specs, and corpora consumed by the B1-B6 agentic-su
 covered_by = ["cargo xtask agentic-bench", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "crates/ripr/vendor/**"
+kind = "vendor_proto"
+owner = "analysis"
+surface = "rust"
+classification = "config"
+reason = "Pinned upstream SCIP proto revision for optional read-only index admission (#8115)."
+covered_by = ["cargo test -p ripr --lib analysis::scip::admission::tests", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "benchmarks/pilot_ranking/manifest.json"
 kind = "benchmark_fixture"
 owner = "eval-corpus"
@@ -801,7 +810,7 @@ owner = "verification/kani-import"
 surface = "fixtures"
 classification = "fixture"
 reason = "Pinned upstream Kani contract examples and an authored no-promotion report projection; no native-run capture claim."
-covered_by = ["cargo test -p ripr --lib kani_import", "cargo test -p ripr --lib kani_report"]
+covered_by = ["cargo test -p ripr --test kani_report_cli"]
 
 [[allow]]
 glob = "crates/ripr/src/app/kani_import/fixtures/native-captures/**"
@@ -810,7 +819,7 @@ owner = "verification/kani-import"
 surface = "fixtures"
 classification = "fixture"
 reason = "Untouched native Kani exports, exact source data and an authored portable provenance projection; offline replay does not execute or authenticate the verifier."
-covered_by = ["cargo test -p ripr --lib kani_import", "cargo test -p ripr --lib kani_report"]
+covered_by = ["cargo test -p ripr --test kani_report_cli"]
 
 [[allow]]
 glob = "crates/ripr/tests/fixtures/causal-attribution/*.json"
@@ -879,7 +888,7 @@ owner = "ci/admission"
 surface = "ci"
 classification = "tooling"
 reason = "Stdlib Python decision logic extracted from the pre-allocation admission action so the hard-cut and candidate decisions are testable outside embedded YAML shell (#5391, #2022)."
-covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest"]
+covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest", "cargo test -p repo-policy --test review_disposition_admission"]
 
 [[allow]]
 glob = "policy/release-ledger-overrides.json"
@@ -1063,3 +1072,21 @@ surface = "repo"
 classification = "metadata"
 reason = "Per-PR count-policy allowlist rows merged into policy/process_allowlist.txt and policy/network_allowlist.txt so parallel PRs do not append to the same list tail."
 covered_by = ["cargo xtask check-process-policy", "cargo xtask check-network-policy"]
+
+[[allow]]
+glob = ".agents/skills/finish-pr/scripts/*.py"
+kind = "merge_guard_script"
+owner = "ci/merge-flow"
+surface = "ci"
+classification = "tooling"
+reason = "Stdlib Python helper that refuses an expected-head squash without exact-head successful Result evidence (#11781); read-only gh api except the single expected-head merge."
+covered_by = ["cargo test -p xtask --test guarded_merge_selftest"]
+
+[[allow]]
+glob = ".agents/skills/finish-pr/tests/*.py"
+kind = "merge_guard_test"
+owner = "ci/merge-flow"
+surface = "ci"
+classification = "test"
+reason = "Fake-API unittest suite for the exact-head merge guard (#11781); run through the Rust wrapper test so CI executes it."
+covered_by = ["cargo test -p xtask --test guarded_merge_selftest"]

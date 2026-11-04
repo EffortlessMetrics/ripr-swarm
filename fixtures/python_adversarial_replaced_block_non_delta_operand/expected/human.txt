@@ -17,13 +17,14 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:src/account.py:Account.balance:return_value:return_value:max_0_self._balance
   Changed behavior: return max(0, self._balance)
   Missing check (1 of 2): A strong Python oracle reaches `balance`, but its assertion does not
     observe the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_account.py:4 test_balance_starts_at_the_opening_amount (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_account.py:4 test_balance_starts_at_the_opening_amount
   Suggested test file: tests/test_account.py
   Suggested test: test_balance_starts_at_the_opening_amount
   Test node: tests/test_account.py::test_balance_starts_at_the_opening_amount

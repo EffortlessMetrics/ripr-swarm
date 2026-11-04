@@ -195,27 +195,39 @@ actor records its claim:
   timestamp>`, or reuse an existing owned-convergence comment by editing it.
   Keep one current claim comment per actor, edited at transitions — the same
   discipline as the PR-native continuation record above.
-- Treat any other actor's claim younger than 4 hours as ownership. While a
-  live claim is held, do not push to the branch, re-bless, or change labels.
-  This coordinates writers; it does not replace `stackable = false`,
-  `blocked_by`, review or qualification routes.
-- A claim alone does not keep ownership. Judge liveness from actual activity
-  (next subsection), and record a stale-claim takeover in the claim comment
-  you edit in.
+- Respect an existing actor's claim and any active work. While ownership is
+  held, do not push to the branch, re-bless, or change labels without an
+  accepted handoff. This coordinates writers; it does not replace
+  `stackable = false`, `blocked_by`, review or qualification routes.
+- A claim aged four hours warrants reconciliation, not automatic takeover;
+  reconcile sooner when other evidence warrants it. Check the
+  owner's disposition, current head, active qualification and accepted handoff
+  (next subsection); if activity or custody is unknown, preserve ownership
+  until the responsible owner or coordinator resolves it.
 - Before every push, run the runbook's writer guard: `git ls-remote` the head
   branch and reconcile a mismatch instead of pushing over it.
 
+Admission reads these claims: the `merge-ready` qualification run's candidate
+admission step fetches the PR's conversation comments (bounded latest-100
+read) and annotates any claim comment still inside the 4-hour youth window —
+detected by the `Converging this PR:` line prefix alone; the prose timestamp
+after the prefix is never parsed, and youth comes from the API-attested
+comment update time. A live claim renders as `live claims:` rows plus a
+`::warning::` in the admission summary and a `concurrent claims:` row in the
+Rust result report. It is observability only: the claim never refuses or
+delays qualification, and a PR with no claim comments annotates nothing.
+
 ### Judging activity
 
-The commits API is the truth signal: `commit.author.date` from
-`GET /repos/{owner}/{repo}/pulls/{number}/commits` shows the last real push.
-`updatedAt` is bot-polluted — any comment, label edit, review submission, or
-linked check event advances it with no writer action — so it overstates
-activity and can never establish that an actor went idle. Every PR sampled on
-the 2026-10-31 open board showed `updatedAt` minutes past its last commit
-(for example #11499: last commit 11:58:00Z, `updatedAt` 12:09:54Z). Use
-author dates and claim comments to judge activity; do not declare a rival
-idle from `updatedAt`.
+Commit author dates are object metadata, not publication timestamps or proof
+that a writer has released custody: an old commit can be pushed now, and an
+author date can be in the future. PR `updatedAt` can also reflect bots, labels,
+reviews or checks rather than writer activity. Use neither timestamp alone to
+declare a writer idle or transfer a claim. Reconcile the current head and the
+owner's latest disposition, including active tests or qualification, unique
+uncommitted work and any accepted handoff. An aged claim can prompt that
+inspection; it does not authorize replacement. Unknown activity or custody
+remains unknown until the responsible owner or coordinator resolves it.
 
 ### Yield on contact
 
@@ -378,6 +390,7 @@ cargo xtask specs next
 cargo xtask suggested-fixes
 cargo xtask targeted-rerun-benchmark --root <path> --changed-test <path> [--samples <n>] [--timeout-ms <n>]
 cargo xtask targeted-test-outcome --before <path> --after <path>
+cargo xtask slow-test-report [--junit <path>] [--policy <path>] [--limit <n>]
 cargo xtask test-efficiency-report
 cargo xtask test-oracle-report
 cargo xtask update-badge-endpoints
@@ -456,7 +469,7 @@ review.
 
 Local `precommit` also runs `goldens check` when the diff against
 `origin/main` touches output-surface code (`crates/ripr/src/output/`,
-`crates/ripr/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
+`crates/ripr-contract/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
 `policy/output_contracts.txt`) or a fixture `expected/` file, because renderer
 wording changes make stale goldens the usual way main goes red (#8421). Other
 diffs print a skip line and do not pay for the fixture run. Real drift fails
@@ -793,6 +806,17 @@ alias that produces the same non-blocking report.
 oracle kind and strength, observed literal values, static limitations, and
 advisory reason counts for low-discriminator signals. The report is a review
 aid and does not block CI.
+
+`slow-test-report` reads the nextest `ci` JUnit XML (default
+`target/nextest/ci/junit.xml`) and writes the slowest tests (default 50) to
+`target/ripr/reports/slow-tests.md` and `target/ripr/reports/slow-tests.json`.
+Each test is judged against `policy/test-time-budget.toml`: a per-test budget, a
+baseline allowlist of tests already over budget, and a regression cap (a
+baselined test slower than `regression_factor` times its recorded time is
+reported as regressed). The report is advisory; it fails only when the policy
+`mode` is `enforced` and a test is over budget without a baseline entry or has
+regressed past the cap. Duplicate testcase rows from several shards are merged,
+keeping the slowest. It never runs tests (#12905).
 
 `dogfood` runs `ripr check --mode fast` against stable in-repo fixture diffs,
 writes actual outputs under `target/ripr/dogfood/`, and writes advisory

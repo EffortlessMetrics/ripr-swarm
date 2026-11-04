@@ -22,7 +22,7 @@ use std::os::windows::fs::symlink_file;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn suffixed_decimal_arguments_preserve_whole_literal_boundaries() {
@@ -4649,6 +4649,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     };
     let mut index = RustIndex::default();
     index.insert_file_only(
@@ -4663,6 +4664,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: Default::default(),
             source: "fn discounted_total_helper() {}".into(),
             item_scopes: None,
@@ -13069,6 +13071,7 @@ fn assertion_targets_seam_returns_false_for_empty_token_list() {
         attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     };
     assert!(!assertion_targets_seam(&test, &[]));
 }
@@ -13939,6 +13942,242 @@ fn proximity_test_pinning_another_function_lends_a_return_value_no_oracle() -> R
     assert!(
         with_runner.iter().all(|o| *o == OracleStrength::None),
         "runner without assertion: other-function lends none: {with_runner:?}"
+    );
+    Ok(())
+}
+
+/// #12722: an exact error-variant pin reads the owner's `Err` arm, so it is
+/// published as no oracle on the owner's returned-value `Ok(n)` seam, while an
+/// exact value assertion on that value keeps its strong credit. The same pin
+/// still credits the `Err(..)` seam it names.
+#[test]
+fn exact_error_pin_is_not_published_as_an_oracle_on_the_ok_value_seam() -> Result<(), String> {
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Even,\n}\n\
+         pub fn parse_pinned(n: u8) -> Result<u8, Fault> {\n    if n % 2 == 0 { Err(Fault::Even) } else { Ok(n) }\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn pinned_even() { assert_eq!(parse_pinned(2).unwrap_err(), Fault::Even); }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let published = |expression: &str| -> Result<Vec<OracleStrength>, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.expression() == expression)
+            .ok_or_else(|| format!("{expression} seam present"))?;
+        Ok(evidence_for_seam(seam, &index)
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect())
+    };
+    assert_eq!(
+        published("Ok(n)")?,
+        vec![OracleStrength::None],
+        "the error pin cannot see the Ok value"
+    );
+    assert_eq!(
+        published("Err(Fault::Even)")?,
+        vec![OracleStrength::Strong],
+        "the same pin still credits the Err value it names"
+    );
+    Ok(())
+}
+
+/// #12733 / #12734: the skipped error-variant pin must read the same in every
+/// view of the `Ok(n)` seam. The classify stage's discriminate evidence agrees
+/// with the related-test record (no oracle credited), and the record says the
+/// assertion pins a different arm instead of claiming the test has no oracle.
+#[test]
+fn skipped_error_pin_reads_the_same_in_the_stage_and_the_related_test_record() -> Result<(), String>
+{
+    let prod = "#[derive(Debug, PartialEq)]\npub enum Fault {\n    Even,\n}\n\
+         pub fn parse_pinned(n: u8) -> Result<u8, Fault> {\n    if n % 2 == 0 { Err(Fault::Even) } else { Ok(n) }\n}\n\
+         #[cfg(test)]\nmod tests {\n    use super::*;\n    \
+         #[test] fn pinned_even() { assert_eq!(parse_pinned(2).unwrap_err(), Fault::Even); }\n}\n";
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let evidence = |expression: &str| -> Result<TestGripEvidence, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.expression() == expression)
+            .ok_or_else(|| format!("{expression} seam present"))?;
+        Ok(evidence_for_seam(seam, &index))
+    };
+
+    let ok_seam = evidence("Ok(n)")?;
+    let [grip] = ok_seam.related_tests.as_slice() else {
+        return Err(format!(
+            "one related test expected: {:?}",
+            ok_seam.related_tests
+        ));
+    };
+    assert_eq!(grip.oracle_strength, OracleStrength::None);
+    assert_eq!(grip.oracle_kind, OracleKind::ExactErrorVariant);
+    assert_eq!(
+        grip.evidence_summary,
+        "exact error-variant assertion on a different arm than this seam's returned value"
+    );
+    assert!(
+        super::pins_other_arm(&grip.oracle_kind, &grip.oracle_strength),
+        "the record is the typed marker for a pin on a different arm"
+    );
+    assert_eq!(
+        ok_seam.discriminate.state,
+        StageState::No,
+        "stage must agree with the record: {}",
+        ok_seam.discriminate.summary
+    );
+    assert!(
+        ok_seam
+            .discriminate
+            .summary
+            .contains("is `none` (kind-match false)"),
+        "stage summary must not read strong: {}",
+        ok_seam.discriminate.summary
+    );
+
+    // The same pin still credits the `Err(..)` seam it names, in every view.
+    let err_seam = evidence("Err(Fault::Even)")?;
+    assert_eq!(
+        err_seam.related_tests[0].oracle_strength,
+        OracleStrength::Strong
+    );
+    assert!(
+        !super::pins_other_arm(
+            &err_seam.related_tests[0].oracle_kind,
+            &err_seam.related_tests[0].oracle_strength
+        ),
+        "a pin that names the seam's own Err is not a different-arm pin"
+    );
+    assert_eq!(err_seam.discriminate.state, StageState::Yes);
+    Ok(())
+}
+
+/// #12478: ranking a match-arm seam with many related tests builds owner
+/// reach once, not once per test, and still publishes the #12060 credited
+/// view (other-function `None`, owner+other `Strong`).
+#[test]
+fn match_arm_owner_reach_is_computed_once_for_many_related_tests() -> Result<(), String> {
+    const EXTRA_TESTS: usize = 48;
+    const SORT_REPEATS: usize = 200;
+    let mut extras = String::new();
+    let mut tests = String::from(
+        "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }\n\
+         #[test] fn consume_and_reduce() { let _ = consume(3); assert_eq!(reduce(3), Reduction::Over(3)); }\n",
+    );
+    for i in 0..EXTRA_TESTS {
+        extras.push_str(&format!("pub fn extra_{i}() -> u64 {{ {i} }}\n"));
+        tests.push_str(&format!(
+            "#[test] fn extra_{i}_pin() {{ assert_eq!(extra_{i}(), {i}); }}\n"
+        ));
+    }
+    let prod = format!(
+        "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+         pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+         pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+         {extras}\
+         #[cfg(test)]\nmod tests {{\n    use super::*;\n    {tests}\n}}\n"
+    );
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let arm = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::MatchArm && s.expression().contains("Over"))
+        .ok_or_else(|| "Over arm seam present".to_string())?;
+    let context = CompactGripContext::new(&index);
+    let owner_fn = context.owner_function(arm.file(), arm.display_line());
+    let related = find_related_tests_with_context(arm, &context);
+    if related.len() < EXTRA_TESTS + 2 {
+        return Err(format!(
+            "expected at least {} related tests, found {}",
+            EXTRA_TESTS + 2,
+            related.len()
+        ));
+    }
+
+    let mut warmup = related.clone();
+    let _ = sort_related_tests_for_seam(arm, &context, owner_fn, &mut warmup);
+
+    CREDITED_OWNER_REACH_BUILDS.with(|count| count.set(0));
+    let started = Instant::now();
+    for _ in 0..SORT_REPEATS {
+        let mut ranked = related.clone();
+        let _ = sort_related_tests_for_seam(arm, &context, owner_fn, &mut ranked);
+    }
+    let elapsed = started.elapsed();
+    let builds = CREDITED_OWNER_REACH_BUILDS.with(|count| count.get());
+    eprintln!(
+        "sort_related_tests_for_seam: related={} repeats={} owner_reach_builds={} elapsed={elapsed:?}",
+        related.len(),
+        SORT_REPEATS,
+        builds
+    );
+    if builds != SORT_REPEATS {
+        return Err(format!(
+            "expected one owner_reach per sort ({SORT_REPEATS} sorts, {} related tests), saw {builds}; elapsed {elapsed:?}",
+            related.len()
+        ));
+    }
+
+    let mut ranked = related.clone();
+    let ranked_oracles = sort_related_tests_for_seam(arm, &context, owner_fn, &mut ranked);
+    let published: Vec<(String, OracleStrength)> = ranked
+        .iter()
+        .zip(ranked_oracles)
+        .map(|((indexed, _reason), oracle)| (indexed.test.name.clone(), oracle.1))
+        .collect();
+    let strength = |name: &str| {
+        published
+            .iter()
+            .find(|(test, _)| test == name)
+            .map(|(_, strength)| strength.clone())
+            .ok_or_else(|| format!("{name} related"))
+    };
+    assert_eq!(
+        strength("reduce_over")?,
+        OracleStrength::None,
+        "other-function"
+    );
+    assert_eq!(
+        strength("consume_and_reduce")?,
+        OracleStrength::Strong,
+        "owner+other"
+    );
+    for i in 0..EXTRA_TESTS {
+        let name = format!("extra_{i}_pin");
+        if let Ok(found) = strength(&name) {
+            assert_eq!(found, OracleStrength::None, "{name}");
+        }
+    }
+
+    let full = evidence_for_seam(arm, &index);
+    let compact = compact_evidence_for_seam(arm, &context);
+    assert_eq!(
+        full.propagate.state, compact.propagate.state,
+        "full and compact propagate"
+    );
+    let full_by_name: Vec<(String, OracleStrength)> = full
+        .related_tests
+        .iter()
+        .map(|grip| (grip.test_name.clone(), grip.oracle_strength.clone()))
+        .collect();
+    assert_eq!(
+        full_by_name
+            .iter()
+            .find(|(name, _)| name == "reduce_over")
+            .map(|(_, strength)| strength),
+        Some(&OracleStrength::None),
+        "published other-function"
+    );
+    assert_eq!(
+        full_by_name
+            .iter()
+            .find(|(name, _)| name == "consume_and_reduce")
+            .map(|(_, strength)| strength),
+        Some(&OracleStrength::Strong),
+        "published owner+other"
     );
     Ok(())
 }
@@ -15128,6 +15367,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 attrs: Vec::new(),
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -22359,4 +22599,232 @@ fn inherent_receiver_name_only_residual_gaps_issue_8917() -> Result<(), String> 
         );
     }
     Ok(())
+}
+
+/// #11870: the missing-discriminator facts of the `self.count = 2` write seam
+/// in `bump`, given the owner signature and the test body.
+fn field_write_facts(signature: &str, test_body: &str) -> Result<Vec<String>, String> {
+    field_write_facts_with_attr(signature, test_body, "")
+}
+
+/// #11870: a weak relational read of the written field, from the binding the
+/// test ran the owner on, makes the exact field value the missing check.
+/// Every other shape (a strong read, a sibling or other binding, a later
+/// write, a by-value owner, an equality, a bare boolean, a skipped test)
+/// emits nothing.
+#[test]
+fn a_weak_read_of_a_written_field_is_the_missing_discriminator_only_when_placed()
+-> Result<(), String> {
+    let by_ref = "pub fn bump(&mut self)";
+    let run = "    let mut c = Counter::new();\n    c.bump();\n";
+    let weak = |read: &str| format!("{run}    {read}");
+    for read in [
+        "assert!(c.count > 0);",
+        "assert!(0 < c.count);",
+        "assert!(c.count != 0);",
+        "assert_ne!(c.count, 0);",
+    ] {
+        assert_eq!(
+            field_write_facts(by_ref, &weak(read))?,
+            vec!["count".to_string()],
+            "{read}"
+        );
+    }
+    for (label, signature, body) in [
+        ("a strong read", by_ref, weak("assert_eq!(c.count, 2);")),
+        ("a sibling field", by_ref, weak("assert!(c.other > 0);")),
+        (
+            "a read before the call",
+            by_ref,
+            "    let mut c = Counter::new();\n    assert!(c.count < 5);\n    c.bump();".to_string(),
+        ),
+        (
+            "another binding",
+            by_ref,
+            "    let mut c = Counter::new();\n    let d = Counter::new();\n    c.bump();\n    assert!(d.count > 0);"
+                .to_string(),
+        ),
+        (
+            "a later write",
+            by_ref,
+            format!("{run}    c.count = 9;\n    assert!(c.count > 0);"),
+        ),
+        (
+            "an equality spelled as a bare assert",
+            by_ref,
+            weak("assert!(c.count == 2);"),
+        ),
+        (
+            "a default-like equality",
+            by_ref,
+            weak("assert_eq!(c.count, 0);"),
+        ),
+        (
+            "a compared side naming the binding",
+            by_ref,
+            weak("assert!(c.count > c.other);"),
+        ),
+        (
+            "a strong read beside the weak one",
+            by_ref,
+            weak("assert!(c.count > 0);\n    assert_eq!(c.count, 2);"),
+        ),
+        (
+            "another check on the binding beside the weak one",
+            by_ref,
+            weak("assert!(c.count > 0);\n    assert_eq!(c.snapshot(), 2);"),
+        ),
+        (
+            "a by-value owner",
+            "pub fn bump(mut self) -> Self",
+            weak("assert!(c.count > 0);"),
+        ),
+    ] {
+        let facts = field_write_facts(signature, &body)?;
+        assert!(facts.is_empty(), "{label} must start nothing: {facts:?}");
+    }
+    // A check that reaches the field without being an assertion fact.
+    for (label, body, tail) in [
+        (
+            "a let alias of the field then an exact check",
+            weak("assert!(c.count > 0);\n    let n = c.count;\n    assert_eq!(n, 2);"),
+            "",
+        ),
+        (
+            "a helper that checks the binding",
+            weak("assert!(c.count > 0);\n    verify(&c);"),
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        ),
+        (
+            "a helper on the same line as the weak assertion",
+            weak("assert!(c.count > 0); verify(&c);"),
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        ),
+        (
+            "a destructure of the binding",
+            weak(
+                "assert!(c.count > 0);\n    let Counter { count, .. } = c;\n    assert_eq!(count, 2);",
+            ),
+            "",
+        ),
+        (
+            "a reference alias of the field",
+            weak("assert!(c.count > 0);\n    let r = &c.count;\n    assert_eq!(*r, 2);"),
+            "",
+        ),
+        (
+            "an if-panic check of the field",
+            weak("assert!(c.count > 0);\n    if c.count != 2 {\n        panic!(\"bad\");\n    }"),
+            "",
+        ),
+        (
+            "an inline format capture {c}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c}\"), \"2\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c:?}",
+            weak(
+                "assert!(c.count > 0);\n    assert_eq!(format!(\"{c:?}\"), \"Counter { count: 2, other: 0 }\");",
+            ),
+            "",
+        ),
+        (
+            "an inline format capture {c:#?}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c:#?}\"), \"x\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c :?}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c :?}\"), \"x\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c }",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c }\"), \"x\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c:>10}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c:>10}\"), \"x\");"),
+            "",
+        ),
+        (
+            "a capture in a let then an exact check of the string",
+            weak(
+                "assert!(c.count > 0);\n    let s = format!(\"{c:?}\");\n    assert_eq!(s, \"Counter { count: 2, other: 0 }\");",
+            ),
+            "",
+        ),
+        (
+            "a reference alias of the binding",
+            weak("assert!(c.count > 0);\n    let r = &c;\n    assert_eq!(r.count, 2);"),
+            "",
+        ),
+        (
+            "a spaced field access",
+            weak("assert!(c.count > 0);\n    let n = c\n        . count;\n    assert_eq!(n, 2);"),
+            "",
+        ),
+        (
+            "a move of the binding",
+            weak("assert!(c.count > 0);\n    let moved = c;\n    drop(moved);"),
+            "",
+        ),
+    ] {
+        let facts = field_write_facts_with_tail(by_ref, &body, "", tail)?;
+        assert!(facts.is_empty(), "{label} must start nothing: {facts:?}");
+    }
+    // The same shapes without the extra statement still start, so the
+    // negatives above are the statement's doing and not the harness'.
+    assert_eq!(
+        field_write_facts_with_tail(
+            by_ref,
+            &weak("assert!(c.count > 0);"),
+            "",
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        )?,
+        vec!["count".to_string()],
+        "an unrelated helper item does not withhold"
+    );
+    for attr in ["#[ignore]", "#[should_panic]"] {
+        let facts = field_write_facts_with_attr(by_ref, &weak("assert!(c.count > 0);"), attr)?;
+        assert!(facts.is_empty(), "{attr} must start nothing: {facts:?}");
+    }
+    Ok(())
+}
+
+fn field_write_facts_with_attr(
+    signature: &str,
+    test_body: &str,
+    attr: &str,
+) -> Result<Vec<String>, String> {
+    field_write_facts_with_tail(signature, test_body, attr, "")
+}
+
+/// As [`field_write_facts`], with `tail` (helper items) after the test fn.
+fn field_write_facts_with_tail(
+    signature: &str,
+    test_body: &str,
+    attr: &str,
+    tail: &str,
+) -> Result<Vec<String>, String> {
+    let prod = PathBuf::from("src/counter.rs");
+    let prod_src = format!(
+        "pub struct Counter {{\n    pub count: u32,\n    pub other: u32,\n}}\n\nimpl Counter {{\n    pub fn new() -> Self {{\n        Counter {{ count: 0, other: 0 }}\n    }}\n\n    {signature} {{\n        self.count = 2;\n    }}\n}}\n"
+    );
+    let tests = PathBuf::from("tests/counter_tests.rs");
+    let tests_src =
+        format!("use crate::Counter;\n\n#[test]\n{attr}\nfn t() {{\n{test_body}\n}}\n{tail}\n");
+    let index = index_from_files(&[(prod, prod_src.as_str()), (tests, tests_src.as_str())])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/counter.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::FieldConstruction && s.expression().contains("self.count"))
+        .ok_or_else(|| "expected the self.count write seam".to_string())?;
+    Ok(evidence_for_seam(seam, &index)
+        .missing_discriminators
+        .iter()
+        .map(|fact| fact.value.clone())
+        .collect())
 }

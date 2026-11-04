@@ -162,7 +162,7 @@ records that distinction.
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
 | `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
-| `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
+| `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
 | `schemas/ripr/pr-evidence.schema.json` | `0.1` | `crates/ripr/src/app/pr_evidence.rs` (installed `ripr pr-evidence`) and `xtask/src/reports/pr_evidence.rs` (xtask compatibility); PR evidence envelope |
 | `schemas/ripr/repair-assurance.schema.json` | `1` | `crates/ripr/src/domain/verification_result.rs`; reserved assurance vocabulary and execution result |
@@ -173,7 +173,7 @@ records that distinction.
 | `schemas/ripr/ripr-agent-request.schema.json` | `0.2` | `crates/ripr/src/lsp/agent_protocol.rs`; route readiness fields |
 | `schemas/ripr/ripr-agent-success.schema.json` | `0.2` | `crates/ripr/src/lsp/agent_protocol.rs`; route readiness fields |
 | `schemas/ripr/rust-repair-trust-corpus.schema.json` | `0.1` | `xtask/src/reports/rust_repair_trust.rs`; trust corpus input, including optional observation `route` ladder facts |
-| `schemas/ripr/ripr-intervention-study.schema.json` | `ripr_intervention_study.v1` | `crates/ripr/src/domain/intervention_study.rs` plus `crates/ripr/src/output/intervention_study.rs`; preregistration-only matched intervention-study protocol |
+| `schemas/ripr/ripr-intervention-study.schema.json` | `ripr_intervention_study.v1` | `crates/ripr-contract/src/domain/intervention_study.rs` plus `crates/ripr/src/output/intervention_study.rs`; preregistration-only matched intervention-study protocol |
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
@@ -286,7 +286,7 @@ The budget-version constant lives in
 
 Every refusal already names its next step in prose (#11539). Machine
 consumers get the same step as a `remedy` object, derived from that prose by
-one owner (`RefusalRemedy::from_prose` in `crates/ripr/src/domain/`); the
+one owner (`RefusalRemedy::from_prose` in `crates/ripr-contract/src/domain/`); the
 renderers only serialize it. The prose is the source of truth, so the
 derivation is fail-closed: it copies what the message states and never
 composes, completes or guesses a command.
@@ -820,7 +820,7 @@ The live cache is unchanged. See [RIPR-SPEC-0257](specs/RIPR-SPEC-0257-current-c
 `schemas/ripr/ripr-intervention-study.schema.json` describes one frozen
 `ripr_intervention_study.v1` protocol. `schema_version`, `kind`, and
 `implementation_state` (`preregistration_only`) are pinned. The semantic
-object in `crates/ripr/src/domain/intervention_study.rs` owns study identity
+object in `crates/ripr-contract/src/domain/intervention_study.rs` owns study identity
 (`study_id`), `assignment`, `shared_budget`, `intervention_surface`,
 `leakage_controls`, `outcome_axes`, `stopping_rule`, and `non_claims`.
 `crates/ripr/src/output/intervention_study.rs` seals `protocol_digest` and
@@ -3468,10 +3468,10 @@ unchanged and compose underneath (the budget counts already-capped payloads).
 ### `confidence_basis` and `confidence_why_capped` (additive, preview findings, #10700)
 
 The fields are reserved by the shared `Finding.confidence_basis` shape and are
-not populated by any adapter until the TypeScript/JavaScript classifier lands
-(#10700 part 2); until then no output carries them. Once populated,
-TypeScript/JavaScript preview findings carry a per-class constant `confidence`
-that is not on the same scale as Rust's. `confidence_basis` is a non-empty list
+populated by the TypeScript/JavaScript classifier (#10700 part 2) and the
+Python classifier (#12419). TypeScript/JavaScript and Python preview findings
+carry a per-class constant `confidence` that is not on the same scale as
+Rust's. `confidence_basis` is a non-empty list
 of `{code, summary}` objects naming why the score is capped (codes:
 `preview_stages_not_modeled`, `syntax_first_no_type_resolution`,
 `infection_not_established`, `propagation_not_established`, `no_related_test`, `oracle_below_strong`, `boundary_input_not_matched`,
@@ -3659,6 +3659,12 @@ while `call_effect` remains the fallback for other observable calls.
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
 - `static_probe_unknown`
+
+Reserved wire values (RIPR-SPEC-0411, #5514): `max_depth_reached`,
+`external_crate_boundary`, and `feature_unknown` stay valid JSON tokens with
+human glosses and next-step guidance, but no production classifier on current
+main pushes them onto a finding. A future spec slice must name the trigger
+before any emitter lands.
 
 `agent_card_refusal_kind` values:
 
@@ -5200,6 +5206,14 @@ Field contract:
   `activation_overlap` is a static tie-breaker from already observed call
   values, such as a predicate-boundary equality call. `related_tests_total` is
   unaffected by ranking.
+- A related test whose only assertion on a returned-value seam is an exact
+  error-variant pin that does not name the `Err(..)` that seam constructs (this
+  includes a seam that constructs no `Err` at all, such as an `Ok(n)` arm
+  paired with an `Err(Fault::Even)` pin) is
+  published as `oracle_kind: exact_error_variant`, `oracle_strength: none`,
+  with a summary saying it pins a different arm; the same assertion is skipped
+  by the seam's discriminate stage and is not offered as the nearest test to
+  imitate (#12733, #12734).
 - `seams[].observed_values` — statically resolved scalar values seen in
   owner-call arguments across related tests. In addition to direct literals,
   Rust predicate boundaries may carry exact values from source-ordered direct
@@ -19621,7 +19635,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.147",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.158",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20393,7 +20407,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.55",
+    "schema_version": "1.57",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -20406,7 +20420,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.147",
+      "schema_version": "1.158",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

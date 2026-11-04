@@ -17,13 +17,14 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:shapes/noter.py:Recorder.note:field_value:field_construction:self.last=fault
   Changed behavior: self.last = "fault"
   Missing check (1 of 2): A strong Python oracle reaches `note`, but its assertion does not observe
     the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_noter.py:3 test_note (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_noter.py:3 test_note
   Suggested test file: tests/test_noter.py
   Suggested test: test_note
   Test node: tests/test_noter.py::test_note

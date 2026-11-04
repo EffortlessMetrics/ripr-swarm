@@ -1,6 +1,6 @@
 use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
-    ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
+    ASSERTION_CONTEXT_UNESTABLISHED, OwnerPinSyntax, ProbeContext, body_contains_owner_call,
     ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
     is_partial_eq_method, missing_evidence, oracle_crediting_relations, recommended_next_step,
     recommended_next_step_with_boundary, stop_reasons, wrapper_error_seam_expression,
@@ -144,6 +144,15 @@ pub(in crate::analysis) fn build_finding_with_origins(
             &evidence.implicit_dispatch_tests,
         );
     }
+    let fallback_pin_syntax = OwnerPinSyntax::default();
+    let collection_contents_check_side_effect =
+        crate::analysis::repair_route::probe_needs_collection_contents_guidance(
+            context.probe,
+            context.owner_fn,
+            context.index,
+            &test_summaries,
+            context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax),
+        );
     // RIPR-SPEC-0229 / #11024: no related test input selects the changed
     // match arm, so the repair is an input that selects it, not a stronger
     // assertion. The arm pattern is the backticked span of the fact reason.
@@ -276,6 +285,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
                 &related_tests,
                 &stop_reasons,
             ),
+            collection_contents_check_side_effect,
         )
     };
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {
@@ -1248,6 +1258,7 @@ mod tests {
             observe: yes.clone(),
             discriminate: yes,
             reach_ruled_out: true,
+            assigned_field_weakly_read: false,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
             mixed_refusal_is_analyzer_limit: false,
@@ -1270,6 +1281,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
