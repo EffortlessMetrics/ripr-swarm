@@ -640,6 +640,7 @@ fn job_guard_violations(workflow: &str, source: &str) -> Vec<String> {
     for job in guarded {
         let condition = job_condition(source, job).unwrap_or_default();
         let exact = match (workflow, job) {
+            ("zed-extension.yml", "queue-select") => Some("github.event_name == 'merge_group'"),
             ("ci.yml", "source-identity") => Some("contains(toJSON(inputs), '\"subject_sha\"')"),
             ("ci.yml", "ci-result") => {
                 Some("always() && contains(toJSON(inputs), '\"subject_sha\"')")
@@ -1242,6 +1243,159 @@ fn fixture_retention_preserves_only_explicitly_retained_evidence() -> TestResult
         if retained {
             fs::remove_dir_all(root)?;
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn zed_queue_selector_uses_combined_tree_and_fails_toward_execution() -> TestResult {
+    let source = include_str!("../../../.github/workflows/zed-extension.yml");
+    let selector = named_job(source, "queue-select");
+    assert!(selector.contains("if: github.event_name == 'merge_group'"));
+    assert!(source.contains(
+        "needs.queue-select.result == 'success' && needs.queue-select.outputs.selected == 'true'"
+    ));
+    let body = selector
+        .split_once("        run: |\n")
+        .ok_or("queue selection script")?
+        .1;
+    let script = body
+        .lines()
+        .take_while(|line| line.is_empty() || line.starts_with("          "))
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let fixture = Fixture::new()?;
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    fixture.write("docs/only.md", "docs\n")?;
+    let unrelated = fixture.commit()?;
+    let select = |script: &str, base: &str, head: &str| -> TestResult<String> {
+        let output = fixture.run(script, &[("BASE_SHA", base), ("HEAD_SHA", head)], None)?;
+        assert!(output.status.success(), "selector failed: {output:?}");
+        let value = fs::read_to_string(fixture.root.join(".git/actions-output"))?;
+        let selected = value
+            .lines()
+            .filter_map(|line| line.strip_prefix("selected="))
+            .collect::<Vec<_>>();
+        assert_eq!(selected.len(), 1);
+        Ok(selected[0].to_owned())
+    };
+    assert_eq!(select(&script, &base, &unrelated)?, "false");
+    fixture.write("editors/zed/src/lib.rs", "changed\n")?;
+    let zed = fixture.commit()?;
+    assert_eq!(select(&script, &base, &zed)?, "true");
+    assert_eq!(select(&script, "", &zed)?, "true");
+    assert_eq!(select(&script, &base, &base)?, "true");
+    assert_eq!(
+        select(&script, &base, &unrelated)?,
+        "true",
+        "wrong checked-out head must widen"
+    );
+    fixture.git(&["rm", "editors/zed/src/lib.rs"])?;
+    let deleted = fixture.commit()?;
+    assert_eq!(
+        select(&script, &zed, &deleted)?,
+        "true",
+        "deletions still select"
+    );
+    fixture.git(&["checkout", "--detach", &zed])?;
+    let mutant = script.replace(
+        "editors/zed/*|.github/workflows/zed-extension.yml",
+        "never-matches",
+    );
+    assert_ne!(mutant, script);
+    assert_eq!(
+        select(&mutant, &base, &zed)?,
+        "false",
+        "removing the path guard exposes the false skip"
+    );
+    Ok(())
+}
+
+#[test]
+fn zed_queue_job_condition_preserves_manual_and_explicit_pr_routes() -> TestResult {
+    let source = include_str!("../../../.github/workflows/zed-extension.yml");
+    let condition = job_condition(source, "zed-extension").ok_or("missing Zed condition")?;
+    assert!(
+        condition.starts_with("always() && !cancelled()"),
+        "a skipped queue selector must not suppress legacy events"
+    );
+    let fixture = Fixture::new()?;
+    for (event, action, label, selected, selector_result, expected) in [
+        ("merge_group", "checks_requested", "", true, "success", true),
+        (
+            "merge_group",
+            "checks_requested",
+            "",
+            false,
+            "success",
+            false,
+        ),
+        (
+            "merge_group",
+            "checks_requested",
+            "",
+            true,
+            "failure",
+            false,
+        ),
+        ("workflow_dispatch", "", "", false, "skipped", true),
+        ("push", "", "", false, "skipped", true),
+        (
+            "pull_request",
+            "labeled",
+            "merge-ready",
+            false,
+            "skipped",
+            true,
+        ),
+        ("pull_request", "opened", "", false, "skipped", false),
+    ] {
+        let flag = |value| if value { "true" } else { "false" };
+        let expr = condition
+            .replace("always()", "true")
+            .replace("!cancelled()", "true")
+            .replace(
+                "github.event_name != 'merge_group'",
+                flag(event != "merge_group"),
+            )
+            .replace(
+                "needs.queue-select.result == 'success'",
+                flag(selector_result == "success"),
+            )
+            .replace(
+                "needs.queue-select.outputs.selected == 'true'",
+                flag(selected),
+            )
+            .replace(
+                "github.event_name != 'pull_request'",
+                flag(event != "pull_request"),
+            )
+            .replace(
+                "contains(github.event.pull_request.labels.*.name, 'merge-ready')",
+                flag(label == "merge-ready"),
+            )
+            .replace(
+                "github.event.action == 'labeled'",
+                flag(action == "labeled"),
+            )
+            .replace(
+                "github.event.label.name == 'merge-ready'",
+                flag(label == "merge-ready"),
+            )
+            .replace("true", "1 == 1")
+            .replace("false", "1 == 0");
+        assert!(!expr.contains("github.") && !expr.contains("needs."));
+        let output = fixture.run(
+            &format!("if [[ {expr} ]]; then exit 0; else exit 1; fi"),
+            &[],
+            None,
+        )?;
+        assert_eq!(
+            output.status.success(),
+            expected,
+            "{event}/{action}/{selector_result}/{selected}"
+        );
     }
     Ok(())
 }

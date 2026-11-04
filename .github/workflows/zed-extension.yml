@@ -2,8 +2,9 @@ name: Zed extension
 
 # Checks format and Clippy for the Zed extension (editors/zed, #4460), builds
 # it to the WebAssembly target Zed compiles it with, and runs its unit tests.
-# Only changes to the extension or this workflow trigger it: the extension has
-# its own Cargo workspace, lockfile, and toolchain pin.
+# PR and push events are path-filtered; queue events classify the combined
+# diff before allocating the build. The extension has its own Cargo workspace,
+# lockfile, and toolchain pin.
 
 on:
   pull_request:
@@ -11,6 +12,8 @@ on:
     paths:
       - "editors/zed/**"
       - ".github/workflows/zed-extension.yml"
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main, master]
     paths:
@@ -30,9 +33,48 @@ concurrency:
   cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
 
 jobs:
+  queue-select:
+    name: Zed queue surface
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      selected: ${{ steps.surface.outputs.selected }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select Zed from queue composition
+        id: surface
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          selected=true reason=unclassified
+          classify() {
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || return 0
+            [[ "$(git rev-parse HEAD)" == "$HEAD_SHA" ]] || return 0
+            git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || return 0
+            git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA" || return 0
+            changed=$(mktemp) || return 0
+            trap 'rm -f "$changed"' EXIT
+            git diff --no-renames --name-only -z "$BASE_SHA" "$HEAD_SHA" > "$changed" || return 0
+            [[ -s "$changed" ]] || return 0
+            while IFS= read -r -d '' path; do
+              case "$path" in editors/zed/*|.github/workflows/zed-extension.yml) reason=zed_surface; return 0 ;; esac
+            done < "$changed"
+            selected=false reason=no_zed_surface
+          }
+          classify
+          echo "selected=$selected" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
   zed-extension:
     name: Build Zed extension
-    if: github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))
+    needs: queue-select
+    if: always() && !cancelled() && (github.event_name != 'merge_group' || (needs.queue-select.result == 'success' && needs.queue-select.outputs.selected == 'true')) && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
