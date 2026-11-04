@@ -1420,6 +1420,11 @@ fn bind_targets(target: &Expr, bound: &mut BTreeMap<String, usize>) {
 
 /// The first guard of `call_chain.rs` that refuses `source`, in its own text
 /// or through the writes of every other workspace file.
+///
+/// This mirrors `call_chain.rs` rather than sharing one function: there the
+/// foreign-write checks run before parsing, the source checks run on both the
+/// old and new text, and each failure is a bare `None`, whereas weak reach
+/// needs a named reason per guard. A guard added there must be added here.
 fn file_refusal(source: &str, body: &[Stmt], writes: &ForeignWrites) -> Option<&'static str> {
     if has_dynamic_word(source) {
         return Some("dynamic_word");

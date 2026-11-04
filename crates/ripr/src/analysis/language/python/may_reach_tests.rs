@@ -315,10 +315,10 @@ fn a_shadowed_bare_name_constructor_does_not_type_the_local() -> Check {
 fn a_local_bound_twice_is_untyped() -> Check {
     let graph = graph(&[(
         "src/pkg/a.py",
-        "class A:\n    def go(self):\n        return 1\n\n\nclass B:\n    def go(self):\n        return 2\n\n\ndef run(flag):\n    item = A()\n    if flag:\n        item = B()\n    return item.go()\n",
+        "class Alpha:\n    def go(self):\n        return 1\n\n\nclass Beta:\n    def go(self):\n        return 2\n\n\ndef run(flag):\n    item = Alpha()\n    if flag:\n        item = Beta()\n    return item.go()\n",
     )]);
-    lacks(&graph, "src/pkg/a.py::run", "src/pkg/a.py::A.go")?;
-    lacks(&graph, "src/pkg/a.py::run", "src/pkg/a.py::B.go")?;
+    lacks(&graph, "src/pkg/a.py::run", "src/pkg/a.py::Alpha.go")?;
+    lacks(&graph, "src/pkg/a.py::run", "src/pkg/a.py::Beta.go")?;
     // The constructors themselves still resolve: no `__init__` body to enter.
     refused(&graph, "untyped_ambiguous_name")
 }
@@ -327,10 +327,10 @@ fn a_local_bound_twice_is_untyped() -> Check {
 fn a_local_bound_once_to_a_constructor_is_typed() -> Check {
     let graph = graph(&[(
         "src/pkg/a.py",
-        "class A:\n    def go(self):\n        return 1\n\n\nclass B:\n    def go(self):\n        return 2\n\n\ndef run():\n    item = A()\n    return item.go()\n",
+        "class Alpha:\n    def go(self):\n        return 1\n\n\nclass Beta:\n    def go(self):\n        return 2\n\n\ndef run():\n    item = Alpha()\n    return item.go()\n",
     )]);
-    has(&graph, "src/pkg/a.py::run", "src/pkg/a.py::A.go")?;
-    lacks(&graph, "src/pkg/a.py::run", "src/pkg/a.py::B.go")
+    has(&graph, "src/pkg/a.py::run", "src/pkg/a.py::Alpha.go")?;
+    lacks(&graph, "src/pkg/a.py::run", "src/pkg/a.py::Beta.go")
 }
 
 #[test]
@@ -525,6 +525,51 @@ fn a_metaclass_or_new_makes_the_class_opaque() -> Check {
     lacks(&graph, "src/pkg/a.py::go", "src/pkg/a.py::Page.run")?;
     lacks(&graph, "src/pkg/a.py::go", "src/pkg/a.py::Odd.run")?;
     refused(&graph, "opaque_class")
+}
+
+#[test]
+fn a_getattr_or_getattribute_makes_the_class_opaque() -> Check {
+    // Observe mode: the file-level reflection guard (which also fires on a
+    // `__getattr__` definition) is off, so only the class-level guard can
+    // refuse these receivers.
+    let graph = graph_with(
+        &[(
+            "src/pkg/a.py",
+            "class Lazy:\n    def __getattr__(self, name):\n        return name\n\n    def run(self):\n        return 0\n\n\nclass Hooked:\n    def __getattribute__(self, name):\n        return name\n\n    def run(self):\n        return 1\n\n\ndef go(a: Lazy, b: Hooked):\n    a.run()\n    return b.run()\n",
+        )],
+        GuardMode::Observe,
+    );
+    lacks(&graph, "src/pkg/a.py::go", "src/pkg/a.py::Lazy.run")?;
+    lacks(&graph, "src/pkg/a.py::go", "src/pkg/a.py::Hooked.run")?;
+    refused(&graph, "opaque_class")
+}
+
+fn fan_out_source(subclasses: usize) -> String {
+    let mut source = String::from("class Base:\n    def run(self):\n        return 0\n");
+    for index in 0..subclasses {
+        source.push_str(&format!(
+            "\n\nclass Sub{index}(Base):\n    def run(self):\n        return {index}\n"
+        ));
+    }
+    source.push_str("\n\ndef go(item: Base):\n    return item.run()\n");
+    source
+}
+
+#[test]
+fn a_union_within_the_cap_resolves_every_override() -> Check {
+    // Positive control for the cap test below: the same shape under MAX_UNION.
+    let graph = graph(&[("src/pkg/a.py", &fan_out_source(3))]);
+    has(&graph, "src/pkg/a.py::go", "src/pkg/a.py::Base.run")?;
+    has(&graph, "src/pkg/a.py::go", "src/pkg/a.py::Sub2.run")
+}
+
+#[test]
+fn a_union_wider_than_the_cap_is_dropped_whole() -> Check {
+    // Base plus 17 overrides is 18 candidates, above MAX_UNION (16).
+    let graph = graph(&[("src/pkg/a.py", &fan_out_source(17))]);
+    lacks(&graph, "src/pkg/a.py::go", "src/pkg/a.py::Base.run")?;
+    lacks(&graph, "src/pkg/a.py::go", "src/pkg/a.py::Sub0.run")?;
+    refused(&graph, "union_too_wide")
 }
 
 #[test]
