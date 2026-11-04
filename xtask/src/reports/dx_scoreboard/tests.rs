@@ -515,6 +515,45 @@ fn gate_fails_on_a_broken_instrument_even_without_baseline() -> Result<(), Strin
 }
 
 #[test]
+fn gate_fails_when_no_selected_metric_is_comparable() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    let boards = vec!["first_run".to_string()];
+    let baseline = build_report(
+        &config,
+        &boards,
+        &[sample(
+            "first_run.friction_events",
+            None,
+            SampleOutcome::Value(0.0),
+        )],
+        &context("r"),
+        None,
+        false,
+    );
+    // No ingest receipt this run: the only selected metric is not measured,
+    // so the gate has zero comparable evidence and must not pass.
+    let report = build_report(&config, &boards, &[], &context("r"), Some(&baseline), true);
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    assert_eq!(report["gate"]["zero_evidence_boards"], json!(["first_run"]));
+    assert!(gate_failure_message(&report).contains("first_run"));
+    // A comparable selected metric keeps the gate passing as before.
+    let measured = build_report(
+        &config,
+        &boards,
+        &[sample(
+            "first_run.friction_events",
+            None,
+            SampleOutcome::Value(0.0),
+        )],
+        &context("r"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(measured["gate"]["status"].as_str(), Some("pass"));
+    Ok(())
+}
+
+#[test]
 fn repo_view_groups_per_repo_samples() -> Result<(), String> {
     let config = parse_config(MINIMAL)?;
     let samples = vec![sample(
