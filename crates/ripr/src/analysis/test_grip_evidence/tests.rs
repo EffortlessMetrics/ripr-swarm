@@ -20682,6 +20682,47 @@ fn receiver_rule_parts(source: &str, call: &str) -> Result<(FixtureIndex, String
     ))
 }
 
+#[test]
+fn generic_qualifier_does_not_credit_same_named_module_helper() -> Result<(), String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-scope-shadow/src/lib.rs");
+    let shadow = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let module = shadow
+        .replace(
+            "fn route_read_as_object<helpers: Foreign>()",
+            "fn route_read_as_object()",
+        )
+        .replace("route_read_as_object::<Fake>()", "route_read_as_object()");
+    for (source, expected) in [(&shadow, false), (&module, true)] {
+        let file = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(file.clone(), source)])?;
+        let seams = inventory_seams_from_index(&[file], &index);
+        let seam = seams
+            .iter()
+            .find(|seam| {
+                seam.owner().ends_with("::helpers::read_as_object")
+                    && seam.expression() == "value.as_object()"
+            })
+            .ok_or("missing module helper seam")?;
+        let evidence = evidence_for_seam(seam, &index);
+        assert_eq!(
+            evidence
+                .related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            expected,
+            "{}",
+            source
+        );
+        assert_eq!(
+            evidence.reach.state == StageState::Yes,
+            expected,
+            "{}",
+            source
+        );
+    }
+    Ok(())
+}
+
 fn receiver_resolves(source: &str, call: &str) -> Result<bool, String> {
     let (index, _) = receiver_rule_parts(source, call)?;
     let find = |name: &str| {
