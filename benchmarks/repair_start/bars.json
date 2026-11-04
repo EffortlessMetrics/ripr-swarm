@@ -1,0 +1,22 @@
+{
+  "schema_version": "ripr-repair-start-bars-v1",
+  "basis": "Working bars from strategy/master-scoreboard-2026-11-04.md (80% repair start, p50 check under 1 s, 97% precision). They are placeholders until the four product calls are answered; changing one is a bar change, not a regression fix.",
+  "repair_start_rate": {
+    "bar": 0.8,
+    "floor_starts": 7,
+    "tolerance_cases": 1,
+    "note": "floor_starts is the gate: the nightly fails when fewer than floor_starts - tolerance_cases of the 24 cases start a repair. Raise the floor in the change that earns a gain; never lower it. 7/24 was the 2026-11-02 manual harness result (#11402)."
+  },
+  "first_useful_result_p50_ms": {
+    "bar": 1000,
+    "note": "Advisory: wall time of `ripr check` on a tiny crate, runner-dependent, never gates."
+  },
+  "agent_fix_success_rate": {
+    "bar": 1.0,
+    "note": "Read from the dx-scoreboard agent board (ingest:agent-as-user); not measured until #12902 lands a cohort receipt."
+  },
+  "false_actionable_rate": {
+    "bar": 0.03,
+    "note": "Read from the dx-scoreboard verdict-corpus trust metrics; the page reports the rate and does not restate it as precision."
+  }
+}

@@ -1,0 +1,372 @@
+{
+ "cases": [
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn total(price: i32, qty: i32) -> i32 {\n    price * qty\n}\n",
+    "tests/t.rs": "use fx::total;\n\n#[test]\nfn total_is_product_plus_fee() {\n    assert_eq!(total(3, 4), 17);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn total(price: i32, qty: i32) -> i32 {\n    price * qty + 5\n}\n",
+    "tests/t.rs": "use fx::total;\n\n#[test]\nfn total_is_product_plus_fee() {\n    assert_eq!(total(3, 4), 17);\n}\n"
+   },
+   "id": "arith-strong-ext"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n",
+    "tests/t.rs": "use fx::is_adult;\n\n#[test]\nfn adult_far_above() {\n    assert!(is_adult(40));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n",
+    "tests/t.rs": "use fx::is_adult;\n\n#[test]\nfn adult_far_above() {\n    assert!(is_adult(40));\n}\n"
+   },
+   "id": "boundary-weak"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n",
+    "tests/t.rs": "use fx::is_adult;\n\n#[test]\nfn adult_at_boundary() {\n    assert!(is_adult(18));\n    assert!(!is_adult(17));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n",
+    "tests/t.rs": "use fx::is_adult;\n\n#[test]\nfn adult_at_boundary() {\n    assert!(is_adult(18));\n    assert!(!is_adult(17));\n}\n"
+   },
+   "id": "boundary-strong"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n"
+   },
+   "id": "boundary-notest"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => 0,\n    }\n}\n",
+    "tests/t.rs": "use fx::rate;\n\n#[test]\nfn rate_silver_runs() {\n    let r = rate(\"silver\");\n    assert!(r < 100);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 7,\n        _ => 0,\n    }\n}\n",
+    "tests/t.rs": "use fx::rate;\n\n#[test]\nfn rate_silver_runs() {\n    let r = rate(\"silver\");\n    assert!(r < 100);\n}\n"
+   },
+   "id": "match-arm-weak"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 5,\n        _ => 0,\n    }\n}\n",
+    "tests/t.rs": "use fx::rate;\n\n#[test]\nfn rate_silver_is_seven() {\n    assert_eq!(rate(\"silver\"), 7);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 10,\n        \"silver\" => 7,\n        _ => 0,\n    }\n}\n",
+    "tests/t.rs": "use fx::rate;\n\n#[test]\nfn rate_silver_is_seven() {\n    assert_eq!(rate(\"silver\"), 7);\n}\n"
+   },
+   "id": "match-arm-strong"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Debug, PartialEq)]\npub enum ParseError {\n    Empty,\n    TooLong,\n}\n\npub fn parse(s: &str) -> Result<usize, ParseError> {\n    if s.is_empty() {\n        return Err(ParseError::Empty);\n    }\n    if s.len() > 10 {\n        return Err(ParseError::Empty);\n    }\n    Ok(s.len())\n}\n",
+    "tests/t.rs": "use fx::parse;\n\n#[test]\nfn long_input_is_error() {\n    assert!(parse(\"abcdefghijklmnop\").is_err());\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Debug, PartialEq)]\npub enum ParseError {\n    Empty,\n    TooLong,\n}\n\npub fn parse(s: &str) -> Result<usize, ParseError> {\n    if s.is_empty() {\n        return Err(ParseError::Empty);\n    }\n    if s.len() > 10 {\n        return Err(ParseError::TooLong);\n    }\n    Ok(s.len())\n}\n",
+    "tests/t.rs": "use fx::parse;\n\n#[test]\nfn long_input_is_error() {\n    assert!(parse(\"abcdefghijklmnop\").is_err());\n}\n"
+   },
+   "id": "error-variant-weak"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Debug, PartialEq)]\npub enum ParseError {\n    Empty,\n    TooLong,\n}\n\npub fn parse(s: &str) -> Result<usize, ParseError> {\n    if s.is_empty() {\n        return Err(ParseError::Empty);\n    }\n    if s.len() > 10 {\n        return Err(ParseError::Empty);\n    }\n    Ok(s.len())\n}\n",
+    "tests/t.rs": "use fx::{parse, ParseError};\n\n#[test]\nfn long_input_is_too_long() {\n    assert_eq!(parse(\"abcdefghijklmnop\"), Err(ParseError::TooLong));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Debug, PartialEq)]\npub enum ParseError {\n    Empty,\n    TooLong,\n}\n\npub fn parse(s: &str) -> Result<usize, ParseError> {\n    if s.is_empty() {\n        return Err(ParseError::Empty);\n    }\n    if s.len() > 10 {\n        return Err(ParseError::TooLong);\n    }\n    Ok(s.len())\n}\n",
+    "tests/t.rs": "use fx::{parse, ParseError};\n\n#[test]\nfn long_input_is_too_long() {\n    assert_eq!(parse(\"abcdefghijklmnop\"), Err(ParseError::TooLong));\n}\n"
+   },
+   "id": "error-variant-strong"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn can_ship(stock: u32, blocked: bool) -> bool {\n    stock > 0 && !blocked\n}\n",
+    "tests/t.rs": "use fx::can_ship;\n\n#[test]\nfn ships_when_in_stock() {\n    assert!(can_ship(3, false));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn can_ship(stock: u32, blocked: bool) -> bool {\n    stock > 0 && blocked\n}\n",
+    "tests/t.rs": "use fx::can_ship;\n\n#[test]\nfn ships_when_in_stock() {\n    assert!(can_ship(3, false));\n}\n"
+   },
+   "id": "predicate-flip"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 3,\n        verbose: false,\n    }\n}\n",
+    "tests/t.rs": "use fx::default_config;\n\n#[test]\nfn default_config_is_quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 5,\n        verbose: false,\n    }\n}\n",
+    "tests/t.rs": "use fx::default_config;\n\n#[test]\nfn default_config_is_quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n"
+   },
+   "id": "field-change"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Default)]\npub struct Req {\n    pub url: String,\n    pub timeout: u32,\n}\n\nimpl Req {\n    pub fn new(url: &str) -> Self {\n        Req {\n            url: url.to_string(),\n            timeout: 30,\n        }\n    }\n\n    pub fn timeout(mut self, t: u32) -> Self {\n        self.timeout = t;\n        self\n    }\n}\n",
+    "tests/t.rs": "use fx::Req;\n\n#[test]\nfn builder_sets_url() {\n    let r = Req::new(\"http://x\").timeout(10);\n    assert_eq!(r.url, \"http://x\");\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "#[derive(Default)]\npub struct Req {\n    pub url: String,\n    pub timeout: u32,\n}\n\nimpl Req {\n    pub fn new(url: &str) -> Self {\n        Req {\n            url: url.to_string(),\n            timeout: 30,\n        }\n    }\n\n    pub fn timeout(mut self, t: u32) -> Self {\n        self.timeout = t * 2;\n        self\n    }\n}\n",
+    "tests/t.rs": "use fx::Req;\n\n#[test]\nfn builder_sets_url() {\n    let r = Req::new(\"http://x\").timeout(10);\n    assert_eq!(r.url, \"http://x\");\n}\n"
+   },
+   "id": "builder"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn clamp_pct(v: i32) -> i32 {\n    if v > 100 {\n        100\n    } else {\n        v\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn clamps_to_ninety_nine() {\n        assert_eq!(clamp_pct(150), 99);\n        assert_eq!(clamp_pct(50), 50);\n    }\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn clamp_pct(v: i32) -> i32 {\n    if v >= 100 {\n        99\n    } else {\n        v\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn clamps_to_ninety_nine() {\n        assert_eq!(clamp_pct(150), 99);\n        assert_eq!(clamp_pct(50), 50);\n    }\n}\n"
+   },
+   "id": "inline-tests-strong"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn clamp_pct(v: i32) -> i32 {\n    if v > 100 {\n        100\n    } else {\n        v\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn clamp_runs() {\n        assert!(clamp_pct(150) > 0);\n    }\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn clamp_pct(v: i32) -> i32 {\n    if v >= 100 {\n        99\n    } else {\n        v\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn clamp_runs() {\n        assert!(clamp_pct(150) > 0);\n    }\n}\n"
+   },
+   "id": "inline-tests-weak"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn largest<T: PartialOrd + Copy>(xs: &[T]) -> Option<T> {\n    let mut it = xs.iter();\n    let mut best = *it.next()?;\n    for x in it {\n        if *x > best {\n            best = *x;\n        }\n    }\n    Some(best)\n}\n",
+    "tests/t.rs": "use fx::largest;\n\n#[test]\nfn largest_of_three() {\n    assert_eq!(largest(&[1, 5, 3]), Some(5));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn largest<T: PartialOrd + Copy>(xs: &[T]) -> Option<T> {\n    let mut it = xs.iter();\n    let mut best = *it.next()?;\n    for x in it {\n        if *x >= best {\n            best = *x;\n        }\n    }\n    Some(best)\n}\n",
+    "tests/t.rs": "use fx::largest;\n\n#[test]\nfn largest_of_three() {\n    assert_eq!(largest(&[1, 5, 3]), Some(5));\n}\n"
+   },
+   "id": "generic-fn"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub async fn fetch_len(s: &str) -> usize {\n    s.len()\n}\n",
+    "tests/t.rs": "use fx::fetch_len;\n\n#[test]\nfn fetch_len_builds_future() {\n    let _f = fetch_len(\"abc\");\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub async fn fetch_len(s: &str) -> usize {\n    s.len() + 1\n}\n",
+    "tests/t.rs": "use fx::fetch_len;\n\n#[test]\nfn fetch_len_builds_future() {\n    let _f = fetch_len(\"abc\");\n}\n"
+   },
+   "id": "async-fn"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn sum_to(n: u32) -> u32 {\n    let mut acc = 0;\n    for i in 1..=n {\n        acc += i;\n    }\n    acc\n}\n",
+    "tests/t.rs": "use fx::sum_to;\n\n#[test]\nfn sum_to_zero() {\n    assert_eq!(sum_to(0), 0);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn sum_to(n: u32) -> u32 {\n    let mut acc = 0;\n    for i in 1..n {\n        acc += i;\n    }\n    acc\n}\n",
+    "tests/t.rs": "use fx::sum_to;\n\n#[test]\nfn sum_to_zero() {\n    assert_eq!(sum_to(0), 0);\n}\n"
+   },
+   "id": "loop-accum"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n",
+    "tests/t.rs": "use fx::greet;\n\n#[test]\nfn greet_mentions_name() {\n    assert!(greet(\"bob\").contains(\"bob\"));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub const GREETING: &str = \"hi\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n",
+    "tests/t.rs": "use fx::greet;\n\n#[test]\nfn greet_mentions_name() {\n    assert!(greet(\"bob\").contains(\"bob\"));\n}\n"
+   },
+   "id": "string-const"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn first_even(xs: &[i32]) -> Option<i32> {\n    xs.iter().copied().find(|x| x % 2 == 0)\n}\n",
+    "tests/t.rs": "use fx::first_even;\n\n#[test]\nfn none_when_all_odd() {\n    assert_eq!(first_even(&[1, 3]), None);\n    assert_eq!(first_even(&[1, 4]), Some(4));\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn first_even(xs: &[i32]) -> Option<i32> {\n    xs.iter().copied().find(|x| x % 2 == 0).or(Some(0))\n}\n",
+    "tests/t.rs": "use fx::first_even;\n\n#[test]\nfn none_when_all_odd() {\n    assert_eq!(first_even(&[1, 3]), None);\n    assert_eq!(first_even(&[1, 4]), Some(4));\n}\n"
+   },
+   "id": "option-none"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub trait Shape {\n    fn area(&self) -> u32;\n}\n\npub struct Rect {\n    pub w: u32,\n    pub h: u32,\n}\n\nimpl Shape for Rect {\n    fn area(&self) -> u32 {\n        self.w * self.h\n    }\n}\n",
+    "tests/t.rs": "use fx::{Rect, Shape};\n\n#[test]\nfn rect_area_positive() {\n    let r = Rect { w: 2, h: 3 };\n    assert!(r.area() > 0);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub trait Shape {\n    fn area(&self) -> u32;\n}\n\npub struct Rect {\n    pub w: u32,\n    pub h: u32,\n}\n\nimpl Shape for Rect {\n    fn area(&self) -> u32 {\n        self.w * self.h + 1\n    }\n}\n",
+    "tests/t.rs": "use fx::{Rect, Shape};\n\n#[test]\nfn rect_area_positive() {\n    let r = Rect { w: 2, h: 3 };\n    assert!(r.area() > 0);\n}\n"
+   },
+   "id": "trait-impl"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "fn tax(v: u32) -> u32 {\n    v / 10\n}\n\npub fn gross(v: u32) -> u32 {\n    v + tax(v)\n}\n",
+    "tests/t.rs": "use fx::gross;\n\n#[test]\nfn gross_exceeds_net() {\n    assert!(gross(100) > 100);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "fn tax(v: u32) -> u32 {\n    v / 5\n}\n\npub fn gross(v: u32) -> u32 {\n    v + tax(v)\n}\n",
+    "tests/t.rs": "use fx::gross;\n\n#[test]\nfn gross_exceeds_net() {\n    assert!(gross(100) > 100);\n}\n"
+   },
+   "id": "private-helper"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn log_line(buf: &mut Vec<String>, msg: &str) {\n    buf.push(msg.to_string());\n}\n",
+    "tests/t.rs": "use fx::log_line;\n\n#[test]\nfn log_line_appends() {\n    let mut b = Vec::new();\n    log_line(&mut b, \"hi\");\n    assert_eq!(b.len(), 1);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn log_line(buf: &mut Vec<String>, msg: &str) {\n    buf.push(msg.to_uppercase());\n}\n",
+    "tests/t.rs": "use fx::log_line;\n\n#[test]\nfn log_line_appends() {\n    let mut b = Vec::new();\n    log_line(&mut b, \"hi\");\n    assert_eq!(b.len(), 1);\n}\n"
+   },
+   "id": "side-effect"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn divide(a: u32, b: u32) -> u32 {\n    a / b\n}\n",
+    "tests/t.rs": "use fx::divide;\n\n#[test]\n#[should_panic]\nfn divide_by_zero_panics() {\n    divide(1, 0);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "src/lib.rs": "pub fn divide(a: u32, b: u32) -> u32 {\n    if b == 0 {\n        panic!(\"division by zero\");\n    }\n    a / b\n}\n",
+    "tests/t.rs": "use fx::divide;\n\n#[test]\n#[should_panic]\nfn divide_by_zero_panics() {\n    divide(1, 0);\n}\n"
+   },
+   "id": "panic-guard"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n",
+    "app/Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n",
+    "app/src/lib.rs": "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n",
+    "wscore/Cargo.toml": "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "wscore/src/lib.rs": "pub fn discount(price: u32) -> u32 {\n    if price > 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n",
+    "wscore/tests/t.rs": "use wscore::discount;\n\n#[test]\nfn discount_at_boundary() {\n    assert_eq!(discount(100), 90);\n    assert_eq!(discount(50), 50);\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n",
+    "app/Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n",
+    "app/src/lib.rs": "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n",
+    "wscore/Cargo.toml": "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "wscore/src/lib.rs": "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n",
+    "wscore/tests/t.rs": "use wscore::discount;\n\n#[test]\nfn discount_at_boundary() {\n    assert_eq!(discount(100), 90);\n    assert_eq!(discount(50), 50);\n}\n"
+   },
+   "id": "workspace"
+  },
+  {
+   "base": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n",
+    "app/Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n",
+    "app/src/lib.rs": "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n",
+    "app/tests/t.rs": "use app::checkout;\n\n#[test]\nfn checkout_at_boundary() {\n    assert_eq!(checkout(100), 90);\n}\n",
+    "wscore/Cargo.toml": "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "wscore/src/lib.rs": "pub fn discount(price: u32) -> u32 {\n    if price > 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n"
+   },
+   "change": {
+    ".gitignore": "/target/\n",
+    "Cargo.toml": "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n",
+    "app/Cargo.toml": "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n",
+    "app/src/lib.rs": "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n",
+    "app/tests/t.rs": "use app::checkout;\n\n#[test]\nfn checkout_at_boundary() {\n    assert_eq!(checkout(100), 90);\n}\n",
+    "wscore/Cargo.toml": "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    "wscore/src/lib.rs": "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n"
+   },
+   "id": "ws-test-other-crate"
+  }
+ ],
+ "note": "24 small Cargo diffs: each case is a base commit and one behavior-changing commit. Re-created from the 2026-10 audit table, not byte-identical to earlier runs.",
+ "schema_version": "ripr-repair-start-cases-v1"
+}

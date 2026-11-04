@@ -60,6 +60,7 @@ mod issue_lifecycle_real_rows;
 mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
+mod outcome_page;
 mod output_enum_contracts;
 mod package_qualification;
 mod packaged_repair_receipt;
