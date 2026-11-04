@@ -273,10 +273,10 @@ carded one, so `check` does not report "no repair card" while `ripr pilot` and
 
 The digest's assertion line label reflects the assertion state. Boundary
 (#10692): stage and producer prose that is shared with JSON (for example "No
-strong discriminator was detected", "equality-boundary discriminator is
-missing", and the Python preview next-step text) still says "discriminator" in the
-default digest; changing it needs the shared producer strings and the JSON
-contracts to move together.
+strong discriminator was detected" and the Python preview next-step text) still
+says "discriminator" in the default digest; changing it needs the shared producer
+strings and the JSON contracts to move together. The "equality-boundary check is
+missing" reason was reworded at its producer (#12907).
 
 - `Missing check` — the finding is not `exposed`; the named
   discriminator is absent from the related tests (#10691: the digest says
@@ -289,10 +289,10 @@ contracts to move together.
 
 The line carries the discriminator value alone; the label is not restated
 inside it. `Finding.missing` mixes value-shaped entries, which the classifier
-builds as `Missing discriminator value: <value>`, with prose entries such as
+builds as `Missing check value: <value>`, with prose entries such as
 `No strong discriminator was detected`. Rendering a value-shaped entry verbatim
 under the label produced
-`Missing discriminator: Missing discriminator value: AuthError::RevokedToken`,
+`Missing discriminator: Missing check value: AuthError::RevokedToken`,
 so the renderer strips that prefix and emits
 `Missing check: AuthError::RevokedToken`. Prose entries carry no such
 prefix and are rendered unchanged. This governs the human digest only; no

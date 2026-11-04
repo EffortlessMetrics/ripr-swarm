@@ -779,6 +779,28 @@ naming `ripr check` for detail, instead of the repository-wide `ripr pilot`
 route. When every candidate was dropped as already noticed, the outcome is the nothing-to-do one instead. Without a diff scope the repository route is kept. Eligibility and the
 `no_eligible_seam` code are unchanged.
 
+## Amendment (#12867): no start whose handoff card cannot be produced
+
+A start publishes an attempt and then renders the handoff card, which names the
+workspace only through an admitted test target. A seam whose repair would begin
+in a proposed new test file has none, so the shared repair-admission gate
+refuses it up front ("found no existing test to extend ... write the test by
+hand") for bare repair (`no_eligible_seam`) and an explicit id
+(`seam_not_repair_eligible`), and no attempt is created. `ripr agent start` and
+the MCP admission use the same gate and refuse these seams too. The check
+screen reads the same gate as a not-ready route and keeps its own wording
+("not complete enough to name a safe test target"); it does not print this
+reason.
+
+## Amendment (#12959): a refused changed-field seam names its next step
+
+A refusal for a field-construction seam whose only missing fact is the changed
+field value names the working stub (`ripr agent stub ... --kind
+field_construction`) or, when the stub refuses (for example a by-value `self`
+setter), says why it cannot write one and that the test is written by hand.
+Refusal text only: eligibility is unchanged, and starting a repair from a weak
+read of a written field stays #11870.
+
 ## Test Mapping
 
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
@@ -787,6 +809,8 @@ route. When every candidate was dropped as already noticed, the outcome is the n
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_change_check_reads_as_noticed_and_unknown_lists_no_start` (#12831)
 - `crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection` (#12831)
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
+- `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
+- `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
 - `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
 - `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)
 - `crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run` (#12831)

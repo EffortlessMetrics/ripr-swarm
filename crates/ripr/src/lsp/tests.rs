@@ -29239,7 +29239,7 @@ fn fix_route_rust_finding() -> Finding {
     finding.ripr.infect = StageEvidence::new(
         StageState::Weak,
         Confidence::Medium,
-        "Related tests contain input values, but the equality-boundary discriminator is missing",
+        "Related tests contain input values, but the equality-boundary check is missing",
     );
     finding.ripr.reveal.discriminate = StageEvidence::new(
         StageState::Yes,

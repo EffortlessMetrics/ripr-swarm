@@ -47,7 +47,7 @@ Hidden:
   5 finding(s) omitted: 4 lower-priority, 1 base-side evidence (not candidate edit targets).
     - ./src/lib.rs:1 (unknown: static analysis limited, lower-priority candidate); kind: unclear; reason: No relevant oracle was detected
     - ./src/lib.rs:3 (unknown: static analysis limited, lower-priority candidate); kind: unclear; reason: No relevant oracle was detected
-    - ./src/lib.rs:4 (no path, lower-priority candidate); kind: field_construction; reason: Missing discriminator value: pub changed_slot: u64,
+    - ./src/lib.rs:4 (no path, lower-priority candidate); kind: field_construction; reason: Missing check value: pub changed_slot: u64,
     - ./src/lib.rs:7 (unknown: static analysis limited, lower-priority candidate); kind: unclear; reason: No relevant oracle was detected
     - ./src/lib.rs:7 (unknown: static analysis limited, base-side); kind: unclear; reason: No relevant oracle was detected
   Hidden classes:
