@@ -4336,6 +4336,11 @@ fn changed_range_requires_a_test_that_can_reach_and_pass_its_pin() -> Result<(),
         ("    value = 3\n    assert sum_to(value) == 6", true),
         ("    assert sum_to(3) == 3", true),
         ("    assert sum_to(3) == +6", true),
+        ("    assert sum_to(3, 4) == 6", false),
+        ("    assert sum_to(3, bogus=0) == 6", false),
+        ("    assert sum_to(3, n=3) == 6", false),
+        ("    sum_to(3, 4)\n    assert sum_to(3) == 6", false),
+        ("    sum_to(3, bogus=0)\n    assert sum_to(3) == 6", false),
     ] {
         let tests = format!("from src.subject import sum_to\n\ndef test_sum():\n{body}\n");
         let finding = classify_range_case(&source, &tests, 3, before, after)?;
@@ -4371,6 +4376,29 @@ fn changed_range_requires_an_unchanged_old_body_and_catches_old_wrappers() -> Re
     )
     .ok_or("range replacement must produce a finding")?;
     assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    for (signature, call, exposed) in [
+        ("n, unused", "3", false),
+        ("n, unused", "3, 0", true),
+        ("n, *, unused", "3", false),
+        ("n, *, unused", "3, unused=0", true),
+        ("n, /", "n=3", false),
+        ("n=1 / 0", "3", false),
+        ("n: missing_type", "3", false),
+    ] {
+        let source = format!(
+            "def sum_to({signature}):\n    acc = 0\n{after}\n        acc += i\n    return acc\n"
+        );
+        let tests = format!(
+            "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to({call}) == 6\n"
+        );
+        let finding =
+            classify_range_case(&source, &tests, 3, "    for i in range(1, n + 1):", after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "signature {signature}, call {call}: {finding:?}"
+        );
+    }
     let wrapped_before = "    for i in iter(range(1, n + 1)):";
     let conditional_after = "    if n > 0:";
     let source = format!(

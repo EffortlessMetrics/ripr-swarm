@@ -43,7 +43,8 @@ pub(super) fn changed_range_limit(
                         || !name_rebound_in_owner(source, owner, &parameter.name)
                 })
                 && rows.iter().any(|row| {
-                    let Some((expected, test)) = asserted_expectation(row, candidates, focus)
+                    let Some((expected, test)) =
+                        asserted_expectation(owner, row, candidates, focus)
                     else {
                         return false;
                     };
@@ -72,6 +73,7 @@ pub(super) fn changed_range_limit(
 /// witness must instead be the call observed by its selected assertion.
 /// Parse the complete, bounded row excerpt: partial/multiline rows refuse.
 fn asserted_expectation<'a>(
+    owner: &PythonOwner,
     row: &CallRow,
     candidates: &'a [PythonRelatedCandidate<'a>],
     focus: &PythonAssertionFocus,
@@ -129,12 +131,13 @@ fn asserted_expectation<'a>(
         }
         _ => return None,
     };
-    direct_integer_pin(pair.0, pair.1)
-        .or_else(|| direct_integer_pin(pair.1, pair.0))
+    direct_integer_pin(owner, pair.0, pair.1)
+        .or_else(|| direct_integer_pin(owner, pair.1, pair.0))
         .map(|expected| (expected, candidate.test))
 }
 
 fn direct_integer_pin(
+    owner: &PythonOwner,
     value: &rustpython_parser::ast::Expr,
     expected: &rustpython_parser::ast::Expr,
 ) -> Option<i128> {
@@ -163,13 +166,61 @@ fn direct_integer_pin(
     let Expr::Call(call) = value else {
         return None;
     };
-    (super::expr_full_name(&call.func).is_some()
+    (valid_owner_call(owner, call)
+        && super::expr_full_name(&call.func).is_some()
         && call.args.iter().all(plain_argument)
         && call
             .keywords
             .iter()
             .all(|keyword| keyword.arg.is_some() && plain_argument(&keyword.value)))
     .then_some(value_expected)
+}
+
+/// The shared binding reader inventories values, but deliberately tolerates
+/// unmatched arguments. The range model needs a call that actually binds.
+fn valid_owner_call(owner: &PythonOwner, call: &rustpython_parser::ast::ExprCall) -> bool {
+    use crate::domain::OwnerKind;
+    let skip = match owner.owner_kind {
+        Some(OwnerKind::Method) => 1,
+        Some(OwnerKind::ClassMethod) => {
+            usize::from(!owner.decorators.iter().any(|d| d.ends_with("staticmethod")))
+        }
+        Some(OwnerKind::Function) => 0,
+        _ => return false,
+    };
+    let Some(parameters) = owner.parameters.get(skip..) else {
+        return false;
+    };
+    let names: std::collections::BTreeSet<_> = parameters.iter().map(|p| p.name.as_str()).collect();
+    if names.len() != parameters.len() {
+        return false;
+    }
+    let positional: Vec<_> = parameters.iter().filter(|p| !p.keyword_only).collect();
+    if call.args.len() > positional.len() {
+        return false;
+    }
+    let mut bound = std::collections::BTreeSet::new();
+    for (argument, parameter) in call.args.iter().zip(positional) {
+        if !plain_argument(argument) || !bound.insert(parameter.name.as_str()) {
+            return false;
+        }
+    }
+    for keyword in &call.keywords {
+        let Some(name) = keyword.arg.as_ref().map(|name| name.as_str()) else {
+            return false;
+        };
+        if !parameters
+            .iter()
+            .any(|p| p.name == name && !p.positional_only)
+            || !bound.insert(name)
+            || !plain_argument(&keyword.value)
+        {
+            return false;
+        }
+    }
+    parameters
+        .iter()
+        .all(|p| bound.contains(p.name.as_str()) || p.default.is_some())
 }
 
 fn plain_argument(value: &rustpython_parser::ast::Expr) -> bool {
@@ -244,7 +295,8 @@ fn closed_test_body(
                 let Expr::Call(call) = expression.value.as_ref() else {
                     return false;
                 };
-                if !super::expr_full_name(&call.func).is_some_and(|name| names.contains(&name))
+                if !valid_owner_call(owner, call)
+                    || !super::expr_full_name(&call.func).is_some_and(|name| names.contains(&name))
                     || !call.args.iter().all(plain_argument)
                     || !call
                         .keywords
@@ -524,6 +576,30 @@ fn sum_accumulator(owner: &PythonOwner, source: &str, changed_line: &str) -> boo
     let [Stmt::FunctionDef(function)] = module.body.as_slice() else {
         return false;
     };
+    if function
+        .args
+        .posonlyargs
+        .iter()
+        .chain(&function.args.args)
+        .chain(&function.args.kwonlyargs)
+        .any(|argument| {
+            argument
+                .default
+                .as_deref()
+                .is_some_and(|expr| !literal(expr))
+                || argument
+                    .def
+                    .annotation
+                    .as_deref()
+                    .is_some_and(|expr| !literal(expr))
+        })
+        || function
+            .returns
+            .as_deref()
+            .is_some_and(|expr| !literal(expr))
+    {
+        return false;
+    }
     let [
         Stmt::Assign(initial),
         Stmt::For(walk),
