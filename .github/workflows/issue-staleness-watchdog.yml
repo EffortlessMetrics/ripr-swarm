@@ -70,7 +70,11 @@ jobs:
                 /(?:^|[\s\x60\x27"\(\[])((?:crates|xtask|docs|policy|fixtures|editors|examples|scripts|\.github|\.agents|\.ripr|\.allow)\/[^\s\x60\x27"\(\)\]\>,]+)/g
               ) {
                 my $p = $1;
-                $p =~ s/:\d+\z//;
+                # Drop sentence punctuation and `:line`, `:line:col`, `:12-22`
+                # anchors so the commits lookup sees the cited file path.
+                $p =~ s/[.,;:!?]+\z//;
+                $p =~ s/(?::\d+)+(?:-\d+)?\z//;
+                $p =~ s/[.,;:!?]+\z//;
                 next if $seen{$p}++;
                 print "$p\n";
                 last if ++$n >= $max;
@@ -78,16 +82,21 @@ jobs:
             ' <<<"$1"
           }
 
+          # Prints the id of the first watchdog-owned comment, nothing when there
+          # is none. A failed lookup returns nonzero so the caller never mistakes
+          # "could not list comments" for "no comment yet" and posts a duplicate.
           find_owned_comment() {
-            gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100" \
-              --jq '.[] | select(.body | contains($m)) | .id' \
-              --arg m "$MARKER" 2>/dev/null | head -n 1
+            local pages
+            pages="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100")" || return 1
+            printf '%s' "$pages" \
+              | jq -r --arg m "$MARKER" '.[] | select(.body | contains($m)) | .id' \
+              | sed -n '1p'
           }
 
           post_or_edit_comment() {
             issue="$1"
             body="$2"
-            id="$(find_owned_comment "$issue" || true)"
+            id="$(find_owned_comment "$issue")" || return 1
             if [ -n "${id:-}" ]; then
               gh api -X PATCH "repos/$REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
             else
@@ -95,8 +104,26 @@ jobs:
             fi
           }
 
+          # `--paginate` runs `--jq` once per page, so ordering happens here over
+          # the whole list: oldest first with a stable number tiebreak. Whether the
+          # issue carries the label is computed in jq (a boolean column) because
+          # `@tsv` escapes any tab used to join several label names.
           issues="$(gh api "repos/$REPOSITORY/issues?state=open&per_page=100" --paginate \
-            --jq 'sort_by(.created_at) | .[] | select(.pull_request == null) | [.number, .created_at, ((.title + "\n" + (.body // "")) | @base64), ([.labels[].name] | join("\t"))] | @tsv')"
+            --jq ".[] | select(.pull_request == null) | [.created_at, .number, ((.title + \"\\n\" + (.body // \"\")) | @base64), ([.labels[].name] | any(. == \"$LABEL\"))] | @tsv" \
+            | LC_ALL=C sort -t $'\t' -k1,1 -k2,2n)"
+
+          # Unchanged issues consume path checks every week, so a fixed start would
+          # let the first issues starve the rest once the commits budget is spent.
+          # Rotate the start by one run's worth of issues per week so every issue
+          # is reached within a bounded number of sweeps.
+          total="$(printf '%s\n' "$issues" | grep -c . || true)"
+          week="${SWEEP_WEEK:-$(( $(date -u +%s) / 604800 ))}"
+          stride=$(( MAX_COMMITS_CALLS / MAX_PATHS ))
+          [ "$stride" -ge 1 ] || stride=1
+          if [ "$total" -gt 1 ]; then
+            offset=$(( (week * stride) % total ))
+            issues="$(printf '%s\n' "$issues" | awk -v o="$offset" 'NF { rows[n++] = $0 } END { for (i = 0; i < n; i++) print rows[(i + o) % n] }')"
+          fi
 
           scanned=0
           flagged=0
@@ -104,17 +131,12 @@ jobs:
           deferred_cap=0
           deferred_api=0
 
-          while IFS=$'\t' read -r number created_at b64 labels; do
+          while IFS=$'\t' read -r created_at number b64 has_label; do
             [ -n "${number:-}" ] || continue
             text="$(printf '%s' "$b64" | base64 -d)"
             scanned=$((scanned + 1))
             disposition="ok"
             stale_paths=""
-
-            has_label=false
-            case $'\t'"${labels}"$'\t' in
-              *$'\t'"$LABEL"$'\t'*) has_label=true ;;
-            esac
 
             if [ "$has_label" = true ] && [ "$REFRESH" != true ]; then
               disposition="skip: already labeled"
@@ -153,7 +175,7 @@ jobs:
             done
 
             if [ -z "$stale_lines" ]; then
-              disposition="skip: citations unchanged on cited paths"
+              [ "$disposition" != ok ] || disposition="skip: citations unchanged on cited paths"
               echo "| #$number | — | $disposition |" >> "$GITHUB_STEP_SUMMARY"
               continue
             fi
@@ -176,7 +198,7 @@ jobs:
 
             if [ "$flagged" -ge "$MAX_ISSUES" ]; then
               deferred_cap=$((deferred_cap + 1))
-              disposition="defer: per-sweep label cap (oldest first next week)"
+              disposition="defer: per-sweep label cap (the weekly rotation reaches it in a later sweep)"
               echo "| #$number | ${stale_paths%;*} | $disposition |" >> "$GITHUB_STEP_SUMMARY"
               continue
             fi
