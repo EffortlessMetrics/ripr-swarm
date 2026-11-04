@@ -668,11 +668,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// credits the changed `T(e)` tail (#12796).
 /// `1.153`: a bounded `.map(owner)` iterator chain with a resolved owner path and
 /// matching literal `Vec` expectation credits through the owner-return pin (#9478).
-/// `1.154`: an exact error-variant pin on a returned-value seam it cannot see is
+/// `1.154`: a bare `assert_matches!` around an inherent owner call reads the
+/// unplaced receiver withhold (#10666). Old entries keep the unnamed gap.
+/// `1.155`: an exact error-variant pin on a returned-value seam it cannot see is
 /// one fact in every view: the discriminate stage skips it like the related-test
 /// record, which names it a different-arm pin and is not offered to imitate
 /// (#12733, #12734).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.154";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.155";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -867,8 +869,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.154";
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
 /// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
-/// `0.156`: same different-arm error-pin rule as full `1.154` (#12733, #12734).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.156";
+/// `0.156`: same unplaced `assert_matches!` withhold as full `1.154` (#10666).
+/// `0.157`: same different-arm error-pin rule as full `1.155` (#12733, #12734).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.157";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1065,8 +1068,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.156";
 /// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
 /// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
-/// `0.156`: same different-arm error-pin rule as full `1.154` (#12733, #12734).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.156";
+/// `0.156`: same unplaced `assert_matches!` withhold as full `1.154` (#10666).
+/// `0.157`: same different-arm error-pin rule as full `1.155` (#12733, #12734).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.157";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5977,8 +5981,9 @@ mod tests {
         // 1.150 -> 1.151: renamed assertion-macro imports name the macro limit (#12779).
         // 1.151 -> 1.152: a tuple `.0` pin credits the changed `T(e)` tail (#12796).
         // 1.152 -> 1.153: bounded `.map(owner)` chains credit via the owner pin (#9478).
-        // 1.153 -> 1.154: different-arm error pin is one fact in every view (#12733, #12734).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.154");
+        // 1.153 -> 1.154: a bare `assert_matches!` around an inherent owner call reads the unplaced receiver withhold (#10666).
+        // 1.154 -> 1.155: different-arm error pin is one fact in every view (#12733, #12734).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.155");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -6113,9 +6118,10 @@ mod tests {
         // 0.152 -> 0.153: same renamed-assertion-import limit as full 1.151 (#12779).
         // 0.153 -> 0.154: same tuple-projection pin as full 1.152 (#12796).
         // 0.154 -> 0.155: same path-value crediting as full 1.153 (#9478).
-        // 0.155 -> 0.156: same different-arm error-pin rule as full 1.152 (#12733, #12734).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.156");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.156");
+        // 0.155 -> 0.156: same unplaced `assert_matches!` withhold as full 1.154 (#10666).
+        // 0.156 -> 0.157: same different-arm error-pin rule as full 1.152 (#12733, #12734).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.157");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.157");
     }
 
     #[test]
