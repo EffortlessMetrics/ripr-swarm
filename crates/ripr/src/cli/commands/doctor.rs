@@ -2638,7 +2638,10 @@ fn probe_perl_exporter(root: &Path, config: Option<&RiprConfig>) -> PerlExporter
         }
         let program = judged;
         let bin = program.display().to_string();
-        let Some(version) = run_exporter_probe(&program, &["--version"], timeout)
+        // The canonical exporter has no top-level `--version` (it exits 1 on
+        // it), so a failed version probe is not "missing": the capability
+        // probe below decides compatibility and the version reads unknown.
+        let version = run_exporter_probe(&program, &["--version"], timeout)
             .filter(|output| output.status.success())
             .map(|output| {
                 String::from_utf8_lossy(&output.stdout)
@@ -2648,9 +2651,7 @@ fn probe_perl_exporter(root: &Path, config: Option<&RiprConfig>) -> PerlExporter
                     .trim()
                     .to_string()
             })
-        else {
-            continue;
-        };
+            .unwrap_or_default();
         let version = if version.is_empty() {
             "version unknown".to_string()
         } else {
@@ -2659,7 +2660,11 @@ fn probe_perl_exporter(root: &Path, config: Option<&RiprConfig>) -> PerlExporter
         if exporter_accepts_ripr_facts(&program, timeout) {
             return PerlExporterProbe::Compatible { bin, version };
         }
-        first_incompatible.get_or_insert(PerlExporterProbe::Incompatible { bin, version });
+        // Only a binary that answered `--version` is reported as an
+        // incompatible exporter; a silent non-exporter stays not found.
+        if version != "version unknown" {
+            first_incompatible.get_or_insert(PerlExporterProbe::Incompatible { bin, version });
+        }
     }
     // A refusal is a security decision and must not be masked by an
     // incompatible hit for the other candidate name (#5349 finding 3).
