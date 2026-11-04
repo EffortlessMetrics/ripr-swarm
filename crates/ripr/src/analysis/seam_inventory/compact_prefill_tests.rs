@@ -321,7 +321,7 @@ fn compact_windows_verification_bounds_cumulative_moved_source() -> Result<(), S
         .index
         .files()
         .values()
-        .map(|facts| facts.source.len())
+        .map(|facts| facts.source.len().saturating_add(3))
         .sum();
     let mut session = Session {
         state: &state,
@@ -367,6 +367,94 @@ fn compact_windows_verification_bounds_cumulative_moved_source() -> Result<(), S
     match cache.load_classified_seams_with_fallback(&key) {
         CacheLoad::Hit((old, _, _)) => assert!(old.is_empty()),
         other => return Err(format!("bounded reread refusal replaced cache: {other:?}")),
+    }
+    std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn compact_windows_unchanged_bom_at_byte_boundary_declines_or_fits_without_drift()
+-> Result<(), String> {
+    let root = make_tempdir("compact-windows-bom-budget")?;
+    write_file(
+        &root.join("Cargo.toml"),
+        "[package]\nname='bom_window'\nversion='0.1.0'\nedition='2024'\n",
+    )?;
+    write_file(
+        &root.join("src/lib.rs"),
+        "\u{feff}pub fn answer()->i32 { 42 }\n",
+    )?;
+    let config = RiprConfig::default();
+    let state = collect_workspace_state(&root, &config)?;
+    let cached = state.build_index(&config)?;
+    let files = production_files_from_state_with_role(&state, &config);
+    let total = inventory_seams_from_index(&files, &cached.index).len();
+    assert!(total > 0);
+    let decoded = cached
+        .index
+        .files()
+        .get(Path::new("src/lib.rs"))
+        .ok_or("BOM fixture missing from index")?
+        .source
+        .len();
+    let raw = std::fs::metadata(root.join("src/lib.rs"))
+        .map_err(|e| e.to_string())?
+        .len() as usize;
+    assert_eq!(
+        raw,
+        decoded + 3,
+        "fixture must exercise actual BOM stripping"
+    );
+    let fallback = rust_index::lexical_fallback_files(&cached.index);
+    let pass = test_grip_evidence::EvidencePass::new(&cached.index);
+    let key = state.cache_key();
+    let cache = RepoSeamFactCache::at_compact_classified(&root);
+    cache.store_compact_classified_seams_with_limit(&key, &[], 1)?;
+    let mut session = Session {
+        state: &state,
+        key: &key,
+        files: &files,
+        index: &cached.index,
+        pass: &pass,
+        total,
+        fallback: &fallback,
+        limits: LIMITS,
+        retention: Retention::default(),
+        inputs_changed: std::cell::Cell::new(false),
+    };
+    for limits in [
+        Limits {
+            file_source_bytes: decoded,
+            source_bytes: raw,
+            ..LIMITS
+        },
+        Limits {
+            file_source_bytes: raw,
+            source_bytes: decoded,
+            ..LIMITS
+        },
+    ] {
+        session.limits = limits;
+        assert_eq!(session.run()?.label, "skipped_compact_prefill_input_limit");
+        assert!(
+            !session.inputs_changed.get(),
+            "unchanged BOM bytes are not input drift"
+        );
+    }
+    session.limits = Limits {
+        file_source_bytes: raw,
+        source_bytes: raw,
+        ..LIMITS
+    };
+    assert!(session.run()?.label.starts_with("sharded_ok_"));
+    assert!(!session.inputs_changed.get());
+    match cache.load_classified_seams_with_fallback(&key) {
+        CacheLoad::Hit((complete, _, _)) => assert_eq!(complete.len(), total),
+        other => {
+            return Err(format!(
+                "raw-byte-admitted BOM prefill was not published: {other:?}"
+            ));
+        }
     }
     std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
     Ok(())

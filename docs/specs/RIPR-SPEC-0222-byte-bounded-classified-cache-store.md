@@ -276,6 +276,9 @@ The current cache-key owner retains its own discovery and input-admission
 rules. Rust source verification rereads at most the admitted per-file bound
 plus one byte, and at most the aggregate source budget plus one byte, so
 growing source files cannot evade either bound.
+Admission conservatively reserves three raw bytes per indexed file for a
+leading UTF-8 BOM removed by decoding; an unchanged file at a decoded-only
+budget boundary declines optional prefill instead of being called input drift.
 
 The publisher knows the complete count and window count before staging shards.
 Each producer result must contain the exact requested number of records. Each

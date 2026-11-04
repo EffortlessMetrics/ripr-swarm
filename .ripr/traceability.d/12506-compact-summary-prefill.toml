@@ -10,6 +10,7 @@ tests = [
   "crates/ripr/src/analysis/seam_inventory/compact_prefill_tests.rs::compact_windows_admission_and_payload_limits_preserve_prior_generation",
   "crates/ripr/src/analysis/seam_inventory/compact_prefill_tests.rs::compact_windows_moved_inputs_and_wrong_total_refuse_without_replacing_cache",
   "crates/ripr/src/analysis/seam_inventory/compact_prefill_tests.rs::compact_windows_verification_bounds_cumulative_moved_source",
+  "crates/ripr/src/analysis/seam_inventory/compact_prefill_tests.rs::compact_windows_unchanged_bom_at_byte_boundary_declines_or_fits_without_drift",
 ]
 
 [[extend]]

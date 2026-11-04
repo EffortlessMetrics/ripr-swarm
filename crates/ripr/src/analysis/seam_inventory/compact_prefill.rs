@@ -121,13 +121,19 @@ impl Session<'_, '_> {
         let mut shapes = 0usize;
         for facts in self.index.files().values() {
             cancellation::checkpoint()?;
-            if facts.source.len() > self.limits.file_source_bytes
+            // The index removes one leading UTF-8 BOM. Reserve its three
+            // raw bytes before admission; lossy UTF-8 decoding otherwise
+            // preserves or expands byte length. A tight decoded-only budget
+            // declines optional prefill instead of claiming unchanged input
+            // moved during raw-byte verification.
+            let source_upper = facts.source.len().saturating_add(3);
+            if source_upper > self.limits.file_source_bytes
                 || facts.probe_shapes.len() > self.limits.file_shapes
                 || facts.functions.len() > self.limits.file_shapes
             {
                 return Ok(false);
             }
-            bytes = bytes.saturating_add(facts.source.len());
+            bytes = bytes.saturating_add(source_upper);
             shapes = shapes.saturating_add(facts.probe_shapes.len());
             if bytes > self.limits.source_bytes || shapes > self.limits.shapes {
                 return Ok(false);
