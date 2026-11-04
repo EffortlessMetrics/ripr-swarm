@@ -387,35 +387,73 @@ pub(super) fn match_helper_owner_call(
     if owner.name.is_empty() {
         return;
     }
-    // A free owner is reached through a helper only when the helper body
-    // spells a bare or module-qualified call of it; a helper calling only
-    // `Type::name(..)` never credits the free `name` beside it (#6713).
-    let indices = if owner.free_function {
-        context
-            .tests_by_free_helper_owner_call_name
-            .get(&owner.name)
-    } else {
-        context.tests_by_helper_owner_call_name.get(&owner.name)
-    };
-    let Some(indices) = indices else {
-        return;
-    };
-    for test_index in indices {
-        if owner.inherent_receiver
-            && !owner.inherent_owner.is_some_and(|function| {
-                context.inherent_helper_reaches_owner(*test_index, function)
-            })
-        {
-            continue;
+    let mut lookup_names = vec![owner.name.clone()];
+    if let Some(module_path) = &owner.module_path {
+        let normalized = module_path.replace('/', "::");
+        if !normalized.is_empty() {
+            lookup_names.push(format!("{normalized}::{}", owner.name));
         }
-        insert_related_candidate(
-            candidates,
-            context,
-            prefix,
-            *test_index,
-            RelationReason::HelperOwnerCall,
-        );
     }
+    let mut linked = BTreeSet::new();
+    for lookup_name in &lookup_names {
+        let batch = if owner.free_function {
+            context
+                .tests_by_free_helper_owner_call_name
+                .get(lookup_name)
+        } else {
+            context.tests_by_helper_owner_call_name.get(lookup_name)
+        };
+        let Some(batch) = batch else {
+            continue;
+        };
+        for &test_index in batch {
+            if linked.contains(&test_index) {
+                continue;
+            }
+            if owner.inherent_receiver
+                && !owner.inherent_owner.is_some_and(|function| {
+                    context.inherent_helper_reaches_owner(test_index, function)
+                })
+            {
+                continue;
+            }
+            if lookup_name == &owner.name
+                && owner.function.is_some_and(|owner_fn| {
+                    owner_same_file_helper_name_collision(context.index, owner_fn)
+                        && context.tests.get(test_index).is_none_or(|indexed| {
+                            !context::production_delegation_from_test_reaches_owner(
+                                context.index,
+                                indexed.test,
+                                owner_fn,
+                            )
+                        })
+                })
+            {
+                continue;
+            }
+            linked.insert(test_index);
+            insert_related_candidate(
+                candidates,
+                context,
+                prefix,
+                test_index,
+                RelationReason::HelperOwnerCall,
+            );
+        }
+    }
+}
+
+fn owner_same_file_helper_name_collision(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.file == owner.file
+                && function.name == owner.name
+                && !function.source_role.is_evidence_role()
+        })
+        .count()
+        > 1
 }
 
 pub(super) fn match_target_affinity_owner_call(

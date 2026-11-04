@@ -265,3 +265,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_shadowed_owner (22)
+
+Reason:
+RIPR-SPEC-0240 merged-tree golden refresh: re-blessed against current main; this branch's change does not move these fixtures, and the stale expected files predate main's analyzer. No class, stage or evidence change from the PR itself.
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_shadowed_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
