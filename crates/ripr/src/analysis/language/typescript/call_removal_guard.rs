@@ -9,6 +9,28 @@ pub(crate) struct RemovedMethodCall {
     argument_names: Vec<String>,
 }
 
+/// Broad, syntax-light recognition that a call statement was replaced by a
+/// `void name;` discard, regardless of the exact call shape or line count
+/// (#12463). Used only to withhold input-flip advice, so it errs wide.
+pub(crate) fn replaced_call_with_discard(new: &str, old: Option<&str>) -> bool {
+    let new = new.trim();
+    let is_discard = new
+        .strip_prefix("void ")
+        .and_then(|rest| rest.strip_suffix(';'))
+        .is_some_and(|name| {
+            let name = name.trim();
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        });
+    is_discard
+        && old.is_some_and(|old| {
+            let old = old.trim();
+            old.ends_with(';') && old.contains('(') && !old.starts_with("void ")
+        })
+}
+
 /// Read a whole removed method-call statement and its replacement discard.
 pub(crate) fn removed_method_call(new: &str, old: Option<&str>) -> Option<RemovedMethodCall> {
     let new_len = new.len();

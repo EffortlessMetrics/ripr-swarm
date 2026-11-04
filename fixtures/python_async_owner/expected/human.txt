@@ -17,6 +17,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
   Gap ID (for scripts): gap:python:src/loading.py:load_total:return_value:return_value:await_client.total+2
   Changed behavior: return await client.total() + 2
   Check (observed, advisory): Related Python test reaches `load_total` with an `exact_value` oracle.
@@ -39,6 +40,7 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_async_owner/input --diff <cwd>/fixtures/python_async_owner/diff.patch --mode fast probe:src_loading.py:python_preview:f9419b36
   ripr context --root <cwd>/fixtures/python_async_owner/input --diff <cwd>/fixtures/python_async_owner/diff.patch --mode fast --at probe:src_loading.py:python_preview:f9419b36
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

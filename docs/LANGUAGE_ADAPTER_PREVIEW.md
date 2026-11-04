@@ -249,8 +249,8 @@ not on the same scale as Rust's `confidence`. The number is unchanged by
   `explain` print it as `Why capped:` under the confidence.
 - Rust findings carry neither field. The basis explains the score only; it
   never changes the class, actionability or repair-packet readiness. The
-  reasons live in the shared `ConfidenceCap` domain type so the Python adapter
-  can adopt them without a new wire shape.
+  reasons live in the shared `ConfidenceCap` domain type; the TypeScript and
+  Python classifiers both derive them (Python: #12419).
 
 ## Read Mixed-Language Reports
 
@@ -288,6 +288,7 @@ Useful references:
   for the checked TypeScript/Python preview receipt cases.
 - [TypeScript preview static facts](specs/RIPR-SPEC-0027-typescript-preview-static-facts.md).
 - [Python preview static facts](specs/RIPR-SPEC-0028-python-preview-static-facts.md).
+- [Ruby preview static facts](specs/RIPR-SPEC-0391-ruby-preview-static-facts.md) (proposed contract only; no adapter shipped).
 
 ## Repo-Mode Analysis: Rust Full, Python and TypeScript Bounded Preview
 

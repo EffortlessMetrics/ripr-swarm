@@ -10,10 +10,11 @@
 //! non-test `fn` that could shadow a callee the isolated expansion mentions
 //! is such a refusal (#9967): the generated test must not outrank its twin.
 
+use super::MacroGeneratedOrigin;
 use super::macro_visibility::MacroVisibility;
 use super::{RustIndex, TestFact};
-use crate::analysis::syntax::expand_local_test_macros_with;
 use crate::analysis::syntax::ra::summarize_file_with_parser;
+use crate::analysis::syntax::{expand_local_test_macros_with, expansion_declares_items};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -35,6 +36,9 @@ pub(super) fn register_macro_generated_tests(index: &mut RustIndex) -> Result<()
             let Ok(facts) = summarize_file_with_parser(path, &expansion.text) else {
                 continue;
             };
+            let origin = MacroGeneratedOrigin {
+                body_declares_items: expansion_declares_items(&expansion.text),
+            };
             // The same exact attribute-path rule the style normalizer
             // applies to hand-written tests; the parser's own check is a
             // prefix match.
@@ -42,6 +46,7 @@ pub(super) fn register_macro_generated_tests(index: &mut RustIndex) -> Result<()
                 super::test_styles::attributes_define_test(test.attrs.iter().map(String::as_str))
             }) {
                 pin_to_invocation(&mut test, path, expansion.start_line, expansion.end_line);
+                test.generated = Some(origin);
                 generated.push(test);
             }
         }

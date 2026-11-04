@@ -634,7 +634,49 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.139`: a table-test row title or template that merely quotes `eval`,
 /// `with`, `this`, `arguments` or `Function` no longer hides the row's
 /// mutation route; only code uses and computed keys do (#12253).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.139";
+/// `1.140`: a verified `use claims::..` `assert_ok_eq!` / `assert_some_eq!` of a
+/// literal pins an `Ok`/`Some` tail and reads `exact_value` / strong
+/// (RIPR-SPEC-0197, RIPR-SPEC-0231 rule 10, #12304). Old entries keep `unknown`.
+/// `1.141`: a comment inside a table-test callback no longer demotes the
+/// row; the single-expect container check skips complete comments (#12494).
+/// `1.142`: a doc example on an item gated by a default-on cargo feature
+/// registers as a test again (#12230).
+/// `1.143`: an assertion whose `Err(..)` constructor feeds a value-supplying
+/// adapter is a relation, not an exact oracle of any kind (#12610).
+/// `1.144`: a file-backed insta snapshot whose committed `.snap` file is
+/// certainly missing no longer discriminates a seam, and the `.snap` listing is
+/// part of the key (#12189).
+/// `1.145`: a same-file assertion on another function lends a returned value
+/// no oracle once a test that runs the owner is related (#12671).
+/// `1.146`: a bare `assert_*snapshot!` counts as insta's only when no workspace
+/// file defines a macro of that name (#12720).
+/// `1.147`: a multi-line `assert_ok_eq!` / `assert_some_eq!` of a literal is
+/// nominated like its one-line form and reads `exact_value` / strong under the
+/// same owner-pin gates (RIPR-SPEC-0197, #12394). Old entries keep `unknown`.
+/// `1.148`: an exact error-variant pin is no oracle on a returned-value seam it
+/// cannot see (#12722).
+/// `1.149`: a doc example registers as a test only when no gate on an enclosing
+/// `mod`, `impl`, `trait` or `mod name;` declaration may leave it uncompiled (#12453).
+/// `1.150`: a pinned literal that neither the owner before the diff nor after
+/// it returns for the call's literal arguments is no exact-value pin, so it no
+/// longer credits (#12716).
+/// `1.151`: a test that invokes an assertion macro under a `use ..::assert_x as
+/// name` rename names `rust_macro_wrapped_assertion_unresolved` instead of
+/// reading as a gap (#12779). Old entries keep the gap.
+/// `1.152`: an exact pin of a one-field integer tuple struct's `.0` (or through
+/// a tuple-constructor receiver, under an imported std operator trait) now
+/// credits the changed `T(e)` tail (#12796).
+/// `1.153`: a bounded `.map(owner)` iterator chain with a resolved owner path and
+/// matching literal `Vec` expectation credits through the owner-return pin (#9478).
+/// `1.154`: a bare `assert_matches!` around an inherent owner call reads the
+/// unplaced receiver withhold (#10666). Old entries keep the unnamed gap.
+/// `1.155`: a macro-generated test borrows its invocation-site name scopes only
+/// when its expansion declares nothing that could rebind a callee (#12320).
+/// `1.156`: an exact error-variant pin on a returned-value seam it cannot see is
+/// one fact in every view: the discriminate stage skips it like the related-test
+/// record, which names it a different-arm pin and is not offered to imitate
+/// (#12733, #12734).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.156";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -815,7 +857,24 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.139";
 /// `0.139`: same indirect-owner item scope decisions as full `1.137` (#10162).
 /// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
 /// `0.141`: same table-row quoted-word rule as full `1.139` (#12253).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.141";
+/// `0.142`: same claims payload-equality pin as full `1.140` (#12304).
+/// `0.143`: same table-callback comment rule as full `1.141` (#12494).
+/// `0.144`: same default-feature doctest rule as full `1.142` (#12230).
+/// `0.145`: same adapter-fed `Err(..)` relation as full `1.143` (#12610).
+/// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
+/// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
+/// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
+/// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
+/// `0.150`: same error-pin refusal as full `1.148` (#12722).
+/// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
+/// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
+/// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
+/// `0.154`: same tuple-projection pin as full `1.152` (#12796).
+/// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
+/// `0.156`: same unplaced `assert_matches!` withhold as full `1.154` (#10666).
+/// `0.157`: same generated-test invocation-scope rule as full `1.155` (#12320).
+/// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.158";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -998,7 +1057,24 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.141";
 /// `0.139`: same indirect-owner item scope decisions as full `1.137` (#10162).
 /// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
 /// `0.141`: same table-row quoted-word rule as full `1.139` (#12253).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.141";
+/// `0.142`: same claims payload-equality pin as full `1.140` (#12304).
+/// `0.143`: same table-callback comment rule as full `1.141` (#12494).
+/// `0.144`: same default-feature doctest rule as full `1.142` (#12230).
+/// `0.145`: same adapter-fed `Err(..)` relation as full `1.143` (#12610).
+/// `0.146`: same missing-committed-snapshot rule as full `1.144` (#12189).
+/// `0.147`: same returned-value other-function refusal as full `1.145` (#12671).
+/// `0.148`: same shadowed-snapshot-macro rule as full `1.146` (#12720).
+/// `0.149`: same multi-line claims nomination as full `1.147` (#12394).
+/// `0.150`: same error-pin refusal as full `1.148` (#12722).
+/// `0.151`: same enclosing-cfg doctest rule as full `1.149` (#12453).
+/// `0.152`: same neither-version literal refusal as full `1.150` (#12716).
+/// `0.153`: same renamed-assertion-import limit as full `1.151` (#12779).
+/// `0.154`: same tuple-projection pin as full `1.152` (#12796).
+/// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
+/// `0.156`: same unplaced `assert_matches!` withhold as full `1.154` (#10666).
+/// `0.157`: same generated-test invocation-scope rule as full `1.155` (#12320).
+/// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.158";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1201,7 +1277,13 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.53`: an assertion whose `Err(..)` constructor feeds a value-supplying
 /// adapter is no longer an `ExactErrorVariant` oracle fact (#12359); `1.52`
 /// facts keep the old kind.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.53";
+/// `1.54`: `assert_ok_eq` and `assert_some_eq` are trusted macro names, so the
+/// stored binding candidates may name them (#12304); `1.53` facts cannot.
+/// `1.55`: an assertion whose `Err(..)` constructor feeds a value-supplying
+/// adapter is a weak relation, not an exact oracle fact of any kind (#12610).
+/// `1.56`: bounded `.map(owner)` iterator chains emit synthetic owner call
+/// facts for reach (#9478); `1.55` facts lack them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.56";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1777,6 +1859,15 @@ impl WorkspaceKeyContext<'_> {
             } else {
                 workspace_manifests_hash
             };
+        // #12189 (before the Cargo identity, whose unavailable marker must stay
+        // the key's suffix): a committed `.snap` file decides whether a file-backed
+        // snapshot assertion can fail, so adding, deleting or (un)tracking
+        // one must move the key. Existence and tracking are the inputs;
+        // content is not.
+        let workspace_manifests_hash = hash_str(&format!(
+            "{workspace_manifests_hash}:rust-snapshot-files:{}",
+            super::rust_snapshot_files::SnapshotListing::read(self.workspace_root).identity()
+        ));
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -2264,6 +2355,27 @@ impl RepoModuleTreeScanCache {
     }
 }
 
+/// A published entry: a single-entry `*.json` file, or a per-key sharded
+/// directory holding `manifest.json`. Publication `.lock` files, temporary
+/// files and empty key directories left by a skipped or failed store are not
+/// entries, so they never earn a warm-rerun promise. This is a presence probe
+/// for the layer, not a hit check for the current workspace key.
+fn cache_entry_layer_has_any_entry(dir: &Path, sharded: bool) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        if sharded {
+            path.join("manifest.json").is_file()
+        } else {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+                && path.is_file()
+        }
+    })
+}
+
 /// Crate-private cache I/O surface. Holds the directory the cache lives
 /// in but not in-memory state; safe to construct cheaply per call.
 pub(crate) struct RepoSeamFactCache {
@@ -2301,6 +2413,19 @@ impl RepoSeamFactCache {
             ClassifiedCacheFamily::CompactClassifiedSeams,
             COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
         )
+    }
+
+    /// Cheap cache-presence probe for invocation-time cost disclosure (#12505).
+    pub(crate) fn seam_facts_cache_has_stored_entries(
+        workspace_root: &Path,
+        compact: bool,
+    ) -> bool {
+        let cache = if compact {
+            Self::at_compact_classified(workspace_root)
+        } else {
+            Self::at(workspace_root)
+        };
+        cache.has_stored_entries()
     }
 
     fn at_named(
@@ -2345,6 +2470,13 @@ impl RepoSeamFactCache {
     /// (see `publish_sharded_generation`), hence `true` only there.
     pub(crate) fn entry_dirs(&self) -> [(PathBuf, bool); 2] {
         [(self.dir.clone(), false), (self.sharded_dir.clone(), true)]
+    }
+
+    /// True when either cache layer directory contains at least one entry.
+    pub(crate) fn has_stored_entries(&self) -> bool {
+        self.entry_dirs()
+            .iter()
+            .any(|(dir, sharded)| cache_entry_layer_has_any_entry(dir, *sharded))
     }
 
     pub(crate) fn rooted_at(dir: PathBuf, sharded_dir: PathBuf, base: PathBuf) -> Self {
@@ -2829,6 +2961,39 @@ impl FileFactCacheStats {
             self.hits, self.misses, self.corrupt_ignored, self.store_errors
         )
     }
+
+    /// When a store failed during a batch, name the retained rows so a
+    /// cancellation or deadline error is not mistaken for a cache mismatch
+    /// (#6746).
+    pub(crate) fn store_failure_diagnostic(&self) -> Option<String> {
+        if self.store_errors == 0 {
+            return None;
+        }
+        let mut message = format!("file fact cache store failed {} time(s)", self.store_errors);
+        if !self.store_failures.is_empty() {
+            let rows: Vec<String> = self
+                .store_failures
+                .iter()
+                .map(|row| {
+                    format!(
+                        "{} at {} stage: {}",
+                        row.path.display(),
+                        row.stage,
+                        row.error
+                    )
+                })
+                .collect();
+            message.push_str(": ");
+            message.push_str(&rows.join("; "));
+        }
+        if self.store_failures_dropped > 0 {
+            message.push_str(&format!(
+                " ({} additional failure(s) not shown)",
+                self.store_failures_dropped
+            ));
+        }
+        Some(message)
+    }
 }
 
 /// Layer directories whose stale schema siblings were already pruned this
@@ -3182,6 +3347,61 @@ impl RepoFileFactCache {
             }
         }
         KnownFilePaths { candidates }
+    }
+
+    /// Test-only strict inventory: every header-matching entry must decode for
+    /// the current build identity, or the report names the failure (#6746).
+    #[cfg(test)]
+    pub(crate) fn test_inventory_report(&self) -> Result<(), String> {
+        let identity = crate::build_identity::cache_identity();
+        let entries = std::fs::read_dir(&self.dir).map_err(|err| {
+            format!(
+                "read file fact cache dir {} failed: {err}",
+                self.dir.display()
+            )
+        })?;
+        let mut problems = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("read cache dir entry failed: {err}"))?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let bytes = match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    problems.push(format!("{}: read failed: {err}", path.display()));
+                    continue;
+                }
+            };
+            match codec::decode_file_facts(&bytes) {
+                Ok(envelope) => {
+                    if envelope.file_fact_cache_schema_version != FILE_FACT_CACHE_SCHEMA_VERSION {
+                        problems.push(format!(
+                            "{}: schema {} (expected {})",
+                            path.display(),
+                            envelope.file_fact_cache_schema_version,
+                            FILE_FACT_CACHE_SCHEMA_VERSION
+                        ));
+                    } else if envelope.analyzer_version != identity {
+                        problems.push(format!("{}: analyzer identity mismatch", path.display()));
+                    } else if let Err(reason) = envelope.validate_integrity() {
+                        problems.push(format!(
+                            "{}: integrity check failed: {reason}",
+                            path.display()
+                        ));
+                    }
+                }
+                Err(reason) => {
+                    problems.push(format!("{}: decode failed: {reason}", path.display()));
+                }
+            }
+        }
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(problems.join("\n"))
+        }
     }
 
     pub(crate) fn store_file_facts(
@@ -5582,7 +5802,8 @@ mod tests {
         // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.53");
+        // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.56");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5750,7 +5971,24 @@ mod tests {
         // 1.136 -> 1.137: indirect-owner item scope decisions (#10162).
         // 1.137 -> 1.138: adapter-fed Err refusal (#12359).
         // 1.138 -> 1.139: table-row quoted words no longer hide the route (#12253).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.139");
+        // 1.139 -> 1.140: claims payload-equality owner pin (#12304).
+        // 1.140 -> 1.141: comments inside table-test callbacks no longer demote the row (#12494).
+        // 1.141 -> 1.142: default-feature cfg gates register doctests (#12230).
+        // 1.142 -> 1.143: adapter-fed Err is a relation (#12610).
+        // 1.143 -> 1.144: file-backed snapshot with no committed `.snap` (#12189).
+        // 1.144 -> 1.145: returned-value seams refuse another function's oracle (#12671).
+        // 1.145 -> 1.146: shadowed bare snapshot macro (#12720).
+        // 1.146 -> 1.147: multi-line claims payload-equality nomination (#12394).
+        // 1.147 -> 1.148: an exact error-variant pin is no oracle on an Ok-value seam (#12722).
+        // 1.148 -> 1.149: enclosing cfg gates on a doctest (#12453).
+        // 1.149 -> 1.150: a pinned literal neither owner version returns does not credit (#12716).
+        // 1.150 -> 1.151: renamed assertion-macro imports name the macro limit (#12779).
+        // 1.151 -> 1.152: a tuple `.0` pin credits the changed `T(e)` tail (#12796).
+        // 1.152 -> 1.153: bounded `.map(owner)` chains credit via the owner pin (#9478).
+        // 1.153 -> 1.154: a bare `assert_matches!` around an inherent owner call reads the unplaced receiver withhold (#10666).
+        // 1.154 -> 1.155: macro-generated tests borrow invocation-site name scopes only when the expansion declares nothing (#12320).
+        // 1.155 -> 1.156: different-arm error pin is one fact in every view (#12733, #12734).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.156");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5871,8 +6109,25 @@ mod tests {
         // 0.138 -> 0.139: same indirect-owner item scope decisions as full 1.137 (#10162).
         // 0.139 -> 0.140: same adapter-fed Err refusal as full 1.138 (#12359).
         // 0.140 -> 0.141: same table-row quoted-word rule as full 1.139 (#12253).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.141");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.141");
+        // 0.141 -> 0.142: same claims payload-equality pin as full 1.140 (#12304).
+        // 0.142 -> 0.143: same table-callback comment rule as full 1.141 (#12494).
+        // 0.143 -> 0.144: same default-feature doctest rule as full 1.142 (#12230).
+        // 0.144 -> 0.145: same adapter-fed Err relation as full 1.143 (#12610).
+        // 0.145 -> 0.146: same missing-snapshot rule as full 1.144 (#12189).
+        // 0.146 -> 0.147: same returned-value refusal as full 1.145 (#12671).
+        // 0.147 -> 0.148: same shadowed-macro rule as full 1.146 (#12720).
+        // 0.148 -> 0.149: same multi-line claims nomination as full 1.147 (#12394).
+        // 0.149 -> 0.150: same error-pin refusal as full 1.148 (#12722).
+        // 0.150 -> 0.151: same enclosing-cfg doctest rule as full 1.149 (#12453).
+        // 0.151 -> 0.152: same neither-version literal refusal as full 1.150 (#12716).
+        // 0.152 -> 0.153: same renamed-assertion-import limit as full 1.151 (#12779).
+        // 0.153 -> 0.154: same tuple-projection pin as full 1.152 (#12796).
+        // 0.154 -> 0.155: same path-value crediting as full 1.153 (#9478).
+        // 0.155 -> 0.156: same unplaced `assert_matches!` withhold as full 1.154 (#10666).
+        // 0.156 -> 0.157: same generated-test invocation-scope rule as full 1.155 (#12320).
+        // 0.157 -> 0.158: same different-arm error-pin rule as full 1.156 (#12733, #12734).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.158");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.158");
     }
 
     #[test]

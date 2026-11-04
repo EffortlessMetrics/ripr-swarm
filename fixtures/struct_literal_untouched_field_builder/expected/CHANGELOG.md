@@ -141,3 +141,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — struct_literal_untouched_field_builder (12)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless struct_literal_untouched_field_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

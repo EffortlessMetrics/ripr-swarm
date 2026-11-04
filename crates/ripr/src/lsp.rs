@@ -19,6 +19,7 @@ mod initialize_repair;
 mod input_identity;
 mod lens;
 mod panic_containment;
+mod parent_death_watchdog;
 mod payload_bounds;
 mod position;
 mod progress;
@@ -37,6 +38,7 @@ mod state;
 mod tests;
 mod transport_bounds;
 mod uri;
+mod workspace_folder_bounds;
 
 use backend::Backend;
 pub use diagnostics::{DiagnosticBatch, workspace_diagnostic_batches};
@@ -86,6 +88,7 @@ pub fn serve() -> Result<(), String> {
 }
 
 async fn serve_stdio() -> Result<(), String> {
+    let watched_parent = parent_death_watchdog::initial_parent_process_id();
     let root =
         std::env::current_dir().map_err(|err| format!("failed to get current dir: {err}"))?;
     let stdin = tokio::io::stdin();
@@ -95,6 +98,7 @@ async fn serve_stdio() -> Result<(), String> {
         stdout,
         root,
         &transport_bounds::TransportBounds::default(),
+        watched_parent,
     )
     .await
 }
@@ -108,6 +112,7 @@ async fn serve_streams<I, O>(
     stdout: O,
     root: std::path::PathBuf,
     bounds: &transport_bounds::TransportBounds,
+    watched_parent: Option<u32>,
 ) -> Result<(), String>
 where
     I: tokio::io::AsyncRead + Unpin,
@@ -120,6 +125,7 @@ where
     // #11439: `exit` and the end of stdin cancel in-flight analysis, so the
     // server does not wait out a refresh that can no longer be delivered.
     let session_end = session_end::SessionEnd::new(service.inner().session_end_hook());
+    parent_death_watchdog::spawn_parent_death_watchdog(session_end.clone(), watched_parent);
     let stdin = initialize_repair::InitializeRepairReader::new(stdin);
     let stdin = session_end::EndOfInput::new(stdin, session_end.clone());
     let order = ShutdownExitOrder::default().ending_session_with(session_end);

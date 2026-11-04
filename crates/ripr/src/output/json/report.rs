@@ -1310,7 +1310,7 @@ fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
         finding.language,
         Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
     ) {
-        return crate::output::related_test_miss::strongest_related_test(&finding.related_tests);
+        return crate::output::related_test_miss::typescript_script_preview_related_test(finding);
     }
     finding
         .related_tests

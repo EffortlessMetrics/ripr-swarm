@@ -16,6 +16,12 @@ const TEST_COVERED_BY_LIST_TIMEOUT: Duration = Duration::from_mins(5);
 /// almost all of its wall clock building; that must not be charged against
 /// the list cap or reported as an unresolved `covered_by` pointer (#4141).
 const TEST_COVERED_BY_BUILD_TIMEOUT: Duration = Duration::from_mins(30);
+
+/// The longest single Cargo build `check_file_policy` itself allows. A caller
+/// that bounds the whole check with a shorter deadline cuts the check off
+/// inside its own documented budget (#12510).
+#[cfg(test)]
+pub(crate) const FILE_POLICY_COVERED_BY_BUILD_BUDGET: Duration = TEST_COVERED_BY_BUILD_TIMEOUT;
 const COVERED_BY_INSTRUMENT_PREFIX: &str = "covered_by_instrument_timeout:";
 /// Infrastructure state: the spawn timed out while Cargo was blocked on a
 /// build/package lock held by another process (#8793). Still an instrument

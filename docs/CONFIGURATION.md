@@ -240,6 +240,7 @@ that needs the tuning.
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `RIPR_CACHE_DIR` | (none) | Relocate the entire cache base directory (the cache is disposable; see below). When set to a non-empty path, all cache reads and writes use that path instead of `{workspace_root}/target/ripr/cache`. Useful for read-only or immutable source checkouts and for redirecting the cache to a faster or larger volume. When unset or empty, default behaviour is unchanged, except that `ripr check` refuses to run when `target`, `target/ripr`, `target/ripr/cache` or `target/ripr/reports` under the workspace is a symlink resolving outside it (a checked-in link could otherwise redirect where ripr writes); set `RIPR_CACHE_DIR` to choose the location explicitly (#7781). `ripr doctor` reports whether `RIPR_CACHE_DIR` is active and shows the resolved location and total size. |
+| `RIPR_MAX_DIFF_CHANGED_LINES` | `100000` | Maximum added plus removed diff lines recorded while parsing a unified diff before `ripr check` fails closed with `diff_scope_oversized`. This is a language-neutral streaming guard: context, quarantined conflict lines, and scope-dropped sections do not count. Per-language adapter limits (`RIPR_MAX_DIFF_CHANGED_RUST_LINES`, Python, TypeScript) may still refuse earlier or with a tighter bound. With `--json`, the command still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. Raise only for a single command on a machine with enough memory, or split the extraction PR. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_MAX_DIFF_CHANGED_RUST_LINES` | `2000` | Maximum added plus removed Rust diff lines that `ripr check` will expand into probes before failing closed with `diff_scope_oversized`. With `--json`, the command still exits non-zero but emits a limited artifact with `analysis_scope.run_status = "diff_scope_oversized"` and `downstream_consumable = false`. This protects constrained runners from large code-motion diffs that touch few files but produce thousands of probes. Raise only for a single command on a machine with enough memory, or split the extraction PR. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_MAX_DIFF_CHANGED_PYTHON_LINES` | `2000` | Maximum added plus removed Python diff lines that `ripr check` will hand to the Python adapter before failing closed with `diff_scope_oversized` — the same early, explainable refusal the Rust limit provides, so a large Python diff (for example a 167-file django extraction) is refused before the expensive per-language analysis instead of burning minutes or the whole timeout. Checked only when the Python adapter is enabled, before any preview adapter runs. With `--json`, the command still exits non-zero but emits a limited artifact. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES` | `2000` | Maximum added plus removed TypeScript diff lines that `ripr check` will hand to the TypeScript adapter before failing closed with `diff_scope_oversized`. Counts the whole routed TS/JS source family the one adapter reads (`.ts`/`.tsx`/`.mts`/`.cts` and `.js`/`.jsx`/`.mjs`/`.cjs`), and is checked when either the `typescript` or `javascript` language is enabled, before any preview adapter runs. Same repair route as the Rust limit: narrow the diff with `--path`/`--exclude` or raise the limit for a single command. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
@@ -365,7 +366,10 @@ leaves no changed file fails with `scope_filter_matched_nothing` (exit 2). Rust
 files with a generator header (`@generated`, `Code generated ... DO NOT EDIT`,
 rust-bindgen), `cargo vendor` crates and a root `target/` directory are already
 skipped with a named limitation before the limits apply, without any flag.
-`--path` and `--exclude` do not apply to repo-scoped formats.
+`--path` and `--exclude` do not apply to repo-scoped formats. `ripr explain`
+and `ripr context` accept the same flags, and a scoped `ripr check` prints
+them on its explain, context, and `check --json` drill-in commands so a paste
+re-analyzes the same files instead of the full oversized diff.
 
 To reduce full-cache shard counts for a repo on a machine with enough headroom:
 
@@ -390,6 +394,7 @@ Renders a single finding in human format.
 
 ```text
 ripr explain [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
+             [--path GLOB] [--exclude GLOB]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH] [--quiet] <finding-id | file:line>
 ```
@@ -414,6 +419,7 @@ Emits a compact JSON context packet for one finding.
 
 ```text
 ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
+             [--path GLOB] [--exclude GLOB]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH]
              (--at | --finding) <finding-id | file:line>
@@ -1126,11 +1132,12 @@ finding-affecting config for artifact/receipt comparison. Rerun analysis after
 changing it; do not reuse an old excluded-source receipt as complete evidence.
 
 `[languages.python]` and `[languages.typescript]` configure the preview
-adapters. Each admits one override:
+adapters:
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `handwritten_files` | array of exact paths | `[]` | Repository-relative files to analyze even though a path component matches the adapter's built-in excluded-directory conventions (`.git`, `target`, `node_modules`, virtualenvs, `site-packages`, caches, and build-output names such as `build/`, `dist/` and, for TypeScript, `out/`). Python declarations must name `.py` files; TypeScript declarations must name one of the routed TypeScript/JavaScript extensions (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`). Exact paths only — globs are rejected. Generated-name conventions still exclude a declared path. The override applies to diff checks; repo-scope exposure remains convention-scoped. |
+| `excluded_file_patterns` | array of strings | `[]` | Additional repository-relative globs omitted from preview-language indexing during diff checks (#5380). Uses the same `/`-separated glob dialect as `[languages.rust] generated_file_patterns`. Parse-budget refusals on paths that look like fixture or data files point here instead of advising a source rewrite. |
 
 For example, a project that keeps hand-written Python source under a `build/`
 package can admit it:
@@ -1138,6 +1145,13 @@ package can admit it:
 ```toml
 [languages.python]
 handwritten_files = ["build/lib/pipeline.py"]
+```
+
+To keep syntax-highlighted or other fixture trees out of Python preview indexing:
+
+```toml
+[languages.python]
+excluded_file_patterns = ["tests/syntax-tests/**"]
 ```
 
 When a changed file is still skipped by these conventions, the run's
