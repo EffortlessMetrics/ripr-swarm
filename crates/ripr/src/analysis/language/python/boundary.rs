@@ -2431,12 +2431,26 @@ pub(super) fn unresolved_loop_list_boundary(
                         assertion.line == row.line
                             && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
                     })
-        }) && is_direct_integer_list_assertion(row, owner)
+                && is_direct_integer_list_assertion(row, owner, candidate)
+        })
     })
 }
 
-fn is_direct_integer_list_assertion(row: &CallRow, owner: &PythonOwner) -> bool {
+fn is_direct_integer_list_assertion(
+    row: &CallRow,
+    owner: &PythonOwner,
+    candidate: &PythonRelatedCandidate<'_>,
+) -> bool {
     use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+    fn integer(expr: &Expr) -> bool {
+        match expr {
+            Expr::Constant(value) => matches!(value.value, ast::Constant::Int(_)),
+            Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::USub | ast::UnaryOp::UAdd) => {
+                matches!(unary.operand.as_ref(), Expr::Constant(value) if matches!(value.value, ast::Constant::Int(_)))
+            }
+            _ => false,
+        }
+    }
     let Ok(Mod::Module(module)) = super::source_facts::parse_module_result(
         std::path::Path::new("<loop-boundary-oracle>"),
         &row.text,
@@ -2452,27 +2466,32 @@ fn is_direct_integer_list_assertion(row: &CallRow, owner: &PythonOwner) -> bool 
     let Expr::Compare(compare) = assertion.test.as_ref() else {
         return false;
     };
-    let ([ast::CmpOp::Eq], [expected]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+    let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
     else {
         return false;
     };
-    let Expr::Constant(expected) = expected else {
+    let observed = if integer(right) {
+        compare.left.as_ref()
+    } else if integer(&compare.left) {
+        right
+    } else {
         return false;
     };
-    if !matches!(expected.value, ast::Constant::Int(_)) {
-        return false;
-    }
-    let Expr::Call(call) = compare.left.as_ref() else {
+    let Expr::Call(call) = observed else {
         return false;
     };
     let Expr::Name(callee) = call.func.as_ref() else {
         return false;
     };
-    if callee.id.as_str() != owner.name || !call.keywords.is_empty() {
+    if !owner_call_names(owner, candidate.test, false)
+        .iter()
+        .any(|name| name == callee.id.as_str())
+        || !call.keywords.is_empty()
+    {
         return false;
     }
     let [Expr::List(list)] = call.args.as_slice() else {
         return false;
     };
-    !list.elts.is_empty() && list.elts.iter().all(|element| matches!(element, Expr::Constant(value) if matches!(value.value, ast::Constant::Int(_))))
+    !list.elts.is_empty() && list.elts.iter().all(integer)
 }

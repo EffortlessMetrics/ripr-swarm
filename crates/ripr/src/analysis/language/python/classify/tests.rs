@@ -4129,3 +4129,22 @@ fn loop_boundary_equality_can_distinguish_other_loop_bodies() -> Result<(), Stri
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn loop_boundary_accepts_signed_inputs_reversed_equality_and_alias() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest as biggest\n\ndef test_largest():\n    assert -1 == biggest([-3, -1, -2])\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
