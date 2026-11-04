@@ -17,8 +17,6 @@ pub mod guard_refusal;
 pub mod identity;
 pub mod intervention_study;
 pub mod language;
-#[doc(hidden)]
-pub mod language_availability;
 pub mod language_capability;
 #[cfg(test)]
 pub mod language_capability_drift;

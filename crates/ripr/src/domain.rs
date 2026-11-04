@@ -183,6 +183,7 @@ pub(crate) use ripr_contract::domain::{
 pub mod context_packet;
 mod diagnostic_witness;
 mod fix_instruction;
+#[doc(hidden)]
 pub mod language_availability;
 mod next_action;
 mod repair_card;
