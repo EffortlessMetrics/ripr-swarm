@@ -1576,6 +1576,7 @@ dependencies = [
  "pulldown-cmark",
  "ra_ap_syntax",
  "rayon",
+ "ripr-contract",
  "rmcp",
  "rustix",
  "rustpython-parser",
@@ -1595,6 +1596,14 @@ dependencies = [
  "unicode-width",
  "win32job",
  "winsafe",
+]
+
+[[package]]
+name = "ripr-contract"
+version = "0.11.0"
+dependencies = [
+ "serde",
+ "sha2",
 ]
 
 [[package]]

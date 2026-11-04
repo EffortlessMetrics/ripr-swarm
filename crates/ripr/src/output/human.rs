@@ -3186,7 +3186,7 @@ mod tests {
         let mut legacy = carded.clone();
         legacy
             .evidence
-            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            .push(ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
         assert!(crate::output::python_repair_card::python_repair_card(&legacy).is_none());
         assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
     }
@@ -5510,7 +5510,7 @@ mod tests {
         let mut finding = python_preview_finding(5, false);
         finding
             .evidence
-            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            .push(ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
         assert_eq!(finding.analysis_mode(), None);
         let rendered = render(&single_finding_output(finding));
         assert!(!rendered.contains("repo-mode findings"), "{rendered}");
@@ -5573,9 +5573,9 @@ mod tests {
             assert!(!render_finding(&diff).contains("repo-mode findings"));
 
             let mut legacy = diff;
-            legacy
-                .evidence
-                .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            legacy.evidence.push(
+                ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string(),
+            );
             let why = crate::output::preview_actionability::preview_actionability_for(&legacy)
                 .map(|a| a.why_not_actionable);
             assert!(

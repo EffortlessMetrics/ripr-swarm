@@ -1,6 +1,6 @@
 # ADR 0001: One Published Package
 
-Status: accepted
+Status: accepted; packaging clause superseded by ADR 0025 (2026-11-04)
 
 Date: 2026-05-01
 

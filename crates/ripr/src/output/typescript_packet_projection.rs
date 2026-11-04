@@ -14,12 +14,12 @@
 //! - No parallel TypeScript-specific completeness validator is introduced.
 //!   The only flip gate is `validate_agent_gap_record_packet(..) == Ok(())`.
 
-use crate::domain::language_capability::{
-    CapabilityFamily, cell_state, state_establishes_capability,
-};
 use crate::domain::{Finding, OracleStrength, ProbeFamily, StageState};
 use crate::output::gap_decision_ledger::{
     GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility, preview_receipt_write_command,
+};
+use ripr_contract::domain::language_capability::{
+    CapabilityFamily, cell_state, state_establishes_capability,
 };
 use std::collections::BTreeMap;
 
@@ -1798,7 +1798,7 @@ pub(crate) mod tests {
     /// whose typed scope is `Diff` (contradictory) fails closed too.
     #[test]
     fn typed_scope_is_authority_and_contradiction_fails_closed() {
-        use crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
+        use ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
         let mut typed_only = complete_finding();
         typed_only.analysis_scope = crate::domain::AnalysisScope::Repo;
         assert!(

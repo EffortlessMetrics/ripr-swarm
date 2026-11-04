@@ -421,7 +421,7 @@ mod tests {
         // Real governed source, not a comment/string added to make the gate
         // appear productive. The moved tokenizer precedes an existing DTO
         // validation-field literal in the same compiled candidate source.
-        let source = include_str!("../../crates/ripr/src/domain/command_spec.rs");
+        let source = include_str!("../../crates/ripr-contract/src/domain/command_spec.rs");
         let tokenizer = source
             .find("pub(crate) fn command_tokens(")
             .ok_or("actual command tokenizer source must be present")?;

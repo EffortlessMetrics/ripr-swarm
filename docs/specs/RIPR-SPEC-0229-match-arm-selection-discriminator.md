@@ -705,7 +705,7 @@ the diff changes `None => 1` to `None => 0`.
 - `crates/ripr/src/analysis/probes/diff.rs`: a changed arm pairs with the
   removed arm of the same pattern; a return value the edit left untouched
   is dropped when another shape on the line holds the edit.
-- `crates/ripr/src/domain/probe.rs` (`input_boundary_fact`) and
+- `crates/ripr-contract/src/domain/probe.rs` (`input_boundary_fact`) and
   `crates/ripr/src/output/related_test_miss.rs`: an examined test of a named
   arm misses an input (`missing_input`, "no test input selects arm"), not an
   exact assertion (RIPR-SPEC-0224).

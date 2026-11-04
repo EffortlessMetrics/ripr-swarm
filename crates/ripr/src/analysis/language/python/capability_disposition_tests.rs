@@ -15,7 +15,7 @@
 
 use super::PythonFramework;
 use crate::domain::LanguageId;
-use crate::domain::language_capability::{
+use ripr_contract::domain::language_capability::{
     AnalysisMode, CAPABILITY_CELLS, CapabilityCell, CapabilityFamily, FRAMEWORK_ANY, cells_for,
 };
 

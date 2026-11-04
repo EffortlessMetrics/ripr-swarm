@@ -60,6 +60,10 @@ name = "ripr"
 path = "src/main.rs"
 
 [dependencies]
+# ADR 0025 (#8382/#12726): internal contract crate, published in lockstep with
+# `ripr` (same workspace version, exact requirement). It owns the domain DTOs
+# re-exported at `ripr::domain`; it is not a separate public API.
+ripr-contract = { path = "../ripr-contract", version = "0.11.0", default-features = false }
 # #5287: OS advisory file locks serialize concurrent after-phase manifest
 # commits. Only fs2's safe API is used (`FileExt::try_lock_exclusive` /
 # `unlock`); no `unsafe fn` surface reaches first-party code, keeping the
@@ -159,12 +163,14 @@ win32job = "2.0.3"
 
 [features]
 default = ["lang-rust", "lang-typescript", "lang-python"]
-lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident", "dep:unicode-properties"]
-lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span"]
-lang-python = ["dep:rustpython-parser", "dep:unicode-ident"]
-lang-perl = []
+lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident", "dep:unicode-properties", "ripr-contract/lang-rust"]
+lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span", "ripr-contract/lang-typescript"]
+lang-python = ["dep:rustpython-parser", "dep:unicode-ident", "ripr-contract/lang-python"]
+lang-perl = ["ripr-contract/lang-perl"]
 
 [dev-dependencies]
+# ADR 0025: facade tests import shared fixtures from the contract crate.
+ripr-contract = { path = "../ripr-contract", features = ["test-fixtures"] }
 proptest = "1"
 rmcp = { version = "=3.7.0", default-features = false, features = ["client", "transport-async-rw"] }
 serial_test = "4"

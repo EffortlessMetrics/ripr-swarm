@@ -1,0 +1,34 @@
+[package]
+name = "ripr-contract"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Internal contract types for the ripr facade: domain DTOs and adapter result shells (ADR 0025). Implementation package; the public API is the ripr crate."
+keywords = ["mutation-testing", "testing", "static-analysis"]
+categories = ["development-tools", "development-tools::testing"]
+
+[features]
+default = ["lang-rust", "lang-typescript", "lang-python"]
+# Enables shared test-fixture modules (e.g. `domain::executed_control::tests`)
+# for downstream test builds; production builds do not compile them.
+test-fixtures = []
+# Mirror `ripr`'s language features: `domain::language` reads them with
+# `cfg!`, so the facade forwards each one to keep enablement identical.
+lang-rust = []
+lang-typescript = []
+lang-python = []
+lang-perl = []
+
+[lib]
+name = "ripr_contract"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive", "rc"] }
+sha2 = "0.10"
+
+[lints]
+workspace = true

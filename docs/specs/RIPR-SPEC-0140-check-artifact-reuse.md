@@ -234,7 +234,7 @@ artifact stores the uncapped related-tests list.
 - `CheckArtifactV1` envelope and atomic write in
   `crates/ripr/src/app/check_artifact.rs`.
 - Serde round-trip derives on the domain probe types in
-  `crates/ripr/src/domain/probe.rs`, `classification.rs`, `language.rs`.
+  `crates/ripr-contract/src/domain/probe.rs`, `classification.rs`, `language.rs`.
 - Closed config-identity allowlist in `crates/ripr/src/config/model.rs`
   with the hash in `crates/ripr/src/config.rs`; the field-enumeration
   contract test in `crates/ripr/src/config/tests.rs`.
@@ -435,7 +435,7 @@ even though the `check --json` render caps related tests at 8.
   analysis or writing.
 - `crates/ripr/src/config/model.rs` + `crates/ripr/src/config.rs` —
   config-identity allowlist, version, and hash.
-- `crates/ripr/src/domain/probe.rs`, `classification.rs`, `language.rs` —
+- `crates/ripr-contract/src/domain/probe.rs`, `classification.rs`, `language.rs` —
   serde derives enabling the full-fidelity `Finding` round-trip.
 
 ## Metrics
