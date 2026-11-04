@@ -8964,7 +8964,7 @@ fn ts_selected_switch_return(context: &TsPostLadderContext<'_>) -> bool {
     };
     let Some(module) = super::bounded_read::read_workspace_sources_capped(
         root,
-        &[owner.file.clone()],
+        std::slice::from_ref(&owner.file),
         super::bounded_read::ts_file_read_limit(),
         super::bounded_read::ts_workspace_read_budget(),
     )

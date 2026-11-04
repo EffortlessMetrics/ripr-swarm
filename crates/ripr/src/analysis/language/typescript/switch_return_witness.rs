@@ -127,7 +127,7 @@ pub(crate) fn direct_test_call(
 ) -> bool {
     let Some(source) = super::bounded_read::read_workspace_sources_capped(
         root,
-        &[test.file.clone()],
+        std::slice::from_ref(&test.file),
         super::bounded_read::ts_file_read_limit(),
         super::bounded_read::ts_workspace_read_budget(),
     )

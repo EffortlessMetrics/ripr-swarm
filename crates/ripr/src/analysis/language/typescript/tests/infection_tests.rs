@@ -229,6 +229,25 @@ fn switch_literal_return_controls() -> Result<(), String> {
 }
 
 #[test]
+fn switch_return_direct_selector_controls() -> Result<(), String> {
+    let test_for = |argument: &str| {
+        format!(
+            "import {{ test, expect }} from 'vitest';\nimport {{ price }} from '../src/price';\ntest('price', () => {{ const result = price({argument}); expect(result).toBeLessThan(100); }});\n"
+        )
+    };
+    let other = switch_return("switch-direct-other", &test_for("'gold'"))?;
+    assert_ne!(other.class, ExposureClass::WeaklyExposed);
+    assert_ne!(other.class, ExposureClass::Exposed);
+    let computed = switch_return("switch-direct-computed", &test_for("pick()"))?;
+    assert_eq!(computed.class, ExposureClass::InfectionUnknown);
+    let escaped_match = switch_return("switch-escaped-match", &test_for("'\\x73ilver'"))?;
+    assert_eq!(escaped_match.class, ExposureClass::WeaklyExposed);
+    let escaped_other = switch_return("switch-escaped-other", &test_for("'\\x67old'"))?;
+    assert_eq!(escaped_other.class, ExposureClass::InfectionUnknown);
+    Ok(())
+}
+
+#[test]
 fn switch_return_with_another_changed_line_stays_unknown() -> Result<(), String> {
     let root = ts_unique_tempdir("switch-changed-flow")?;
     let source = "export function price(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 10;\n    case 'silver':\n      return 7;\n    default:\n      return 0;\n  }\n}\n";
