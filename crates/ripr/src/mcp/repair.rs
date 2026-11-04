@@ -1262,6 +1262,7 @@ pub(super) mod tests {
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         })
     }
 

@@ -2389,6 +2389,10 @@ fn run_pipeline_for_diff_text_with_language_config(
         rust_consumed_sources,
         language_view: Some(language_view),
         preview_fact_caches,
+        // #13036: classify the diff's changed paths from the same slice the
+        // outcome counts above record, so the renderers can name the real
+        // cause of an empty result (zero-diff, docs-only, tests-only).
+        changed_path_kinds: Some(super::diff::classify_changed_paths(&changed_files)),
     })
 }
 
@@ -2701,6 +2705,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         rust_consumed_sources,
         language_view: Some(language_view),
         preview_fact_caches: Vec::new(),
+        // Repo-scope runs index the whole workspace; there is no diff whose
+        // changed paths could be classified (#13036).
+        changed_path_kinds: None,
     })
 }
 

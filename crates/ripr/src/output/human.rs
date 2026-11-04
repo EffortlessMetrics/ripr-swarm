@@ -277,20 +277,106 @@ fn no_source_examined(output: &CheckOutput) -> bool {
     }
 }
 
+/// #13036: the analyzed range was the comparison base against itself — the
+/// loader resolved the base to HEAD's own commit, so the diff was empty by
+/// construction and the empty result is a zero-diff state, not a
+/// language-availability one.
+fn zero_diff_vs_base(output: &CheckOutput) -> bool {
+    let outcome_empty = output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.counts.changed_file_count == 0);
+    if !outcome_empty {
+        return false;
+    }
+    let Some(revisions) = output.analyzed_revisions.as_ref() else {
+        return false;
+    };
+    match (
+        revisions.base_commit.as_deref(),
+        revisions.head_commit.as_deref(),
+    ) {
+        (Some(base_commit), Some(head_commit)) => base_commit == head_commit,
+        _ => false,
+    }
+}
+
+/// #13036: the diff changed test files only. Producer-backed: true only when
+/// the pipeline classified the changed paths and every one of them matched a
+/// per-language test-path convention, so the renderers can say "tests-only"
+/// without re-deriving path kinds from strings.
+fn tests_only_diff(output: &CheckOutput) -> bool {
+    output
+        .changed_path_kinds
+        .as_ref()
+        .is_some_and(crate::analysis::ChangedPathKinds::is_tests_only)
+}
+
+/// #13036: the guidance a tests-only diff adds under the headline. Tests-only
+/// diffs carry no production behavior, so an empty result here is expected;
+/// the base probably needs to precede the feature commit. The command is
+/// pasteable, with `--root` bound when the workspace root is not the current
+/// directory.
+fn tests_only_note(output: &CheckOutput) -> String {
+    format!(
+        "\nNote: tests-only diffs carry no production behavior, so there was nothing to check. If the change you want checked is in an earlier commit, the base probably needs to precede it — for example: `{}`\n",
+        check_base_command(output, "HEAD~1"),
+    )
+}
+
+/// The pasteable `ripr check --base <rev>` invocation for the bound output,
+/// including `--root <path>` whenever the workspace root is not the current
+/// directory (or the comparison cannot be made, which must not drop the
+/// binding).
+pub(crate) fn check_base_command(output: &CheckOutput, base: &str) -> String {
+    let root_flag = std::env::current_dir()
+        .ok()
+        .filter(|cwd| cwd == &output.root)
+        .map_or_else(
+            || {
+                format!(
+                    " --root {}",
+                    crate::agent::loop_commands::shell_arg(
+                        &crate::agent::loop_commands::root_display(
+                            &output.root.display().to_string()
+                        )
+                    )
+                )
+            },
+            |_| String::new(),
+        );
+    format!("ripr check{root_flag} --base {base}")
+}
+
 /// The empty-findings headline. An incomplete analysis checked less than it
 /// was asked to, so claiming it "checked no changed behavior" would contradict
 /// the `Analysis outcome` disclosure printed just above it.
-fn no_findings_line(output: &CheckOutput) -> &'static str {
+fn no_findings_line(output: &CheckOutput) -> String {
     match &output.analysis_outcome {
         Some(outcome) if !outcome.kind.is_complete() => {
             "No findings reported: the analysis was incomplete, so this is not a clean result.\n"
+                .to_string()
+        }
+        // #13036: a zero-diff run names the real cause — there is no diff
+        // against the comparison base — instead of claiming no analyzable
+        // source file existed.
+        _ if zero_diff_vs_base(output) => format!(
+            "Nothing to check: no files changed against the comparison base `{}`, so ripr examined no behavior.\n",
+            output.base.as_deref().unwrap_or("HEAD"),
+        ),
+        // #13036: a tests-only diff is not "nothing changed" and not a
+        // language-availability claim; it has no production behavior to check.
+        _ if tests_only_diff(output) => {
+            "Nothing to check: the diff changed test files only, so ripr examined no production behavior.\n"
+                .to_string()
         }
         // #11396: nothing in scope, or only non-source files changed, examined
         // no behavior; say what was not checked instead of "No findings".
         _ if no_source_examined(output) => {
             "Nothing to check: no changed source file in a language ripr analyzes was available, so ripr examined no behavior.\n"
+                .to_string()
         }
-        _ => "No findings: ripr checked no changed behavior.\n",
+        _ => "No findings: ripr checked no changed behavior.\n".to_string(),
     }
 }
 
@@ -306,7 +392,13 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str(no_findings_line(output));
+        out.push_str(&no_findings_line(output));
+        // #13036: a tests-only diff gets its own guidance under the headline,
+        // in both human forms; it is independent of whether a scope was
+        // explicitly provided.
+        if tests_only_diff(output) {
+            out.push_str(&tests_only_note(output));
+        }
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
@@ -362,7 +454,12 @@ pub(crate) fn render_full_with_config_and_navigation(
     render_partial_scope_disclosure(&mut out, output);
 
     if output.findings.is_empty() {
-        out.push_str(no_findings_line(output));
+        out.push_str(&no_findings_line(output));
+        // #13036: same tests-only guidance as the bounded form, so rerunning
+        // with `--format human-full` never loses it.
+        if tests_only_diff(output) {
+            out.push_str(&tests_only_note(output));
+        }
         // RIPR-SPEC-0083: disclose when no analysis scope was provided
         // (#4012: or when the established range is empty — the note then
         // names the compared base instead of claiming no scope).
@@ -1509,6 +1606,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -1570,6 +1668,7 @@ mod tests {
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: false,
             }),
+            changed_path_kinds: None,
         })
     }
 
@@ -1648,9 +1747,13 @@ mod tests {
             ] {
                 assert!(rendered.contains(expected), "{rendered}");
                 // #11396: the headline states what was not examined and does
-                // not open with an all-clear style "No findings".
+                // not open with an all-clear style "No findings". #13036: a
+                // `HEAD...HEAD` range is a zero-diff state, so the headline
+                // names the comparison-base cause.
                 assert!(
                     rendered.contains(
+                        "Nothing to check: no files changed against the comparison base `HEAD`"
+                    ) || rendered.contains(
                         "Nothing to check: no changed source file in a language ripr analyzes was available"
                     ),
                     "{rendered}"
@@ -1711,6 +1814,157 @@ mod tests {
             assert!(!rendered.contains("No findings:"), "{rendered}");
         }
         Ok(())
+    }
+
+    /// #13036: a zero-diff run (the loader resolved the base to HEAD's own
+    /// commit, so nothing changed against it) names that cause — not the
+    /// language-availability claim — in both human forms.
+    #[test]
+    fn zero_diff_headline_names_the_comparison_base() -> Result<(), String> {
+        use crate::analysis_outcome::AnalysisOutcomeKind;
+        let config = RiprConfig::default();
+        // `empty_range_output` already binds base_commit == head_commit.
+        let zero_diff = empty_range_output(Some("master"), AnalysisOutcomeKind::NoScope, 0)?;
+        for rendered in [
+            render_with_config(&zero_diff, &config),
+            render_full_with_config(&zero_diff, &config),
+        ] {
+            assert!(
+                rendered.contains(
+                    "Nothing to check: no files changed against the comparison base `master`"
+                ),
+                "{rendered}"
+            );
+            assert!(
+                !rendered.contains("no changed source file in a language ripr analyzes"),
+                "a zero-diff result must not name the language cause: {rendered}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #13036 negative control: without producer-backed revisions the
+    /// headline must not claim a zero-diff state it cannot prove.
+    #[test]
+    fn zero_diff_headline_requires_producer_revisions() -> Result<(), String> {
+        use crate::analysis_outcome::AnalysisOutcomeKind;
+        let config = RiprConfig::default();
+        let mut no_provenance =
+            empty_range_output(Some("master"), AnalysisOutcomeKind::NoScope, 0)?;
+        no_provenance.analyzed_revisions = None;
+        for rendered in [
+            render_with_config(&no_provenance, &config),
+            render_full_with_config(&no_provenance, &config),
+        ] {
+            assert!(
+                rendered.contains("no changed source file in a language ripr analyzes"),
+                "{rendered}"
+            );
+            assert!(
+                !rendered.contains("no files changed against the comparison base"),
+                "{rendered}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #13036: a tests-only diff is not "nothing changed" and not a
+    /// language-availability claim; the headline says test files only, and
+    /// the note carries the production-behavior guidance with the pasteable
+    /// previous-commit command.
+    #[test]
+    fn tests_only_diff_headline_and_note() -> Result<(), String> {
+        use crate::analysis_outcome::AnalysisOutcomeKind;
+        let config = RiprConfig::default();
+        let mut tests_only =
+            empty_range_output(Some("main"), AnalysisOutcomeKind::NoChangedLines, 1)?;
+        // A tests-only diff really has changed lines; the constructor only
+        // validates count coherence, so set the line count after building
+        // (same fixture pattern as `changed file count alone` below).
+        let outcome = tests_only
+            .analysis_outcome
+            .as_mut()
+            .ok_or_else(|| "fixture outcome".to_string())?;
+        outcome.counts.changed_line_count = 2;
+        // Producer-backed classification: one changed path, a Rust test file.
+        tests_only.changed_path_kinds = Some(crate::analysis::ChangedPathKinds {
+            total_files: 1,
+            test_files: 1,
+            analyzed_source_files: 1,
+        });
+        for rendered in [
+            render_with_config(&tests_only, &config),
+            render_full_with_config(&tests_only, &config),
+        ] {
+            assert!(
+                rendered.contains("Nothing to check: the diff changed test files only"),
+                "{rendered}"
+            );
+            assert!(
+                !rendered.contains("no changed source file in a language ripr analyzes"),
+                "a tests-only result must not name the language cause: {rendered}"
+            );
+            assert!(
+                rendered.contains("tests-only diffs carry no production behavior"),
+                "{rendered}"
+            );
+            assert!(
+                rendered.contains("--base HEAD~1"),
+                "the note must print the pasteable previous-commit command: {rendered}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #13036 negative control: a docs/config-only diff (nothing routed,
+    /// nothing a test-path convention claims) keeps the #11396 headline, so
+    /// the tests-only arm cannot swallow it.
+    #[test]
+    fn docs_only_diff_keeps_the_no_source_headline() -> Result<(), String> {
+        use crate::analysis_outcome::AnalysisOutcomeKind;
+        let config = RiprConfig::default();
+        let mut docs_only =
+            empty_range_output(Some("main"), AnalysisOutcomeKind::NoChangedLines, 1)?;
+        docs_only.changed_path_kinds = Some(crate::analysis::ChangedPathKinds {
+            total_files: 1,
+            test_files: 0,
+            analyzed_source_files: 0,
+        });
+        for rendered in [
+            render_with_config(&docs_only, &config),
+            render_full_with_config(&docs_only, &config),
+        ] {
+            assert!(
+                rendered.contains("no changed source file in a language ripr analyzes"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("changed test files only"), "{rendered}");
+        }
+        Ok(())
+    }
+
+    /// #13036: `is_tests_only` holds only when at least one file changed and
+    /// every changed path matched a test-path convention.
+    #[test]
+    fn changed_path_kinds_is_tests_only_contract() {
+        use crate::analysis::ChangedPathKinds;
+        assert!(!ChangedPathKinds::default().is_tests_only());
+        assert!(
+            ChangedPathKinds {
+                total_files: 2,
+                test_files: 2,
+                analyzed_source_files: 1,
+            }
+            .is_tests_only()
+        );
+        assert!(
+            !ChangedPathKinds {
+                total_files: 2,
+                test_files: 1,
+                analyzed_source_files: 2,
+            }
+            .is_tests_only()
+        );
     }
 
     /// #9033 discriminators: the note stays off when files were analyzed, no
@@ -1809,6 +2063,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
         let loaded = RiprConfig {
             source_path: Some(PathBuf::from("repo/ripr.toml")),
@@ -1855,6 +2110,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 analyzed_revisions: None,
+                changed_path_kinds: None,
             };
 
             let rendered = render_header_summary(&output, &RiprConfig::default(), false);
@@ -1898,6 +2154,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -1947,6 +2204,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -1986,6 +2244,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -2029,6 +2288,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -2075,6 +2335,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -2127,6 +2388,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -2194,6 +2456,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -2244,6 +2507,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -2343,6 +2607,7 @@ mod tests {
             analysis_outcome: Some(outcome),
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         })
     }
 
@@ -2615,6 +2880,7 @@ mod tests {
             analysis_outcome: Some(outcome),
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         })
     }
 
@@ -2691,6 +2957,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
         let config = crate::config::RiprConfig::default();
         let render_with = |uncommitted: Vec<String>| {
@@ -2851,6 +3118,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -2899,6 +3167,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
         let config = crate::config::RiprConfig::default();
         let routed = crate::app::FindingDrillIn::Commands(
@@ -3332,6 +3601,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 analyzed_revisions: None,
+                changed_path_kinds: None,
             };
             let rendered = render(&output);
             assert!(
@@ -3380,6 +3650,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -3428,6 +3699,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -4100,6 +4372,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -4148,6 +4421,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -4221,6 +4495,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -4276,6 +4551,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -4309,6 +4585,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -4483,6 +4760,7 @@ mod tests {
                 head_commit: Some("1a2b3c4d5e6f".to_string()),
                 working_tree: true,
             }),
+            changed_path_kinds: None,
         }
     }
 
@@ -4670,6 +4948,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -5612,6 +5891,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         }
     }
 
@@ -5717,6 +5997,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -5766,6 +6047,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered =
@@ -5886,6 +6168,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered =
@@ -5959,6 +6242,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = unbound_repo_root(super::render_bounded_with_config_and_navigation(
@@ -6016,6 +6300,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = unbound_repo_root(super::render_full_with_config_and_navigation(
@@ -6091,6 +6376,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
         unbound_repo_root(super::render_full_with_config_and_navigation(
             &output,
@@ -6205,6 +6491,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -6256,6 +6543,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -6304,6 +6592,7 @@ mod tests {
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         for rendered in [
@@ -6395,6 +6684,7 @@ mod tests {
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
+            changed_path_kinds: None,
         }
     }
 
@@ -6507,6 +6797,7 @@ mod tests {
                 partition_identity: "c".repeat(64),
             }),
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered =
@@ -8676,6 +8967,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         }
     }
 
@@ -8844,6 +9136,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -8891,6 +9184,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -8942,6 +9236,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -8986,6 +9281,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -9028,6 +9324,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -9123,6 +9420,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -9200,6 +9498,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
         let rendered = render(&output);
         let _ = std::fs::remove_dir_all(&root);
@@ -9275,6 +9574,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -9331,6 +9631,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -9372,6 +9673,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -9415,6 +9717,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -9461,6 +9764,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -9512,6 +9816,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         }
     }
 
@@ -9666,6 +9971,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
         let flat = |output: &CheckOutput| {
             render(output)
@@ -9732,6 +10038,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -9790,6 +10097,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -9852,6 +10160,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         // The note wraps at the terminal width; compare its words.
@@ -9946,6 +10255,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -9993,6 +10303,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -10034,6 +10345,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -10072,6 +10384,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -10107,6 +10420,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -10147,6 +10461,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -10186,6 +10501,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -10236,6 +10552,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -10303,6 +10620,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 analyzed_revisions: None,
+                changed_path_kinds: None,
             })
         };
 

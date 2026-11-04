@@ -332,28 +332,44 @@ pub(crate) fn render_human_triage(
                 out.push_str(&format!(
                     "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
                 ));
-            } else if let Some(base) = output.base.as_deref()
-                && head_is_on_branch(&output.root, base)
-            {
-                out.push_str(&format!(
-                    "  Safe next action: you are on `{base}`, which is the comparison base; edit a tracked source file or switch to a feature branch\n"
-                ));
-            } else if let Some(base) = output.base.as_deref()
-                && let Some(candidate) = empty_diff_base_candidate(output, base)
-            {
-                // The analyzed base resolved to HEAD itself, so committing
-                // or `--worktree` against it stays empty; the one canonical
-                // remediation is the probed other base, named identically
-                // on stderr by the check hedge (#7644).
-                out.push_str(&format!(
-                    "  Safe next action: no changed files were compared against `{base}`; pass `--base {candidate}` to compare against `{candidate}` instead\n"
-                ));
             } else if let Some(base) = output.base.as_deref() {
-                // "tracked" (#5258): `--worktree` diffs tracked edits only,
-                // so the line must not promise it covers untracked files.
-                out.push_str(&format!(
-                    "  Safe next action: no changed files were compared against `{base}`; commit a change and re-run, or add `--worktree` to include uncommitted tracked edits\n"
-                ));
+                // #13036: one decision point owns every empty committed-range
+                // state, in precedence order: the probed other-branch
+                // candidate first (verified analyzable, #9013/#10821), then
+                // a tests-only diff (no production behavior to check), then
+                // the pasteable previous-commit command when the base
+                // resolved to HEAD itself, then the established per-state
+                // lines.
+                if let Some(candidate) = empty_diff_base_candidate(output, base) {
+                    // The analyzed base resolved to HEAD itself, so committing
+                    // or `--worktree` against it stays empty; the one canonical
+                    // remediation is the probed other base, named identically
+                    // on stderr by the check hedge (#7644).
+                    out.push_str(&format!(
+                        "  Safe next action: no changed files were compared against `{base}`; pass `--base {candidate}` to compare against `{candidate}` instead\n"
+                    ));
+                } else if let Some(line) = tests_only_scope_line(output) {
+                    out.push_str(&line);
+                } else if let Some(command) = previous_commit_base_command(output) {
+                    // #13036: the base IS HEAD (for example plain `ripr
+                    // check` on the base branch), so editing or committing
+                    // cannot widen the comparison; the honest remediation is
+                    // the pasteable command, which compares HEAD against its
+                    // parent commit.
+                    out.push_str(&format!(
+                        "  Safe next action: no files changed against `{base}` because it points at the same commit as HEAD; to check the most recent commit against its parent, run: `{command}`\n"
+                    ));
+                } else if head_is_on_branch(&output.root, base) {
+                    out.push_str(&format!(
+                        "  Safe next action: you are on `{base}`, which is the comparison base; edit a tracked source file or switch to a feature branch\n"
+                    ));
+                } else {
+                    // "tracked" (#5258): `--worktree` diffs tracked edits only,
+                    // so the line must not promise it covers untracked files.
+                    out.push_str(&format!(
+                        "  Safe next action: no changed files were compared against `{base}`; commit a change and re-run, or add `--worktree` to include uncommitted tracked edits\n"
+                    ));
+                }
             } else {
                 // No base was established: name the same canonical pair
                 // every format names (domain::next_action) — provide a diff
@@ -1011,6 +1027,63 @@ fn head_is_on_branch(root: &std::path::Path, base: &str) -> bool {
     .ok()
     .filter(|output| output.status.success())
     .is_some_and(|output| String::from_utf8_lossy(&output.stdout).trim() == base)
+}
+
+/// True when `HEAD` has a parent commit, so a `--base HEAD~1` remediation
+/// names a revision that exists on this repository (#13036: advice ripr can
+/// stand behind — the probe refuses rather than printing a command that
+/// would fail).
+fn head_has_parent(root: &std::path::Path) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD~1"],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .ok()
+    .is_some_and(|output| output.status.success())
+}
+
+/// #13036: the pasteable `ripr check --base HEAD~1` command for an empty
+/// result whose analyzed base resolved to HEAD's own commit and where no
+/// probed other-branch candidate owns the advice. `None` for every other
+/// state (base behind HEAD, root commit, unresolvable revisions), so the
+/// established per-state lines keep owning them.
+fn previous_commit_base_command(output: &CheckOutput) -> Option<String> {
+    let revisions = output.analyzed_revisions.as_ref()?;
+    match (
+        revisions.base_commit.as_deref(),
+        revisions.head_commit.as_deref(),
+    ) {
+        (Some(base_commit), Some(head_commit)) if base_commit == head_commit => {}
+        _ => return None,
+    }
+    if revisions.working_tree {
+        return None;
+    }
+    head_has_parent(&output.root).then(|| super::check_base_command(output, "HEAD~1"))
+}
+
+/// #13036: the Safe next action for a tests-only diff inside the
+/// missing-scope triage: tests carry no production behavior, so editing or
+/// committing more tests cannot widen the result; the honest remediation is
+/// to compare against the commit that introduced the feature change. The
+/// pasteable command is offered only when HEAD has a parent (a tests-only
+/// diff implies the base is behind HEAD, so this is the common case).
+fn tests_only_scope_line(output: &CheckOutput) -> Option<String> {
+    if !super::tests_only_diff(output) {
+        return None;
+    }
+    if head_has_parent(&output.root) {
+        let command = super::check_base_command(output, "HEAD~1");
+        Some(format!(
+            "  Safe next action: the diff changed test files only, which carry no production behavior; if the change you want checked is in an earlier commit, compare against that commit instead, for example `{command}`\n"
+        ))
+    } else {
+        Some(
+            "  Safe next action: the diff changed test files only, which carry no production behavior; pass `--base` set to the commit that precedes your feature change, and re-run\n"
+                .to_string(),
+        )
+    }
 }
 
 /// The probed `--base` candidate for an empty result whose analyzed base
@@ -1883,6 +1956,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         }
     }
 
@@ -2643,6 +2717,239 @@ mod tests {
             git(&["checkout", "-q", "--detach"])?;
             if head_is_on_branch(&dir, "master") {
                 return Err("a detached HEAD is not on the base branch".to_string());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    /// Test helpers for the #13036 git-backed triage tests: a scratch repo
+    /// runner and a ScopeMissing render, mirroring the fixture style of the
+    /// base-candidate test above.
+    fn git_ok(dir: &std::path::Path, args: &[&str]) -> Result<(), String> {
+        let output = crate::git::run_git_output_with_deadline_and_env(
+            dir,
+            args,
+            &[("GIT_CONFIG_NOSYSTEM", std::ffi::OsStr::new("1"))],
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!("git {args:?} failed"))
+        }
+    }
+
+    fn git_stdout(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+        let output = crate::git::run_git_output_with_deadline_and_env(
+            dir,
+            args,
+            &[("GIT_CONFIG_NOSYSTEM", std::ffi::OsStr::new("1"))],
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            Err(format!("git {args:?} failed"))
+        }
+    }
+
+    fn render_scope_missing(output: &CheckOutput) -> String {
+        let triage = HumanTriage {
+            state: HumanTriageState::MissingScope,
+            selected: None,
+            omitted: Vec::new(),
+        };
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            output,
+            &crate::config::RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        out
+    }
+
+    fn scratch_dir(label: &str) -> Result<std::path::PathBuf, String> {
+        let dir = std::env::temp_dir().join(format!("ripr-triage-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|error| format!("scratch dir: {error}"))?;
+        Ok(dir)
+    }
+
+    /// #13036: HEAD's parent is probed, not assumed — advice ripr can stand
+    /// behind refuses to print `--base HEAD~1` on a root commit.
+    #[test]
+    fn head_has_parent_probes_the_first_parent() -> Result<(), String> {
+        let dir = scratch_dir("head-parent")?;
+        let result = (|| -> Result<(), String> {
+            git_ok(&dir, &["init", "-b", "master"])?;
+            git_ok(&dir, &["config", "user.email", "ripr@example.invalid"])?;
+            git_ok(&dir, &["config", "user.name", "ripr test"])?;
+            std::fs::write(dir.join("README"), "init").map_err(|e| e.to_string())?;
+            git_ok(&dir, &["add", "."])?;
+            git_ok(&dir, &["commit", "-m", "init"])?;
+            if head_has_parent(&dir) {
+                return Err("a root commit has no parent".to_string());
+            }
+            std::fs::write(dir.join("README"), "second").map_err(|e| e.to_string())?;
+            git_ok(&dir, &["add", "."])?;
+            git_ok(&dir, &["commit", "-m", "second"])?;
+            if !head_has_parent(&dir) {
+                return Err("a non-root commit must have a parent".to_string());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    /// #13036: plain `ripr check` on a branch where the base resolved to HEAD
+    /// itself (the eval dead end) now prints the pasteable previous-commit
+    /// command instead of telling the reader to edit a file.
+    #[test]
+    fn zero_diff_scope_missing_prints_pasteable_previous_commit_command() -> Result<(), String> {
+        let dir = scratch_dir("zero-diff")?;
+        let result = (|| -> Result<(), String> {
+            git_ok(&dir, &["init", "-b", "master"])?;
+            git_ok(&dir, &["config", "user.email", "ripr@example.invalid"])?;
+            git_ok(&dir, &["config", "user.name", "ripr test"])?;
+            std::fs::write(dir.join("README"), "init").map_err(|e| e.to_string())?;
+            git_ok(&dir, &["add", "."])?;
+            git_ok(&dir, &["commit", "-m", "init"])?;
+            std::fs::write(dir.join("README"), "second").map_err(|e| e.to_string())?;
+            git_ok(&dir, &["add", "."])?;
+            git_ok(&dir, &["commit", "-m", "second"])?;
+            let head = git_stdout(&dir, &["rev-parse", "HEAD"])?;
+            let mut output = test_output(Vec::new());
+            output.root = dir.clone();
+            output.base = Some("master".to_string());
+            output.no_scope_provided = true;
+            output.analyzed_revisions = Some(crate::analysis::AnalyzedRevisions {
+                base_ref: "master".to_string(),
+                base_commit: Some(head.clone()),
+                merge_base_commit: None,
+                loaded_diff_origin: None,
+                head_commit: Some(head),
+                working_tree: false,
+            });
+            let out = render_scope_missing(&output);
+            if !out.contains("run: `ripr check") || !out.contains("--base HEAD~1") {
+                return Err(format!(
+                    "zero-diff safe next action must print the pasteable previous-commit command, got:\n{out}"
+                ));
+            }
+            if out.contains("which is the comparison base; edit a tracked source file") {
+                return Err(format!(
+                    "the pasteable command must replace the dead-end edit advice when HEAD has a parent, got:\n{out}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    /// #13036 negative control: a root commit has no previous commit, so the
+    /// established on-base line keeps owning that state.
+    #[test]
+    fn zero_diff_root_commit_keeps_the_established_on_base_line() -> Result<(), String> {
+        let dir = scratch_dir("zero-diff-root")?;
+        let result = (|| -> Result<(), String> {
+            git_ok(&dir, &["init", "-b", "master"])?;
+            git_ok(&dir, &["config", "user.email", "ripr@example.invalid"])?;
+            git_ok(&dir, &["config", "user.name", "ripr test"])?;
+            std::fs::write(dir.join("README"), "init").map_err(|e| e.to_string())?;
+            git_ok(&dir, &["add", "."])?;
+            git_ok(&dir, &["commit", "-m", "init"])?;
+            let head = git_stdout(&dir, &["rev-parse", "HEAD"])?;
+            let mut output = test_output(Vec::new());
+            output.root = dir.clone();
+            output.base = Some("master".to_string());
+            output.no_scope_provided = true;
+            output.analyzed_revisions = Some(crate::analysis::AnalyzedRevisions {
+                base_ref: "master".to_string(),
+                base_commit: Some(head.clone()),
+                merge_base_commit: None,
+                loaded_diff_origin: None,
+                head_commit: Some(head),
+                working_tree: false,
+            });
+            let out = render_scope_missing(&output);
+            if !out.contains("which is the comparison base") {
+                return Err(format!(
+                    "a root commit must keep the established on-base line, got:\n{out}"
+                ));
+            }
+            if out.contains("--base HEAD~1") {
+                return Err(format!(
+                    "a root commit must not print a previous-commit command that cannot exist, got:\n{out}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    /// #13036: a tests-only diff in the missing-scope triage names the real
+    /// cause (test files carry no production behavior) and the remediation
+    /// (compare against the commit that introduced the feature change), and
+    /// must not tell the reader to commit more changes.
+    #[test]
+    fn tests_only_scope_missing_names_tests_only_remediation() -> Result<(), String> {
+        let dir = scratch_dir("tests-only")?;
+        let result = (|| -> Result<(), String> {
+            git_ok(&dir, &["init", "-b", "master"])?;
+            git_ok(&dir, &["config", "user.email", "ripr@example.invalid"])?;
+            git_ok(&dir, &["config", "user.name", "ripr test"])?;
+            std::fs::write(dir.join("README"), "init").map_err(|e| e.to_string())?;
+            git_ok(&dir, &["add", "."])?;
+            git_ok(&dir, &["commit", "-m", "init"])?;
+            std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+            std::fs::write(dir.join("tests/pricing.rs"), "#[test]\nfn it_works() {}\n")
+                .map_err(|e| e.to_string())?;
+            git_ok(&dir, &["add", "."])?;
+            git_ok(&dir, &["commit", "-m", "tests only"])?;
+            let head = git_stdout(&dir, &["rev-parse", "HEAD"])?;
+            let parent = git_stdout(&dir, &["rev-parse", "HEAD~1"])?;
+            let mut output = test_output(Vec::new());
+            output.root = dir.clone();
+            output.base = Some("master".to_string());
+            output.no_scope_provided = true;
+            output.analyzed_revisions = Some(crate::analysis::AnalyzedRevisions {
+                base_ref: "master".to_string(),
+                base_commit: Some(parent),
+                merge_base_commit: None,
+                loaded_diff_origin: None,
+                head_commit: Some(head),
+                working_tree: false,
+            });
+            output.changed_path_kinds = Some(crate::analysis::ChangedPathKinds {
+                total_files: 1,
+                test_files: 1,
+                analyzed_source_files: 1,
+            });
+            let out = render_scope_missing(&output);
+            if !out.contains("the diff changed test files only") {
+                return Err(format!(
+                    "tests-only safe next action must name the tests-only cause, got:\n{out}"
+                ));
+            }
+            if !out.contains("--base HEAD~1") {
+                return Err(format!(
+                    "tests-only safe next action must print the pasteable command, got:\n{out}"
+                ));
+            }
+            if out.contains("commit a change and re-run") {
+                return Err(format!(
+                    "committing more tests cannot widen a tests-only diff, got:\n{out}"
+                ));
             }
             Ok(())
         })();

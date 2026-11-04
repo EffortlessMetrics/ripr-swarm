@@ -122,7 +122,10 @@ pub(super) fn normalized_path(path: &Path) -> String {
     normalized
 }
 
-pub(super) fn is_test_file(path: &Path) -> bool {
+/// #13036: crate-visible so the diff-side changed-path classifier
+/// (`analysis::language::is_test_changed_path`) dispatches to this exact
+/// convention instead of a parallel heuristic.
+pub(crate) fn is_test_file(path: &Path) -> bool {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())

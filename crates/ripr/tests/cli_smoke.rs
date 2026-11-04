@@ -33,6 +33,8 @@ mod check_artifact_stdin;
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/check_budget_refusals.rs"]
 mod check_budget_refusals;
+#[path = "cli_smoke/clean_base_dead_end.rs"]
+mod clean_base_dead_end;
 #[path = "cli_smoke/cli_value_contracts.rs"]
 mod cli_value_contracts;
 #[path = "cli_smoke/closed_stderr.rs"]

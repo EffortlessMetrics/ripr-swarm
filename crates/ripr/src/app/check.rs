@@ -619,6 +619,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             rust_consumed_sources: Default::default(),
             language_view: None,
             preview_fact_caches: Vec::new(),
+            changed_path_kinds: None,
         },
     )
 }
@@ -1524,6 +1525,7 @@ mod tests {
             rust_consumed_sources: Default::default(),
             language_view: None,
             preview_fact_caches: Vec::new(),
+            changed_path_kinds: None,
         }
     }
 

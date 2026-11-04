@@ -539,6 +539,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         }
     }
 
@@ -666,6 +667,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 analyzed_revisions: None,
+                changed_path_kinds: None,
             },
             "origin/main",
             "HEAD",
@@ -740,6 +742,7 @@ mod tests {
                 analysis_outcome: Some(outcome),
                 partial_scope: None,
                 analyzed_revisions: None,
+                changed_path_kinds: None,
             },
             "origin/main",
             "HEAD",
@@ -826,6 +829,7 @@ mod tests {
                 analysis_outcome: Some(outcome),
                 partial_scope: None,
                 analyzed_revisions: None,
+                changed_path_kinds: None,
             },
             "origin/main",
             "HEAD",
@@ -952,6 +956,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 analyzed_revisions: None,
+                changed_path_kinds: None,
             },
             "origin/main",
             "HEAD",
@@ -1007,6 +1012,7 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 analyzed_revisions: None,
+                changed_path_kinds: None,
             },
             "origin/main",
             "HEAD",

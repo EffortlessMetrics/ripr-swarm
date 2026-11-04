@@ -47,6 +47,7 @@ fn captured_server(
         suppression: None,
         partial_scope: None,
         analyzed_revisions: None,
+        changed_path_kinds: None,
     };
     let snapshot = workspace::Snapshot::from_output_admitted(
         &output,

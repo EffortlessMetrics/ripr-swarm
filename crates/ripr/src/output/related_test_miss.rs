@@ -1091,6 +1091,7 @@ mod tests {
                 partial_scope: None,
                 unlinked_python_tests: None,
                 analyzed_revisions: None,
+                changed_path_kinds: None,
             }
         }
 
@@ -1342,6 +1343,7 @@ mod tests {
                 partial_scope: None,
                 unlinked_python_tests: None,
                 analyzed_revisions: None,
+                changed_path_kinds: None,
             }
         }
 

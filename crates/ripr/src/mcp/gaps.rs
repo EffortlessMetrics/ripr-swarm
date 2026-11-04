@@ -1283,6 +1283,7 @@ mod tests {
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
         let check_json: Value = serde_json::from_str(&crate::output::json::render(&output))
             .map_err(|error| format!("parse check JSON: {error}"))?;

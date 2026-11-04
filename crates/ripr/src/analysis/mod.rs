@@ -95,7 +95,7 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
+    AnalyzedRevisions, ChangedFile, ChangedPathKinds, HeadRefState, another_base_candidate,
     artifact_root_gitignore_entry, artifact_root_pathspec, is_shallow_repository, load_diff,
     load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
     load_diff_with_effective_base_core, load_worktree_diff,
@@ -1158,6 +1158,13 @@ pub struct AnalysisResult {
     /// cache work.
     pub(crate) preview_fact_caches:
         Vec<(crate::domain::LanguageId, language::PreviewFactCacheStats)>,
+    /// How the diff's changed paths split (total / test-only / adapter-routed),
+    /// produced from the same `changed_files` slice the outcome counts record
+    /// (#13036). Lets the renderers name the real cause of an empty result —
+    /// no diff against the base, docs/config-only, or tests-only — instead of
+    /// guessing from counts. `None` for repo-scope runs and other paths with
+    /// no diff denominator. Render-internal: never serialized.
+    pub(crate) changed_path_kinds: Option<diff::ChangedPathKinds>,
 }
 
 /// Default language list when callers do not pass `[languages]` config.

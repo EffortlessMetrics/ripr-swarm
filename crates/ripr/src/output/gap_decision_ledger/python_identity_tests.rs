@@ -129,6 +129,7 @@ fn check_output(layout: Layout) -> Result<Value, String> {
         suppression: None,
         partial_scope: None,
         analyzed_revisions: None,
+        changed_path_kinds: None,
     };
     serde_json::from_str(&crate::output::json::render(&output)).map_err(|error| error.to_string())
 }

@@ -606,6 +606,54 @@ fn align_by_content(removed: &[&ChangedLine], added: &[&ChangedLine]) -> Vec<(us
         .collect()
 }
 
+/// How a diff's changed paths split for honest empty-scope messaging
+/// (#13036). The counts let the renderers distinguish "zero files changed
+/// against the comparison base", "docs/config-only diff" and "tests-only
+/// diff" without re-deriving path kinds from strings. Produced by the diff
+/// pipeline; `None` for repo-scope runs that have no diff denominator.
+/// Render-internal: never serialized, and no verdict, class or gate reads
+/// it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ChangedPathKinds {
+    /// Every changed path the diff parser retained.
+    pub total_files: usize,
+    /// Changed paths that carry test evidence only, under the routed
+    /// language's own test-path convention. A path no adapter routes and a
+    /// language without a test-path convention never count, so the total
+    /// never claims more than the adapters recognize.
+    pub test_files: usize,
+    /// Changed paths the language router admitted to an adapter.
+    pub analyzed_source_files: usize,
+}
+
+impl ChangedPathKinds {
+    /// #13036: every changed path carries test evidence only. True only when
+    /// at least one file changed and each changed path matched a per-language
+    /// test-path convention.
+    pub fn is_tests_only(&self) -> bool {
+        self.total_files > 0 && self.test_files == self.total_files
+    }
+}
+
+/// Classify the diff's changed paths once, next to the counts the analysis
+/// outcome records from the same `changed_files` slice, so the headline cause
+/// and the numeric counts cannot drift apart.
+pub fn classify_changed_paths(changed_files: &[ChangedFile]) -> ChangedPathKinds {
+    let mut kinds = ChangedPathKinds {
+        total_files: changed_files.len(),
+        ..ChangedPathKinds::default()
+    };
+    for file in changed_files {
+        if crate::analysis::language::route(&file.path).is_some() {
+            kinds.analyzed_source_files += 1;
+        }
+        if crate::analysis::language::is_test_changed_path(&file.path) {
+            kinds.test_files += 1;
+        }
+    }
+    kinds
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -637,6 +685,50 @@ mod tests {
             text: text.to_string(),
             new_side_line,
         }
+    }
+
+    fn changed(path: &str) -> ChangedFile {
+        ChangedFile {
+            path: PathBuf::from(path),
+            added_lines: vec![line(1, 1, "x")],
+            removed_lines: Vec::new(),
+        }
+    }
+
+    /// #13036: the classifier dispatches to each language's own test-path
+    /// convention and never claims a test path for docs/config files or
+    /// languages without a convention.
+    #[test]
+    fn classify_changed_paths_counts_tests_and_routed_source() {
+        let kinds = classify_changed_paths(&[
+            changed("src/lib.rs"),
+            changed("tests/pricing.rs"),
+            changed("README.md"),
+        ]);
+        assert_eq!(kinds.total_files, 3);
+        assert_eq!(kinds.analyzed_source_files, 2);
+        assert_eq!(kinds.test_files, 1);
+        assert!(!kinds.is_tests_only());
+
+        let tests_only = classify_changed_paths(&[changed("tests/pricing.rs")]);
+        assert!(tests_only.is_tests_only());
+
+        let docs_only = classify_changed_paths(&[changed("README.md")]);
+        assert_eq!(docs_only.test_files, 0);
+        assert!(!docs_only.is_tests_only());
+
+        let python_tests = classify_changed_paths(&[changed("pkg/test_pricing.py")]);
+        assert!(python_tests.is_tests_only());
+
+        // A production Python file is not a test path.
+        let python_prod = classify_changed_paths(&[changed("pkg/pricing.py")]);
+        assert_eq!(python_prod.test_files, 0);
+
+        // Perl has no test-path convention here: never claimed as tests-only.
+        let perl = classify_changed_paths(&[changed("t/pricing.t")]);
+        assert_eq!(perl.analyzed_source_files, 1);
+        assert_eq!(perl.test_files, 0);
+        assert!(!perl.is_tests_only());
     }
 
     #[test]

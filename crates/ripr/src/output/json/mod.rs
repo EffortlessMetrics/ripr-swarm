@@ -1129,6 +1129,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -1262,6 +1263,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -1441,6 +1443,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -2385,6 +2388,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         }
     }
 
@@ -2525,6 +2529,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -2642,6 +2647,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         }
     }
 
@@ -2672,6 +2678,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -2738,6 +2745,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);
@@ -2780,6 +2788,7 @@ mod tests {
             analysis_outcome: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
 
         let rendered = render(&output);

@@ -479,7 +479,8 @@ use source_facts::{
     extract_source_facts, extract_workspace_source_facts, source_fact_snapshot_observation,
 };
 mod source_utils;
-use source_utils::{is_test_file, normalized_path};
+pub(crate) use source_utils::is_test_file;
+use source_utils::normalized_path;
 mod collection_config;
 mod fixture_substitution;
 mod fixtures;

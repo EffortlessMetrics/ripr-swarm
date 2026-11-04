@@ -2547,6 +2547,7 @@ mod tests {
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         })
     }
 
@@ -3013,6 +3014,7 @@ mod tests {
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
         let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))
             .map_err(|failure| failure.detail)?;
@@ -3094,6 +3096,7 @@ mod tests {
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         };
         let snapshot = Snapshot::from_output(&output, Some("root:sha256:test"))
             .map_err(|failure| failure.detail)?;

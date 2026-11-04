@@ -363,6 +363,13 @@ pub struct CheckOutput {
     /// every diff-scoped check header. `None` when the input was a diff file,
     /// stdin, a candidate tree, or a repo-scope run.
     pub(crate) analyzed_revisions: Option<crate::analysis::AnalyzedRevisions>,
+    /// How the diff's changed paths split (total / test-only / adapter-routed),
+    /// for naming the real cause of an empty result (#13036): no diff against
+    /// the comparison base, a docs/config-only diff, or a tests-only diff.
+    /// `None` when the run had no diff denominator (repo scope, diff-file
+    /// provenance constructed without it). Render-internal: never serialized,
+    /// and no verdict, class, exit code or gate reads it.
+    pub(crate) changed_path_kinds: Option<crate::analysis::ChangedPathKinds>,
 }
 
 /// Renders a previously computed [`CheckOutput`] in the requested format.

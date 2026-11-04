@@ -1979,6 +1979,7 @@ mod harness_projection_tests {
             suppression: None,
             partial_scope: None,
             analyzed_revisions: None,
+            changed_path_kinds: None,
         }
     }
 

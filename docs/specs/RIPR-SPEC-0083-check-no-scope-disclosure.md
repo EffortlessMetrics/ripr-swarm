@@ -108,10 +108,33 @@ is set to `true`. The renderers read this field. The analyzed-file discriminator
 
 ### Human output
 
-The empty-findings headline for a nothing-in-scope result is "Nothing to check:
-no changed source file in a language ripr analyzes was available, so ripr
-examined no behavior." It replaces "No findings: ripr checked no changed
-behavior." (#11396); the note below carries the detail.
+The empty-findings headline names the producer-established cause of the empty
+result (#13036), in this precedence order:
+
+1. A zero-diff run — the loader resolved the comparison base to HEAD's own
+   commit, so no files changed against it — reads "Nothing to check: no files
+   changed against the comparison base `<base>`, so ripr examined no behavior."
+   It replaces the language-availability claim, which named the wrong cause.
+   The state requires producer-backed `analyzed_revisions` with
+   `base_commit == head_commit` and zero changed files; without that
+   provenance the headline must not claim it.
+2. A tests-only diff — every changed path matched a per-language test-path
+   convention (`changed_path_kinds.is_tests_only()`) — reads "Nothing to check:
+   the diff changed test files only, so ripr examined no production behavior."
+   Both human forms add: `Note: tests-only diffs carry no production behavior,
+   so there was nothing to check. If the change you want checked is in an
+   earlier commit, the base probably needs to precede it — for example:
+   `ripr check --base HEAD~1`` (with `--root <path>` bound when the workspace
+   root is not the current directory).
+3. Nothing in scope, or only non-source files changed (docs/config-only), keeps
+   the #11396 headline: "Nothing to check: no changed source file in a language
+   ripr analyzes was available, so ripr examined no behavior." It replaces "No
+   findings: ripr checked no changed behavior." (#11396); the note below
+   carries the detail.
+
+The cause sentence distinguishes those three states; a tests-only diff is
+never reported as "nothing changed", and a zero-diff run is never reported as
+a language-availability result.
 
 When `no_scope_provided` is true, a note is appended after the
 "No diff-derived mutation exposure probes found." line. The note names what
@@ -130,10 +153,19 @@ Note: `<base>...HEAD` has no analyzable changed files, so there was nothing to a
   files, submodule pointer changes and files ripr does not analyze are not
   counted, so this empty result does NOT mean no behavior changed.` (#9922).
 
-  The triage "Safe next action" likewise reads `no changed files were
-  compared against `<base>`; commit a change and re-run, or add `--worktree` to
-  include uncommitted tracked edits` (#5258 qualifies the remedy: the flag
-  diffs tracked edits only) — the honest action
+  The triage "Safe next action" for an empty committed range names the real
+  state in precedence order (#13036): the probed other-branch candidate when
+  one exists (verified analyzable, #9013/#10821); a tests-only remediation
+  (`the diff changed test files only, which carry no production behavior; …
+  for example `ripr check --base HEAD~1``) when the diff changed test paths
+  only; the pasteable previous-commit command (`run: `ripr check --base
+  HEAD~1``, with `--root` bound when needed) when the base resolved to HEAD
+  itself and HEAD has a parent; then the established lines — `you are on
+  `<base>`, which is the comparison base; edit a tracked source file or
+  switch to a feature branch` when HEAD is on the base branch, and `no changed
+  files were compared against `<base>`; commit a change and re-run, or add
+  `--worktree` to include uncommitted tracked edits` (#5258 qualifies the
+  remedy: the flag diffs tracked edits only) — the honest action
   is to change something, not to provide a scope.
 
 - No established base at all: guidance names a placeholder for an existing

@@ -27,12 +27,13 @@ pub use load::{
 };
 pub(crate) use parse::parse_unified_diff_with_metadata;
 
+pub(crate) use model::classify_changed_paths;
 pub(crate) use model::lines_look_alike;
 #[allow(
     unused_imports,
     reason = "ChangedLine is re-exported for use by probes.rs and other external modules; not used within diff module itself."
 )]
-pub use model::{ChangedFile, ChangedLine};
+pub use model::{ChangedFile, ChangedLine, ChangedPathKinds};
 pub use parse::parse_unified_diff;
 #[cfg(test)]
 pub(crate) use parse::parse_unified_diff_bounded_with_metadata;

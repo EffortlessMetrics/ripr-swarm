@@ -282,6 +282,7 @@ pub(crate) fn check_output(
         analysis_outcome: Some(outcome),
         partial_scope: None,
         analyzed_revisions: None,
+        changed_path_kinds: None,
     }
 }
 

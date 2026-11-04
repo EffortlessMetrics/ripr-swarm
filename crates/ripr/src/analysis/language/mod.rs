@@ -82,6 +82,27 @@ pub(crate) use typescript::{
     verify_command_for_discovery,
 };
 
+/// #13036: the single conservative owner for "this changed path carries test
+/// evidence only", dispatching to each routed language adapter's own
+/// test-path convention so the empty-scope hint cannot drift from what the
+/// adapters recognize. A path no adapter routes (docs, config) is never a
+/// test path, and a routed language without a test-path convention (today
+/// Perl) never claims one, so the fact cannot over-promise. Test paths in a
+/// language whose adapter is feature-disabled are not claimed either.
+pub(crate) fn is_test_changed_path(path: &std::path::Path) -> bool {
+    match route(path) {
+        Some(LanguageId::Rust) => crate::analysis::rust_index::is_test_file(path),
+        #[cfg(feature = "lang-typescript")]
+        Some(LanguageId::TypeScript) | Some(LanguageId::JavaScript) => {
+            typescript::is_test_file(path)
+        }
+        #[cfg(not(feature = "lang-typescript"))]
+        Some(LanguageId::TypeScript) | Some(LanguageId::JavaScript) => false,
+        Some(LanguageId::Python) => python::is_test_file(path),
+        Some(LanguageId::Perl) | None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
