@@ -15,6 +15,7 @@ Linked issues:
 Support-tier impact:
 
 - None. Types and validation only; no command emits or applies an edit.
+- Claim boundaries for this surface are governed by the canonical ledger in [support tiers](../status/SUPPORT_TIERS.md); nothing here promotes a tier.
 
 Policy impact:
 
