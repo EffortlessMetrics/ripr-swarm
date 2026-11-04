@@ -64,6 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          start=$SECONDS
           case "$CHANNEL" in
             cargo)
               # macOS bash 3.2 rejects an empty array under set -u, so pass the
@@ -73,10 +74,8 @@ jobs:
                 [[ $CARGO_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad cargo_version: $CARGO_VERSION"; exit 1; }
                 pin="--version=$CARGO_VERSION"
               fi
-              start=$SECONDS
               # shellcheck disable=SC2086
               cargo install ripr --locked --root "$RUNNER_TEMP/ripr-root" $pin
-              echo "install_seconds=$((SECONDS - start))" >> "$GITHUB_OUTPUT"
               echo "$RUNNER_TEMP/ripr-root/bin" >> "$GITHUB_PATH"
               ;;
             pypi)
@@ -90,6 +89,7 @@ jobs:
               echo "$RUNNER_TEMP/npm/node_modules/.bin" >> "$GITHUB_PATH"
               ;;
           esac
+          echo "install_seconds=$((SECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Start it in a fresh Cargo project
         id: smoke
@@ -106,6 +106,8 @@ jobs:
         if: always()
         env:
           CELL: ${{ matrix.channel }} on ${{ matrix.os }}
+          CHANNEL: ${{ matrix.channel }}
+          RUNNER_OS_LABEL: ${{ matrix.os }}
           INSTALL: ${{ steps.install.outcome }}
           SMOKE: ${{ steps.smoke.outcome }}
           GAP: ${{ matrix.known_gap == true }}
@@ -124,3 +126,27 @@ jobs:
           if [ "$GAP" = true ] && [ "$INSTALL" = success ] && [ "$SMOKE" = success ]; then
             echo "::notice::$CELL works now; drop its known_gap entry from the matrix."
           fi
+          # One receipt row per cell for `cargo xtask install-receipt`.
+          case "$verdict" in
+            works) status=works ;;
+            known*) status=known_gap ;;
+            INSTALLED*) status=broken ;;
+            *) status=failed ;;
+          esac
+          safe_version=$(printf '%s' "${VERSION:-}" | tr -cd '0-9A-Za-z.+ -')
+          mkdir -p "$RUNNER_TEMP/cell"
+          if [ "$status" = works ]; then
+            printf '{"channel":"%s","os":"%s","status":"%s","version":"%s","install_seconds":%s}\n' \
+              "$CHANNEL" "$RUNNER_OS_LABEL" "$status" "$safe_version" "${SECONDS_TO_INSTALL:-0}" > "$RUNNER_TEMP/cell/cell.json"
+          else
+            printf '{"channel":"%s","os":"%s","status":"%s"}\n' \
+              "$CHANNEL" "$RUNNER_OS_LABEL" "$status" > "$RUNNER_TEMP/cell/cell.json"
+          fi
+
+      - name: Upload the cell
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-cell-${{ matrix.channel }}-${{ matrix.os }}
+          path: ${{ runner.temp }}/cell/cell.json
+          if-no-files-found: warn

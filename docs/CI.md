@@ -2889,6 +2889,20 @@ order, and deletes them with `--write`. The default is a dry run. It reuses the
 `check-changelog-fragments` validator, refuses malformed fragments by file name
 and is not part of `precommit`. `changelog.d/README.md` has the batch procedure.
 
+## Install Receipt
+
+`cargo xtask install-receipt [--check] | --cells <dir> [--run-id <id>] [--write]`
+(#13064) records the per-platform, per-channel install seconds behind the R0
+install row in `docs/METRICS.md`. `published-install-matrix.yml` uploads one
+JSON file per cell (`install-cell-<channel>-<os>`); download a run's artifacts
+into a directory and pass it as `--cells`. The command merges them with the
+hand-kept `metrics/install/dispositions.json` (channels outside the matrix:
+archive, binstall, extension, Homebrew), refuses a missing, duplicate or unknown
+cell, derives the R0 verdict (`met`, `not_met`, `not_established`) and writes
+`metrics/install/receipt.json` and `receipt.md` with `--write`. `--check` is the
+default and re-validates the checked-in receipt offline. It is not part of
+`precommit`.
+
 ## Capability Registry Docs Block
 
 `cargo xtask capability-docs [--check | --write] [--markdown-file <path>]` keeps
