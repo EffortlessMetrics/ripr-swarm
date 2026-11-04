@@ -7955,6 +7955,10 @@ pub(crate) fn classify_resolved_owner(
         } else if let Some(shape) =
             super::infection_shape::ts_unmodeled_infection(old_line_text, line_text, is_predicate)
             && (weak || (exposed && shape.behavior_neutral))
+            && !(shape.shape == "literal_return"
+                && weak
+                && context.single_line_replacement
+                && ts_selected_switch_return(&post_ladder_context))
         {
             verdict.class = ExposureClass::InfectionUnknown;
             verdict.observe_state = StageState::Unknown;
@@ -8942,6 +8946,97 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+    })
+}
+
+/// Positive evidence is deliberately narrower than the guard-exclusion rule:
+/// both the owner and test must have a fully straight-line admitted shape.
+fn ts_selected_switch_return(context: &TsPostLadderContext<'_>) -> bool {
+    if context.candidates.len() != 1 {
+        return false;
+    }
+    let Some(root) = context.workspace_root else {
+        return false;
+    };
+    let owner = context.owner;
+    let Some(source) = owner.source_text.as_deref() else {
+        return false;
+    };
+    let Some(module) = super::bounded_read::read_workspace_sources_capped(
+        root,
+        &[owner.file.clone()],
+        super::bounded_read::ts_file_read_limit(),
+        super::bounded_read::ts_workspace_read_budget(),
+    )
+    .sources
+    .remove(&owner.file) else {
+        return false;
+    };
+    if module.trim().strip_prefix("export ") != Some(source.trim()) {
+        return false;
+    }
+    let Some((label, old, new)) = super::switch_return_witness::selected_label(
+        owner,
+        context.line,
+        context.line_text,
+        context.old_line_text,
+    ) else {
+        return false;
+    };
+    context.candidates.iter().any(|candidate| {
+        let test = candidate.test;
+        if !matches!(
+            candidate.relation,
+            TypeScriptRelationKind::ImportedOwnerCall | TypeScriptRelationKind::DirectOwnerCall
+        ) || test
+            .scope_bindings
+            .iter()
+            .any(|binding| [owner.name.as_str(), "test", "expect"].contains(&binding.name.as_str()))
+            || test
+                .written_locals_in_file
+                .iter()
+                .any(|name| [owner.name.as_str(), "test", "expect"].contains(&name.as_str()))
+            || local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+        {
+            return false;
+        }
+        let imports = &test.imports_in_file;
+        if imports.len() != 3 {
+            return false;
+        }
+        let has_vitest = |name: &str| {
+            imports.iter().any(|import| {
+                import.source == "vitest"
+                    && !import.namespace
+                    && import.local == name
+                    && import.imported.as_deref() == Some(name)
+            })
+        };
+        if !has_vitest("test") || !has_vitest("expect") {
+            return false;
+        }
+        let Some(import) = imports.iter().find(|import| {
+            !import.namespace
+                && import.local == owner.name
+                && import.imported.as_deref() == Some(owner.name.as_str())
+        }) else {
+            return false;
+        };
+        import_source_matches_owner(
+            import,
+            &test.file,
+            owner,
+            context.alias_map,
+            context.workspace_root,
+        ) && super::switch_return_witness::direct_test_call(
+            test,
+            root,
+            &owner.name,
+            &label,
+            &import.source,
+            old,
+            new,
+        )
     })
 }
 

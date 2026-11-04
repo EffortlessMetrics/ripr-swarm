@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::selected_switch_literal_return_has_weak_oracle_gap",
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::switch_literal_return_controls",
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::switch_return_with_another_changed_line_stays_unknown",
+  "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::switch_return_with_a_competing_test_stays_unknown",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/switch_return_witness.rs",
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+]

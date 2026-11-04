@@ -178,6 +178,144 @@ fn literal_arm(label: &str, call: &str) -> Result<Finding, String> {
     )
 }
 
+fn switch_return(label: &str, test: &str) -> Result<Finding, String> {
+    let source = "export function price(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 10;\n    case 'silver':\n      return 7;\n    default:\n      return 0;\n  }\n}\n";
+    finding_for(label, source, 6, "      return 5;", "      return 7;", test)
+}
+
+#[test]
+fn selected_switch_literal_return_has_weak_oracle_gap() -> Result<(), String> {
+    let test = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(100); });\n";
+    let finding = switch_return("switch-selected", test)?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn switch_literal_return_controls() -> Result<(), String> {
+    let exact = switch_return(
+        "switch-exact",
+        "import { price } from '../src/price';\ntest('price', () => { expect(price('silver')).toBe(7); });\n",
+    )?;
+    assert_eq!(exact.class, ExposureClass::Exposed);
+    let other = switch_return("switch-other", &weak_test("price('gold')"))?;
+    assert_ne!(other.class, ExposureClass::Exposed);
+    let unknown = switch_return("switch-unknown", &weak_test("price(pick())"))?;
+    assert_eq!(unknown.class, ExposureClass::InfectionUnknown);
+    let unrelated = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(0).toBeLessThan(100); });\n";
+    let finding = switch_return("switch-unrelated", unrelated)?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    let discriminating = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(6); });\n";
+    let finding = switch_return("switch-discriminating", discriminating)?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    let failing = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(1); });\n";
+    let finding = switch_return("switch-failing", failing)?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    let shadowed = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const expect = price('silver'); expect(expect).toBeLessThan(100); });\n";
+    let finding = switch_return("switch-shadowed-expect", shadowed)?;
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed);
+    let source = "export function price(kind: string): number {\n  switch (kind) {\n    case 'silver':\n      return 9007199254740993;\n  }\n}\n";
+    let test = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(100); });\n";
+    let unsafe_number = finding_for(
+        "switch-unsafe-number",
+        source,
+        4,
+        "      return 9007199254740992;",
+        "      return 9007199254740993;",
+        test,
+    )?;
+    assert_eq!(unsafe_number.class, ExposureClass::InfectionUnknown);
+    Ok(())
+}
+
+#[test]
+fn switch_return_with_another_changed_line_stays_unknown() -> Result<(), String> {
+    let root = ts_unique_tempdir("switch-changed-flow")?;
+    let source = "export function price(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 10;\n    case 'silver':\n      return 7;\n    default:\n      return 0;\n  }\n}\n";
+    let test = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(100); });\n";
+    ts_write_file(&root.join("src/price.ts"), source)?;
+    ts_write_file(&root.join("tests/price.test.ts"), test)?;
+    let changed = ChangedFile {
+        path: PathBuf::from("src/price.ts"),
+        added_lines: vec![
+            crate::analysis::diff::ChangedLine {
+                line: 5,
+                new_side_line: 5,
+                text: "    case 'silver':".into(),
+            },
+            crate::analysis::diff::ChangedLine {
+                line: 6,
+                new_side_line: 6,
+                text: "      return 7;".into(),
+            },
+        ],
+        removed_lines: vec![
+            crate::analysis::diff::ChangedLine {
+                line: 5,
+                new_side_line: 5,
+                text: "    case 'bronze':".into(),
+            },
+            crate::analysis::diff::ChangedLine {
+                line: 6,
+                new_side_line: 5,
+                text: "      return 5;".into(),
+            },
+        ],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .find(|f| f.probe.location.line == 6)
+        .ok_or("missing return finding")?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    Ok(())
+}
+
+#[test]
+fn switch_return_with_a_competing_test_stays_unknown() -> Result<(), String> {
+    let root = ts_unique_tempdir("switch-competing")?;
+    let source = "export function price(kind: string): number {\n  switch (kind) {\n    case 'gold':\n      return 10;\n    case 'silver':\n      return 7;\n    default:\n      return 0;\n  }\n}\n";
+    let test = "import { test, expect } from 'vitest';\nimport { price } from '../src/price';\ntest('price', () => { const result = price('silver'); expect(result).toBeLessThan(100); });\n";
+    ts_write_file(&root.join("src/price.ts"), source)?;
+    ts_write_file(&root.join("tests/price.test.ts"), test)?;
+    ts_write_file(
+        &root.join("tests/other.test.ts"),
+        &weak_test("price('gold')"),
+    )?;
+    let changed = ChangedFile {
+        path: PathBuf::from("src/price.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 6,
+            new_side_line: 6,
+            text: "      return 7;".into(),
+        }],
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 6,
+            new_side_line: 6,
+            text: "      return 5;".into(),
+        }],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .find(|f| f.probe.location.line == 6)
+        .ok_or("missing return finding")?;
+    assert_eq!(finding.class, ExposureClass::InfectionUnknown);
+    Ok(())
+}
+
 #[test]
 fn an_unmodeled_shape_in_an_untaken_arm_reads_the_stronger_no_fact() -> Result<(), String> {
     let untaken = literal_arm("infect-literal-untaken", "price(2)")?;

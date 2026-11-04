@@ -172,6 +172,7 @@ mod self_comparing_assertion_tests;
 mod shadow_index;
 mod spread_override_guard;
 mod static_limit;
+mod switch_return_witness;
 mod table_loop_rows;
 mod table_rows;
 mod ternary_arm_guard;
