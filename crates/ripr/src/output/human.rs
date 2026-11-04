@@ -591,6 +591,14 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
             if unknown > 0 {
                 classes.push_str(&format!(", {unknown} unclear"));
             }
+            // #12921: "no test path" is not "no guard of any kind". Say how many of
+            // them are reached only by a verifier harness ripr does not evaluate.
+            if s.proof_harness_only > 0 {
+                classes.push_str(&format!(
+                    " ({} of the no test path only have a proof harness that ripr does not evaluate, which is not test coverage)",
+                    s.proof_harness_only
+                ));
+            }
             out.push_str(&format!(
                 "Summary: {} changed {} checked: {}. {} found, {} suppressed by your settings{base_side}\n\n",
                 s.probes,
@@ -604,7 +612,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         out.push_str(&format!(
             "Summary: {} changed behavior(s) checked: {} exposed, {} weakly_exposed, {} reachable_unrevealed, \
              {} no_static_path, {} infection_unknown, {} propagation_unknown, {} static_unknown; \
-             {} of {} finding(s) unsuppressed{base_side}\n",
+             {} of {} finding(s) unsuppressed{proof_only}{base_side}\n",
             output.summary.probes,
             output.summary.exposed,
             output.summary.weakly_exposed,
@@ -615,6 +623,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
             output.summary.static_unknown,
             unsuppressed,
             output.summary.findings,
+            proof_only = proof_harness_only_note(&output.summary),
         ));
         // #10691: the stable tokens stay (they are the schema vocabulary);
         // each is glossed once so the line reads without the specs.
@@ -1083,6 +1092,18 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
     out.push('\n');
     out.push_str(&wrap_human_prose(&note, "", "  "));
     out.push('\n');
+}
+
+/// #12921: the non-plain summary names findings reached only by an unevaluated
+/// proof harness (a subset of `no_static_path`; never test coverage).
+fn proof_harness_only_note(summary: &crate::domain::Summary) -> String {
+    if summary.proof_harness_only == 0 {
+        return String::new();
+    }
+    format!(
+        "; {} of the no_static_path finding(s) reached only by a proof harness ripr does not evaluate (proof_harness_only; not test coverage)",
+        summary.proof_harness_only
+    )
 }
 
 const HUMAN_PROSE_WRAP_COLUMN: usize = 100;

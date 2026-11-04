@@ -81,6 +81,21 @@ impl Repo {
         Ok(Self { base, root })
     }
 
+    fn human(&self) -> Result<String, String> {
+        let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .args(["check", "--mode", "draft", "--root"])
+            .arg(&self.root)
+            .arg("--diff")
+            .arg(self.base.join("change.diff"))
+            .env("RIPR_CACHE_DIR", self.base.join("cache"))
+            .output()
+            .map_err(|e| format!("run ripr check: {e}"))?;
+        if !output.status.success() {
+            return Err(format!("ripr check failed: {}", output.status));
+        }
+        String::from_utf8(output.stdout).map_err(|e| e.to_string())
+    }
+
     fn report(&self) -> Result<serde_json::Value, String> {
         let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(["check", "--mode", "draft", "--root"])
@@ -255,5 +270,75 @@ fn a_test_path_wins_over_the_harness() -> Result<(), String> {
         assert_ne!(finding["classification"], "no_static_path", "{finding}");
         assert_ne!(finding["static_limit_kind"], LIMIT, "{finding}");
     }
+    Ok(())
+}
+
+fn owner_change() -> String {
+    one_line_diff(
+        2,
+        "    if x >= 100 { 100 } else { x }",
+        "    if x > 100 { 100 } else { x }",
+    )
+}
+
+/// #12921: a `no_static_path` owner reached only by an unevaluated proof
+/// harness is counted apart from one nothing reaches, in `summary`, and the
+/// harness is never credited as test coverage.
+#[test]
+fn summary_counts_proof_only_apart_from_no_guard() -> Result<(), String> {
+    let proof = Repo::new(&lib("kani::proof", ">", "100", ""), &owner_change())?.report()?;
+    let summary = &proof["summary"];
+    assert_eq!(summary["no_static_path"], 1, "premise: {proof}");
+    assert_eq!(summary["proof_harness_only"], 1, "{summary}");
+    assert_eq!(summary["exposed"], 0, "a proof is not coverage: {summary}");
+    assert_eq!(summary["weakly_exposed"], 0, "{summary}");
+
+    // Discriminating negative: the same owner change with no harness at all is
+    // plain "no guard found" and carries no proof-only count.
+    let bare_source = lib("kani::proof", ">", "100", "")
+        .replace("#[cfg(kani)]", "#[cfg(feature = \"nothing\")]")
+        .replace("#[kani::proof]", "#[inline]");
+    let bare = Repo::new(&bare_source, &owner_change())?.report()?;
+    assert_eq!(bare["summary"]["no_static_path"], 1, "premise: {bare}");
+    assert!(
+        bare["summary"].get("proof_harness_only").is_none(),
+        "{bare}"
+    );
+    Ok(())
+}
+
+/// #12921: a test path wins; the proof-only count must not appear.
+#[test]
+fn summary_has_no_proof_only_count_when_a_test_reaches_the_owner() -> Result<(), String> {
+    let report = Repo::new(
+        &lib("kani::proof", ">", "100", TEST_MODULE),
+        &owner_change(),
+    )?
+    .report()?;
+    assert!(
+        report["summary"].get("proof_harness_only").is_none(),
+        "{report}"
+    );
+    Ok(())
+}
+
+/// #12921: the human summary says so too, without changing the class words.
+#[test]
+fn human_summary_distinguishes_proof_only_from_no_guard() -> Result<(), String> {
+    let text = Repo::new(&lib("kani::proof", ">", "100", ""), &owner_change())?.human()?;
+    assert!(
+        text.contains("only have a proof harness that ripr does not evaluate")
+            || text.contains("proof_harness_only"),
+        "{text}"
+    );
+    let bare_source = lib("kani::proof", ">", "100", "")
+        .replace("#[cfg(kani)]", "#[cfg(feature = \"nothing\")]")
+        .replace("#[kani::proof]", "#[inline]");
+    let bare = Repo::new(&bare_source, &owner_change())?.human()?;
+    assert!(
+        !bare.contains("proof harness that ripr does not evaluate"),
+        "{bare}"
+    );
+    assert!(!bare.contains("proof_harness_only"), "{bare}");
     Ok(())
 }
