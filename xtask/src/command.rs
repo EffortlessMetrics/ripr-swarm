@@ -1028,8 +1028,8 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "mutating",
             "fixtures/**/expected/**",
             true,
-            false,
-            "Updates golden expected outputs and requires explicit review reason.",
+            true,
+            "Updates golden expected outputs and requires explicit review reason. CI invokes it only from the dispatch-only goldens-rebless route (#11736), after its judge approves.",
         ),
         command_entry(
             "golden-drift",
@@ -2916,7 +2916,7 @@ mod tests {
         assert!(help.contains("check-static-language [CI]"));
         assert!(help.contains("goldens check [CI]"));
         assert!(!help.contains("check-supply-chain [CI]"));
-        assert!(!help.contains("goldens bless <name> --reason <reason> [CI]"));
+        assert!(help.contains("goldens bless <name> --reason <reason> [CI]"));
         assert!(help.contains("advisory or local-only"));
         Ok(())
     }
