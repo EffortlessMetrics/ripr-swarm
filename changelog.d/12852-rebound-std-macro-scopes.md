@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- A macro-generated Rust test no longer borrows invocation-site name scopes when its file defines a `macro_rules!` with the name of an exempt std expression macro (`assert_eq!`, `vec!`, ...) or when the invocation scope explicitly imports a macro of that name, because that macro could expand to a rebinding `use`. A glob import or a macro defined in another file is still not seen (Closes #12852, advances #12320).

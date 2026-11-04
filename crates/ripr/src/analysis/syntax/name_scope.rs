@@ -400,8 +400,33 @@ pub(crate) fn name_scopes_for_test_caller(
     match generated {
         None => name_scopes_in_tree(tree, line_index, fn_line, fn_name),
         Some(origin) if origin.body_declares_items => None,
-        Some(_) => name_scopes_at_line(tree, line_index, fn_line),
+        Some(_) if file_rebinds_a_std_macro(tree) => None,
+        Some(_) => name_scopes_at_line(tree, line_index, fn_line)
+            .filter(|scopes| !scopes_import_a_std_macro_name(scopes)),
     }
+}
+
+/// A `macro_rules!` anywhere in the file that reuses an exempt std macro name.
+/// Textual macro scope is positional, so any definition counts: the exemption
+/// reads a bare name, and a local definition may expand to a rebinding `use`
+/// (#12852). Macros defined in another file are not seen.
+fn file_rebinds_a_std_macro(tree: &ast::SourceFile) -> bool {
+    tree.syntax()
+        .descendants()
+        .filter_map(ast::MacroRules::cast)
+        .filter_map(|rules| rules.name())
+        .any(|name| NAME_FREE_STD_MACROS.contains(&name.text().trim_start_matches("r#")))
+}
+
+/// An explicit import at the invocation site that binds an exempt std macro
+/// name (`use other::assert_eq;`). Glob imports are not read (#12852).
+fn scopes_import_a_std_macro_name(scopes: &NameScopes) -> bool {
+    scopes.scopes.iter().any(|scope| {
+        scope
+            .imports
+            .iter()
+            .any(|import| NAME_FREE_STD_MACROS.contains(&import.bound.as_str()))
+    })
 }
 
 fn name_scopes_at_line(
@@ -964,6 +989,29 @@ mod a { child_table!(case); } mod b { use demo::owner; #[test] fn case() { owner
         assert!(tree.is_some_and(|tree| {
             name_scopes_for_test_caller(&tree, &LineIndex::new(source), 2, "case", None).is_none()
         }));
+    }
+
+    #[test]
+    fn a_rebound_std_macro_name_takes_no_invocation_scopes() {
+        let origin = Some(MacroGeneratedOrigin::default());
+        let run = |source: &str, line: usize| -> Result<Option<NameScopes>, String> {
+            let parse = parse_clean_source_file(source).ok_or("parse")?;
+            Ok(name_scopes_for_test_caller(
+                &parse.tree(),
+                &LineIndex::new(source),
+                line,
+                "case",
+                origin,
+            ))
+        };
+        // Control: no rebinding, the invocation scopes are borrowed.
+        let plain = "use demo::owner;\nchild_table!(case);\n";
+        assert!(matches!(run(plain, 2), Ok(Some(_))));
+        // A local `macro_rules!` reusing a std name, an explicit import of it.
+        let local = "use demo::owner;\nmacro_rules! assert_eq { () => {}; }\nchild_table!(case);\n";
+        assert!(matches!(run(local, 3), Ok(None)));
+        let imported = "use demo::owner;\nuse other::assert_eq;\nchild_table!(case);\n";
+        assert!(matches!(run(imported, 3), Ok(None)));
     }
 
     #[test]
