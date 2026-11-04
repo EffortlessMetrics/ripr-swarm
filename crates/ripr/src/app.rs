@@ -42,6 +42,7 @@ pub mod repair_card_usability;
 pub(crate) mod review_comments_receipt;
 pub(crate) mod ripr_plus;
 mod running_binary;
+pub(crate) mod subcommand;
 /// Task-first repair selection services behind `ripr repair` and
 /// `ripr continue` (#6305). The CLI adapter parses and renders; the
 /// decisions here reuse the inventory, eligibility, selector, and attempt

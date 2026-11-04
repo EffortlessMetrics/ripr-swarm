@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0394](../specs/RIPR-SPEC-0394-jvm-shared-build-and-separate-language-evidence-contracts.md) | proposed | JVM shared build/classpath substrate plus separate Java, Kotlin, and Scala evidence and test/oracle contracts (#5646, #5586) |
