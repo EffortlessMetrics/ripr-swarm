@@ -20,7 +20,7 @@ Tests below and above the threshold pass on both versions. Only
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
 ```
 
-(Checked output of the [boundary example](../fixtures/boundary_gap/expected/human.txt).)
+(Selected lines, in order, from the [boundary example's checked output](../fixtures/boundary_gap/expected/human.txt); `cargo xtask goldens check` keeps that output current.)
 
 ## What you get
 
