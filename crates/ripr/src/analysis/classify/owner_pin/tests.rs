@@ -8574,6 +8574,24 @@ fn a_bare_assert_keeps_the_owner_binding_defeats() {
     );
 }
 
+#[test]
+fn refusal_describe_uses_stable_slash_paths_on_every_host() {
+    // Evidence text must be byte-identical across hosts: a Windows-spelled
+    // path renders with `/`, never `\\`, so checked-in goldens hold.
+    let mut refusal = binding_refusal(Some(MacroBindingKind::Definition));
+    if let AssertionRefusal::MacroBinding {
+        site: Some((path, _)),
+        ..
+    } = &mut refusal
+    {
+        *path = PathBuf::from(r"tests\api.rs");
+    }
+    assert_eq!(
+        refusal.describe(),
+        "tests/api.rs:3 defines a macro named `assert_eq`"
+    );
+}
+
 fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
     AssertionRefusal::MacroBinding {
         name: "assert_eq".to_string(),
