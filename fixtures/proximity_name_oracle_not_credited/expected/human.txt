@@ -34,15 +34,17 @@ Start here:
     - 10 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/proximity_name_oracle_not_credited/input --diff <cwd>/fixtures/proximity_name_oracle_not_credited/diff.patch --mode fast probe:src_lib.rs:error_path:e01f0ca9
   ripr context --root <cwd>/fixtures/proximity_name_oracle_not_credited/input --diff <cwd>/fixtures/proximity_name_oracle_not_credited/diff.patch --mode fast --at probe:src_lib.rs:error_path:e01f0ca9
+  (spot id, for repair)
   ripr repair 568eb455b8d770f3 --root <cwd>/fixtures/proximity_name_oracle_not_credited/input
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/proximity_name_oracle_not_credited/input --at src/lib.rs:9 --kind error_path
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:9 (weak); kind: return_value; reason: Missing discriminator value: ParseError::MalformedSource
+    - ./src/lib.rs:9 (weak); kind: return_value; reason: Missing check value: ParseError::MalformedSource
   Hidden classes:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full

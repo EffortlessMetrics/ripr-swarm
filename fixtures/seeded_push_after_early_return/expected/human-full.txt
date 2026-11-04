@@ -42,6 +42,7 @@ Weakness
 Next step
   - Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/seeded_push_after_early_return/input --diff <cwd>/fixtures/seeded_push_after_early_return/diff.patch --mode fast probe:src_lib.rs:call_deletion:41285dd4
   ripr context --root <cwd>/fixtures/seeded_push_after_early_return/input --diff <cwd>/fixtures/seeded_push_after_early_return/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:41285dd4
 
@@ -65,5 +66,6 @@ Weakness
 Next step
   - Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/seeded_push_after_early_return/input --diff <cwd>/fixtures/seeded_push_after_early_return/diff.patch --mode fast probe:src_lib.rs:side_effect:51743e2c
   ripr context --root <cwd>/fixtures/seeded_push_after_early_return/input --diff <cwd>/fixtures/seeded_push_after_early_return/diff.patch --mode fast --at probe:src_lib.rs:side_effect:51743e2c
