@@ -4726,6 +4726,7 @@ mod tests {
     fn a_module_matching_no_placed_definition_is_unsettled() {
         let identity = OwnerCallIdentity {
             name: "render".to_string(),
+            type_namespace: false,
             owner_crate: Some("lib".to_string()),
             layout: CrateLayout::default(),
             owner_file: PathBuf::from("src/lib.rs"),
