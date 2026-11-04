@@ -1014,7 +1014,13 @@ pub(crate) fn resolve_repair_start(
             // verdicts on one change.
             Some((_, reason)) => {
                 open_on_change += 1;
-                match blocked_groups.iter_mut().find(|group| group.0 == *reason) {
+                // Seams in the same state group even when their by-hand hints
+                // differ (a stub command here, the stub's own refusal there):
+                // the hint is the first member's, the state is the key.
+                match blocked_groups
+                    .iter_mut()
+                    .find(|group| reason_state(&group.0) == reason_state(reason))
+                {
                     Some(group) => group.2 += 1,
                     None => blocked_groups.push((reason.clone(), seam_label(entry), 1)),
                 }
@@ -1239,6 +1245,14 @@ fn change_after_closure(
         NoEligibleChange::Other if dropped_any => NoEligibleChange::AlreadyChecked,
         other => other,
     }
+}
+
+/// The part of a not-ready reason that names its state: everything before the
+/// by-hand hint (#12959), so seams missing the same evidence group together.
+fn reason_state(reason: &str) -> &str {
+    reason
+        .split_once(": write the test by hand")
+        .map_or(reason, |(state, _)| state)
 }
 
 /// Runs `run` at most once and shares its result.
