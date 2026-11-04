@@ -64,6 +64,13 @@ mod role_composition;
 mod stray_files;
 
 #[cfg(test)]
+pub(crate) fn configure_fixture_manifest_authority(index: &mut RustIndex, root: &Path) {
+    index.package_names = build::manifest_package_names(root);
+    index.member_crates = member_crates::MemberCrates::new(root);
+    index.drop_in_manifests = drop_in::DropInManifests::new(root);
+}
+
+#[cfg(test)]
 pub(crate) fn compose_fixture_source_roles(index: &mut RustIndex, root: &Path) {
     role_composition::compose_index_source_roles(index, root);
 }

@@ -385,7 +385,9 @@ discarded futures retain their existing admission; a synchronous helper with a
 dormant async block is still eligible. Paired native controls keep unsupported
 activation separate from runtime mutation discrimination.
 
-For the existing bounded same-file helper chain, every admitted entry and
+The exact helper graph follows at most four declaration edges after the test
+entry; the separate receiver-only recursion retains its existing limit.
+Every admitted entry and
 intermediate free-function hop must contain an executable call bound to the
 candidate's actual module/function declaration. The existing helper-name graph
 only supplies candidates. Caller-scope memos distinguish function names even
@@ -397,16 +399,30 @@ the value namespace. Intermediate traversal follows resolved declaration indices
 same-named methods and free functions cannot exchange their downstream edges.
 Resolved entry and terminal owner identities remain attached through ordinary and
 target-affinity relations and through full and compact activation. Plain nominal
-associated-function paths use the same module/type scope authority; generic
-instantiation and type aliases remain outside that bounded path reader.
+associated-function paths use the same module/type scope authority. An inherent
+blanket impl with distinct unconstrained type parameters applied directly to its
+nominal type also admits explicit type arguments of matching arity (or `Self`
+inside the same nominal impl). Bounds, where clauses, specialization, competing
+method declarations (including unresolved cross-file alternatives) and type aliases
+remain unresolved. Proven different nominal declarations do not compete. Trait-default dispatch
+still requires body-selection authority outside this bounded reader.
 Every helper-credit route requires a resolved terminal identity. Trait/default,
 local and unknown declarations that this bounded resolver cannot establish do
 not regain helper credit through a spelling fallback; their existing direct-call
 and explicitly unresolved-dispatch routes remain separate.
 Type-only declarations do not intercept bare value calls, and value-only
 declarations do not intercept module/type path prefixes.
+Raw identifiers and ordinary identifier spellings share the same import, module
+and namespace facts. Function-local modules cannot borrow the enclosing module's
+same-named child. Verified standard eager macro operands (`dbg`, `format`,
+`format_args`, `vec`, and the subject of `matches`) retain helper call binding;
+rebound macros, conditional assertion diagnostic operands and unsupported
+operand-local declarations supply no executable helper edge.
 Free-owner graph edges share lexical binding and value-shadow
-refusals before propagation, including imported and cross-file calls. A rejected
+refusals before propagation, including imported and cross-file calls. Integration
+support entries follow the calling test's actual module declarations and scoped
+imports, retaining prefix/type and bare-value shadows; a sibling test target's
+module declaration or a matching physical file stem supplies no authority. A rejected
 intermediate edge cannot regain free-owner credit through the any-spelling graph;
 explicit crate/module paths and genuinely bound helper calls remain eligible.
 Explicit foreign paths, wrong imports, dormant local

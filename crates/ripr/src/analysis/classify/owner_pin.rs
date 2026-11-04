@@ -451,7 +451,7 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// #7097: out-of-line module children per (parent file, `mod` name):
     /// the composed child file, or `None` when declarations conflict.
     /// Built once per run; the index is immutable.
-    mod_children: OnceLock<BTreeMap<(PathBuf, String), Option<PathBuf>>>,
+    mod_children: OnceLock<ModuleChildren>,
     /// #7172: [`unit_struct_value`]'s workspace-wide scan verdicts,
     /// computed once per run over the once-built module-name set.
     /// The index is immutable, so the memo never goes stale.
@@ -1399,7 +1399,9 @@ impl OwnerPinSyntax {
         index: &RustIndex,
         trust_unplaced_standard_root: bool,
     ) -> bool {
-        let name = if let Some(leaf) = drop_in_assertion_leaf(name) {
+        let name = if let Some(leaf) = drop_in_assertion_leaf(name)
+            .or_else(|| super::related_tests::eager_standard_macro_leaf(name))
+        {
             let Some((root, _)) = name.strip_prefix("::").unwrap_or(name).split_once("::") else {
                 return false;
             };
@@ -1422,15 +1424,17 @@ impl OwnerPinSyntax {
                 .chain(placement.iter())
                 .all(|file| {
                     if matches!(root, "std" | "core") {
-                        matches!(
-                            leaf,
-                            "assert"
-                                | "assert_eq"
-                                | "assert_ne"
-                                | "debug_assert"
-                                | "debug_assert_eq"
-                                | "debug_assert_ne"
-                        ) && index.drop_in_manifests.unbound_standard_root(file, root)
+                        (super::related_tests::eager_standard_macro_leaf(name).is_some()
+                            || matches!(
+                                leaf,
+                                "assert"
+                                    | "assert_eq"
+                                    | "assert_ne"
+                                    | "debug_assert"
+                                    | "debug_assert_eq"
+                                    | "debug_assert_ne"
+                            ))
+                            && index.drop_in_manifests.unbound_standard_root(file, root)
                     } else {
                         matches!(leaf, "assert_eq" | "assert_ne")
                             && index.drop_in_manifests.verified(file, root)
@@ -6882,7 +6886,7 @@ impl FreeOwnerBinding<'_> {
         }
         syntax
             .mod_children(index)
-            .get(&(target_file, child.to_owned()))
+            .get(&(target_file, target.stack.clone(), child.to_owned()))
             .and_then(Option::as_ref)
             .is_some_and(|file| file == self.owner_file)
     }
@@ -7034,7 +7038,7 @@ impl FreeOwnerBinding<'_> {
         if scopes.scope_with_stack(&child).is_some() {
             return Some((file.to_path_buf(), child));
         }
-        let key = (file.to_path_buf(), segment.to_string());
+        let key = (file.to_path_buf(), stack.to_vec(), segment.to_string());
         syntax
             .mod_children(index)
             .get(&key)
@@ -7135,7 +7139,7 @@ impl FreeOwnerBinding<'_> {
                 stack = child;
                 continue;
             }
-            let key = (file.clone(), segment.to_string());
+            let key = (file.clone(), stack.clone(), segment.to_string());
             if let Some(next) = syntax.mod_children(index).get(&key) {
                 file = next.clone()?;
                 stack = Vec::new();
@@ -11601,7 +11605,8 @@ pub(in crate::analysis) fn free_helper_call_reaches_definition(
         super::call_identity::shared_solo_owner_call_identity(index, helper)
             .map(|identity| identity.resolve_call(caller, index, &qualifier))
     };
-    if target != Some(CallTarget::Owner)
+    if (target != Some(CallTarget::Owner)
+        && !integration_helper_module_call_reaches_owner(caller, helper, prefix, index, syntax))
         || (prefix.is_none() && !free_helper_name_is_unshadowed(caller, &helper.name))
     {
         return false;
@@ -11622,6 +11627,159 @@ pub(in crate::analysis) fn free_helper_call_reaches_definition(
         index,
         syntax,
     )
+}
+
+/// Integration support files belong to the test crate which declares them,
+/// not the crate suggested by their physical directory name. Follow the
+/// caller's actual module declarations/imports and retain exact target checks.
+fn integration_helper_module_call_reaches_owner(
+    caller: &TestSummary,
+    helper: &FunctionSummary,
+    prefix: Option<&str>,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    use crate::analysis::syntax::UseBinding;
+    if !super::call_identity::under_tests_dir(&caller.file)
+        || !super::call_identity::under_tests_dir(&helper.file)
+    {
+        return false;
+    }
+    let Some(facts) = index.files().get(&caller.file) else {
+        return false;
+    };
+    if super::call_identity::source_may_splice_items(&facts.source, true) {
+        return false;
+    }
+    let Some(scopes) = index
+        .source_syntax
+        .get(index, &caller.file)
+        .and_then(|source| source.name_scopes(caller))
+    else {
+        return false;
+    };
+    let Some(owner_inline) = syntax
+        .item_nesting(index, &helper.file, &helper.name, helper.start_line)
+        .map(|nesting| nesting.modules)
+    else {
+        return false;
+    };
+    let binding = FreeOwnerBinding {
+        name: &helper.name,
+        owner_file: &helper.file,
+        owner_start_line: helper.start_line,
+    };
+    let mut path = prefix.map(path_prefix_segments).unwrap_or_default();
+    let lookup = path
+        .first()
+        .map(String::as_str)
+        .unwrap_or(&helper.name)
+        .to_string();
+    for (scope_index, scope) in scopes.scopes.iter().enumerate() {
+        if if prefix.is_some() {
+            scope.block_binds_type(&lookup)
+        } else {
+            scope.block_binds_value(&lookup)
+        } {
+            return false;
+        }
+        if prefix.is_some() && scope.fn_body && scope.child_modules.contains(&lookup) {
+            return false;
+        }
+        let imports: Vec<_> = scope.imports_of(&lookup).collect();
+        if !imports.is_empty() {
+            let [UseBinding::Path(import) | UseBinding::Renamed(import)] = imports.as_slice()
+            else {
+                return false;
+            };
+            if prefix.is_none() {
+                if import.last() != Some(&helper.name) {
+                    return false;
+                }
+                path = import[..import.len() - 1].to_vec();
+            } else {
+                path = import
+                    .iter()
+                    .cloned()
+                    .chain(path.iter().skip(1).cloned())
+                    .collect();
+            }
+        } else if prefix.is_none() {
+            if scope.defines_value(&lookup) || !scope.globs.is_empty() {
+                return false;
+            }
+            if scope.fn_body {
+                continue;
+            }
+            return false;
+        } else if !matches!(lookup.as_str(), "crate" | "self" | "super") {
+            if scope.defines_type(&lookup) && !scope.child_modules.contains(&lookup) {
+                return false;
+            }
+            if !scope.child_modules.contains(&lookup) {
+                if scope.fn_body && scope.globs.is_empty() {
+                    continue;
+                }
+                return false;
+            }
+        }
+        let Some(first) = path.first().cloned() else {
+            return false;
+        };
+        // An unqualified local module head is relative only when that exact
+        // declaration is visible in this scope. Never infer it from a stem.
+        let mut declaration_modules = &scope.modules;
+        if !matches!(first.as_str(), "crate" | "self" | "super") {
+            // A function-local import can name a module declared by its
+            // enclosing module. Read that lexical binding, not a file stem.
+            let mut declared = false;
+            for prefix_scope in &scopes.scopes[scope_index..] {
+                if prefix_scope.block_binds_type(&first)
+                    || prefix_scope.imports_of(&first).next().is_some()
+                    || (prefix_scope.defines_type(&first)
+                        && !prefix_scope.child_modules.contains(&first))
+                {
+                    return false;
+                }
+                if prefix_scope.child_modules.contains(&first) {
+                    if prefix_scope.fn_body {
+                        return false;
+                    }
+                    declaration_modules = &prefix_scope.modules;
+                    declared = true;
+                    break;
+                }
+                if !prefix_scope.fn_body || !prefix_scope.globs.is_empty() {
+                    break;
+                }
+            }
+            if !declared {
+                return false;
+            }
+            path.insert(0, "self".to_string());
+        }
+        let context = ScopeContext {
+            file: &caller.file,
+            source: &facts.source,
+            stack: declaration_modules,
+        };
+        let rest: Vec<&str> = path.iter().skip(1).map(String::as_str).collect();
+        let target = if path[0] == "crate" {
+            // A shared support file can compose into several integration
+            // targets. Resolve from this caller's root, never an arbitrary
+            // first parent of the target helper file.
+            let Some(root) = syntax.target_roots(index).root(&caller.file, index) else {
+                return false;
+            };
+            binding.resolve_module_path(index, syntax, context, &root, &[], &rest, 1)
+        } else {
+            binding.resolve_use_prefix(&path[0], &rest, context, index, syntax, 1)
+        };
+        return target.is_some_and(|(file, stack)| {
+            binding.resolved_module_delivers_owner(file, stack, &owner_inline, index, syntax)
+        });
+    }
+    false
 }
 
 /// The value-binding refusals shared by named and import-renamed helper calls.
@@ -11712,32 +11870,84 @@ struct ModuleScope {
     macro_defs: Vec<String>,
 }
 
+type ModuleChildren = BTreeMap<(PathBuf, Vec<String>, String), Option<PathBuf>>;
+
 impl OwnerPinSyntax {
     /// #7097: out-of-line module children, built once per run from the
     /// recorded module edges. Two children under one (parent, name) —
     /// cfg'd alternatives — resolve to neither.
-    fn mod_children(&self, index: &RustIndex) -> &BTreeMap<(PathBuf, String), Option<PathBuf>> {
+    fn mod_children(&self, index: &RustIndex) -> &ModuleChildren {
         self.mod_children.get_or_init(|| {
-            let mut children: BTreeMap<(PathBuf, String), Option<PathBuf>> = BTreeMap::new();
+            let mut children = ModuleChildren::new();
             for (child, _) in index.files().iter() {
                 let Some(context) = index.execution_context(child) else {
                     continue;
                 };
-                let mut direct = context.edges.iter().filter(|edge| &edge.child == child);
-                let (Some(edge), None) = (direct.next(), direct.next()) else {
-                    continue;
-                };
-                let Some(name) = module_declaration_name(&edge.declaration) else {
-                    continue;
-                };
-                children
-                    .entry((edge.parent.clone(), name))
-                    .and_modify(|slot| {
-                        if slot.as_ref() != Some(child) {
-                            *slot = None;
-                        }
-                    })
-                    .or_insert_with(|| Some(child.clone()));
+                for edge in context.edges.iter().filter(|edge| {
+                    &edge.child == child && edge.kind == SourceRoleProvenanceEdgeKind::Module
+                }) {
+                    let Some(name) = module_declaration_name(&edge.declaration) else {
+                        continue;
+                    };
+                    let Some(parent) = index.files().get(&edge.parent) else {
+                        continue;
+                    };
+                    let Some(tree) = index
+                        .source_syntax
+                        .get(index, &edge.parent)
+                        .and_then(|source| source.tree())
+                    else {
+                        continue;
+                    };
+                    let line_of = |offset: ra_ap_syntax::TextSize| {
+                        parent.source[..usize::from(offset)]
+                            .bytes()
+                            .filter(|byte| *byte == b'\n')
+                            .count()
+                            + 1
+                    };
+                    let mut declarations = tree
+                        .syntax()
+                        .descendants()
+                        .filter_map(ast::Module::cast)
+                        .filter(|module| {
+                            module.item_list().is_none()
+                                && module
+                                    .name()
+                                    .is_some_and(|bound| strip_raw(bound.text()) == name)
+                                && module.mod_token().is_some_and(|token| {
+                                    (line_of(module.syntax().text_range().start())
+                                        ..=line_of(token.text_range().start()))
+                                        .contains(&edge.line)
+                                })
+                                && !module
+                                    .syntax()
+                                    .ancestors()
+                                    .any(|node| ast::Fn::can_cast(node.kind()))
+                        });
+                    let (Some(declaration), None) = (declarations.next(), declarations.next())
+                    else {
+                        continue;
+                    };
+                    let mut stack: Vec<_> = declaration
+                        .syntax()
+                        .ancestors()
+                        .skip(1)
+                        .filter_map(ast::Module::cast)
+                        .filter_map(|module| {
+                            module.name().map(|name| strip_raw(name.text()).to_string())
+                        })
+                        .collect();
+                    stack.reverse();
+                    children
+                        .entry((edge.parent.clone(), stack, name))
+                        .and_modify(|slot| {
+                            if slot.as_ref() != Some(child) {
+                                *slot = None;
+                            }
+                        })
+                        .or_insert_with(|| Some(child.clone()));
+                }
             }
             children
         })

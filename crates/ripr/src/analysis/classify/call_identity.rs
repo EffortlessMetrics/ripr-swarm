@@ -376,7 +376,7 @@ fn call_identity_shape(
         })
 }
 
-/// Resolve a non-generic inherent helper's nominal type through the same
+/// Resolve an admitted inherent helper's nominal type through the same
 /// module/import scope authority as free calls. The owner must actually declare
 /// that type beside its impl; aliases and inferred generic instantiations are
 /// outside this bounded relation.
@@ -517,6 +517,80 @@ pub(super) fn shared_solo_owner_call_identity(
     built
 }
 
+/// Nominal helper selection admits only a plain type or an unconstrained
+/// blanket impl applying distinct type parameters directly to that type.
+/// This establishes no trait selection, specialization or bound satisfaction.
+pub(in crate::analysis) fn inherent_helper_nominal_type(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Option<(String, usize)> {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasGenericArgs, HasGenericParams, HasName},
+    };
+    let FunctionContainer::Inherent { .. } = owner.item.container else {
+        return None;
+    };
+    let item = index
+        .source_syntax
+        .get(index, &owner.file)?
+        .declaration(owner)?;
+    let imp = item.syntax().parent()?.parent().and_then(ast::Impl::cast)?;
+    if imp.trait_().is_some() || imp.where_clause().is_some() {
+        return None;
+    }
+    let ast::Type::PathType(ty) = imp.self_ty()? else {
+        return None;
+    };
+    let path = ty.path()?;
+    let segments: Vec<_> = path.segments().collect();
+    let [segment] = segments.as_slice() else {
+        return None;
+    };
+    if segment.type_anchor().is_some() || segment.coloncolon_token().is_some() {
+        return None;
+    }
+    let name = segment
+        .name_ref()?
+        .text()
+        .trim_start_matches("r#")
+        .to_string();
+    let mut parameters = Vec::new();
+    for param in imp
+        .generic_param_list()
+        .into_iter()
+        .flat_map(|list| list.generic_params())
+    {
+        let ast::GenericParam::TypeParam(param) = param else {
+            return None;
+        };
+        let parameter = param.name()?.text().to_string();
+        if param.syntax().text().to_string().trim() != parameter || parameters.contains(&parameter)
+        {
+            return None;
+        }
+        parameters.push(parameter);
+    }
+    let mut arguments = Vec::new();
+    for arg in segment
+        .generic_arg_list()
+        .into_iter()
+        .flat_map(|list| list.generic_args())
+    {
+        let ast::GenericArg::TypeArg(arg) = arg else {
+            return None;
+        };
+        arguments.push(arg.ty()?.syntax().text().to_string());
+    }
+    if arguments != parameters
+        || (!parameters.is_empty()
+            && (item.generic_param_list().is_some() || item.where_clause().is_some()))
+    {
+        return None;
+    }
+    Some((name, parameters.len()))
+}
+
 /// The owner and its same-named, same-package module-level rivals.
 pub(in crate::analysis) struct OwnerCallIdentity {
     name: String,
@@ -572,24 +646,65 @@ struct TestScope {
 
 impl OwnerCallIdentity {
     fn nominal_helper(owner: &FunctionSummary, index: &RustIndex) -> Option<Self> {
+        if owner.item.has_self_param {
+            return None;
+        }
+        let identity = Self::nominal_helper_definition(owner, index)?;
+        if inherent_helper_nominal_type(owner, index)?.1 > 0 {
+            // A blanket impl may have same-named alternatives in another
+            // source module. Reuse nominal declaration authority to prove a
+            // different type; aliases, constraints and unplaced alternatives
+            // remain ambiguous. This scan is memoized with the identity.
+            for other in index.functions().iter().filter(|other| {
+                (other.id != owner.id || other.start_line != owner.start_line)
+                    && other.name == owner.name
+                    && package_key(&other.file) == identity.owner_package
+                    && match (
+                        identity.owner_crate.as_deref(),
+                        identity.layout.class(&other.file),
+                    ) {
+                        (Some(owner_crate), Some(other_crate)) => other_crate == owner_crate,
+                        _ => true,
+                    }
+                    && matches!(other.item.container, FunctionContainer::Inherent { .. })
+            }) {
+                let other = Self::nominal_helper_definition(other, index)?;
+                if other.name == identity.name
+                    && other.owner_crate == identity.owner_crate
+                    && other.definitions == identity.definitions
+                {
+                    return None;
+                }
+            }
+        }
+        Some(identity)
+    }
+
+    fn nominal_helper_definition(owner: &FunctionSummary, index: &RustIndex) -> Option<Self> {
         use ra_ap_syntax::{
             AstNode,
             ast::{self, HasAttrs, HasName},
         };
-        let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
-            return None;
-        };
-        if owner.item.has_self_param
-            || !owner.item.has_body
+        let (self_ty, arity) = inherent_helper_nominal_type(owner, index)?;
+        if !owner.item.has_body
             || self_ty.is_empty()
             || !self_ty.chars().all(|c| c.is_alphanumeric() || c == '_')
             || !super::owner_pin::inherent_factory_declaration_is_authoritative(
-                owner, self_ty, index,
+                owner, &self_ty, index,
             )
         {
             return None;
         }
         let owner_path = module_path_of(owner, true)?;
+        // This identity is memoized per owner; do not rescan the workspace
+        // for every observed nominal call.
+        if index.files().get(&owner.file)?.functions.iter().any(|other| {
+            (other.id != owner.id || other.start_line != owner.start_line)
+                && other.name == owner.name
+                && module_path_of(other, true).as_ref() == Some(&owner_path)
+                && matches!(&other.item.container, FunctionContainer::Inherent { self_ty: other_ty }
+                    if other_ty.split('<').next().map(str::trim) == Some(self_ty.as_str()))
+        }) { return None; }
         let file_path = file_module_segments(&owner.file)?;
         let tree = index.source_syntax.get(index, &owner.file)?.tree()?;
         let source = &index.files().get(&owner.file)?.source;
@@ -638,6 +753,32 @@ impl OwnerCallIdentity {
                     && text != "#[cfg(test)]"
             }) {
                 return None;
+            }
+            if arity > 0 {
+                use ra_ap_syntax::ast::HasGenericParams;
+                let (params, constrained) = match &item {
+                    ast::Item::Struct(i) => (i.generic_param_list(), i.where_clause().is_some()),
+                    ast::Item::Enum(i) => (i.generic_param_list(), i.where_clause().is_some()),
+                    ast::Item::Union(i) => (i.generic_param_list(), i.where_clause().is_some()),
+                    _ => return None,
+                };
+                let params: Vec<_> = params
+                    .into_iter()
+                    .flat_map(|list| list.generic_params())
+                    .collect();
+                if constrained
+                    || params.len() != arity
+                    || params.iter().any(|param| {
+                        let ast::GenericParam::TypeParam(param) = param else {
+                            return true;
+                        };
+                        param.name().is_none_or(|name| {
+                            param.syntax().text().to_string().trim() != name.text()
+                        })
+                    })
+                {
+                    return None;
+                }
             }
             declarations += 1;
         }
@@ -1161,6 +1302,11 @@ impl OwnerCallIdentity {
                 };
                 return self.matches_module(module.map(|module| join(&module, rest)));
             }
+            if scope.fn_body && scope.child_modules.contains(first) {
+                // Block-local module paths are not the enclosing module's
+                // same-named child. This index does not bind local items.
+                return Matches::Any;
+            }
             if scope.child_modules.contains(first) {
                 return self.matches_module(base.map(|base| join(base, segments)));
             }
@@ -1263,6 +1409,7 @@ fn use_target(
     match first.as_str() {
         "crate" | "self" | "super" => keyword_module(path, base?),
         "Self" => None,
+        _ if scope.fn_body && scope.child_modules.contains(first) => None,
         _ if scope.child_modules.contains(first) => Some(join(base?, path)),
         _ if crate_names.contains(first) && !crate_name_rebound(scope, first) => {
             Some(path[1..].to_vec())
@@ -1506,7 +1653,11 @@ fn module_path_of(function: &FunctionSummary, through_impl: bool) -> Option<Vec<
         }
         segments.truncate(at);
     }
-    path.extend(segments.into_iter().map(str::to_string));
+    path.extend(
+        segments
+            .into_iter()
+            .map(|segment| segment.trim_start_matches("r#").to_string()),
+    );
     Some(path)
 }
 

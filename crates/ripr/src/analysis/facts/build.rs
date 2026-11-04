@@ -751,7 +751,7 @@ fn build_index_with_adapters(
 /// import gate admits an import through any of the crate's own
 /// identifiers. A missing or unparseable manifest yields an empty set,
 /// never an error: the gate only ever under-credits.
-fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
+pub(super) fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
     let mut names = std::collections::BTreeSet::new();
     let Ok(text) = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")) else {
         return names;

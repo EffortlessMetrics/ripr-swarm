@@ -107,6 +107,7 @@ fn index_from_files_at_stamp(
             .iter()
             .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
+    crate::analysis::facts::configure_fixture_manifest_authority(&mut index, &fixture_root);
     crate::analysis::facts::compose_fixture_source_roles(&mut index, &fixture_root);
     Ok(FixtureIndex {
         index,
@@ -3713,7 +3714,7 @@ pub fn exercise_statuses() -> (&'static str, &'static str) {
 "#;
     let tests = PathBuf::from("tests/status_contract.rs");
     let tests_src = r#"
-use labels::{exercise_statuses, DEVICE_LABELS_EMPTY};
+use memory_fixture::labels::{exercise_statuses, DEVICE_LABELS_EMPTY};
 
 #[test]
 fn status_wrapper_observes_device_target() {
@@ -3721,7 +3722,11 @@ fn status_wrapper_observes_device_target() {
     assert_eq!(return_value, DEVICE_LABELS_EMPTY);
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod labels;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/labels.rs")], &index);
     let return_seam = seams
         .iter()
@@ -5621,7 +5626,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::exercise_pipeline;
+use memory_fixture::pipeline::exercise_pipeline;
 
 #[test]
 fn production_wrapper_exercises_pipeline() {
@@ -5629,7 +5634,11 @@ fn production_wrapper_exercises_pipeline() {
     assert_eq!(format_output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -5684,7 +5693,7 @@ fn format_output(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::exercise_pipeline;
+use memory_fixture::pipeline::exercise_pipeline;
 
 #[test]
 fn production_wrapper_chain_exercises_pipeline() {
@@ -5692,7 +5701,11 @@ fn production_wrapper_chain_exercises_pipeline() {
     assert_eq!(format_output, "alpha");
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -5821,7 +5834,7 @@ pub fn agent_start_command(root: &str, packet: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/loop_commands_tests.rs");
     let tests_src = r#"
-use loop_commands::agent_start_command;
+use memory_fixture::loop_commands::agent_start_command;
 
 #[test]
 fn command_quotes_each_dynamic_arg() {
@@ -5832,7 +5845,11 @@ fn command_quotes_each_dynamic_arg() {
     );
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod loop_commands;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/loop_commands.rs")], &index);
     let call_presence = seams
         .iter()
@@ -5961,7 +5978,7 @@ fn format_report(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use pipeline::exercise_both;
+use memory_fixture::pipeline::exercise_both;
 
 #[test]
 fn multi_owner_wrapper_observes_pipeline_call_target() {
@@ -5969,7 +5986,11 @@ fn multi_owner_wrapper_observes_pipeline_call_target() {
     assert!(rendered.contains("format_output"));
 }
 "#;
-    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), "pub mod pipeline;"),
+        (prod, prod_src),
+        (tests, tests_src),
+    ])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/pipeline.rs")], &index);
     let call_presence = seams
         .iter()
@@ -6316,6 +6337,7 @@ fn format_report(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/contract_tests.rs");
     let tests_src = r#"
+use memory_fixture::pipeline;
 #[test]
 fn qualified_wrapper_observes_pipeline_call_target() {
     let format_output = pipeline::exercise_pipeline();
@@ -6323,6 +6345,10 @@ fn qualified_wrapper_observes_pipeline_call_target() {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod pipeline; pub mod report;",
+        ),
         (pipeline, pipeline_src),
         (report, report_src),
         (tests, tests_src),
@@ -6391,7 +6417,7 @@ fn format_report(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/contract_tests.rs");
     let tests_src = r#"
-use crate::pipeline as pipe;
+use memory_fixture::pipeline as pipe;
 
 #[test]
 fn aliased_wrapper_observes_pipeline_call_target() {
@@ -6400,6 +6426,10 @@ fn aliased_wrapper_observes_pipeline_call_target() {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod pipeline; pub mod report;",
+        ),
         (pipeline, pipeline_src),
         (report, report_src),
         (tests, tests_src),
@@ -6472,9 +6502,9 @@ fn format_report(input: &str) -> String {
     let ambiguous = PathBuf::from("tests/ambiguous_tests.rs");
     let ambiguous_src = r#"
 #[cfg(unix)]
-use crate::pipeline as pipe;
+use memory_fixture::pipeline as pipe;
 #[cfg(windows)]
-use crate::report as pipe;
+use memory_fixture::report as pipe;
 
 #[test]
 fn ambiguous_alias_must_not_credit_an_owner() {
@@ -6486,7 +6516,7 @@ fn ambiguous_alias_must_not_credit_an_owner() {
     // mean the fixture never reached the production path at all.
     let unique = PathBuf::from("tests/unique_tests.rs");
     let unique_src = r#"
-use crate::pipeline as clear;
+use memory_fixture::pipeline as clear;
 
 #[test]
 fn unique_alias_is_credited() {
@@ -6495,6 +6525,10 @@ fn unique_alias_is_credited() {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod pipeline; pub mod report;",
+        ),
         (pipeline, pipeline_src),
         (report, report_src),
         (ambiguous, ambiguous_src),
@@ -6565,7 +6599,7 @@ fn format_report(input: &str) -> String {
     // rebinds the same alias to `pipeline`. Neither binding may overwrite the
     // other, and neither test may be credited against the other's target.
     let tests_src = r#"
-use crate::report as pipe;
+use memory_fixture::report as pipe;
 
 #[test]
 fn outer_module_test_observes_report_target() {
@@ -6574,7 +6608,7 @@ fn outer_module_test_observes_report_target() {
 }
 
 mod nested {
-    use crate::pipeline as pipe;
+    use memory_fixture::pipeline as pipe;
 
     #[test]
     fn nested_module_test_observes_pipeline_target() {
@@ -6584,6 +6618,10 @@ mod nested {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod pipeline; pub mod report;",
+        ),
         (pipeline, pipeline_src),
         (report, report_src),
         (tests.clone(), tests_src),
@@ -6776,7 +6814,7 @@ pub fn pilot_paths(root: &Path, after: &Path) -> String {
 "#;
     let tests = PathBuf::from("tests/pilot_commands_tests.rs");
     let tests_src = r#"
-use output::pilot::commands::pilot_paths;
+use memory_fixture::output::pilot::commands::pilot_paths;
 use std::path::Path;
 
 #[test]
@@ -6786,6 +6824,10 @@ fn pilot_paths_preserve_shell_arg_route() {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod agent { pub mod loop_commands; } pub mod output { pub mod pilot { pub mod commands; } }",
+        ),
         (loop_commands, loop_commands_src),
         (pilot_commands, pilot_commands_src),
         (tests, tests_src),
@@ -6938,7 +6980,7 @@ pub fn gather(input: &str) -> String {
 "#;
     let tests = PathBuf::from("tests/classifier_evidence_tests.rs");
     let tests_src = r#"
-use analysis::classifier::evidence::gather;
+use memory_fixture::analysis::classifier::evidence::gather;
 
 #[test]
 fn crate_qualified_wrapper_observes_format_marker_target() {
@@ -6947,6 +6989,10 @@ fn crate_qualified_wrapper_observes_format_marker_target() {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod analysis { pub mod classifier { pub mod evidence; } pub mod classify; }",
+        ),
         (classify, classify_src),
         (evidence, evidence_src),
         (tests, tests_src),
@@ -8063,7 +8109,7 @@ fn format_report(input: &str) -> String {
     input.to_string()
 }
 "#;
-    let support_a = PathBuf::from("tests/support_a.rs");
+    let support_a = PathBuf::from("src/support_a.rs");
     let support_a_src = r#"
 pub fn exercise_support() -> String {
     run("alpha")
@@ -8071,8 +8117,7 @@ pub fn exercise_support() -> String {
 
 use crate::pipeline::calculate as run;
 
-#[cfg(test)]
-mod nested_shadow {
+pub mod nested_shadow {
 use crate::report::summarize as run;
 
     pub fn nested_exercise() -> String {
@@ -8084,9 +8129,9 @@ pub fn exercise_after() -> String {
     run("gamma")
 }
 "#;
-    let support_b = PathBuf::from("tests/support_b.rs");
+    let support_b = PathBuf::from("src/support_b.rs");
     let support_b_src = r#"
-use report::summarize;
+use crate::report::summarize;
 
 pub fn exercise() -> String {
     summarize("beta")
@@ -8094,7 +8139,8 @@ pub fn exercise() -> String {
 "#;
     let tests = PathBuf::from("tests/pipeline_tests.rs");
     let tests_src = r#"
-use support_a::{
+use memory_fixture::support_a;
+use memory_fixture::support_a::{
     exercise_support as exercise,
     exercise_after as after,
 };
@@ -8127,6 +8173,10 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
     assert_eq!(binding_for("run(\"beta\")")?, ("report", "summarize"));
     assert_eq!(binding_for("run(\"gamma\")")?, ("pipeline", "calculate"));
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod pipeline; pub mod report; pub mod support_a; pub mod support_b;",
+        ),
         (pipeline, pipeline_src),
         (report, report_src),
         (support_a.clone(), support_a_src),
@@ -8142,8 +8192,7 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
             .functions()
             .iter()
             .find(|function| {
-                function.name == helper
-                    && function.file.as_path() == Path::new("tests/support_a.rs")
+                function.name == helper && function.file.as_path() == Path::new("src/support_a.rs")
             })
             .ok_or_else(|| format!("missing helper identity {helper}"))?;
         assert!(
@@ -8188,8 +8237,7 @@ fn aliased_direct_imported_support_helper_reaches_pipeline() {
             .functions()
             .iter()
             .find(|function| {
-                function.name == helper
-                    && function.file.as_path() == Path::new("tests/support_a.rs")
+                function.name == helper && function.file.as_path() == Path::new("src/support_a.rs")
             })
             .ok_or_else(|| format!("missing helper identity {helper}"))?;
         let owners = direct_imported_owner_calls_for_function(
@@ -11917,7 +11965,7 @@ fn parse_line(raw: &str) -> Option<PathBuf> {
 "#;
     let tests = PathBuf::from("tests/parser_tests.rs");
     let tests_src = r#"
-use parser::parse::parse_unified_diff;
+use memory_fixture::parser::parse::parse_unified_diff;
 
 #[test]
 fn quoted_path_reaches_path_parser() {
@@ -11925,6 +11973,10 @@ fn quoted_path_reaches_path_parser() {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod parser { pub mod path; pub mod parse; }",
+        ),
         (path_file, path_src),
         (parse_file, parse_src),
         (tests, tests_src),
@@ -16061,6 +16113,44 @@ fn constructor_field_case_at(
     test_source: &str,
     field: &str,
 ) -> Result<ConstructorFieldCase, String> {
+    if production_path == "crates/parser/src/hir/lower.rs" {
+        let test_source = test_source
+            .replace(
+                "rust_constructor_field_observation_fixture::",
+                "parser::hir::lower::",
+            )
+            .replace(
+                "rust_constructor_field_wrong_field_observer_fixture::",
+                "parser::hir::lower::",
+            );
+        let test_source =
+            if test_path.starts_with("crates/parser/") && !test_source.contains("use parser::") {
+                format!("use parser::hir::lower::*;\n{test_source}")
+            } else {
+                test_source
+            };
+        let files = [
+            (
+                PathBuf::from("crates/parser/src/lib.rs"),
+                "pub mod hir { pub mod lower; }",
+            ),
+            (PathBuf::from(production_path), production),
+            (PathBuf::from(test_path), test_source.as_str()),
+        ];
+        let mut index = index_from_files(&files)?;
+        fs::write(
+            index._fixture_root.join("crates/parser/Cargo.toml"),
+            r#"[package]
+name = "parser"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .map_err(|error| error.to_string())?;
+        index.index.member_crates =
+            crate::analysis::facts::member_crates::MemberCrates::new(&index._fixture_root);
+        return classified_from_index(index, Path::new(production_path), field);
+    }
     let production_path = PathBuf::from(production_path);
     let files = vec![
         (production_path.clone(), production),
@@ -17117,7 +17207,7 @@ fn normalize_delta(input: &str) -> String {
     input.to_string()
 }
 "#;
-    let support = PathBuf::from("tests/support_nested.rs");
+    let support = PathBuf::from("src/support_nested.rs");
     let support_src = r#"
 use crate::alpha::compute_alpha as run;
 
@@ -17125,23 +17215,21 @@ pub fn exercise_outer() -> String {
     run("outer")
 }
 
-#[cfg(test)]
-mod middle {
+pub mod middle {
     use crate::beta::compute_beta as run;
 
     pub fn exercise_middle() -> String {
         run("middle")
     }
 
-    #[cfg(test)]
-    mod inner_inherits {
+    pub mod inner_inherits {
         pub fn exercise_inner_inherits() -> String {
+            let run = |value: &str| value.to_string();
             run("inner")
         }
     }
 
-    #[cfg(test)]
-    mod inner_rebinds {
+    pub mod inner_rebinds {
         use crate::gamma::compute_gamma as run;
 
         pub fn exercise_inner_rebinds() -> String {
@@ -17150,8 +17238,7 @@ mod middle {
     }
 }
 
-#[cfg(test)]
-mod sibling {
+pub mod sibling {
     use crate::delta::compute_delta as run;
 
     pub fn exercise_sibling() -> String {
@@ -17165,7 +17252,8 @@ pub fn exercise_tail() -> String {
 "#;
     let tests = PathBuf::from("tests/nested_alias_tests.rs");
     let tests_src = r#"
-use support_nested::exercise_outer;
+use memory_fixture::support_nested;
+use memory_fixture::support_nested::exercise_outer;
 
 #[test]
 fn nested_alias_ancestry_reaches_every_indexed_owner() {
@@ -17184,6 +17272,10 @@ fn nested_alias_ancestry_reaches_every_indexed_owner() {
 }
 "#;
     let index = index_from_files(&[
+        (
+            PathBuf::from("src/lib.rs"),
+            "pub mod alpha; pub mod beta; pub mod delta; pub mod gamma; pub mod support_nested;",
+        ),
         (alpha, alpha_src),
         (beta, beta_src),
         (gamma, gamma_src),
@@ -21852,16 +21944,22 @@ fn inherent_helper_declarations_are_not_executable_self_edges() -> Result<(), St
     for (source, expected) in [(declaration.as_str(), false), (wrapper, true)] {
         let path = PathBuf::from("src/lib.rs");
         let index = index_from_files(&[(path.clone(), source)])?;
-        let shared = SharedIndexTables::build(&index);
-        let pairs = helper_owner_calls_by_file_with_fanout(&index, &shared, false);
-        let self_edge = pairs
-            .any_spelling
-            .get(&path)
-            .and_then(|helpers| helpers.get("as_object"))
-            .is_some_and(|calls| calls.contains("as_object"));
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let seam = seams
+            .iter()
+            .find(|seam| {
+                seam.owner().contains("JsonValue::as_object")
+                    && seam.kind() == SeamKind::ReturnValue
+            })
+            .ok_or("JsonValue return seam must exist")?;
+        let evidence = evidence_for_seam(seam, &index);
+        let helper = evidence
+            .related_tests
+            .iter()
+            .any(|test| test.relation_reason == RelationReason::HelperOwnerCall);
         assert_eq!(
-            self_edge, expected,
-            "declarations and real delegation differ"
+            helper, expected,
+            "declarations and real delegation differ: {evidence:?}"
         );
     }
     Ok(())

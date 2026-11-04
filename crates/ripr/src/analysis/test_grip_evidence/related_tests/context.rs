@@ -1667,6 +1667,59 @@ impl SharedIndexTables {
     /// Names nominate direct edges; only a resolved declaration can supply an
     /// intermediate body's edges. A receiver-bound method and a same-named free
     /// function remain distinct until the final, conservative name projection.
+    /// Preserve the direct-import candidate heuristic using the caller's
+    /// parsed lexical scopes. Import leaves nominate; binding still happens
+    /// per exact target in `bound_helper_edges`.
+    fn scoped_imported_owner_names(
+        &self,
+        caller: &FunctionSummary,
+        index: &RustIndex,
+    ) -> BTreeSet<String> {
+        let body = helper_call_view(caller);
+        let Some(scopes) = index
+            .source_syntax
+            .get(index, &caller.file)
+            .and_then(|source| source.name_scopes(&body))
+        else {
+            return BTreeSet::new();
+        };
+        let mut names = BTreeSet::new();
+        for call in caller
+            .calls
+            .iter()
+            .filter(|call| call_text_contains_unqualified_named_call(&call.text, &call.name))
+        {
+            for scope in &scopes.scopes {
+                let imports: Vec<_> = scope.imports_of(&call.name).collect();
+                if !imports.is_empty() {
+                    for import in imports {
+                        let (crate::analysis::syntax::UseBinding::Path(path)
+                        | crate::analysis::syntax::UseBinding::Renamed(path)) = import
+                        else {
+                            continue;
+                        };
+                        if let Some(leaf) = path.last()
+                            && owner_token_is_specific_enough(&leaf.to_ascii_lowercase())
+                            && self.functions_by_name.contains_key(leaf)
+                        {
+                            names.insert(leaf.clone());
+                        }
+                    }
+                    break;
+                }
+                if !scope.fn_body
+                    && !scope.globs.iter().any(|glob| {
+                        glob.as_ref()
+                            .is_some_and(|path| path.as_slice() == ["super"])
+                    })
+                {
+                    break;
+                }
+            }
+        }
+        names
+    }
+
     fn bound_helper_edges(
         &self,
         any_names: BTreeSet<String>,
@@ -1823,11 +1876,15 @@ struct BoundHelperEdges {
     next: BTreeSet<usize>,
 }
 
+// Retain the established four-edge production-wrapper route with a literal
+// declaration-edge bound, independent of receiver-only recursion.
+const EXACT_HELPER_GRAPH_MAX_EDGES: usize = 4;
+
 /// One round adds one exact declaration hop. Never expand the adjacency itself:
 /// doing so would both exceed the bound and let same-named functions exchange
 /// bodies before the final projection.
 fn expand_bound_helper_edges(rows: &mut BTreeMap<usize, BoundHelperEdges>, index: &RustIndex) {
-    for _ in 1..HELPER_OWNER_CALL_GRAPH_MAX_HOPS {
+    for _ in 1..EXACT_HELPER_GRAPH_MAX_EDGES {
         let previous = rows.clone();
         let mut changed = false;
         for (position, row) in rows.iter_mut() {
@@ -1976,6 +2033,11 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
         } else {
             BTreeSet::new()
         };
+        let scoped_imports = shared.scoped_imported_owner_names(function, index);
+        if scoped_imports.len() == 1 {
+            owner_calls.extend(scoped_imports.iter().cloned());
+            free_owner_calls.extend(scoped_imports);
+        }
         owner_calls.extend(imported_owner_calls.iter().cloned());
         free_owner_calls.extend(imported_owner_calls.iter().cloned());
         rows.insert(
@@ -2193,10 +2255,14 @@ impl TargetAffinityOwnerCalls {
                     .get(&package),
                 &shared.owner_names_by_module_path,
             );
+            let scoped_imports = shared.scoped_imported_owner_names(function, index);
+            let mut owner_calls = owner_calls;
+            owner_calls.extend(scoped_imports.iter().cloned());
             let free_owner_calls: BTreeSet<String> = owner_calls
                 .intersection(&free_spelled_names)
                 .cloned()
                 .chain(imported_owner_calls.iter().cloned())
+                .chain(scoped_imports)
                 .collect();
             let bound = shared.bound_helper_edges(owner_calls, free_owner_calls, function, index);
             let owner_calls = bound.any_names;

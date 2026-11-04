@@ -303,7 +303,10 @@ fn assert_exact_helper_owner_credit(source: &str, owners: &[(&str, bool)]) -> Re
             .related_tests
             .iter()
             .any(|test| test.relation_reason == RelationReason::HelperOwnerCall);
-        assert_eq!(helper_relation, *credited, "{owner}: {full:?}");
+        assert_eq!(
+            helper_relation, *credited,
+            "{owner}: {full:?}; source: {source}"
+        );
         for (surface, reach, activate) in [
             ("full", full.reach.state, full.activate.state),
             ("compact", compact.reach.state, compact.activate.state),
@@ -522,10 +525,7 @@ fn unresolved_trait_helper_terminals_do_not_borrow_namesake_credit() -> Result<(
         (
             "trait Real { fn leaf_value() -> Option<u32> { Some(7) } }\ntrait Decoy { fn leaf_value() -> Option<u32> { Some(7) } }\nstruct Value; impl Real for Value {} impl Decoy for Value {}",
             "<Value as Real>::leaf_value()",
-            [
-                "src/lib.rs::leaf_value#L1",
-                "src/lib.rs::leaf_value#L2",
-            ],
+            ["src/lib.rs::leaf_value#L1", "src/lib.rs::leaf_value#L2"],
         ),
     ] {
         let source = format!(
@@ -534,6 +534,430 @@ fn unresolved_trait_helper_terminals_do_not_borrow_namesake_credit() -> Result<(
         // The bounded helper resolver does not establish trait dispatch. It
         // must not turn that uncertainty into credit for either namesake.
         assert_exact_helper_owner_credit(&source, &[(owners[0], false), (owners[1], false)])?;
+    }
+    Ok(())
+}
+
+#[test]
+fn integration_helper_entries_follow_declared_modules_not_file_stems() -> Result<(), String> {
+    for support_body in [
+        "use memory_fixture::leaf_value; pub fn read_leaf_value() -> Option<u32> { leaf_value() }",
+        "use memory_fixture::leaf_value as run; pub fn read_leaf_value() -> Option<u32> { run() }",
+    ] {
+        for (declaration, import, call, expected) in [
+            (
+                "mod support;",
+                "use support::read_leaf_value;",
+                "read_leaf_value()",
+                true,
+            ),
+            (
+                "mod support;",
+                "use support::read_leaf_value as read;",
+                "read()",
+                true,
+            ),
+            ("mod support;", "", "support::read_leaf_value()", true),
+            (
+                "mod support;",
+                "",
+                "crate::support::read_leaf_value()",
+                true,
+            ),
+            (
+                "",
+                "use support::read_leaf_value;",
+                "read_leaf_value()",
+                false,
+            ),
+            ("", "", "support::read_leaf_value()", false),
+            (
+                "mod support;",
+                "use support::read_leaf_value;",
+                "{ let read_leaf_value = || Some(7); read_leaf_value() }",
+                false,
+            ),
+            (
+                "mod support; mod decoy;",
+                "use decoy::read_leaf_value;",
+                "read_leaf_value()",
+                false,
+            ),
+            (
+                "mod support; trait Foreign { fn read_leaf_value() -> Option<u32>; } struct Decoy; impl Foreign for Decoy { fn read_leaf_value() -> Option<u32> { Some(7) } } fn route_read_leaf_value<support: Foreign>() -> Option<u32> { support::read_leaf_value() }",
+                "",
+                "route_read_leaf_value::<Decoy>()",
+                false,
+            ),
+            (
+                "mod support;",
+                "",
+                "{ mod support { pub fn read_leaf_value() -> Option<u32> { Some(7) } } support::read_leaf_value() }",
+                false,
+            ),
+            (
+                "mod support;",
+                "",
+                "{ mod support { pub fn read_leaf_value() -> Option<u32> { Some(7) } } use support::read_leaf_value as route; route() }",
+                false,
+            ),
+            (
+                "mod support; fn route_read_leaf_value<support>() -> Option<u32> { crate::support::read_leaf_value() }",
+                "",
+                "route_read_leaf_value::<()>()",
+                true,
+            ),
+            (
+                "mod support; fn route_read_leaf_value<support>() -> Option<u32> { self::support::read_leaf_value() }",
+                "",
+                "route_read_leaf_value::<()>()",
+                true,
+            ),
+            (
+                "mod support; fn route_read_leaf_value() -> Option<u32> { mod support { pub fn read_leaf_value() -> Option<u32> { Some(7) } } support::read_leaf_value() }",
+                "",
+                "route_read_leaf_value()",
+                false,
+            ),
+        ] {
+            let test_source = format!(
+                "{declaration}\n{import}\n#[test] fn observes_leaf() {{ assert_eq!({call}, Some(7)); }}"
+            );
+            let sources = [
+                (
+                    PathBuf::from("src/lib.rs"),
+                    "pub fn leaf_value() -> Option<u32> { Some(7) }",
+                ),
+                (PathBuf::from("tests/reads.rs"), test_source.as_str()),
+                (PathBuf::from("tests/support/mod.rs"), support_body),
+                (
+                    PathBuf::from("tests/decoy/mod.rs"),
+                    "pub fn read_leaf_value() -> Option<u32> { Some(7) }",
+                ),
+                // A sibling integration target declaring support cannot grant the
+                // current test that module. Physical-file existence is not binding.
+                (PathBuf::from("tests/other.rs"), "mod support;"),
+            ];
+            let index = index_from_files(&sources)?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+            let seam = seams
+                .iter()
+                .find(|seam| seam.kind() == SeamKind::ReturnValue)
+                .ok_or("leaf return seam")?;
+            let context = CompactGripContext::new(&index);
+            let evidence = evidence_for_seam_with_context(seam, &context);
+            let compact = compact_evidence_for_seam(seam, &context);
+            assert_eq!(
+                evidence
+                    .related_tests
+                    .iter()
+                    .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+                expected,
+                "{test_source}: {evidence:?}"
+            );
+            assert_eq!(
+                evidence.activate.state == StageState::Yes,
+                expected,
+                "{test_source}"
+            );
+            assert_eq!(
+                compact.activate.state == StageState::Yes,
+                expected,
+                "compact: {test_source}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn blanket_generic_nominal_helpers_keep_exact_entries_and_shadow_refusals() -> Result<(), String> {
+    for (implementation, call, expected) in [
+        (
+            "impl<T> Reader<T> { pub fn read_leaf_value() -> Option<u32> { crate::leaf_value() } }",
+            "child::Reader::<()>::read_leaf_value()",
+            true,
+        ),
+        (
+            "impl<T> Reader<T> { pub fn route_read_leaf_value() -> Option<u32> { Self::read_leaf_value() } fn read_leaf_value() -> Option<u32> { crate::leaf_value() } }",
+            "child::Reader::<()>::route_read_leaf_value()",
+            true,
+        ),
+        (
+            "impl<T: Copy> Reader<T> { pub fn read_leaf_value() -> Option<u32> { crate::leaf_value() } }",
+            "child::Reader::<()>::read_leaf_value()",
+            false,
+        ),
+        (
+            "impl<T> Reader<T> where T: Copy { pub fn read_leaf_value() -> Option<u32> { crate::leaf_value() } }",
+            "child::Reader::<()>::read_leaf_value()",
+            false,
+        ),
+        (
+            "impl Reader<()> { pub fn read_leaf_value() -> Option<u32> { crate::leaf_value() } } impl Reader<u32> { pub fn read_leaf_value() -> Option<u32> { Some(7) } }",
+            "child::Reader::<()>::read_leaf_value()",
+            false,
+        ),
+        (
+            "impl<T> Reader<T> { pub fn read_leaf_value() -> Option<u32> { crate::leaf_value() } }",
+            "{ mod child { pub struct Reader<T>(T); impl<T> Reader<T> { pub fn read_leaf_value() -> Option<u32> { Some(7) } } } child::Reader::<()>::read_leaf_value() }",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "fn leaf_value() -> Option<u32> {{ Some(7) }}\nmod child {{ pub struct Reader<T>(T); {implementation} }}\n#[test] fn observes_leaf() {{ assert_eq!({call}, Some(7)); }}"
+        );
+        assert_exact_helper_owner_credit(&source, &[("src/lib.rs::leaf_value", expected)])?;
+    }
+    Ok(())
+}
+
+#[test]
+fn helper_local_modules_do_not_borrow_enclosing_module_identity() -> Result<(), String> {
+    for call in [
+        "helpers::leaf_value()",
+        "use helpers::leaf_value as route; route()",
+        "use helpers::leaf_value; leaf_value()",
+    ] {
+        let source = format!(
+            "mod helpers {{\n    pub fn leaf_value() -> Option<u32> {{ Some(7) }}\n}}\nmod decoy {{\n    pub fn leaf_value() -> Option<u32> {{ Some(9) }}\n}}\nfn read_leaf_value() -> Option<u32> {{\n    mod helpers {{ pub use crate::decoy::leaf_value; }}\n    {call}\n}}\n#[test] fn observes_local() {{ assert_eq!(read_leaf_value(), Some(9)); }}"
+        );
+        assert_exact_helper_owner_credit(&source, &[("src/lib.rs::helpers::leaf_value", false)])?;
+    }
+    Ok(())
+}
+
+#[test]
+fn raw_import_and_module_spellings_share_exact_binding_identity() -> Result<(), String> {
+    for (local, call, expected) in [
+        (
+            "use crate::other::leaf_value as r#leaf_value;",
+            "leaf_value()",
+            false,
+        ),
+        (
+            "use crate::other::leaf_value as r#leaf_value;",
+            "crate::leaf_value()",
+            true,
+        ),
+        ("use crate::leaf_value as r#route;", "route()", true),
+    ] {
+        let source = format!(
+            "fn leaf_value() -> Option<u32> {{ Some(7) }}\nmod other {{\n    pub fn leaf_value() -> Option<u32> {{ Some(7) }}\n}}\nfn read_leaf_value() -> Option<u32> {{\n    {local}\n    {call}\n}}\n#[test] fn observes_leaf() {{ assert_eq!(read_leaf_value(), Some(7)); }}"
+        );
+        assert_exact_helper_owner_credit(
+            &source,
+            &[
+                ("src/lib.rs::leaf_value", expected),
+                ("src/lib.rs::other::leaf_value", !expected),
+            ],
+        )?;
+    }
+    for (call, expected) in [
+        ("helpers::leaf_value()", false),
+        ("crate::helpers::leaf_value()", true),
+    ] {
+        let source = format!(
+            "mod helpers {{\n    pub fn leaf_value() -> Option<u32> {{ Some(7) }}\n}}\nfn read_leaf_value() -> Option<u32> {{\n    mod r#helpers {{\n        pub fn leaf_value() -> Option<u32> {{ Some(7) }}\n    }}\n    {call}\n}}\n#[test] fn observes_leaf() {{ assert_eq!(read_leaf_value(), Some(7)); }}"
+        );
+        assert_exact_helper_owner_credit(
+            &source,
+            &[("src/lib.rs::helpers::leaf_value", expected)],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn eager_macro_helper_operands_require_standard_binding_and_executed_position() -> Result<(), String>
+{
+    for (name, operand) in [
+        ("dbg", "leaf_value()"),
+        ("format", "\"{:?}\", leaf_value()"),
+        ("format_args", "\"{:?}\", leaf_value()"),
+        ("vec", "leaf_value()"),
+        ("matches", "leaf_value(), Some(_)"),
+    ] {
+        for (shadow, prefix, expected) in [
+            (false, "", true),
+            (true, "", false),
+            (false, "std::", true),
+            (true, "std::", true),
+        ] {
+            let binding = if shadow {
+                format!("macro_rules! {name} {{ ($($t:tt)*) => {{ () }}; }}")
+            } else {
+                String::new()
+            };
+            let source = format!(
+                "fn leaf_value() -> Option<u32> {{ Some(7) }}\nfn read_leaf_value() -> Option<u32> {{ {binding} let _ = {prefix}{name}!({operand}); Some(7) }}\n#[test] fn observes_leaf() {{ assert_eq!(read_leaf_value(), Some(7)); }}"
+            );
+            assert_exact_helper_owner_credit(&source, &[("src/lib.rs::leaf_value", expected)])?;
+        }
+    }
+    let source = "fn leaf_value() -> Option<u32> { Some(7) }\nfn read_leaf_value() -> Option<u32> { assert_eq!(0, 0, \"{:?}\", leaf_value()); Some(7) }\n#[test] fn observes_leaf() { assert_eq!(read_leaf_value(), Some(7)); }";
+    assert_exact_helper_owner_credit(source, &[("src/lib.rs::leaf_value", false)])
+}
+
+#[test]
+fn exact_helper_graph_counts_declaration_edges_at_its_boundary() -> Result<(), String> {
+    for edges in [4, 5] {
+        let mut source = "mod real {\n pub fn leaf_value() -> Option<u32> { Some(7) }\n}\nmod decoy {\n pub fn leaf_value() -> Option<u32> { Some(9) }\n}\n".to_string();
+        let helper_name = |hop| format!("{}read_leaf_value", "route_".repeat(edges - hop - 1));
+        for hop in 0..edges {
+            let call = if hop + 1 == edges {
+                "crate::real::leaf_value()".to_string()
+            } else {
+                format!("{}()", helper_name(hop + 1))
+            };
+            source.push_str(&format!(
+                "fn {}() -> Option<u32> {{\n    {call}\n}}\n",
+                helper_name(hop)
+            ));
+        }
+        source.push_str(&format!(
+            "#[test] fn observes_leaf() {{ assert_eq!({}(), Some(7)); }}\n",
+            helper_name(0)
+        ));
+        assert_exact_helper_owner_credit(
+            &source,
+            &[
+                ("src/lib.rs::real::leaf_value", edges == 4),
+                ("src/lib.rs::decoy::leaf_value", false),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn helper_initializer_binding_distinguishes_expression_and_statement_macros() -> Result<(), String>
+{
+    for (definition, body, expected) in [
+        (
+            "macro_rules! result { ($value:expr) => { $value }; }",
+            "let read = read(); result!(read)",
+            true,
+        ),
+        (
+            "macro_rules! bind_read { () => { fn read() -> Option<u32> { Some(7) } }; }",
+            "let read = read(); bind_read!(); read",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "fn leaf_value() -> Option<u32> {{ Some(7) }}\nuse crate::leaf_value as read;\n{definition}\nfn read_leaf_value() -> Option<u32> {{ {body} }}\n#[test] fn observes_leaf() {{ assert_eq!(read_leaf_value(), Some(7)); }}"
+        );
+        assert_exact_helper_owner_credit(&source, &[("src/lib.rs::leaf_value", expected)])?;
+    }
+    Ok(())
+}
+
+#[test]
+fn integration_function_local_helper_import_uses_enclosing_module_binding() -> Result<(), String> {
+    for (body, expected) in [
+        (
+            "use support::read_leaf_value; assert_eq!(read_leaf_value(), Some(7));",
+            true,
+        ),
+        (
+            "use support::read_leaf_value as route; assert_eq!(route(), Some(7));",
+            true,
+        ),
+        (
+            "mod support { pub fn read_leaf_value() -> Option<u32> { Some(7) } } use support::read_leaf_value; assert_eq!(read_leaf_value(), Some(7));",
+            false,
+        ),
+        (
+            "use support::read_leaf_value; let read_leaf_value = || Some(7); assert_eq!(read_leaf_value(), Some(7));",
+            false,
+        ),
+    ] {
+        let tests = format!("mod support;\n#[test] fn observes_leaf() {{\n{body}\n}}");
+        let index = index_from_files(&[
+            (
+                PathBuf::from("src/lib.rs"),
+                "pub fn leaf_value() -> Option<u32> { Some(7) }",
+            ),
+            (PathBuf::from("tests/reads.rs"), &tests),
+            (
+                PathBuf::from("tests/support/mod.rs"),
+                "use memory_fixture::leaf_value;\npub fn read_leaf_value() -> Option<u32> { leaf_value() }",
+            ),
+        ])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::ReturnValue)
+            .ok_or("leaf return seam")?;
+        let context = CompactGripContext::new(&index);
+        let full = evidence_for_seam_with_context(seam, &context);
+        let compact = compact_evidence_for_seam(seam, &context);
+        assert_eq!(
+            full.related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            expected,
+            "{body}: {full:?}"
+        );
+        assert_eq!(compact.activate.state, full.activate.state, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn blanket_generic_helper_competition_uses_cross_file_nominal_identity() -> Result<(), String> {
+    for (other, expected) in [
+        (
+            "pub struct Other<T>(T);\nimpl<T> Other<T> { pub fn read_leaf_value() -> Option<u32> { Some(9) } }",
+            true,
+        ),
+        (
+            "pub struct Other<T>(T);\nimpl<T> Other<T> { pub fn read_leaf_value(&self) -> Option<u32> { Some(9) } }",
+            true,
+        ),
+        (
+            "use crate::Reader;\nimpl<T> Reader<T> { pub fn read_leaf_value() -> Option<u32> { Some(9) } }",
+            false,
+        ),
+        (
+            "use crate::Reader as Alias;\nimpl<T> Alias<T> { pub fn read_leaf_value() -> Option<u32> { Some(9) } }",
+            false,
+        ),
+    ] {
+        let source = "mod other;\nfn leaf_value() -> Option<u32> { Some(7) }\npub struct Reader<T>(T);\nimpl<T> Reader<T> { pub fn read_leaf_value() -> Option<u32> { leaf_value() } }\nstruct Unrelated;\nimpl Unrelated { fn read_leaf_value(&self) -> Option<u32> { Some(9) } }\n#[test] fn observes_leaf() { assert_eq!(Reader::<()>::read_leaf_value(), Some(7)); }";
+        let index = index_from_files(&[
+            (PathBuf::from("src/lib.rs"), source),
+            (PathBuf::from("src/other.rs"), other),
+            // Distinct integration and binary crates cannot contribute rival
+            // impls to the library, even when their nominal type is a namesake.
+            (
+                PathBuf::from("tests/namesake.rs"),
+                "struct Reader<T>(T);\nimpl<T> Reader<T> { fn read_leaf_value(&self) -> Option<u32> { Some(9) } }",
+            ),
+            (
+                PathBuf::from("src/bin/namesake.rs"),
+                "struct Reader<T>(T);\nimpl<T> Reader<T> { fn read_leaf_value(&self) -> Option<u32> { Some(9) } }\nfn main() {}",
+            ),
+        ])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|seam| {
+                seam.owner().ends_with("::leaf_value") && seam.kind() == SeamKind::ReturnValue
+            })
+            .ok_or("leaf return seam")?;
+        let context = CompactGripContext::new(&index);
+        let full = evidence_for_seam_with_context(seam, &context);
+        let compact = compact_evidence_for_seam(seam, &context);
+        assert_eq!(
+            full.related_tests
+                .iter()
+                .any(|test| test.relation_reason == RelationReason::HelperOwnerCall),
+            expected,
+            "{other}: {full:?}"
+        );
+        assert_eq!(compact.activate.state, full.activate.state, "{other}");
     }
     Ok(())
 }

@@ -99,6 +99,11 @@ impl BindingNamespaces {
     }
 }
 
+/// Raw and ordinary spellings denote the same Rust identifier in scope facts.
+fn canonical_identifier(name: &str) -> &str {
+    name.strip_prefix("r#").unwrap_or(name)
+}
+
 impl NameScope {
     fn namespace_for(
         names: &BTreeSet<String>,
@@ -143,7 +148,7 @@ impl NameScope {
     pub(crate) fn imports_of<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a UseBinding> {
         self.imports
             .iter()
-            .filter(move |import| import.bound == name)
+            .filter(move |import| canonical_identifier(&import.bound) == canonical_identifier(name))
             .map(|import| &import.binding)
     }
 
@@ -213,11 +218,12 @@ pub(crate) fn fn_call_has_local_binding(source: &str, offset: usize, name: &str)
             {
                 return Some(true);
             }
-        } else if node
-            .descendants()
-            .any(|inner| ast::MacroCall::can_cast(inner.kind()))
-        {
+        } else if node.descendants().any(|inner| {
+            ast::MacroCall::can_cast(inner.kind()) && !macro_is_expression_position(&inner)
+        }) {
             // A statement macro may create names invisible to the syntax tree.
+            // Expression-position expansion stays inside that expression and
+            // cannot hoist a binding into the surrounding function body.
             return None;
         }
     }
@@ -229,6 +235,27 @@ pub(crate) fn fn_call_has_local_binding(source: &str, offset: usize, name: &str)
                 .iter()
                 .any(|defined| same_name(defined) && scope.defines_value(defined)),
     )
+}
+
+// MacroExpr also represents statement invocations. Only a nested expression
+// or a parenthesized/bracketed tail requires an expression expansion; a
+// semicolon or brace-delimited statement can emit hoisted local items.
+fn macro_is_expression_position(node: &SyntaxNode) -> bool {
+    let Some(expression) = node.parent().and_then(ast::MacroExpr::cast) else {
+        return false;
+    };
+    let Some(parent) = expression.syntax().parent() else {
+        return false;
+    };
+    if ast::ExprStmt::can_cast(parent.kind()) {
+        return false;
+    }
+    if ast::StmtList::can_cast(parent.kind()) {
+        return ast::MacroCall::cast(node.clone())
+            .and_then(|call| call.token_tree())
+            .is_some_and(|tokens| tokens.l_curly_token().is_none());
+    }
+    true
 }
 
 /// Declared type-parameter names share the type/module path namespace. This
@@ -287,7 +314,11 @@ pub(super) fn name_scopes_in_tree(
         let mut modules: Vec<String> = node
             .ancestors()
             .filter_map(ast::Module::cast)
-            .filter_map(|module| module.name().map(|ident| ident.text().to_string()))
+            .filter_map(|module| {
+                module
+                    .name()
+                    .map(|ident| canonical_identifier(ident.text()).to_string())
+            })
             .collect();
         modules.reverse();
         modules
@@ -525,7 +556,11 @@ fn name_scopes_at_line(
         let mut modules: Vec<String> = node
             .ancestors()
             .filter_map(ast::Module::cast)
-            .filter_map(|module| module.name().map(|ident| ident.text().to_string()))
+            .filter_map(|module| {
+                module
+                    .name()
+                    .map(|ident| canonical_identifier(ident.text()).to_string())
+            })
             .collect();
         modules.reverse();
         modules
@@ -671,7 +706,7 @@ fn nearest_item_scope(node: &SyntaxNode) -> Option<SyntaxNode> {
 fn record_item(item: &ast::Item, scope: &mut NameScope) {
     let mut define = |name: Option<ast::Name>, ty: bool, value: bool| {
         if let Some(name) = name {
-            let name = name.text().to_string();
+            let name = canonical_identifier(name.text()).to_string();
             scope
                 .item_namespaces
                 .entry(name.clone())
@@ -688,8 +723,12 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
         }
         ast::Item::ExternCrate(item) => {
             let bound = match item.rename() {
-                Some(rename) => rename.name().map(|ident| ident.text().to_string()),
-                None => item.name_ref().map(|name| name.text().to_string()),
+                Some(rename) => rename
+                    .name()
+                    .map(|ident| canonical_identifier(ident.text()).to_string()),
+                None => item
+                    .name_ref()
+                    .map(|name| canonical_identifier(name.text()).to_string()),
             };
             if let Some(bound) = bound {
                 scope.imports.push(UseImport {
@@ -700,7 +739,9 @@ fn record_item(item: &ast::Item, scope: &mut NameScope) {
         }
         ast::Item::Module(module) => {
             if let Some(name) = module.name() {
-                scope.child_modules.insert(name.text().to_string());
+                scope
+                    .child_modules
+                    .insert(canonical_identifier(name.text()).to_string());
             }
         }
         ast::Item::Fn(item) => define(item.name(), false, true),
@@ -747,7 +788,7 @@ pub(crate) fn path_segments(path: &ast::Path) -> Option<Vec<String>> {
         {
             return None;
         }
-        segments.push(segment.name_ref()?.text().to_string());
+        segments.push(canonical_identifier(segment.name_ref()?.text()).to_string());
     }
     (!segments.is_empty()).then_some(segments)
 }
@@ -771,7 +812,7 @@ fn flatten_use_tree(tree: &ast::UseTree, prefix: Option<Vec<String>>, scope: &mu
         last_text = path
             .segment()
             .and_then(|segment| segment.name_ref())
-            .map(|name| name.text().to_string());
+            .map(|name| canonical_identifier(name.text()).to_string());
         full = match (full, path_segments(&path)) {
             (Some(mut full), Some(segments)) => {
                 full.extend(segments);
@@ -797,9 +838,11 @@ fn flatten_use_tree(tree: &ast::UseTree, prefix: Option<Vec<String>>, scope: &mu
         path.pop();
         last_text = path.last().cloned();
     }
-    let renamed_to = tree
-        .rename()
-        .map(|rename| rename.name().map(|ident| ident.text().to_string()));
+    let renamed_to = tree.rename().map(|rename| {
+        rename
+            .name()
+            .map(|ident| canonical_identifier(ident.text()).to_string())
+    });
     let bound = match &renamed_to {
         // `use x as _;` binds no name.
         Some(name) => name.clone(),
@@ -1166,5 +1209,23 @@ mod a { child_table!(case); } mod b { use demo::owner; #[test] fn case() { owner
                     && !scope.type_parameters.contains("N")
                     && !scope.defines.contains("helpers")))
         );
+    }
+    #[test]
+    fn helper_initializer_query_preserves_statement_macro_shadow_refusal() {
+        for (tail, expected) in [
+            ("bind_read!(); read", None),
+            ("bind_read!{} read", None),
+            ("bind_read!{}", None),
+            ("result!(read)", Some(false)),
+            ("Some(result!(read))", Some(false)),
+        ] {
+            let source = format!("fn f() {{ let read = read(); {tail} }}");
+            let offset = source.find("read();").expect("initializer call");
+            assert_eq!(
+                fn_call_has_local_binding(&source, offset, "read"),
+                expected,
+                "{source}"
+            );
+        }
     }
 }

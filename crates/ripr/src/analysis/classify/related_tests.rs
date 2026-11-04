@@ -24,7 +24,7 @@ use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphSta
 use crate::domain::{Probe, RelationConfidence, RelationReason};
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
-    ast::{self, HasArgList, HasLoopBody, HasName},
+    ast::{self, HasArgList, HasGenericArgs, HasLoopBody, HasName},
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -5656,6 +5656,13 @@ fn imported_helper_prefix(
             if leaf != helper || prefix.is_empty() || !caller_modules.starts_with(&scope.modules) {
                 return None;
             }
+            if scope.fn_body
+                && prefix
+                    .first()
+                    .is_some_and(|head| scope.child_modules.contains(head))
+            {
+                return None;
+            }
             let upwards = caller_modules.len() - scope.modules.len();
             let mut resolved = Vec::new();
             match prefix.first()?.as_str() {
@@ -5862,6 +5869,18 @@ fn workspace_defines_macro(index: &RustIndex, name: &str) -> bool {
 /// Assertion token trees are not expression descendants of the source AST.
 /// Parse only their evaluated operands, preserving the original invocation as
 /// the lexical scope anchor. Diagnostics and unsupported macros add no proof.
+/// Qualified eager builtin macros use the same source/manifest root authority
+/// as qualified standard assertions; this only identifies their known spelling.
+pub(super) fn eager_standard_macro_leaf(name: &str) -> Option<&str> {
+    let (root, leaf) = name.strip_prefix("::").unwrap_or(name).split_once("::")?;
+    (matches!(
+        (root, leaf),
+        ("std", "dbg" | "format" | "format_args" | "vec" | "matches")
+            | ("core", "format_args" | "matches")
+    ))
+    .then_some(leaf)
+}
+
 fn assertion_arguments_resolve(
     call: &ast::MacroCall,
     index: Option<&RustIndex>,
@@ -5875,13 +5894,19 @@ fn assertion_arguments_resolve(
     // A qualified `std`/`core`/drop-in assertion evaluates the same operands.
     // Its root and binding were verified by the caller's macro-binding gate
     // when an index is present; without an index there is nothing to verify.
-    let qualified = crate::analysis::syntax::ra::drop_in_assertion_leaf(name.trim());
+    let qualified = crate::analysis::syntax::ra::drop_in_assertion_leaf(name.trim())
+        .or_else(|| eager_standard_macro_leaf(name.trim()));
     if qualified.is_some() && index.is_none() {
         return false;
     }
     let operands = match qualified.unwrap_or(name.trim()) {
         "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
         "assert" | "debug_assert" => 1,
+        // These standard macros eagerly evaluate their expression operands.
+        // `matches!` evaluates only its subject unconditionally; pattern and
+        // guard syntax must never become an executed helper edge.
+        "matches" => 1,
+        "dbg" | "format" | "format_args" | "vec" => usize::MAX,
         // `assert_matches!` is no prelude macro, so a bare spelling names
         // whatever an import or crate binds. Only the limit-naming trusted
         // pass reads its first operand, which the std and `assert_matches`
@@ -6409,7 +6434,8 @@ pub(in crate::analysis) fn inherent_helper_call_resolves(
     if owner.item.has_self_param {
         return inherent_owner_call_resolves(caller, owner, index);
     }
-    let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
+    let Some((self_ty, arity)) = super::call_identity::inherent_helper_nominal_type(owner, index)
+    else {
         return false;
     };
     let syntax = &index.call_identity_memos.receiver_pin_syntax;
@@ -6433,13 +6459,43 @@ pub(in crate::analysis) fn inherent_helper_call_resolves(
         let Some(prefix) = path.qualifier() else {
             return false;
         };
-        let Some(mut segments) = crate::analysis::syntax::path_segments(&prefix) else {
-            return false;
-        };
+        let paths: Vec<_> = prefix.segments().collect();
+        let mut segments = Vec::new();
+        for (position, segment) in paths.iter().enumerate() {
+            if segment.type_anchor().is_some()
+                || (position == 0 && segment.coloncolon_token().is_some())
+            {
+                return false;
+            }
+            let Some(name) = segment.name_ref() else {
+                return false;
+            };
+            let args: Vec<_> = segment
+                .generic_arg_list()
+                .into_iter()
+                .flat_map(|list| list.generic_args())
+                .collect();
+            if position + 1 == paths.len() {
+                if name.text() != "Self"
+                    && (args.len() != arity
+                        || args
+                            .iter()
+                            .any(|arg| !matches!(arg, ast::GenericArg::TypeArg(_))))
+                {
+                    return false;
+                }
+                if name.text() == "Self" && !args.is_empty() {
+                    return false;
+                }
+            } else if !args.is_empty() {
+                return false;
+            }
+            segments.push(name.text().trim_start_matches("r#").to_string());
+        }
         let Some(called_type) = segments.pop() else {
             return false;
         };
-        if called_type != *self_ty && called_type != "Self" {
+        if called_type != self_ty && called_type != "Self" {
             return false;
         }
         super::call_identity::inherent_helper_type_resolves(
