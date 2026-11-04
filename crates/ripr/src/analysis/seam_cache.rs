@@ -1287,7 +1287,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// adapter is a weak relation, not an exact oracle fact of any kind (#12610).
 /// `1.56`: bounded `.map(owner)` iterator chains emit synthetic owner call
 /// facts for reach (#9478); `1.55` facts lack them.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.56";
+/// `1.57`: `FileFacts` carry parsed `verus_guard_facts` (#10747); `1.56`
+/// warm entries deserialize with an empty guard vector.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.57";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4970,7 +4972,8 @@ mod tests {
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
         // 1.55 -> 1.56: path-value `.map(owner)` synthetic call facts (#9478).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.56");
+        // 1.56 -> 1.57: Verus guard facts on file facts (#10747).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.57");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
