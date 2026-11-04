@@ -842,7 +842,13 @@ fn routed_result_with_vscode(
         docs,
         docs_gate,
         heavy,
-        (admission_result, admission_status, vscode, "success"),
+        (
+            admission_result,
+            admission_status,
+            vscode,
+            "success",
+            "success",
+        ),
     )
 }
 
@@ -853,7 +859,41 @@ fn routed_result_with_proofs(
     docs: &str,
     docs_gate: &str,
     heavy: &str,
-    (admission_result, admission_status, vscode, wheel): (&str, &str, &str, &str),
+    (admission_result, admission_status, vscode, wheel, paste): (&str, &str, &str, &str, &str),
+) -> TestResult<bool> {
+    routed_result_with_portfolio(
+        fixture,
+        event,
+        detector,
+        docs,
+        docs_gate,
+        heavy,
+        (
+            admission_result,
+            admission_status,
+            vscode,
+            wheel,
+            paste,
+            "success",
+        ),
+    )
+}
+
+fn routed_result_with_portfolio(
+    fixture: &Fixture,
+    event: &str,
+    detector: &str,
+    docs: &str,
+    docs_gate: &str,
+    heavy: &str,
+    (admission_result, admission_status, vscode, wheel, paste, features): (
+        &str,
+        &str,
+        &str,
+        &str,
+        &str,
+        &str,
+    ),
 ) -> TestResult<bool> {
     let source = result_step()?;
     let (setup, _) = source.split_once("        run: |\n").ok_or("result step")?;
@@ -910,6 +950,8 @@ fn routed_result_with_proofs(
         ),
         ("VSCODE_CHECK_RESULT", vscode),
         ("WHEEL_RESULT", wheel),
+        ("PASTE_RESULT", paste),
+        ("FEATURE_RESULT", features),
         ("ADMISSION_RESULT", admission_result),
         ("ADMISSION_STATUS", admission_status),
     ]);
@@ -1051,7 +1093,7 @@ fn merge_group_result_requires_wheel_qualification() -> TestResult {
         );
     }
     assert!(
-        job("result")?.contains("wheel-queue]"),
+        job("result")?.contains("wheel-queue, paste-queue, feature-queue]"),
         "result must depend on the wheel job"
     );
     assert!(job("admission")?.contains("tree: ${{ steps.entry.outputs.tree }}"));
@@ -1065,7 +1107,7 @@ fn merge_group_result_requires_wheel_qualification() -> TestResult {
                 "true",
                 "success",
                 "skipped",
-                ("success", "admitted", "success", outcome)
+                ("success", "admitted", "success", outcome, "success")
             )?,
             "wheel {outcome:?} must fail the queue result"
         );
@@ -1077,7 +1119,113 @@ fn merge_group_result_requires_wheel_qualification() -> TestResult {
         "true",
         "success",
         "skipped",
-        ("success", "admitted", "success", "success")
+        ("success", "admitted", "success", "success", "success")
+    )?);
+    Ok(())
+}
+
+#[test]
+fn merge_group_result_requires_printed_command_matrix() -> TestResult {
+    let paste = job("paste-queue")?;
+    for required in [
+        "if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'",
+        "uses: ./.github/workflows/printed-command-paste.yml",
+        "proof_profile: queue_qualification",
+        "request_id: ${{ needs.admission.outputs.request }}",
+        "head_sha: ${{ needs.admission.outputs.head }}",
+        "base_sha: ${{ github.event.merge_group.base_sha }}",
+        "subject_sha: ${{ github.event.merge_group.head_sha }}",
+        "subject_tree: ${{ needs.admission.outputs.tree }}",
+        "workflow_generation: ${{ github.workflow_sha }}",
+    ] {
+        assert!(
+            paste.contains(required),
+            "missing paste binding: {required}"
+        );
+    }
+    assert!(job("result")?.contains("paste-queue, feature-queue]"));
+    let fixture = Fixture::new()?;
+    for outcome in ["failure", "cancelled", "skipped", ""] {
+        assert!(
+            !routed_result_with_proofs(
+                &fixture,
+                "merge_group",
+                "success",
+                "true",
+                "success",
+                "skipped",
+                ("success", "admitted", "success", "success", outcome)
+            )?,
+            "paste {outcome:?} must fail the queue result"
+        );
+    }
+    assert!(routed_result_with_proofs(
+        &fixture,
+        "merge_group",
+        "success",
+        "true",
+        "success",
+        "skipped",
+        ("success", "admitted", "success", "success", "success")
+    )?);
+    Ok(())
+}
+
+#[test]
+fn merge_group_result_requires_feature_portfolio() -> TestResult {
+    let feature = job("feature-queue")?;
+    for required in [
+        "if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'",
+        "uses: ./.github/workflows/ci.yml",
+        "proof_profile: queue_qualification",
+        "request_id: ${{ needs.admission.outputs.request }}",
+        "head_sha: ${{ needs.admission.outputs.head }}",
+        "base_sha: ${{ github.event.merge_group.base_sha }}",
+        "subject_sha: ${{ github.event.merge_group.head_sha }}",
+        "subject_tree: ${{ needs.admission.outputs.tree }}",
+        "workflow_generation: ${{ github.workflow_sha }}",
+        "run_rust_only: true",
+        "run_vscode: false",
+        "',full-ci,'",
+        "',release-check,'",
+    ] {
+        assert!(
+            feature.contains(required),
+            "missing feature binding: {required}"
+        );
+    }
+    assert!(feature.contains("run_release_proof: ${{ contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') || contains(format(',{0},', needs.admission.outputs.labels), ',release-check,') }}"));
+    assert!(feature.contains(
+        "run_msrv: ${{ contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}"
+    ));
+    assert!(job("result")?.contains("feature-queue]"));
+    let fixture = Fixture::new()?;
+    for outcome in ["failure", "cancelled", "skipped", ""] {
+        assert!(
+            !routed_result_with_portfolio(
+                &fixture,
+                "merge_group",
+                "success",
+                "true",
+                "success",
+                "skipped",
+                (
+                    "success", "admitted", "success", "success", "success", outcome
+                )
+            )?,
+            "feature {outcome:?} must fail the queue result"
+        );
+    }
+    assert!(routed_result_with_portfolio(
+        &fixture,
+        "merge_group",
+        "success",
+        "true",
+        "success",
+        "skipped",
+        (
+            "success", "admitted", "success", "success", "success", "success"
+        )
     )?);
     Ok(())
 }

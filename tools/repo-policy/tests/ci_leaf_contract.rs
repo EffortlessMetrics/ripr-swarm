@@ -97,6 +97,13 @@ fn run_with_shell(
             "PARENTS",
             "3333333333333333333333333333333333333333 2222222222222222222222222222222222222222",
         ),
+        ("GITHUB_EVENT_NAME", "pull_request"),
+        ("GITHUB_RUN_ID", "123"),
+        ("GITHUB_RUN_ATTEMPT", "1"),
+        ("GITHUB_SHA", "1111111111111111111111111111111111111111"),
+        ("QUEUE_HEAD", "1111111111111111111111111111111111111111"),
+        ("QUEUE_BASE", "3333333333333333333333333333333333333333"),
+        ("MERGED_TREE", "4444444444444444444444444444444444444444"),
         ("SELECT_RUST", "true"),
         ("SELECT_RELEASE", "true"),
         ("SELECT_MSRV", "true"),
@@ -179,7 +186,7 @@ fn named_step<'a>(source: &'a str, name: &str, step: &str) -> &'a str {
 
 fn guard(source: &str) -> String {
     format!(
-        "git() {{ case \"$*\" in 'rev-parse HEAD') echo \"$ACTUAL\";; 'rev-parse HEAD^{{tree}}') echo \"$ACTUAL_TREE\";; 'show -s --format=%P HEAD') echo \"$PARENTS\";; *) return 91;; esac; }}\n{}",
+        "git() {{ case \"$*\" in 'rev-parse HEAD') echo \"$ACTUAL\";; 'rev-parse HEAD^{{tree}}') echo \"$ACTUAL_TREE\";; 'show -s --format=%P HEAD') echo \"$PARENTS\";; 'cat-file -e '* ) return 0;; 'merge-tree --write-tree '* ) echo \"$MERGED_TREE\";; *) return 91;; esac; }}\n{}",
         body(job(source, "source-identity"))
     )
 }
@@ -237,6 +244,50 @@ fn exact_subject_guard_rejects_missing_stale_malformed_and_wrong_parent_inputs()
     );
     Ok(())
 }
+#[test]
+fn queue_subject_guard_binds_event_attempt_parent_and_tree() -> TestResult {
+    let script = guard(WORKFLOW);
+    let base = "3333333333333333333333333333333333333333";
+    let wrong = "2222222222222222222222222222222222222222";
+    let input = [
+        ("PROFILE", "queue_qualification"),
+        ("GITHUB_EVENT_NAME", "merge_group"),
+        ("PARENTS", base),
+    ];
+    assert!(
+        run(&script, &input)?.status.success(),
+        "valid queue composition"
+    );
+    let mutant = script.replace(
+        "[[ \"${merged%%$'\\n'*}\" == \"$TREE\" ]] || fail 'Wrong queue composition tree'",
+        ":",
+    );
+    assert_ne!(mutant, script);
+    let mut bad_tree = input.to_vec();
+    bad_tree.push(("MERGED_TREE", wrong));
+    assert!(
+        run(&mutant, &bad_tree)?.status.success(),
+        "removing the tree guard admits the wrong composition"
+    );
+    for (key, value) in [
+        ("QUEUE_BASE", wrong),
+        ("QUEUE_HEAD", wrong),
+        ("GITHUB_SHA", wrong),
+        ("GITHUB_RUN_ATTEMPT", "2"),
+        ("MERGED_TREE", wrong),
+        ("PARENTS", wrong),
+        ("GITHUB_EVENT_NAME", "pull_request"),
+    ] {
+        let mut changed = input.to_vec();
+        changed.push((key, value));
+        assert!(
+            !run(&script, &changed)?.status.success(),
+            "accepted wrong {key}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn selected_child_missing_failed_cancelled_or_unexpected_cannot_pass() -> TestResult {
     let script = body(job(WORKFLOW, "ci-result"));
@@ -703,6 +754,8 @@ fn binding_contract(source: &str) -> bool {
         "SUBJECT: ${{ inputs.subject_sha }}",
         "TREE: ${{ inputs.subject_tree }}",
         "GENERATION: ${{ inputs.workflow_generation }}",
+        "QUEUE_BASE: ${{ github.event.merge_group.base_sha }}",
+        "QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}",
         "ref: ${{ inputs.subject_sha }}",
         "persist-credentials: false",
     ].iter().all(|binding| identity.contains(binding))
@@ -727,6 +780,14 @@ fn wiring_rejects_mutable_subjects_fabricated_results_and_wrong_selections() -> 
     assert!(binding_contract(WORKFLOW));
     for (old, new) in [
         ("SUBJECT: ${{ inputs.subject_sha }}", "SUBJECT: main"),
+        (
+            "QUEUE_BASE: ${{ github.event.merge_group.base_sha }}",
+            "QUEUE_BASE: main",
+        ),
+        (
+            "QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}",
+            "QUEUE_HEAD: main",
+        ),
         (
             "GENERATION: ${{ inputs.workflow_generation }}",
             "GENERATION: main",

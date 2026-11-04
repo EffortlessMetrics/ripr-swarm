@@ -75,6 +75,8 @@ jobs:
           SUBJECT: ${{ inputs.subject_sha }}
           TREE: ${{ inputs.subject_tree }}
           GENERATION: ${{ inputs.workflow_generation }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}
           SELECT_RUST: ${{ inputs.run_rust_only }}
           SELECT_RELEASE: ${{ inputs.run_release_proof }}
           SELECT_MSRV: ${{ inputs.run_msrv }}
@@ -82,7 +84,7 @@ jobs:
         run: |
           set -euo pipefail
           fail() { echo "$1" >&2; exit 1; }
-          [[ "$PROFILE" == qualification ]] || fail 'Unknown admitted profile'
+          [[ "$PROFILE" == qualification || "$PROFILE" == queue_qualification ]] || fail 'Unknown admitted profile'
           [[ "$REQUEST" =~ ^[0-9]+-[0-9]+$ ]] || fail 'Malformed request identity'
           for value in "$HEAD_SHA" "$BASE_SHA" "$SUBJECT" "$TREE" "$GENERATION"; do
             [[ "$value" =~ ^[0-9a-f]{40}$ ]] || fail 'Malformed admission identity'
@@ -95,7 +97,17 @@ jobs:
           [[ "$GITHUB_WORKFLOW_SHA" == "$GENERATION" ]] || fail 'Wrong workflow generation'
           [[ "$(git rev-parse HEAD)" == "$SUBJECT" ]] || fail 'Wrong source checkout'
           [[ "$(git rev-parse 'HEAD^{tree}')" == "$TREE" ]] || fail 'Wrong integration tree'
-          [[ "$(git show -s --format=%P HEAD)" == "$BASE_SHA $HEAD_SHA" ]] || fail 'Wrong integration parents'
+          parents=$(git show -s --format=%P HEAD)
+          if [[ "$PROFILE" == queue_qualification ]]; then
+            [[ "$GITHUB_EVENT_NAME" == merge_group && "$QUEUE_BASE" == "$BASE_SHA" && "$QUEUE_HEAD" == "$SUBJECT" && "$GITHUB_SHA" == "$SUBJECT" ]] || fail 'Wrong queue event identity'
+            [[ "$REQUEST" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]] || fail 'Wrong request attempt'
+            [[ "$parents" == "$BASE_SHA" ]] || fail 'Wrong queue parent'
+            git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "$HEAD_SHA"
+            merged=$(git merge-tree --write-tree "$BASE_SHA" "$HEAD_SHA")
+            [[ "${merged%%$'\n'*}" == "$TREE" ]] || fail 'Wrong queue composition tree'
+          else
+            [[ "$parents" == "$BASE_SHA $HEAD_SHA" ]] || fail 'Wrong integration parents'
+          fi
 
   release-proof:
     name: Perl and release proof

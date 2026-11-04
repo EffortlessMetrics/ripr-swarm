@@ -113,6 +113,8 @@ jobs:
           SUBJECT: ${{ inputs.subject_sha || github.sha }}
           TREE: ${{ inputs.subject_tree }}
           GENERATION: ${{ inputs.workflow_generation }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
           fail() { echo "$1" >&2; exit 1; }
@@ -120,7 +122,7 @@ jobs:
           actual=$(git rev-parse HEAD)
           [[ "$actual" == "$SUBJECT" ]] || fail 'Wrong source checkout'
           if [[ "$CALLED" == true ]]; then
-            [[ "$PROFILE" == qualification ]] || fail 'Unknown admitted profile'
+            [[ "$PROFILE" == qualification || "$PROFILE" == queue_qualification ]] || fail 'Unknown admitted profile'
             [[ "$REQUEST" =~ ^[0-9]+-[0-9]+$ ]] || fail 'Malformed request identity'
             for value in "$HEAD_SHA" "$BASE_SHA" "$TREE" "$GENERATION"; do
               [[ "$value" =~ ^[0-9a-f]{40}$ ]] || fail 'Malformed admission identity'
@@ -129,7 +131,16 @@ jobs:
             actual_tree=$(git rev-parse 'HEAD^{tree}')
             [[ "$actual_tree" == "$TREE" ]] || fail 'Wrong integration tree'
             parents=$(git show -s --format=%P HEAD)
-            [[ "$parents" == "$BASE_SHA $HEAD_SHA" ]] || fail 'Wrong integration parents'
+            if [[ "$PROFILE" == queue_qualification ]]; then
+              [[ "$GITHUB_EVENT_NAME" == merge_group && "$QUEUE_BASE" == "$BASE_SHA" && "$QUEUE_HEAD" == "$SUBJECT" && "$GITHUB_SHA" == "$SUBJECT" ]] || fail 'Wrong queue event identity'
+              [[ "$REQUEST" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]] || fail 'Wrong request attempt'
+              [[ "$parents" == "$BASE_SHA" ]] || fail 'Wrong queue parent'
+              git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "$HEAD_SHA"
+              merged=$(git merge-tree --write-tree "$BASE_SHA" "$HEAD_SHA")
+              [[ "${merged%%$'\n'*}" == "$TREE" ]] || fail 'Wrong queue composition tree'
+            else
+              [[ "$parents" == "$BASE_SHA $HEAD_SHA" ]] || fail 'Wrong integration parents'
+            fi
           else
             case "$GITHUB_EVENT_NAME" in
               pull_request|schedule|workflow_dispatch) ;;

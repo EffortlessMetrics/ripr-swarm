@@ -565,6 +565,38 @@ jobs:
       subject_tree: ${{ needs.admission.outputs.tree }}
       workflow_generation: ${{ github.workflow_sha }}
 
+  paste-queue:
+    name: Printed command queue qualification
+    needs: [admission]
+    if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/printed-command-paste.yml
+    with:
+      proof_profile: queue_qualification
+      request_id: ${{ needs.admission.outputs.request }}
+      head_sha: ${{ needs.admission.outputs.head }}
+      base_sha: ${{ github.event.merge_group.base_sha }}
+      subject_sha: ${{ github.event.merge_group.head_sha }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
+  feature-queue:
+    name: Feature queue qualification
+    needs: [admission]
+    if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/ci.yml
+    with:
+      proof_profile: queue_qualification
+      request_id: ${{ needs.admission.outputs.request }}
+      head_sha: ${{ needs.admission.outputs.head }}
+      base_sha: ${{ github.event.merge_group.base_sha }}
+      subject_sha: ${{ github.event.merge_group.head_sha }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+      run_rust_only: true
+      run_release_proof: ${{ contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') || contains(format(',{0},', needs.admission.outputs.labels), ',release-check,') }}
+      run_msrv: ${{ contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      run_vscode: false
+
   docs-gate:
     name: Ripr Docs Gate
     needs: [admission, detect-docs-only]
@@ -632,7 +664,7 @@ jobs:
     # merge-ready request. Any other pull_request label event is a nonrequest
     # under a different name so the required context is never satisfied by it.
     name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
-    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate, vscode-select, vscode-e2e, wheel-queue]
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate, vscode-select, vscode-e2e, wheel-queue, paste-queue, feature-queue]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -835,6 +867,8 @@ jobs:
           ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
           VSCODE_CHECK_RESULT: ${{ steps.vscode.outcome }}
           WHEEL_RESULT: ${{ needs.wheel-queue.result }}
+          PASTE_RESULT: ${{ needs.paste-queue.result }}
+          FEATURE_RESULT: ${{ needs.feature-queue.result }}
         run: |
           status=pass message="selected implementation job succeeded"
           if [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"
@@ -847,6 +881,8 @@ jobs:
           elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$ELIGIBILITY_RESULT" != success ]; then status=fail; message="live eligibility no longer established for the initially admitted head/request"
           elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$VSCODE_CHECK_RESULT" != success ]; then status=fail; message="the selected VS Code extension e2e did not succeed for the admitted head (see the vscode check step)"
           elif [ "$EVENT_NAME" = merge_group ] && [ "$WHEEL_RESULT" != success ]; then status=fail; message="the queued Python wheel qualification did not succeed (result: $WHEEL_RESULT)"
+          elif [ "$EVENT_NAME" = merge_group ] && [ "$PASTE_RESULT" != success ]; then status=fail; message="the queued printed-command matrix did not succeed (result: $PASTE_RESULT)"
+          elif [ "$EVENT_NAME" = merge_group ] && [ "$FEATURE_RESULT" != success ]; then status=fail; message="the queued feature portfolio did not succeed (result: $FEATURE_RESULT)"
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"

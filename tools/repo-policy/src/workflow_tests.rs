@@ -1432,7 +1432,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "the Result's dependency on the extension jobs",
-            "docs-gate, vscode-select, vscode-e2e, wheel-queue]",
+            "docs-gate, vscode-select, vscode-e2e, wheel-queue, paste-queue, feature-queue]",
             "docs-gate]",
             "make the Result depend on the extension selection and e2e jobs",
         ),

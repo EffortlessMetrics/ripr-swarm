@@ -271,6 +271,8 @@ esac
         .to_string(),
     );
     env.insert("WHEEL_RESULT".to_string(), "success".to_string());
+    env.insert("PASTE_RESULT".to_string(), "success".to_string());
+    env.insert("FEATURE_RESULT".to_string(), "success".to_string());
     let output = run_shell(&script, &env)?;
     let report =
         fs::read_to_string(summary).map_err(|e| format!("missing summary: {e}; {output:?}"))?;

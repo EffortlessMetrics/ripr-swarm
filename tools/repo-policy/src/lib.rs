@@ -11,6 +11,7 @@ pub mod coverage_diagnostics;
 pub mod executable_files;
 mod identity;
 pub mod python_wheel;
+pub mod queue_event_inventory;
 pub use identity::{enter_workspace_root, preflight, verify_executable_identity, verify_preflight};
 pub const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
 
@@ -1376,7 +1377,7 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         ),
         (
             "make the Result depend on the extension selection and e2e jobs (#12252)",
-            "docs-gate, vscode-select, vscode-e2e, wheel-queue]",
+            "docs-gate, vscode-select, vscode-e2e, wheel-queue, paste-queue, feature-queue]",
         ),
         (
             "require the extension e2e result for the admitted head before summarizing (#12122)",

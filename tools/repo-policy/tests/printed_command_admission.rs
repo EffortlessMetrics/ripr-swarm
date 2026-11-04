@@ -37,6 +37,8 @@ fn input_bindings(source: &str) -> bool {
             "HEAD_SHA: ${{ inputs.head_sha }}", "BASE_SHA: ${{ inputs.base_sha }}",
             "SUBJECT: ${{ inputs.subject_sha || github.sha }}", "TREE: ${{ inputs.subject_tree }}",
             "GENERATION: ${{ inputs.workflow_generation }}",
+            "QUEUE_BASE: ${{ github.event.merge_group.base_sha }}",
+            "QUEUE_HEAD: ${{ github.event.merge_group.head_sha }}",
         ].iter().all(|binding| step.contains(binding))
 }
 
@@ -62,6 +64,8 @@ fn input_binding_and_guard_removal_mutants_are_rejected() {
         ),
         ("${{ inputs.subject_tree }}", "main"),
         ("${{ inputs.workflow_generation }}", "main"),
+        ("${{ github.event.merge_group.base_sha }}", "main"),
+        ("${{ github.event.merge_group.head_sha }}", "main"),
         (
             "cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}",
             "cancel-in-progress: true",
@@ -191,7 +195,7 @@ mod execution {
 
     // Stub only Git's immutable-object reads. The executed decision is the real workflow body.
     fn run(body: &str, overrides: &[(&str, &str)]) -> Result<bool, String> {
-        let stub = "git() { case \"$*\" in 'rev-parse HEAD') printf '%s\\n' \"$ACTUAL\";; 'rev-parse HEAD^{tree}') printf '%s\\n' \"$ACTUAL_TREE\";; 'show -s --format=%P HEAD') printf '%s\\n' \"$PARENTS\";; *) return 91;; esac; }\ncargo() { return \"$CARGO_STATUS\"; }\n";
+        let stub = "git() { case \"$*\" in 'rev-parse HEAD') printf '%s\\n' \"$ACTUAL\";; 'rev-parse HEAD^{tree}') printf '%s\\n' \"$ACTUAL_TREE\";; 'show -s --format=%P HEAD') printf '%s\\n' \"$PARENTS\";; 'cat-file -e '* ) return 0;; 'merge-tree --write-tree '* ) printf '%s\\n' \"$MERGED_TREE\";; *) return 91;; esac; }\ncargo() { return \"$CARGO_STATUS\"; }\n";
         let output = Command::new("timeout")
             .args([
                 "10s",
@@ -215,6 +219,12 @@ mod execution {
             .env("GENERATION", GENERATION)
             .env("GITHUB_WORKFLOW_SHA", GENERATION)
             .env("GITHUB_EVENT_NAME", "pull_request")
+            .env("GITHUB_RUN_ID", "123")
+            .env("GITHUB_RUN_ATTEMPT", "1")
+            .env("GITHUB_SHA", SUBJECT)
+            .env("QUEUE_BASE", BASE)
+            .env("QUEUE_HEAD", SUBJECT)
+            .env("MERGED_TREE", TREE)
             .env("ACTUAL", SUBJECT)
             .env("ACTUAL_TREE", TREE)
             .env("PARENTS", format!("{BASE} {HEAD}"))
@@ -392,12 +402,48 @@ mod execution {
         }
         assert!(!run(&body, &[("PARENTS", &format!("{HEAD} {BASE}"))])?);
         // Control: deleting the parent predicate admits a wrong integration commit.
-        let mutant = body
-            .lines()
-            .filter(|line| !line.contains("Wrong integration parents"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let mutant = body.replace(
+            "[[ \"$parents\" == \"$BASE_SHA $HEAD_SHA\" ]] || fail 'Wrong integration parents'",
+            ":",
+        );
+        assert_ne!(mutant, body);
         assert!(run(&mutant, &[("PARENTS", HEAD)])?);
+        Ok(())
+    }
+
+    #[test]
+    fn queue_squash_guard_binds_event_tree_head_and_attempt() -> Result<(), String> {
+        let body = guard()?;
+        let queue = [
+            ("PROFILE", "queue_qualification"),
+            ("GITHUB_EVENT_NAME", "merge_group"),
+            ("PARENTS", BASE),
+        ];
+        assert!(run(&body, &queue)?, "valid queue composition must run");
+        let mutant = body.replace(
+            "[[ \"${merged%%$'\\n'*}\" == \"$TREE\" ]] || fail 'Wrong queue composition tree'",
+            ":",
+        );
+        assert_ne!(mutant, body);
+        let mut wrong_tree = queue.to_vec();
+        wrong_tree.push(("MERGED_TREE", HEAD));
+        assert!(
+            run(&mutant, &wrong_tree)?,
+            "removing the tree guard admits the wrong composition"
+        );
+        for (key, value) in [
+            ("QUEUE_BASE", HEAD),
+            ("QUEUE_HEAD", HEAD),
+            ("GITHUB_SHA", HEAD),
+            ("GITHUB_RUN_ATTEMPT", "2"),
+            ("MERGED_TREE", HEAD),
+            ("PARENTS", HEAD),
+            ("GITHUB_EVENT_NAME", "pull_request"),
+        ] {
+            let mut input = queue.to_vec();
+            input.push((key, value));
+            assert!(!run(&body, &input)?, "accepted wrong {key}");
+        }
         Ok(())
     }
 

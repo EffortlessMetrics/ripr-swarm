@@ -7,6 +7,21 @@ configuration are mature enough to support opt-in failure policies.
 New to RIPR in CI? Start with the short ordered path in
 [Adopting RIPR in CI](ADOPTING_IN_CI.md); this page is the long reference.
 
+## Queue event inventory
+
+`cargo policy queue-event-inventory` reports every local workflow file, its
+content hash, and its subscribed events. `--require-no-pr-events` fails if any
+workflow subscribes to `pull_request` or `pull_request_target`; it is intentionally
+stricter than a CI-only check and includes agent and notification workflows.
+`--require-no-pr-or-push-events` additionally rejects all `push` subscriptions,
+including default-branch pushes. These deliberately strict modes do not classify
+which workflows are CI. The tool reports subscriptions even when a job guard skips work. It refuses
+unsupported event YAML rather than treating it as quiet. It does not classify
+proof obligations, follow organization-level automations, establish hosted runs,
+resolve indirect events such as `workflow_run`, or establish live branch
+protections. Use it with the queue cutover evidence,
+not as a replacement for proof-conservation review.
+
 ## Python wheel applicability (#4987)
 
 The Python wheel workflow retains its broad PR paths and ordinary manual
@@ -1012,6 +1027,15 @@ Use it to record CX43 primary proof, CPX42/CX53 fallback proof, or the bounded
 runner availability blocker without exposing runner tokens or secrets.
 
 The protected `Ripr Rust Small Result` job also requires the VS Code extension e2e for the exact admitted head on `merge-ready` requests and the combined queued subject on merge-group requests (#12122, #12252). The e2e is a job of `routed-rust.yml`'s own run: `vscode surface` classifies the admitted diff, and `vscode extension e2e` calls the reusable `vscode-e2e.yml` when it selects. The Result lists both in `needs`, so it reads this run's results by construction and no other request's run can be mistaken for it (GitHub exposes no per-event identifier shared by two workflows, which is why the earlier cross-workflow correlation was retired). `vscode surface` selects on the `full-ci` or `vscode` label, on any change under `editors/vscode/` or to `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml`, and on every doubt (missing or malformed identities, unavailable history, several merge bases, a failed or empty diff). The Result fails closed unless the selection succeeded and either it selected and the e2e succeeded, or it did not select and the e2e was skipped; a selected e2e that failed, was cancelled or skipped, an unselected e2e that ran, or an unreadable selection all fail. Main and manual-dispatch results do not require it. The `CI` workflow still runs the same reusable workflow on pushes to `main` and manual dispatch, and for a frozen `subject_sha` selection on its staged callable path; it no longer runs for pull requests.
+
+The staged merge-group portfolio also invokes the printed-command matrix and the
+feature callable using the admitted queue subject. Its Result requires both
+children to succeed. The Rust-only feature lane runs conservatively for every
+admitted group; release-oriented and duplicate MSRV proof remain selected only
+by their existing `release-check` or `full-ci` intent. The existing VS Code
+queue selection owns editor e2e, so the feature callable does not repeat it.
+These source and local-test changes have not been exercised by a live queue;
+their runtime and the complete portfolio budget are not established.
 
 The routed lane runs the existing Rust/product command surface without release
 package or publish dry-run steps. Each required lane invokes the shared
