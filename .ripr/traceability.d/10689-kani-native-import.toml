@@ -7,8 +7,8 @@ tests = [
   "crates/ripr/src/output/kani_report.rs::tests::honesty_corpus_matches_real_import_projection",
 ]
 code = [
-  "crates/ripr/src/domain/external_verification.rs",
-  "crates/ripr/src/domain/external_verification_native.rs",
+  "crates/ripr-contract/src/domain/external_verification.rs",
+  "crates/ripr-contract/src/domain/external_verification_native.rs",
   "crates/ripr/src/app/kani_import.rs",
   "crates/ripr/src/app/kani_import/native.rs",
   "crates/ripr/src/cli/commands/kani_report.rs",

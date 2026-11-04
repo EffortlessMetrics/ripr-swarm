@@ -783,6 +783,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "source_promotion"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
+                    | "verification-plan-corpus"
                     | "work_portfolio"
                     | "work_selection_identity"
                     | "work_result_identity"
@@ -3267,7 +3268,7 @@ mod tests {
         let paths = |items: &[&str]| items.iter().map(|p| p.to_string()).collect::<Vec<_>>();
         for path in [
             "crates/ripr/src/output/human/triage.rs",
-            "crates/ripr/src/domain/classification.rs",
+            "crates/ripr-contract/src/domain/classification.rs",
             "fixtures/rust_map_overwrite_count/expected/human.txt",
             "docs/OUTPUT_SCHEMA.md",
             "policy/output_contracts.txt",

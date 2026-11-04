@@ -10,9 +10,13 @@ crates/ripr/src/analysis/**|crate::output|analysis must not render user output
 !crates/ripr/src/analysis/diff/path.rs|crate::output|#8419: NFC/NFD diff-vs-walk membership reuses path_identity_key_on; this file does not render user output
 !crates/ripr/src/analysis/language/perl/static_limit/runner_tests.rs|crate::output|#4146: cfg(test) assertions verify the missing-runner guidance IS rendered - the rendered output is the discriminator under test; production rendering paths remain denied by the broad rule
 crates/ripr/src/domain/**|crate::cli|domain must not import CLI adapters
+crates/ripr-contract/src/domain/**|crate::cli|domain must not import CLI adapters
 crates/ripr/src/domain/**|crate::lsp|domain must not import LSP adapters
+crates/ripr-contract/src/domain/**|crate::lsp|domain must not import LSP adapters
 crates/ripr/src/domain/**|crate::output|domain must not import output renderers
+crates/ripr-contract/src/domain/**|crate::output|domain must not import output renderers
 crates/ripr/src/domain/**|serde_json|domain must not know JSON rendering
+crates/ripr-contract/src/domain/**|serde_json|domain must not know JSON rendering
 !crates/ripr/src/domain/next_action.rs|serde_json|#6304: cfg(test) wire-spelling assertions verify the governed spellings ARE the serde form - the serialized value is the discriminator under test; production selection code never touches serde_json
 !crates/ripr/src/domain/guarded_edit.rs|serde_json|#1902: cfg(test) corpus loader parses the committed guarded-edit-precondition fixture JSON - the parsed corpus rows are the discriminator under test; production precondition code never touches serde_json
 crates/ripr/src/output/**|check_workspace|output must not orchestrate analysis use cases

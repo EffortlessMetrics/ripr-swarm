@@ -13,6 +13,14 @@ preserves earlier campaigns without selecting current work.
 ## Current product position
 
 The [support tiers](status/SUPPORT_TIERS.md) define what users may rely on.
+The [release ladder](METRICS.md#release-ladder) (R0 installable and honest,
+R1 reliable, R2 useful, R3 critical) gives each level a numeric bar and an
+instrument, and states which level a language must hold for each tier. Its
+bars are working defaults pending the owner's product call. On 2026-11-04 the
+ladder reads: R0 is not yet met because first value across install channels is
+unproven; the largest gaps are recall, Python and TypeScript repair follow-through,
+and speed and memory on large repositories
+([position](METRICS.md#position-on-2026-11-04)).
 The [capability matrix](CAPABILITY_MATRIX.md) and its
 [machine-readable source](../metrics/capabilities.toml) carry the capability
 and proof inventory.
