@@ -266,8 +266,15 @@ pub(crate) fn module_composition_disclosure(index: &RustIndex) -> Option<String>
 }
 
 pub(crate) fn apply_oracle_policy(index: &mut RustIndex, policy: &OraclePolicy) {
+    if !policy.has_overlays() {
+        index.for_each_test_mut(|test| {
+            apply_oracle_policy_to_assertions(&mut test.assertions, policy);
+        });
+        return;
+    }
     index.for_each_test_mut(|test| {
-        apply_oracle_policy_to_assertions(&mut test.assertions, policy);
+        let resolved = policy.resolved_for_path(&test.file);
+        apply_oracle_policy_to_assertions(&mut test.assertions, &resolved);
     });
 }
 

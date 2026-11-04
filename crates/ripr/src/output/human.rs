@@ -5488,7 +5488,7 @@ mod tests {
                 "{rendered}"
             );
             assert!(!rendered.contains("test placement or related-test evidence is incomplete"));
-            assert!(!rendered.contains("names no concrete missing discriminator"));
+            assert!(!rendered.contains("names no concrete missing check"));
         }
         // Diff-mode placement text is unchanged.
         let mut placed = python_preview_finding(5, false);
