@@ -3096,6 +3096,8 @@ pub(crate) fn include_resolved_explicit_store_operational_write(
     attempt_id: Option<&RepairAttemptId>,
     _access: RepairAttemptStoreAccess,
 ) -> Result<(), String> {
+    // A failed resolution must never retain authority from an earlier call.
+    policy.artifact_store = None;
     let (canonical_root, locator) = match resolve_store(root, store, RepairAttemptStoreAccess::Open)
     {
         Ok(resolved) => {
@@ -5146,6 +5148,15 @@ mod tests {
             Some(&id),
             RepairAttemptStoreAccess::Open,
         )?;
+        let mut stale = policy.clone();
+        include_resolved_explicit_store_operational_write(
+            &mut stale,
+            &root,
+            Some(Path::new("missing-store")),
+            Some(&id),
+            RepairAttemptStoreAccess::Open,
+        )?;
+        assert!(stale.artifact_store.is_none());
         let baseline = crate::edit_cage::capture_attempt_baseline(&root, &policy)?;
         assert!(!baseline.is_ambiguous());
         let bytes = serde_json::to_vec(&baseline).map_err(|error| error.to_string())?;

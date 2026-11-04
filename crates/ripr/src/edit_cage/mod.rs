@@ -5293,6 +5293,26 @@ mod tests {
                     &protected_policy,
                     &BTreeSet::new()
                 )?);
+                protected_policy.forbidden_paths.clear();
+                protected_policy.selected_target = CagePathRule::exact(&protected)?;
+                assert!(!artifact_pair_safe(
+                    &fixture.root,
+                    &format!("{subdir}/data.json"),
+                    store,
+                    &protected_policy,
+                    &BTreeSet::new()
+                )?);
+                protected_policy.selected_target = policy.selected_target.clone();
+                protected_policy
+                    .allowed_edit_surface
+                    .push(CagePathRule::exact(&protected)?);
+                assert!(!artifact_pair_safe(
+                    &fixture.root,
+                    &format!("{subdir}/data.json"),
+                    store,
+                    &protected_policy,
+                    &BTreeSet::new()
+                )?);
             }
         }
         Ok(())
