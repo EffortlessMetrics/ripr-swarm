@@ -76,7 +76,7 @@ macro_rules! closed_vocabulary {
             }
 
             /// Every wire label of this vocabulary, one per variant.
-            pub(crate) const LABELS: &'static [&'static str] = &[$($label,)+];
+            pub(crate) const LABELS: &'static [&'static str] = &[$(Self::$variant.as_str(),)+];
 
             /// Every variant, generated from the same list as `LABELS`.
             #[cfg(test)]
