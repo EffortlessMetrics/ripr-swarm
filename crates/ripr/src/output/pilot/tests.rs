@@ -1370,22 +1370,22 @@ fn pilot_human_output_labels_seams_exploratory_not_ranked_by_mutant_yield() {
     assert_eq!(ranked[1].class, SeamGripClass::WeaklyGripped);
 
     // Control: JSON carries no exploratory label and keeps the same seam
-    // order as the human list, so structured consumers are byte-stable
-    // apart from pre-existing fields (pinned by the JSON assertions in
-    // `pilot_summary_json_*` and verified byte-identical against
-    // origin/main for this fixture in the PR body).
+    // order as the human list. Ranking changes intentionally reorder both.
     let json = render_pilot_summary_json(&entries, pilot_context(&artifacts));
     assert!(!json.contains("Exploratory"), "{json}");
     assert!(!json.contains("mutant yield"), "{json}");
     let weak_at = json.find("src/pricing.rs").unwrap_or(usize::MAX);
     let ungripped_at = json.find("src/other.rs").unwrap_or(usize::MAX);
     assert!(ungripped_at < weak_at, "{json}");
-    let md_weak_at = md.find("src/pricing.rs").unwrap_or(usize::MAX);
-    let md_ungripped_at = md.rfind("src/other.rs").unwrap_or(usize::MAX);
+    let ranked_md = md.find("## Ranked Seams").map_or("", |start| &md[start..]);
+    let md_weak_at = ranked_md.find("src/pricing.rs").unwrap_or(usize::MAX);
+    let md_ungripped_at = ranked_md.find("src/other.rs").unwrap_or(usize::MAX);
     assert!(
         md_weak_at != usize::MAX && md_ungripped_at != usize::MAX,
         "{md}"
     );
+    assert!(md_ungripped_at < md_weak_at, "{md}");
+    assert!(terminal.contains("src/other.rs:10"), "{terminal}");
 }
 
 /// The bash fence content is pinned byte-for-byte: adding the PowerShell
