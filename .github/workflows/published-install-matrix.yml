@@ -1,0 +1,121 @@
+name: Published install matrix
+
+# Answers "does what we publish actually install and start on every platform we
+# claim?" for each public channel: crates.io (`cargo install ripr --locked`),
+# PyPI (`ripr-rs`) and npm (`@effortlessmetrics/ripr`), on Linux x86-64/ARM64,
+# macOS ARM64/Intel and Windows. Each cell installs from the registry into a
+# clean location, then runs `ripr --version` and `ripr doctor` in a fresh Cargo
+# project. Read-only and advisory: it downloads public packages and publishes
+# nothing, runs weekly and on demand, never on a pull request.
+#
+# A cell marked `known_gap` is a documented unavailable combination (see
+# docs/INSTALL_CHANNELS.md: PyPI and npm ship Linux x86-64 only). It still runs
+# so the matrix shows when the gap closes, but its failure is reported as a
+# known gap, not a red run. Remove `known_gap` from a cell when that platform
+# is published. Every other cell fails the run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      cargo_version:
+        description: Exact crates.io version for the cargo cells (for example 0.11.0); empty installs the latest published release
+        required: false
+        default: ""
+        type: string
+  schedule:
+    - cron: "23 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: published-install-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install:
+    name: ${{ matrix.channel }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
+        channel: [cargo, pypi, npm]
+        include:
+          - { os: ubuntu-24.04-arm, channel: pypi, known_gap: true }
+          - { os: macos-latest, channel: pypi, known_gap: true }
+          - { os: macos-15-intel, channel: pypi, known_gap: true }
+          - { os: windows-latest, channel: pypi, known_gap: true }
+          - { os: ubuntu-24.04-arm, channel: npm, known_gap: true }
+          - { os: macos-latest, channel: npm, known_gap: true }
+          - { os: macos-15-intel, channel: npm, known_gap: true }
+          - { os: windows-latest, channel: npm, known_gap: true }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install from the registry
+        id: install
+        continue-on-error: ${{ matrix.known_gap == true }}
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          CARGO_VERSION: ${{ inputs.cargo_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/smoke" && cd "$RUNNER_TEMP/smoke"
+          case "$CHANNEL" in
+            cargo)
+              if [ -n "$CARGO_VERSION" ]; then
+                [[ $CARGO_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad cargo_version: $CARGO_VERSION"; exit 1; }
+                args=(--version "$CARGO_VERSION")
+              else
+                args=()
+              fi
+              start=$SECONDS
+              cargo install ripr --locked --root "$RUNNER_TEMP/ripr-root" "${args[@]}"
+              echo "install_seconds=$((SECONDS - start))" >> "$GITHUB_OUTPUT"
+              echo "$RUNNER_TEMP/ripr-root/bin" >> "$GITHUB_PATH"
+              ;;
+            pypi)
+              python3 -m venv "$RUNNER_TEMP/venv"
+              bindir="$RUNNER_TEMP/venv/bin"; [ -d "$bindir" ] || bindir="$RUNNER_TEMP/venv/Scripts"
+              "$bindir/python" -m pip install --pre ripr-rs
+              echo "$bindir" >> "$GITHUB_PATH"
+              ;;
+            npm)
+              npm install --prefix "$RUNNER_TEMP/npm" @effortlessmetrics/ripr@next
+              echo "$RUNNER_TEMP/npm/node_modules/.bin" >> "$GITHUB_PATH"
+              ;;
+          esac
+
+      - name: Start it in a fresh Cargo project
+        id: smoke
+        if: steps.install.outcome == 'success'
+        continue-on-error: ${{ matrix.known_gap == true }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP" && cargo new --quiet smoke-project && cd smoke-project
+          ripr --version | tee version.txt
+          ripr doctor
+          echo "version=$(head -n1 version.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Record the cell
+        if: always()
+        env:
+          CELL: ${{ matrix.channel }} on ${{ matrix.os }}
+          INSTALL: ${{ steps.install.outcome }}
+          SMOKE: ${{ steps.smoke.outcome }}
+          GAP: ${{ matrix.known_gap == true }}
+          VERSION: ${{ steps.smoke.outputs.version }}
+          SECONDS_TO_INSTALL: ${{ steps.install.outputs.install_seconds }}
+        run: |
+          if [ "$INSTALL" = success ] && [ "$SMOKE" = success ]; then verdict="works"
+          elif [ "$GAP" = true ]; then verdict="known gap (unavailable, as documented)"
+          else verdict="FAILED (install=$INSTALL, start=$SMOKE)"; fi
+          line="| $CELL | $verdict | ${VERSION:-} | ${SECONDS_TO_INSTALL:-} |"
+          echo "$line"
+          { echo "| cell | result | version | install seconds |"; echo "| --- | --- | --- | --- |"; echo "$line"; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$GAP" = true ] && [ "$INSTALL" = success ] && [ "$SMOKE" = success ]; then
+            echo "::notice::$CELL works now; drop its known_gap entry from the matrix."
+          fi
