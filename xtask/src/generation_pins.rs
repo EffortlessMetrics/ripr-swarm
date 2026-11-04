@@ -17,6 +17,13 @@
 //! passes unconditionally (unrelated main movement invalidates nothing), and
 //! every unresolvable or unparseable state fails closed instead of passing.
 //!
+//! Known limit: on a hosted checkout of GitHub's synthetic pull-request merge
+//! ref, `git merge-base origin/main HEAD` returns the base tip rather than the
+//! PR branch's original fork, so a PR whose claimed value is identical to a
+//! value a sibling already landed can read as "untouched". The merge-queue
+//! qualification of the real merge composition is the authority for that
+//! interaction; this local/PR gate is a shift-left check, not the final word.
+//!
 //! The gate compares registry constants only — never fixture values (the
 //! historical 1.74/1.78/1.119 pins in the stale-cache-rejection fixtures are
 //! correct by design) and never the contract schema versions, whose collision
