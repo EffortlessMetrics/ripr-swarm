@@ -1613,10 +1613,11 @@ fn check_inner(
     // #4945: invocation-time cost disclosure for the full-repo audit-path
     // formats. One line, before the run begins, naming the expected cost
     // class (cold full-corpus walk; the warm-rerun clause is honest per
-    // format — see `repo_audit_path_disclosure`) — like the repo-scope
-    // --base/--diff warning above, this is an advisory notice, so it is not
-    // part of the --quiet-suppressed progress stream.
-    if let Some(disclosure) = format.repo_audit_path_disclosure() {
+    // format and per cache presence — see `repo_audit_path_disclosure`,
+    // #12505) — like the repo-scope --base/--diff warning above, this is
+    // an advisory notice, so it is not part of the --quiet-suppressed
+    // progress stream.
+    if let Some(disclosure) = format.repo_audit_path_disclosure(&input.root) {
         eprintln!("{disclosure}");
     }
     if matches!(format, OutputFormat::RepoExposureJson) {

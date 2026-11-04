@@ -1,0 +1,19 @@
+# Allowlisted CLI exit-code contract exceptions (#12505).
+#
+# docs/EXIT_CODES.md pins the closed ripr exit set {0, 2, 3, 130}
+# (typed side kani-pinned in crates/ripr/src/cli/exit_kani.rs). `cargo
+# xtask check-cli-exit-contract` fails any `process::exit` call site in
+# crates/ripr/src whose decimal integer literal is outside that set, and
+# any non-literal exit argument outside the pinned startup boundary.
+# Occurrences inside string/char literals or comments are not call sites
+# and never need a row. Production control flow maps through
+# `CommandError::exit_code` instead of exiting raw.
+#
+# Format:
+# path|pattern|max_count|owner|reason
+#
+# New rows go in their own file under policy/cli-exit-contract-allowlist.d/
+# (same format) so parallel PRs do not append to this list's tail (#9859).
+
+crates/ripr/src/atomic_file.rs|process::exit(86)|1|cache-lifecycle-tests|#8474: test-only child re-enters one exact test in the current unit-test executable and exits 86 inside the production cache fill callback so the child-failure branch executes; isolated temporary directory, no shell, network or descendants.
+crates/ripr/src/main.rs|process::exit(<non-literal>)|2|cli-exit-boundary|#11770 research: the startup boundary is the pinned non-literal exit surface — `exit(err.exit_code())` maps the typed CommandError contract (2/3/130) and `exit(exit_code())` maps a main-thread panic to the documented code 2; both are total over their variants and kani-pinned by cli/exit_kani.rs.

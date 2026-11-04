@@ -3,6 +3,8 @@
 /// Most automation should prefer [`OutputFormat::Json`] for stable
 /// machine-readable data. Badge and repo-inventory formats exist for specific
 /// downstream integrations and may require additional artifacts.
+use crate::analysis::seam_cache::ClassifiedCacheFamily;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputFormat {
     /// Bounded human-readable triage report.
@@ -108,6 +110,14 @@ struct OutputFormatSpec {
     /// corpus index on every invocation and read no cache, so their
     /// disclosure must not promise cache-backed warm reruns (#4945 review).
     is_seam_fact_cache_backed: bool,
+    /// Which seam-facts cache family the format's walk reads, when any
+    /// (#12505). The invocation-time disclosure probes exactly this
+    /// family's entries before claiming warm reruns; `None` on formats
+    /// that read no seam-facts cache. Set together with
+    /// `is_seam_fact_cache_backed` (parity pinned by the disclosure
+    /// coverage test) and kept in sync with the inventory acquisition
+    /// each renderer performs.
+    seam_fact_cache_family: Option<ClassifiedCacheFamily>,
 }
 
 const FORMAT_SPECS: &[OutputFormatSpec] = &[
@@ -116,6 +126,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["human", "text"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
@@ -123,6 +134,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["human-full", "text-full"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
@@ -130,6 +142,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["json"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
@@ -137,6 +150,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["check-findings-json"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
@@ -144,6 +158,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["github"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
@@ -151,6 +166,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["agent"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
@@ -158,6 +174,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["sarif"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
@@ -165,6 +182,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["badge-json"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
@@ -172,6 +190,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["badge-shields"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
@@ -179,6 +198,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["badge-plus-json"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
@@ -186,6 +206,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["badge-plus-shields"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
@@ -196,6 +217,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         // repo-exposure on the same tree; the cost disclosure follows.
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: true,
+        seam_fact_cache_family: Some(ClassifiedCacheFamily::SeamFacts),
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -203,6 +225,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["repo-badge-shields"],
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: true,
+        seam_fact_cache_family: Some(ClassifiedCacheFamily::SeamFacts),
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -214,6 +237,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         // missing-report path stays cheap and merely over-discloses.
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: true,
+        seam_fact_cache_family: Some(ClassifiedCacheFamily::SeamFacts),
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -221,6 +245,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["repo-badge-plus-shields"],
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: true,
+        seam_fact_cache_family: Some(ClassifiedCacheFamily::SeamFacts),
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -228,6 +253,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["repo-seams-json"],
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -235,6 +261,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["repo-seams-md"],
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: false,
+        seam_fact_cache_family: None,
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -242,6 +269,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["repo-exposure-json"],
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: true,
+        seam_fact_cache_family: Some(ClassifiedCacheFamily::SeamFacts),
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -249,6 +277,10 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["repo-exposure-summary-json"],
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: true,
+        // The compact walk reads only the compact-classified family, which
+        // deliberately does not share entries with the classified family
+        // (seam_cache.rs), so its disclosure probes the compact layer only.
+        seam_fact_cache_family: Some(ClassifiedCacheFamily::CompactClassifiedSeams),
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -256,6 +288,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["repo-exposure-md"],
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: true,
+        seam_fact_cache_family: Some(ClassifiedCacheFamily::SeamFacts),
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -263,6 +296,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["repo-sarif"],
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: true,
+        seam_fact_cache_family: Some(ClassifiedCacheFamily::SeamFacts),
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
@@ -270,6 +304,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["agent-seam-packets-json"],
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: true,
+        seam_fact_cache_family: Some(ClassifiedCacheFamily::SeamFacts),
         is_repo_seam_inventory: true,
     },
 ];
@@ -386,21 +421,51 @@ impl OutputFormat {
             .is_some_and(|spec| spec.is_seam_fact_cache_backed)
     }
 
+    /// Which seam-facts cache family this format's walk reads, when any
+    /// (#12505). `None` exactly when the walk reads no seam-facts cache;
+    /// the parity with `is_seam_fact_cache_backed` is pinned by the
+    /// disclosure coverage test.
+    pub(crate) fn seam_fact_cache_family(&self) -> Option<ClassifiedCacheFamily> {
+        FORMAT_SPECS
+            .iter()
+            .find(|spec| spec.format == *self)
+            .and_then(|spec| spec.seam_fact_cache_family)
+    }
+
     /// Invocation-time stderr disclosure naming the expected cost class for
     /// full-repo audit-path formats (#4945). One line, emitted before the run
     /// begins; honest to the measured magnitude (release notes: a cold
     /// `repo-exposure-json` run took about 76 minutes on 4 vCPUs, a warm run
     /// with the classified cache 42 seconds), without promising a wall clock.
-    /// The warm-rerun clause is honest per format: only the
-    /// cache-backed classified/compact-classified walks claim seam-facts
-    /// cache reuse; the raw `repo-seams-*` walks disclose that every run
-    /// pays the full walk (#4945 review).
-    pub(crate) fn repo_audit_path_disclosure(&self) -> Option<String> {
+    /// The warm-rerun clause is honest per format and per cache state: only
+    /// the cache-backed classified/compact-classified walks may claim
+    /// seam-facts cache reuse, and only when a cache entry already exists in
+    /// that walk's own family — a workspace whose cache was never populated
+    /// (or whose prior run died before the end-of-run publication) hears the
+    /// first-run full-price clause instead (#12505). The raw `repo-seams-*`
+    /// walks disclose that every run pays the full walk (#4945 review).
+    pub(crate) fn repo_audit_path_disclosure(
+        &self,
+        workspace_root: &std::path::Path,
+    ) -> Option<String> {
         if !self.is_full_repo_analysis() {
             return None;
         }
         let warm_rerun_clause = if self.is_seam_fact_cache_backed() {
-            "warm reruns reuse the seam-facts cache and are much faster."
+            match self.seam_fact_cache_family() {
+                Some(family)
+                    if crate::analysis::seam_cache::seam_facts_cache_entry_present(
+                        workspace_root,
+                        family,
+                    ) =>
+                {
+                    "warm reruns reuse the seam-facts cache and are much faster."
+                }
+                _ => {
+                    "no seam-facts cache entry is present yet, so this workspace's first run \
+                     pays the full walk."
+                }
+            }
         } else {
             "raw seam inventory does not read the seam-facts cache, so every run pays the full walk."
         };
@@ -488,15 +553,17 @@ mod tests {
     /// #5261 moved their basis onto the full classified inventory) the two
     /// seam-native repo badge formats — and no diff-scoped, badge-plus, or
     /// gap-ledger surface claims minutes it does not charge. The warm-rerun
-    /// clause is honest per format: only the cache-backed
-    /// classified/compact-classified walks claim seam-facts cache reuse; the
-    /// raw `repo-seams-*` walks disclose that every run pays the full walk
-    /// (#4945 review).
+    /// clause is honest per format and per cache state (#12505): against an
+    /// empty workspace, only the raw `repo-seams-*` walks keep a full-walk
+    /// claim and the cache-backed formats disclose the first-run full-price
+    /// clause; `seam_fact_cache_family` is set exactly on the cache-backed
+    /// formats.
     #[test]
     fn repo_format_audit_path_disclosure_covers_exactly_the_full_repo_analysis_group()
     -> Result<(), String> {
+        let root = temp_disclosure_root("coverage-group")?;
         for spec in FORMAT_SPECS {
-            let disclosure = spec.format.repo_audit_path_disclosure();
+            let disclosure = spec.format.repo_audit_path_disclosure(&root);
             assert_eq!(
                 spec.format.is_full_repo_analysis(),
                 spec.is_full_repo_analysis,
@@ -507,6 +574,12 @@ mod tests {
                 spec.format.is_seam_fact_cache_backed(),
                 spec.is_seam_fact_cache_backed,
                 "cache-backed predicate should match metadata for {:?}",
+                spec.format
+            );
+            assert_eq!(
+                spec.format.seam_fact_cache_family().is_some(),
+                spec.is_seam_fact_cache_backed,
+                "cache family should be set exactly on cache-backed formats for {:?}",
                 spec.format
             );
             if spec.is_full_repo_analysis {
@@ -526,8 +599,17 @@ mod tests {
                 );
                 if spec.is_seam_fact_cache_backed {
                     assert!(
-                        disclosure.contains("warm reruns reuse the seam-facts cache"),
-                        "cache-backed format must claim warm cache reruns: {disclosure}"
+                        disclosure.contains(
+                            "no seam-facts cache entry is present yet, so this workspace's \
+                             first run pays the full walk"
+                        ),
+                        "cache-backed format on a cache-empty workspace must disclose the \
+                         first-run full-price clause: {disclosure}"
+                    );
+                    assert!(
+                        !disclosure.contains("warm reruns reuse"),
+                        "cache-backed format must not promise warm reruns without a cache: \
+                         {disclosure}"
                     );
                     assert!(
                         !disclosure.contains("every run pays the full walk"),
@@ -556,7 +638,115 @@ mod tests {
                 );
             }
         }
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    /// #12505: the invocation disclosure flips on cache presence, scoped to
+    /// the walk's own family: populating the classified family lets the
+    /// classified formats claim warm reruns again, while the compact
+    /// `repo-exposure-summary-json` walk — which reads only the separate
+    /// compact-classified family — keeps the first-run full-price clause
+    /// until its own family holds an entry. The same workspace therefore
+    /// hears a different stderr line per format, and each format's line
+    /// differs between cache-absent and cache-present states.
+    #[test]
+    fn repo_audit_path_disclosure_is_cache_presence_aware() -> Result<(), String> {
+        let root = temp_disclosure_root("presence-aware")?;
+        let classified = OutputFormat::RepoExposureMd;
+        let compact = OutputFormat::RepoExposureSummaryJson;
+
+        let cold_classified = classified
+            .repo_audit_path_disclosure(&root)
+            .ok_or("classified disclosure missing")?;
+        let cold_compact = compact
+            .repo_audit_path_disclosure(&root)
+            .ok_or("compact disclosure missing")?;
+        assert!(
+            cold_classified.contains("first run pays the full walk"),
+            "cache-absent classified format must disclose first-run price: {cold_classified}"
+        );
+        assert!(
+            cold_compact.contains("first run pays the full walk"),
+            "cache-absent compact format must disclose first-run price: {cold_compact}"
+        );
+        assert_ne!(
+            cold_classified, cold_compact,
+            "the two families' cold disclosures must still name their own walk"
+        );
+
+        // Populate exactly the classified family through the production
+        // layout (`RepoSeamFactCache::at`), not a parallel path guess.
+        let classified_entry_dirs =
+            crate::analysis::seam_cache::RepoSeamFactCache::at(&root).entry_dirs();
+        let (entry_dir, _) = classified_entry_dirs
+            .first()
+            .ok_or("the cache reports its two entry layers")?;
+        std::fs::create_dir_all(entry_dir).map_err(|err| err.to_string())?;
+        std::fs::write(entry_dir.join("entry.json"), b"{}").map_err(|err| err.to_string())?;
+
+        let warm_classified = classified
+            .repo_audit_path_disclosure(&root)
+            .ok_or("classified disclosure missing")?;
+        assert!(
+            warm_classified.contains("warm reruns reuse the seam-facts cache"),
+            "classified format must claim warm reruns once its family has an entry: \
+             {warm_classified}"
+        );
+        let still_cold_compact = compact
+            .repo_audit_path_disclosure(&root)
+            .ok_or("compact disclosure missing")?;
+        assert!(
+            still_cold_compact.contains("first run pays the full walk"),
+            "compact format must stay on the first-run clause while its own family is empty: \
+             {still_cold_compact}"
+        );
+        assert_ne!(
+            warm_classified, still_cold_compact,
+            "cache-present and cache-absent runs must hear different disclosures"
+        );
+
+        // Populate the compact family; only its own entry flips its clause.
+        for (compact_dir, creates_subdirs) in
+            crate::analysis::seam_cache::RepoSeamFactCache::at_compact_classified(&root)
+                .entry_dirs()
+        {
+            if !creates_subdirs {
+                std::fs::create_dir_all(&compact_dir).map_err(|err| err.to_string())?;
+                std::fs::write(compact_dir.join("entry.json"), b"{}")
+                    .map_err(|err| err.to_string())?;
+                break;
+            }
+        }
+        let warm_compact = compact
+            .repo_audit_path_disclosure(&root)
+            .ok_or("compact disclosure missing")?;
+        assert!(
+            warm_compact.contains("warm reruns reuse the seam-facts cache"),
+            "compact format must claim warm reruns once its own family has an entry: \
+             {warm_compact}"
+        );
+        assert_ne!(cold_compact, warm_compact);
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Exclusive temp root for the disclosure tests, following the
+    /// cache-module test convention (`isolated_dir`): a unique directory
+    /// under the system temp dir, removed by the caller after use.
+    fn temp_disclosure_root(label: &str) -> Result<std::path::PathBuf, String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-disclosure-{label}-{nanos}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir disclosure root: {err}"))?;
+        Ok(dir)
     }
 
     #[test]

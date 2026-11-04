@@ -53,6 +53,27 @@ use std::time::{Duration, Instant};
 
 pub(crate) const REPO_EXPOSURE_SEAM_LIMIT_ENV: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
 
+/// The seam-facts cache miss disclosure for one family (#12505): a
+/// full-price walk is disclosed at the moment it begins instead of only
+/// being visible after the fact. The miss is already known here; the
+/// line never claims *why* the entry is absent (never ran, prior run
+/// died before the end-of-run publication, key changed — all read the
+/// same) and never promises a wall clock. `compact` selects the
+/// compact-classified family's wording; the two families never share
+/// entries, so their disclosures name their own walk.
+fn seam_facts_cache_miss_disclosure<T>(load: &CacheLoad<T>, compact: bool) -> Option<&'static str> {
+    match load {
+        CacheLoad::Hit(_) | CacheLoad::CorruptIgnored { .. } => None,
+        CacheLoad::Miss => Some(if compact {
+            "ripr: no usable compact seam-facts cache entry for this workspace state; \
+             running the full compact classified walk"
+        } else {
+            "ripr: no usable seam-facts cache entry for this workspace state; \
+             running the full classified walk"
+        }),
+    }
+}
+
 /// Default cap on the number of seams analyzed in a single full-repo
 /// `repo-exposure-json` run. This prevents pathological 41-minute runs
 /// on giant workspaces. Operators can opt out via `RIPR_REPO_EXPOSURE_SEAM_LIMIT=0`.
@@ -395,7 +416,11 @@ fn inventory_classified_seams_report_collect(
         // Cooperative cancellation (#1972): a superseded or
         // deadline-expired refresh stops before the cache load path.
         cancellation::checkpoint()?;
-        match cache.load_classified_seams_with_fallback(&key) {
+        let load = cache.load_classified_seams_with_fallback(&key);
+        if let Some(line) = seam_facts_cache_miss_disclosure(&load, false) {
+            eprintln!("{line}");
+        }
+        match load {
             CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
                 trace_latency_phase("cache_load", "hit", cache_started.elapsed());
                 trace_latency_phase("total", "cache_hit", total_started.elapsed());
@@ -464,7 +489,11 @@ fn inventory_classified_seams_report_collect(
     // Cooperative cancellation (#1972): a superseded or deadline-expired
     // refresh stops before the post-collect cache load.
     cancellation::checkpoint()?;
-    match cache.load_classified_seams_with_fallback(&key) {
+    let load = cache.load_classified_seams_with_fallback(&key);
+    if let Some(line) = seam_facts_cache_miss_disclosure(&load, false) {
+        eprintln!("{line}");
+    }
+    match load {
         CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
             trace_latency_phase("cache_load", "hit", cache_started.elapsed());
             trace_latency_phase("total", "cache_hit", total_started.elapsed());
@@ -903,7 +932,11 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
     // key from the corpus fingerprint store when the signature is unchanged.
     if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
         let cache_started = Instant::now();
-        match cache.load_classified_seams_with_fallback(&key) {
+        let load = cache.load_classified_seams_with_fallback(&key);
+        if let Some(line) = seam_facts_cache_miss_disclosure(&load, true) {
+            eprintln!("{line}");
+        }
+        match load {
             CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
                 trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
                 trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
@@ -941,7 +974,11 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         &mut FileFactCacheStats::zero_work(),
     );
     let cache_started = Instant::now();
-    match cache.load_classified_seams_with_fallback(&key) {
+    let load = cache.load_classified_seams_with_fallback(&key);
+    if let Some(line) = seam_facts_cache_miss_disclosure(&load, true) {
+        eprintln!("{line}");
+    }
+    match load {
         CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
             trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
             trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
@@ -4376,6 +4413,68 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
+
+    /// #12505: the miss disclosure fires exactly on `CacheLoad::Miss` and
+    /// never on `Hit` or `CorruptIgnored` (a hit pays no walk; a corrupt
+    /// entry already discloses its own reason line), and the two cache
+    /// families disclose their own walk's wording.
+    #[test]
+    fn seam_facts_cache_miss_disclosure_fires_only_on_miss_in_both_families() -> Result<(), String>
+    {
+        let miss: CacheLoad<(
+            Vec<ClassifiedSeam>,
+            Option<CachedSeamLimitInfo>,
+            Vec<PathBuf>,
+        )> = CacheLoad::Miss;
+        let hit = CacheLoad::<(
+            Vec<ClassifiedSeam>,
+            Option<CachedSeamLimitInfo>,
+            Vec<PathBuf>,
+        )>::Hit((Vec::new(), None, Vec::new()));
+        let corrupt = CacheLoad::<(
+            Vec<ClassifiedSeam>,
+            Option<CachedSeamLimitInfo>,
+            Vec<PathBuf>,
+        )>::CorruptIgnored {
+            reason: "fixture: unreadable".to_string(),
+        };
+
+        let classified = seam_facts_cache_miss_disclosure(&miss, false)
+            .ok_or("classified miss must disclose the full-price walk")?;
+        assert!(classified.contains("no usable seam-facts cache entry"));
+        assert!(classified.contains("running the full classified walk"));
+        assert_eq!(
+            seam_facts_cache_miss_disclosure(&hit, false),
+            None,
+            "a cache hit pays no walk and must not disclose a miss"
+        );
+        assert_eq!(
+            seam_facts_cache_miss_disclosure(&corrupt, false),
+            None,
+            "a corrupt entry has its own reason line; the miss line must not double-fire"
+        );
+
+        let compact = seam_facts_cache_miss_disclosure(&miss, true)
+            .ok_or("compact miss must disclose the full-price walk")?;
+        assert!(compact.contains("no usable compact seam-facts cache entry"));
+        assert!(compact.contains("running the full compact classified walk"));
+        assert_eq!(
+            seam_facts_cache_miss_disclosure(&hit, true),
+            None,
+            "a compact cache hit pays no walk and must not disclose a miss"
+        );
+        assert_eq!(
+            seam_facts_cache_miss_disclosure(&corrupt, true),
+            None,
+            "a compact corrupt entry has its own reason line; the miss line must not double-fire"
+        );
+
+        assert_ne!(
+            classified, compact,
+            "the families never share entries; their disclosures must name their own walk"
+        );
+        Ok(())
+    }
 
     #[test]
     fn cache_receipt_retains_producer_order_and_portable_failure_rows() {

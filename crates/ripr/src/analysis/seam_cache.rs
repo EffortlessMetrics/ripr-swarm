@@ -109,9 +109,18 @@ cache_layers! {
     SeamCounts => "repo-seam-counts",
 }
 
-#[derive(Clone, Copy)]
-enum ClassifiedCacheFamily {
+/// The classified seam-facts cache families. The classified and
+/// compact-classified families live in separate directories and never
+/// share entries (`RepoSeamFactCache::at` vs `at_compact_classified`),
+/// so a cache-presence probe must name the family a walk actually loads
+/// — probing the wrong one would promise warm reruns of a cache that
+/// walk never reads (#12505).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ClassifiedCacheFamily {
+    /// The full classified seam-facts family used by repo-exposure,
+    /// repo-sarif, agent-seam-packets, and the repo badge projections.
     SeamFacts,
+    /// The compact-classified family used by `repo-exposure-summary-json`.
     CompactClassifiedSeams,
 }
 
@@ -1288,6 +1297,29 @@ pub(crate) fn cache_base_dir_from_env(
 /// Resolve the cache base directory using the live process environment.
 pub(crate) fn cache_base_dir(workspace_root: &std::path::Path) -> PathBuf {
     cache_base_dir_from_env(workspace_root, std::env::var(CACHE_DIR_ENV))
+}
+
+/// Cheap cache-presence probe for the invocation-time cost disclosure
+/// (#12505): `true` when at least one entry exists in either layer of
+/// `family`. A directory listing only — it never reads or validates entry
+/// contents, so it establishes presence, not usability for a specific
+/// future cache key. It follows the same `RIPR_CACHE_DIR` resolution the
+/// run's own loads use, so the disclosure probes the cache the walk will
+/// actually read.
+pub(crate) fn seam_facts_cache_entry_present(
+    workspace_root: &std::path::Path,
+    family: ClassifiedCacheFamily,
+) -> bool {
+    let cache = match family {
+        ClassifiedCacheFamily::SeamFacts => RepoSeamFactCache::at(workspace_root),
+        ClassifiedCacheFamily::CompactClassifiedSeams => {
+            RepoSeamFactCache::at_compact_classified(workspace_root)
+        }
+    };
+    cache
+        .entry_dirs()
+        .iter()
+        .any(|(dir, _)| std::fs::read_dir(dir).is_ok_and(|mut entries| entries.next().is_some()))
 }
 
 /// Read-only summary of a cache directory for status and diagnostics.
@@ -5445,6 +5477,86 @@ mod tests {
     use crate::analysis::test_grip_evidence::TestGripEvidence;
     use crate::domain::{Confidence, StageEvidence, StageState};
     use std::path::PathBuf;
+
+    /// #12505: the disclosure's cache-presence probe must find entries in
+    /// the family it names and stay silent on the other family's entries,
+    /// because the classified and compact families never share entries.
+    #[test]
+    fn seam_facts_cache_entry_present_is_family_scoped() -> Result<(), String> {
+        let root = isolated_dir("entry-present-family-scoped");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            !seam_facts_cache_entry_present(&root, ClassifiedCacheFamily::SeamFacts),
+            "empty workspace must probe as cache-absent"
+        );
+        assert!(
+            !seam_facts_cache_entry_present(&root, ClassifiedCacheFamily::CompactClassifiedSeams),
+            "empty workspace must probe as cache-absent for the compact family"
+        );
+        // Populate exactly one classified-family entry directory via the
+        // production layout, not a parallel path construction.
+        let classified_entry_dirs = RepoSeamFactCache::at(&root).entry_dirs();
+        let (classified_entry_dir, _) = classified_entry_dirs
+            .first()
+            .ok_or("the cache reports its two entry layers")?;
+        std::fs::create_dir_all(classified_entry_dir)
+            .map_err(|err| format!("mkdir classified entry: {err}"))?;
+        std::fs::write(classified_entry_dir.join("entry.json"), b"{}")
+            .map_err(|err| format!("write classified probe entry: {err}"))?;
+        assert!(
+            seam_facts_cache_entry_present(&root, ClassifiedCacheFamily::SeamFacts),
+            "a classified entry must probe as present for the classified family"
+        );
+        assert!(
+            !seam_facts_cache_entry_present(&root, ClassifiedCacheFamily::CompactClassifiedSeams),
+            "classified entries must not satisfy the compact family's probe"
+        );
+        // Populate the compact family; only now does its probe flip.
+        for (compact_entry_dir, creates_subdirs) in
+            RepoSeamFactCache::at_compact_classified(&root).entry_dirs()
+        {
+            if !creates_subdirs {
+                std::fs::create_dir_all(&compact_entry_dir)
+                    .map_err(|err| format!("mkdir compact entry: {err}"))?;
+                std::fs::write(compact_entry_dir.join("entry.json"), b"{}")
+                    .map_err(|err| format!("write compact probe entry: {err}"))?;
+                break;
+            }
+        }
+        assert!(
+            seam_facts_cache_entry_present(&root, ClassifiedCacheFamily::CompactClassifiedSeams),
+            "a compact entry must probe as present for the compact family"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A failed cold run publishes nothing (#12505), so a workspace whose
+    /// cache layers exist as empty directories must still probe absent:
+    /// the probe counts entries, not the mere existence of the layers.
+    #[test]
+    fn seam_facts_cache_entry_present_treats_empty_layers_as_absent() -> Result<(), String> {
+        let root = isolated_dir("entry-present-empty-layers");
+        let _ = std::fs::remove_dir_all(&root);
+        for (dir, _) in RepoSeamFactCache::at(&root).entry_dirs() {
+            std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir empty layer: {err}"))?;
+        }
+        assert!(
+            !seam_facts_cache_entry_present(&root, ClassifiedCacheFamily::SeamFacts),
+            "layer directories without any entry must probe as cache-absent"
+        );
+        // A single entry anywhere in a layer flips the probe.
+        let entry_dirs = RepoSeamFactCache::at(&root).entry_dirs();
+        let (first_dir, _) = entry_dirs.first().ok_or("two entry layers expected")?;
+        std::fs::write(first_dir.join("late-entry.json"), b"{}")
+            .map_err(|err| format!("write late entry: {err}"))?;
+        assert!(
+            seam_facts_cache_entry_present(&root, ClassifiedCacheFamily::SeamFacts),
+            "any entry in any layer must probe as cache-present"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 
     #[test]
     fn folding_file_fact_key_digests_matches_folding_bytes() {
