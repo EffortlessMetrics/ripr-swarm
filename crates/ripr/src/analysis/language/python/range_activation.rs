@@ -611,6 +611,17 @@ fn sum_accumulator(owner: &PythonOwner, source: &str, changed_line: &str) -> boo
                     .is_some_and(|expr| !literal(expr))
         })
         || function
+            .args
+            .vararg
+            .iter()
+            .chain(function.args.kwarg.iter())
+            .any(|argument| {
+                argument
+                    .annotation
+                    .as_deref()
+                    .is_some_and(|expr| !literal(expr))
+            })
+        || function
             .returns
             .as_deref()
             .is_some_and(|expr| !literal(expr))

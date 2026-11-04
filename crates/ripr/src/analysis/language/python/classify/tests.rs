@@ -4386,6 +4386,10 @@ fn changed_range_requires_an_unchanged_old_body_and_catches_old_wrappers() -> Re
         ("n, /", "n=3", false),
         ("n=1 / 0", "3", false),
         ("n: missing_type", "3", false),
+        ("n, *unused: missing()", "3", false),
+        ("n, **unused: missing()", "3", false),
+        ("n, *unused", "3", true),
+        ("n, **unused", "3", true),
     ] {
         let source = format!(
             "def sum_to({signature}):\n    acc = 0\n{after}\n        acc += i\n    return acc\n"
