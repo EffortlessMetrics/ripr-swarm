@@ -1,1 +1,1 @@
-xtask/src/generation_pins.rs|Command::new|2|generation-pins|Runs fixed read-only git plumbing (rev-parse/merge-base style arguments, no shell, no network) to bind generation pins to exact commit identities.
+xtask/src/generation_pins.rs|Command::new|2|generation-pins|Runs fixed read-only `git show` and `git merge-base` argument vectors in the repository root to read pinned blobs and resolve the merge base. No shell, no network, no mutation.
