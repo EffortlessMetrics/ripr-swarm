@@ -34,9 +34,6 @@ pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 // consumers outside `analysis` ask it instead of matching attribute text.
 pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
-pub(crate) use pipeline::{
-    DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
-};
 /// Honest seam-count reports for repo-scope inventory progress (#8643).
 /// Installed by the app progress owner for the duration of one walk; the
 /// evidence pass reports `processed`/`total` here instead of inventing a
@@ -114,8 +111,8 @@ pub(crate) use facts::validated_file_wide_harness_targets;
 pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payload_size};
 pub(crate) use language::{
     DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
-    TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
-    is_ts_js_source_extension, route, ts_js_source_kind,
+    TsJsSourceKind, is_generated_rust_file_with_patterns, is_ts_js_source_extension, route,
+    ts_js_source_kind,
 };
 #[cfg(all(test, feature = "lang-perl"))]
 pub(crate) use language::{

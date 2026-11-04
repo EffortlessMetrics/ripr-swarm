@@ -3,39 +3,30 @@ use crate::core_error::CoreError;
 use crate::output::json::render_pretty_with_newline;
 use serde_json::{Value, json};
 
-const DIFF_SCOPE_OVERSIZED_PREFIX: &str = "diff_scope_oversized:";
 const DIFF_SCOPE_REPAIR_ROUTE: &str = "analysis/diff-scope-budget";
 const REPO_SCOPE_OVERSIZED_PREFIX: &str = "repo_scope_oversized:";
 const REPO_SCOPE_REPAIR_ROUTE: &str = "analysis/repo-scope-budget";
 
 /// The refusal basis for a diff-scope guard error: which language's budget
-/// actually fired (#10730). The preview guards name their env override in
-/// the refusal text, so the basis derives from that name; every other
-/// diff-scope refusal (Rust line/file guards) keeps `rust_diff_scope_budget`
-/// exactly as before. The `--json` consumer must see the budget it can act
-/// on — a Python refusal reporting a Rust basis would claim more than the
-/// envelope enforces (evidence honesty).
-fn diff_scope_basis(error: &str) -> &'static str {
-    if error.contains(crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV) {
-        "python_diff_scope_budget"
-    } else if error.contains(crate::analysis::DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV) {
-        "typescript_diff_scope_budget"
-    } else {
-        "rust_diff_scope_budget"
-    }
+/// actually fired (#10730).
+fn diff_scope_basis(guard: &crate::diff_scope_guard::DiffScopeOversized) -> &'static str {
+    guard.json_basis()
 }
 
 pub(crate) fn render_diff_scope_limited_check_json(
     input: &CheckInput,
-    error: &str,
+    error: &CoreError,
 ) -> Result<Option<String>, String> {
-    if !is_diff_scope_oversized(error) && !is_repo_scope_oversized(error) {
-        return Ok(None);
-    }
-
-    // Same non-consumable envelope for both scope guards (#2109 review):
-    // only the scope identity differs.
-    let (scope, run_status, basis, repair_route) = if is_repo_scope_oversized(error) {
+    let message = error.to_string();
+    let (scope, run_status, basis, repair_route) = if let Some(guard) = error.diff_scope_oversized()
+    {
+        (
+            "diff",
+            crate::diff_scope_guard::DIFF_SCOPE_OVERSIZED_KIND,
+            diff_scope_basis(guard),
+            DIFF_SCOPE_REPAIR_ROUTE,
+        )
+    } else if is_repo_scope_oversized(&message) {
         (
             "repo",
             "repo_scope_oversized",
@@ -43,12 +34,7 @@ pub(crate) fn render_diff_scope_limited_check_json(
             REPO_SCOPE_REPAIR_ROUTE,
         )
     } else {
-        (
-            "diff",
-            "diff_scope_oversized",
-            diff_scope_basis(error),
-            DIFF_SCOPE_REPAIR_ROUTE,
-        )
+        return Ok(None);
     };
 
     let mut value = json!({
@@ -84,7 +70,7 @@ pub(crate) fn render_diff_scope_limited_check_json(
                 "run_status": run_status,
                 "basis": basis,
                 "downstream_consumable": false,
-                "message": error,
+                "message": message,
                 "repair_route": repair_route
             }
         ]
@@ -95,10 +81,6 @@ pub(crate) fn render_diff_scope_limited_check_json(
     }
 
     render_pretty_with_newline(&value, "limited check").map(Some)
-}
-
-fn is_diff_scope_oversized(error: &str) -> bool {
-    error.trim_start().starts_with(DIFF_SCOPE_OVERSIZED_PREFIX)
 }
 
 fn is_repo_scope_oversized(error: &str) -> bool {
@@ -270,13 +252,23 @@ mod tests {
         }
     }
 
+    fn repo_scope_error(message: &str) -> CoreError {
+        CoreError::message(message)
+    }
+
+    fn typed_diff_scope_error() -> CoreError {
+        CoreError::from(crate::diff_scope_guard::DiffScopeOversized::rust_indexed_files(800, 900))
+    }
+
     #[test]
     fn repo_scope_oversized_renders_the_same_non_consumable_envelope() -> Result<(), String> {
         // #2109 review: JSON consumers must get the named error and repair
         // route for the repo guard too, in the same envelope shape.
         let rendered = render_diff_scope_limited_check_json(
             &input(),
-            "repo_scope_oversized: 900 indexed Rust files exceed the RIPR_MAX_REPO_INDEX_FILES limit (800); analysis was not run",
+            &repo_scope_error(
+                "repo_scope_oversized: 900 indexed Rust files exceed the RIPR_MAX_REPO_INDEX_FILES limit (800); analysis was not run",
+            ),
         )?;
         let Some(rendered) = rendered else {
             return Err("expected a limited artifact for the repo guard".to_string());
@@ -305,10 +297,7 @@ mod tests {
     fn limited_artifact_summary_carries_empty_language_breakdown() -> Result<(), String> {
         // #2103 review: the limited artifact must keep the same summary
         // shape as every normal check output at the same schema version.
-        let rendered = render_diff_scope_limited_check_json(
-            &input(),
-            "diff_scope_oversized: 900 indexed Rust files exceed the limit (800)",
-        )?;
+        let rendered = render_diff_scope_limited_check_json(&input(), &typed_diff_scope_error())?;
         let Some(rendered) = rendered else {
             return Err("expected a limited artifact for the oversized error".to_string());
         };
@@ -327,7 +316,8 @@ mod tests {
 
     #[test]
     fn non_budget_error_does_not_render_limited_artifact() -> Result<(), String> {
-        let rendered = render_diff_scope_limited_check_json(&input(), "git diff failed")?;
+        let rendered =
+            render_diff_scope_limited_check_json(&input(), &CoreError::message("git diff failed"))?;
 
         assert!(
             rendered.is_none(),
@@ -340,7 +330,9 @@ mod tests {
     fn budget_error_renders_non_consumable_limited_artifact() -> Result<(), String> {
         let rendered = render_diff_scope_limited_check_json(
             &input(),
-            "diff_scope_oversized: 3 changed Rust lines exceed the limit",
+            &CoreError::from(
+                crate::diff_scope_guard::DiffScopeOversized::rust_changed_lines(3, 1, 2),
+            ),
         )?
         .ok_or("expected limited artifact")?;
         let value: Value =
@@ -384,16 +376,19 @@ mod tests {
     fn python_budget_refusal_names_python_diff_scope_budget() -> Result<(), String> {
         // #10730: the basis must name the budget that actually fired, so a
         // Python refusal never reports a Rust basis to machine consumers.
-        let refusal = "diff_scope_oversized: 2100 changed Python lines across 3 Python files \
-                       exceed the RIPR_MAX_DIFF_CHANGED_PYTHON_LINES limit (2000); analysis \
-                       was not run to protect runner memory before probe expansion. Repair \
-                       route: reduce the diff scope, split the extraction PR, run a narrower \
-                       diff, or raise the limit via RIPR_MAX_DIFF_CHANGED_PYTHON_LINES=<number>. \
-                       To analyze a subset, pass `--path <glob>` and/or `--exclude <glob>` to \
-                       `ripr check` (repeatable, repository-relative; files left out are \
-                       reported as not analyzed).";
-        let rendered = render_diff_scope_limited_check_json(&input(), refusal)?
-            .ok_or("expected a limited artifact for the Python guard")?;
+        let rendered = render_diff_scope_limited_check_json(
+            &input(),
+            &CoreError::from(
+                crate::diff_scope_guard::DiffScopeOversized::preview_language_changed_lines(
+                    "Python",
+                    crate::diff_scope_guard::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+                    2100,
+                    3,
+                    2000,
+                ),
+            ),
+        )?
+        .ok_or("expected a limited artifact for the Python guard")?;
         let value: Value =
             serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
         for pointer in ["/analysis_scope/basis", "/run_limitations/0/basis"] {
@@ -410,17 +405,19 @@ mod tests {
     #[test]
     fn typescript_budget_refusal_names_typescript_diff_scope_budget() -> Result<(), String> {
         // #10730: same typed basis for the TypeScript/JavaScript family guard.
-        let refusal = "diff_scope_oversized: 2100 changed TypeScript lines across 5 \
-                       TypeScript files exceed the RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES \
-                       limit (2000); analysis was not run to protect runner memory before \
-                       probe expansion. Repair route: reduce the diff scope, split the \
-                       extraction PR, run a narrower diff, or raise the limit via \
-                       RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES=<number>. To analyze a subset, \
-                       pass `--path <glob>` and/or `--exclude <glob>` to `ripr check` \
-                       (repeatable, repository-relative; files left out are reported as not \
-                       analyzed).";
-        let rendered = render_diff_scope_limited_check_json(&input(), refusal)?
-            .ok_or("expected a limited artifact for the TypeScript guard")?;
+        let rendered = render_diff_scope_limited_check_json(
+            &input(),
+            &CoreError::from(
+                crate::diff_scope_guard::DiffScopeOversized::preview_language_changed_lines(
+                    "TypeScript",
+                    crate::diff_scope_guard::DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+                    2100,
+                    5,
+                    2000,
+                ),
+            ),
+        )?
+        .ok_or("expected a limited artifact for the TypeScript guard")?;
         let value: Value =
             serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
         for pointer in ["/analysis_scope/basis", "/run_limitations/0/basis"] {
@@ -438,13 +435,15 @@ mod tests {
     fn rust_budget_refusals_keep_the_rust_basis() -> Result<(), String> {
         // Both Rust diff-scope guards keep the basis they reported before
         // the preview guards existed.
-        for refusal in [
-            "diff_scope_oversized: 2101 changed Rust lines across 2 Rust files exceed the \
-             RIPR_MAX_DIFF_CHANGED_RUST_LINES limit (2000); analysis was not run.",
-            "diff_scope_oversized: 900 indexed Rust files exceed the \
-             RIPR_MAX_DIFF_INDEX_FILES limit (800); analysis was not run.",
+        for error in [
+            CoreError::from(
+                crate::diff_scope_guard::DiffScopeOversized::rust_changed_lines(2101, 2, 2000),
+            ),
+            CoreError::from(
+                crate::diff_scope_guard::DiffScopeOversized::rust_indexed_files(900, 800),
+            ),
         ] {
-            let rendered = render_diff_scope_limited_check_json(&input(), refusal)?
+            let rendered = render_diff_scope_limited_check_json(&input(), &error)?
                 .ok_or("expected a limited artifact for the Rust guard")?;
             let value: Value =
                 serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
@@ -464,9 +463,12 @@ mod tests {
     fn budget_error_without_base_omits_base_and_keeps_limitation() -> Result<(), String> {
         let mut check_input = input();
         check_input.base = None;
-        let message = "\n  diff_scope_oversized: 4 changed Rust lines exceed the limit";
-        let rendered = render_diff_scope_limited_check_json(&check_input, message)?
-            .ok_or("expected limited artifact with leading whitespace")?;
+        let error = CoreError::from(
+            crate::diff_scope_guard::DiffScopeOversized::rust_changed_lines(4, 1, 2),
+        );
+        let rendered = render_diff_scope_limited_check_json(&check_input, &error)?
+            .ok_or("expected limited artifact")?;
+        let message = error.to_string();
         let value: Value =
             serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
 
@@ -804,7 +806,9 @@ mod tests {
         percent_input.root = PathBuf::from("repo%41");
         let limited = render_diff_scope_limited_check_json(
             &percent_input,
-            "diff_scope_oversized: 3 changed Rust lines exceed the limit",
+            &CoreError::from(
+                crate::diff_scope_guard::DiffScopeOversized::rust_changed_lines(3, 1, 2),
+            ),
         )?
         .ok_or("expected limited artifact")?;
         let refused = render_refusal_envelope(

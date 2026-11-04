@@ -54,6 +54,8 @@ pub(crate) enum CoreError {
         kind: CheckFailureKind,
         detail: String,
     },
+    /// Fail-closed diff-scope guard with governed limit/count/route facts (#4861).
+    DiffScopeOversized(crate::diff_scope_guard::DiffScopeOversized),
     /// Unmigrated remainder. Display-only until a later family is typed.
     Message(String),
     /// Structured wrap that preserves the source kind.
@@ -348,7 +350,10 @@ impl CoreError {
         match self {
             Self::GitInvocationTimeout { .. } => true,
             Self::Context { source, .. } => source.is_git_invocation_timeout(),
-            Self::AnalysisCancelled(_) | Self::CheckFailure { .. } | Self::Message(_) => false,
+            Self::AnalysisCancelled(_)
+            | Self::CheckFailure { .. }
+            | Self::DiffScopeOversized(_)
+            | Self::Message(_) => false,
         }
     }
 
@@ -358,9 +363,35 @@ impl CoreError {
         match self {
             Self::AnalysisCancelled(_) => true,
             Self::Context { source, .. } => source.is_analysis_cancelled(),
-            Self::GitInvocationTimeout { .. } | Self::CheckFailure { .. } | Self::Message(_) => {
-                false
-            }
+            Self::GitInvocationTimeout { .. }
+            | Self::CheckFailure { .. }
+            | Self::DiffScopeOversized(_)
+            | Self::Message(_) => false,
+        }
+    }
+
+    /// True for a typed diff-scope guard, including through `with_context` (#4861).
+    pub(crate) fn is_diff_scope_oversized(&self) -> bool {
+        match self {
+            Self::DiffScopeOversized(_) => true,
+            Self::Context { source, .. } => source.is_diff_scope_oversized(),
+            Self::GitInvocationTimeout { .. }
+            | Self::AnalysisCancelled(_)
+            | Self::CheckFailure { .. }
+            | Self::Message(_) => false,
+        }
+    }
+
+    pub(crate) fn diff_scope_oversized(
+        &self,
+    ) -> Option<&crate::diff_scope_guard::DiffScopeOversized> {
+        match self {
+            Self::DiffScopeOversized(guard) => Some(guard),
+            Self::Context { source, .. } => source.diff_scope_oversized(),
+            Self::GitInvocationTimeout { .. }
+            | Self::AnalysisCancelled(_)
+            | Self::CheckFailure { .. }
+            | Self::Message(_) => None,
         }
     }
 
@@ -378,9 +409,10 @@ impl CoreError {
         match self {
             Self::CheckFailure { kind, .. } => Some(*kind),
             Self::Context { source, .. } => source.check_failure_kind(),
-            Self::GitInvocationTimeout { .. } | Self::AnalysisCancelled(_) | Self::Message(_) => {
-                None
-            }
+            Self::GitInvocationTimeout { .. }
+            | Self::AnalysisCancelled(_)
+            | Self::DiffScopeOversized(_)
+            | Self::Message(_) => None,
         }
     }
 
@@ -389,9 +421,8 @@ impl CoreError {
     /// timeout, and [`ANALYSIS_FAILED_IDENTITY`] for everything else
     /// (unmigrated messages, cancellation, and any future family until it
     /// is typed). Purely structural: message text is never inspected, so a
-    /// scope-guard message still reads as the fallback here — the CLI routes
-    /// those to the frozen scope-guard renderer first, and #4861 owns typing
-    /// them.
+    /// scope-guard errors still use the frozen limited-check renderer first;
+    /// [`Self::check_refusal`] keeps the honest fallback for those families.
     pub(crate) fn check_refusal(&self) -> CheckRefusal {
         if let Some(kind) = self.check_failure_kind() {
             return CheckRefusal {
@@ -456,6 +487,7 @@ impl fmt::Display for CoreError {
                 GIT_TIMEOUT_REPAIR_GUIDANCE
             ),
             Self::AnalysisCancelled(cancellation) => cancellation.fmt(formatter),
+            Self::DiffScopeOversized(guard) => guard.fmt(formatter),
             Self::CheckFailure { detail, .. } => formatter.write_str(detail),
             Self::Message(message) => formatter.write_str(message),
             Self::Context { context, source } => write!(formatter, "{context}: {source}"),
@@ -470,8 +502,15 @@ impl Error for CoreError {
             Self::GitInvocationTimeout { .. }
             | Self::AnalysisCancelled(_)
             | Self::CheckFailure { .. }
+            | Self::DiffScopeOversized(_)
             | Self::Message(_) => None,
         }
+    }
+}
+
+impl From<crate::diff_scope_guard::DiffScopeOversized> for CoreError {
+    fn from(guard: crate::diff_scope_guard::DiffScopeOversized) -> Self {
+        Self::DiffScopeOversized(guard)
     }
 }
 
@@ -757,13 +796,20 @@ mod tests {
                 "{text}"
             );
         }
-        // Scope-guard messages are still untyped until #4861, so they read
-        // as the fallback here; the CLI routes them to the frozen renderer
-        // before this projection ever sees them.
-        let guard = CoreError::message("diff_scope_oversized: 3 lines exceed the limit");
+        // Scope-guard lookalikes stay untyped; typed guards classify structurally.
+        let guard = CoreError::from(
+            crate::diff_scope_guard::DiffScopeOversized::rust_changed_lines(3, 1, 2),
+        );
+        assert!(guard.is_diff_scope_oversized());
         assert_eq!(guard.check_failure_kind(), None);
         assert_eq!(
             guard.check_refusal().identity,
+            super::ANALYSIS_FAILED_IDENTITY
+        );
+        let lookalike = CoreError::message("diff_scope_oversized: 3 lines exceed the limit");
+        assert!(!lookalike.is_diff_scope_oversized());
+        assert_eq!(
+            lookalike.check_refusal().identity,
             super::ANALYSIS_FAILED_IDENTITY
         );
     }

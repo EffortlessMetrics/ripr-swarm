@@ -5,13 +5,14 @@ use std::path::{Path, PathBuf};
 use crate::core_error::CoreError;
 
 use super::{
-    ChangedFile, DIFF_CHANGED_LINE_LIMIT_ENV, DIFF_FILE_LIMIT_ENV, MAX_DIFF_PATH_COMPONENTS,
-    ParsedDiff, is_new_path_marker, parse_old_path_marker, parser_state,
-    path_marker_exceeds_depth_bound,
+    ChangedFile, MAX_DIFF_PATH_COMPONENTS, ParsedDiff, is_new_path_marker, parse_old_path_marker,
+    parser_state, path_marker_exceeds_depth_bound,
 };
 
 #[cfg(test)]
 use super::DEFAULT_DIFF_CHANGED_LINE_LIMIT;
+#[cfg(test)]
+pub(crate) use super::DIFF_CHANGED_LINE_LIMIT_ENV;
 
 /// How many scoped-out paths the parse keeps by name for the disclosure; the
 /// total comes from the distinct-path set.
@@ -81,28 +82,21 @@ pub(super) fn parse_bounded_lines_scoped<'a>(
             if count <= limit {
                 return Ok(());
             }
-            Err(format!(
-                "diff_scope_oversized: at least {count} changed files exceed the \
-                 {DIFF_FILE_LIMIT_ENV} limit ({limit}); parsing stopped before the \
-                 remaining file bodies and analysis was not run. Repair route: reduce \
-                 the diff scope, split the extraction PR, run a narrower diff, or \
-                 raise the limit via {DIFF_FILE_LIMIT_ENV}=<number>."
-            )
-            .into())
+            Err(CoreError::from(
+                crate::diff_scope_guard::DiffScopeOversized::parser_at_least_changed_files(
+                    limit, count,
+                ),
+            ))
         },
         |count| {
             if count <= line_limit {
                 return Ok(());
             }
-            Err(format!(
-                "diff_scope_oversized: at least {count} changed lines exceed the \
-                 {DIFF_CHANGED_LINE_LIMIT_ENV} limit ({line_limit}); parsing stopped \
-                 before the remaining diff lines and analysis was not run. Repair \
-                 route: reduce the diff scope, split the extraction PR, run a \
-                 narrower diff, or raise the limit via \
-                 {DIFF_CHANGED_LINE_LIMIT_ENV}=<number>."
-            )
-            .into())
+            Err(CoreError::from(
+                crate::diff_scope_guard::DiffScopeOversized::parser_at_least_changed_lines(
+                    line_limit, count,
+                ),
+            ))
         },
         |raw| {
             if !path_marker_exceeds_depth_bound(raw) {

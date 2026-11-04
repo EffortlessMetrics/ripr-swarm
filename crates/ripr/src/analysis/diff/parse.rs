@@ -99,6 +99,7 @@ pub(crate) fn parse_unified_diff_bounded_scoped_core(
 }
 
 /// String compatibility wrapper around [`parse_unified_diff_bounded_scoped_core`].
+#[cfg(test)]
 pub(crate) fn parse_unified_diff_bounded_scoped(
     input: &str,
     keep: impl Fn(&Path) -> bool,
