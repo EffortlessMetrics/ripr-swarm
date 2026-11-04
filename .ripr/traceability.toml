@@ -1950,6 +1950,7 @@ tests = [
   "crates/ripr/tests/repair_check_recommended_start.rs::error_variant_change_starts_the_changed_branch_check_recommends",
   "crates/ripr/tests/repair_check_recommended_start.rs::a_change_check_reads_as_noticed_and_unknown_lists_no_start",
   "crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection",
+  "crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons",
   "crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run",
   "crates/ripr/src/app/task_first.rs::tests::check_pick_narrows_only_when_eligible_and_committed",
   "crates/ripr/tests/task_first_facade.rs::repair_same_line_candidates_are_told_apart_in_plain_words",

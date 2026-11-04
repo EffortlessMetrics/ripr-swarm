@@ -72,7 +72,11 @@ pub(crate) enum NoEligibleChange {
     AlreadyChecked,
     /// The changed Rust lines touch no code a repair can start on.
     NoRepairableCode,
-    /// An open spot on the change cannot start, or no diff was read.
+    /// A spot on the changed lines is still open but cannot start a repair;
+    /// each reason says what it needs, so the next step is to write that test
+    /// by hand (#12861).
+    OpenOnChange,
+    /// No diff was read, so nothing can be said about the change.
     Other,
 }
 
@@ -997,10 +1001,12 @@ pub(crate) fn resolve_repair_start(
     let all_changed_checked = matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && gripped_on_change > 0
         && open_on_change == 0;
-    let change = if all_changed_checked {
+    let mut change = if all_changed_checked {
         NoEligibleChange::AlreadyChecked
     } else if matches!(scope, Some(ChangeScope::TouchesNoSeam(_))) {
         NoEligibleChange::NoRepairableCode
+    } else if matches!(scope, Some(ChangeScope::TouchesSeams(_))) && open_on_change > 0 {
+        NoEligibleChange::OpenOnChange
     } else {
         NoEligibleChange::Other
     };
@@ -1162,6 +1168,9 @@ pub(crate) fn resolve_repair_start(
                 ));
             }
             candidates = kept;
+            if change == NoEligibleChange::Other {
+                change = NoEligibleChange::OpenOnChange;
+            }
         }
     }
     let (reasons, reasons_total) =

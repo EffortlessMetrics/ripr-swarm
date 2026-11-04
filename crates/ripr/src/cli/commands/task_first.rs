@@ -829,6 +829,9 @@ fn no_eligible_seam_message(
             "Nothing to do for this change: the existing tests already check it, and `{check}` reports the same. To look for gaps elsewhere in the repository, run `ripr pilot --root {root}`"
         ),
         NoEligibleChange::NoRepairableCode => by_hand.trim_start_matches(". ").to_string(),
+        NoEligibleChange::OpenOnChange => format!(
+            "Next: each changed spot below says what it still needs; write that test by hand (`{check}` shows the detail)"
+        ),
         NoEligibleChange::Other => format!(
             "Next: `ripr pilot --root {root}` explores the whole repository; when this branch has changed code, `{check}` names a gap in it to test by hand"
         ),

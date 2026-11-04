@@ -252,3 +252,35 @@ fn an_unscoped_change_keeps_the_selection() -> Result<(), String> {
     }
     Ok(())
 }
+
+const FIELD_BASE: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 3,\n        verbose: false,\n    }\n}\n";
+const FIELD_NEW: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 5,\n        verbose: false,\n    }\n}\n";
+const FIELD_TEST: &str = "use fx::default_config;\n\n#[test]\nfn default_config_is_quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n";
+
+/// #12861: a scoped change with open spots that cannot start closes on the
+/// per-spot reasons, not on a repository tour that sends the reader back to
+/// check. The unscoped no-tests refusal keeps the repository route.
+#[test]
+fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String> {
+    let scoped = repo("nx-scoped", FLIP_BASE, FLIP_NEW, FLIP_TEST, true)?;
+    let repair = ripr(&scoped.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3)
+        || !err.contains("Next: each changed spot below says what it still needs")
+        || err.contains("explores the whole repository")
+        || !err.contains("code=no_eligible_seam")
+    {
+        return Err(format!("scoped refusal must close on the reasons:\n{err}"));
+    }
+    let unscoped = repo("nx-unscoped", FIELD_BASE, FIELD_NEW, FIELD_TEST, false)?;
+    let repair = ripr(&unscoped.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if !err.contains("explores the whole repository")
+        || err.contains("each changed spot below says")
+    {
+        return Err(format!(
+            "unscoped refusal keeps the repository route:\n{err}"
+        ));
+    }
+    Ok(())
+}
