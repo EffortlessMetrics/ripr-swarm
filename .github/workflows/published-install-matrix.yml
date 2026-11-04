@@ -15,6 +15,9 @@ name: Published install matrix
 # is published. Every other cell fails the run.
 
 on:
+  push:
+    branches: [claude/project-thread-au3yo6]
+    paths: [.github/workflows/published-install-matrix.yml]
   workflow_dispatch:
     inputs:
       cargo_version:
