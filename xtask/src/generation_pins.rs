@@ -131,8 +131,7 @@ pub(crate) fn generations_next(args: &[String]) -> Result<(), String> {
     let root = repo_root()?;
     let (base_ref, merge_base_sha) = resolve_base(&root, base_override.as_deref())?;
     let reader = production_blob_reader(&root);
-    let mut lines = Vec::new();
-    lines.push(format!("base: {base_ref} @ {merge_base_sha}"));
+    let mut lines = vec![format!("base: {base_ref} @ {merge_base_sha}")];
     for pin in GENERATION_PINS {
         let current = read_generation(&reader, Some(&base_ref), pin).map_err(|error| {
             format!(
@@ -365,6 +364,11 @@ fn claimed_generation_violations(
                 continue;
             }
         };
+        // Untouched constant: nothing to judge, and the base tip is not read,
+        // so a base that renamed the defining file cannot fail an unrelated PR.
+        if head == fork {
+            continue;
+        }
         let base_tip = match read_generation(reader, Some(base_ref), pin) {
             Ok(value) => value,
             Err(error) => {
@@ -482,8 +486,9 @@ fn resolve_base_with(
     ))
 }
 
+/// A full object id: 40 hex digits (SHA-1) or 64 (SHA-256 repositories).
 fn is_sha(value: &str) -> bool {
-    value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
+    matches!(value.len(), 40 | 64) && value.chars().all(|character| character.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -684,6 +689,34 @@ mod tests {
             "an untouched tree must pass: {violations:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn untouched_constant_never_reads_the_base_tip() -> Result<(), String> {
+        let head = synthetic_texts(|_family| "5.5".to_string());
+        let fork = synthetic_texts(|_family| "5.5".to_string());
+        let tip = synthetic_texts(|_family| "5.5".to_string());
+        let inner = three_ref_reader(&head, &fork, &tip);
+        // A base tip that cannot be read (for example a renamed defining file)
+        // must not fail a PR that never touched the constant.
+        let reader = |reference: Option<&str>, path: &str| match reference {
+            Some("origin/main") => Err(format!("fixture base tip has no {path}")),
+            other => inner(other, path),
+        };
+        let violations = claimed_generation_violations(&reader, "origin/main", "FORKSHA");
+        assert!(
+            violations.is_empty(),
+            "an untouched constant must pass without a base-tip read: {violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn is_sha_accepts_sha1_and_sha256_object_ids() {
+        assert!(super::is_sha(&"a".repeat(40)));
+        assert!(super::is_sha(&"0".repeat(64)));
+        assert!(!super::is_sha(&"a".repeat(41)));
+        assert!(!super::is_sha(&"g".repeat(40)));
     }
 
     #[test]
