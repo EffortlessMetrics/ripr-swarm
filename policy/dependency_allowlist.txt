@@ -75,3 +75,4 @@ fixtures/owner_return_pin_json_shadowed_constructor/input/Cargo.lock|fixture_inp
 fixtures/owner_return_pin_json_shadowed_owner/input/Cargo.lock|fixture_input|owner-return-pins|RIPR-SPEC-0197 #7776 exact serde_json 1.0.151 registry identity for the literal construction runtime/control subject.
 fixtures/owner_return_pin_json_uncalled_closure/input/Cargo.lock|fixture_input|owner-return-pins|RIPR-SPEC-0197 #7776 exact serde_json 1.0.151 registry identity for the literal construction runtime/control subject.
 fixtures/owner_return_pin_json_unrelated_equality/input/Cargo.lock|fixture_input|owner-return-pins|RIPR-SPEC-0197 #7776 exact serde_json 1.0.151 registry identity for the literal construction runtime/control subject.
+benchmarks/agent_ab/**/Cargo.toml|fixture_input|agentic-benchmarks|First-party task crate manifests for the agent A/B eval (#12912).

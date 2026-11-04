@@ -19,3 +19,4 @@ workspace_member|crates/ripr|published product package
 workspace_member|xtask|unpublished Rust automation
 cargo_manifest|tools/repo-policy/Cargo.toml|unpublished workflow and agent policy boundary (#7158)
 workspace_member|tools/repo-policy|product-independent Rust repository policy (#7158)
+cargo_manifest|benchmarks/agent_ab/**/Cargo.toml|first-party task crates for the agent A/B eval (#12912)

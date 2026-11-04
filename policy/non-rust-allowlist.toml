@@ -1081,3 +1081,21 @@ surface = "ci"
 classification = "test"
 reason = "Fake-API unittest suite for the exact-head merge guard (#11781); run through the Rust wrapper test so CI executes it."
 covered_by = ["cargo test -p xtask --test guarded_merge_selftest"]
+
+[[allow]]
+glob = "benchmarks/agent_ab/**"
+kind = "benchmark_fixture"
+owner = "agentic-benchmarks"
+surface = "fixtures"
+classification = "fixture"
+reason = "First-party task crates and the evaluator-only answer key for the paired with/without-ripr agent eval (docs/AGENT_AB_EVAL.md, #12912)."
+covered_by = ["cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/agent-ab/**"
+kind = "receipt"
+owner = "agentic-benchmarks"
+surface = "receipts"
+classification = "receipt"
+reason = "Committed receipts of paired agent A/B eval runs (#12912)."
+covered_by = ["cargo xtask check-file-policy"]

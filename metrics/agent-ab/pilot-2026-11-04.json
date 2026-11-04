@@ -1,0 +1,24 @@
+{
+  "schema": "ripr-agent-ab-receipt-v1",
+  "status": "pilot",
+  "date": "2026-11-04",
+  "governing_issue": 12912,
+  "ripr": "0.11.0 (b80ce950e7526dd8bc98139f04f8a265256f3b06), release build",
+  "agent_model": "claude-sonnet-5-5",
+  "runs_per_arm_per_task": 1,
+  "positive_control": {"shipping": "5/5", "slug": "5/5", "window": "4/4", "invoice": "7/7", "weak_baseline": "0 caught on every task"},
+  "runs": [
+    {"task": "shipping", "arm": "A_ripr", "caught": "5/5", "tool_uses": 6, "total_tokens": 55287, "ripr_commands": 3, "dead_ends": 1},
+    {"task": "shipping", "arm": "B_control", "caught": "5/5", "tool_uses": 3, "total_tokens": 50697, "ripr_commands": 0, "dead_ends": 0},
+    {"task": "slug", "arm": "A_ripr", "caught": "5/5", "tool_uses": 7, "total_tokens": 55638, "ripr_commands": 4, "dead_ends": 1},
+    {"task": "slug", "arm": "B_control", "caught": "5/5", "tool_uses": 3, "total_tokens": 51350, "ripr_commands": 0, "dead_ends": 0},
+    {"task": "window", "arm": "A_ripr", "caught": "4/4", "tool_uses": 6, "total_tokens": 54959, "ripr_commands": 4, "dead_ends": 2},
+    {"task": "window", "arm": "B_control", "caught": "4/4", "tool_uses": 3, "total_tokens": 50489, "ripr_commands": 0, "dead_ends": 0},
+    {"task": "invoice", "arm": "A_ripr", "caught": "7/7", "tool_uses": 7, "total_tokens": 60283, "ripr_commands": 4, "dead_ends": 1},
+    {"task": "invoice", "arm": "B_control", "caught": "7/7", "tool_uses": 3, "total_tokens": 54162, "ripr_commands": 0, "dead_ends": 0}
+  ],
+  "delta_a_minus_b": {"mutants_caught": 0, "mean_tool_uses": 3.5, "mean_total_tokens": 4390, "mean_dead_ends": 1.25},
+  "reading": "No benefit shown. Both arms reach full answer-key catch on every task (ceiling effect); the ripr arm cost more tool calls and tokens, mainly because ripr never confirmed the fix and plain `ripr check` needed --base. One run per arm per task is a pilot, not a result. These small first-party tasks cannot show a benefit when an unaided agent already writes exact-value tests; harder tasks are required before any claim.",
+  "findings": [13036, 13037],
+  "limits": ["answer key in the same repo as the run copies", "tokens are the harness per-agent usage and include reasoning", "no production edits in any run"]
+}

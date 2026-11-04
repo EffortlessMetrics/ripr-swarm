@@ -1,0 +1,131 @@
+{
+  "schema": "ripr-agent-ab-answer-key-v1",
+  "note": "Evaluator-only. Never copy this file into a directory an agent can read.",
+  "tasks": {
+    "shipping": {
+      "file": "src/lib.rs",
+      "mutants": [
+        {
+          "id": "free-boundary",
+          "from": "order_cents >= FREE_OVER_CENTS",
+          "to": "order_cents > FREE_OVER_CENTS"
+        },
+        {
+          "id": "express-not-free",
+          "from": "&& !express",
+          "to": ""
+        },
+        {
+          "id": "light-tier-boundary",
+          "from": "weight_g <= 500",
+          "to": "weight_g < 500"
+        },
+        {
+          "id": "mid-tier-boundary",
+          "from": "weight_g <= 2_000",
+          "to": "weight_g < 2_000"
+        },
+        {
+          "id": "express-factor",
+          "from": "base * 2",
+          "to": "base + 400"
+        }
+      ]
+    },
+    "slug": {
+      "file": "src/lib.rs",
+      "mutants": [
+        {
+          "id": "no-leading-dash",
+          "from": "if pending_dash && !out.is_empty()",
+          "to": "if pending_dash"
+        },
+        {
+          "id": "lowercase",
+          "from": "c.to_ascii_lowercase()",
+          "to": "c"
+        },
+        {
+          "id": "truncate-boundary",
+          "from": "out.len() > MAX_LEN",
+          "to": "out.len() > MAX_LEN + 1"
+        },
+        {
+          "id": "trailing-dash-trim",
+          "from": "while out.ends_with('-')",
+          "to": "while false"
+        },
+        {
+          "id": "dash-run-collapse",
+          "from": "pending_dash = false;\n            out.push",
+          "to": "out.push"
+        }
+      ]
+    },
+    "window": {
+      "file": "src/lib.rs",
+      "mutants": [
+        {
+          "id": "zero-len",
+          "from": "len == 0 || start >= max",
+          "to": "start >= max"
+        },
+        {
+          "id": "start-at-max",
+          "from": "start >= max",
+          "to": "start > max"
+        },
+        {
+          "id": "clip-to-max",
+          "from": ".min(max)",
+          "to": ""
+        },
+        {
+          "id": "end-sum",
+          "from": "start.saturating_add(len)",
+          "to": "len"
+        }
+      ]
+    },
+    "invoice": {
+      "file": "src/lib.rs",
+      "mutants": [
+        {
+          "id": "round-half",
+          "from": "+ 5_000) / 10_000",
+          "to": "+ 4_999) / 10_000"
+        },
+        {
+          "id": "bogo-free-count",
+          "from": "line.qty / (n + 1)",
+          "to": "line.qty / n"
+        },
+        {
+          "id": "bogo-zero-guard",
+          "from": "if n > 0 =>",
+          "to": "=>"
+        },
+        {
+          "id": "percent-cap",
+          "from": "p.min(100) * 100",
+          "to": "p * 100"
+        },
+        {
+          "id": "flat-saturate",
+          "from": "subtotal.saturating_sub(c as u64)",
+          "to": "subtotal.wrapping_sub(c as u64)"
+        },
+        {
+          "id": "tax-on-discounted",
+          "from": "discounted + bps_of(discounted, tax_bps)",
+          "to": "discounted + bps_of(subtotal, tax_bps)"
+        },
+        {
+          "id": "promo-per-line",
+          "from": "_ => subtotal,",
+          "to": "_ => subtotal + 1,"
+        }
+      ]
+    }
+  }
+}
