@@ -41,7 +41,7 @@ this budget, and each git invocation is bounded separately by RIPR_GIT_TIMEOUT."
 /// The refusal diagnostic, also printed on stderr.
 fn timeout_detail(budget: Duration) -> String {
     format!(
-        "analysis_timeout: ripr check exceeded its {}s analysis-worker budget and was stopped. \
+        "analysis_timeout: ripr check exceeded its {}s wall-clock budget (analysis worker) and was stopped. \
          No findings were produced, so this is not a clean result. \
          Repair route: raise or disable the budget (0 disables it) with --timeout SECS or \
          RIPR_CHECK_TIMEOUT=<seconds>, or narrow the diff, then re-run. \
