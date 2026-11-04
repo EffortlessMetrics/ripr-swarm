@@ -38,6 +38,7 @@ use crate::analysis::committed_source::{self, CommittedSourceRead};
 use crate::analysis::diagnostic_origin::{OriginBuildContext, origins_for_rust_findings};
 use crate::analysis::facts::RustIndex;
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
+use crate::analysis::resource_cost::trace_latency_phase;
 use crate::analysis::workspace::limitations_for_absent_changed_files;
 use crate::config::OraclePolicy;
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
@@ -2361,6 +2362,7 @@ impl RustAdapter {
                     return Err(diff_scope_oversized_error(core_files.len(), scope_limit));
                 }
                 if core_files.len() < index_files.len() {
+                    let admission_started = std::time::Instant::now();
                     let (query, core_index) = dependent_scope::admission_query(
                         &options.root,
                         &core_files,
@@ -2368,7 +2370,13 @@ impl RustAdapter {
                         &options.test_harnesses,
                         &mut rust_consumed_sources,
                     )?;
+                    trace_latency_phase(
+                        "diff_admission_query",
+                        &format!("core_files_{}", core_files.len()),
+                        admission_started.elapsed(),
+                    );
                     admission_core = Some(core_index);
+                    let admit_started = std::time::Instant::now();
                     let admission = dependent_scope::admit_dependents(
                         &options.root,
                         &analyzable_rust_files,
@@ -2378,6 +2386,11 @@ impl RustAdapter {
                         &options.test_harnesses,
                         &mut rust_consumed_sources,
                     )?;
+                    trace_latency_phase(
+                        "diff_admit_dependents",
+                        &format!("main_files_{}", admission.main_files.len()),
+                        admit_started.elapsed(),
+                    );
                     index_files = admission.main_files;
                     dependent_scope = admission.narrowed;
                     withheld_macro_bindings = admission.withheld_macro_bindings;
@@ -2426,6 +2439,7 @@ impl RustAdapter {
         // #6965: a file holding tests that no Cargo target's module tree
         // reaches is never compiled, so its tests are not evidence. Only a complete walk proves a file unreached (#4435);
         // anything less keeps the file.
+        let unreached_started = std::time::Instant::now();
         let loaded_files = drop_unreached_test_files(
             &options.root,
             &source_role_context,
@@ -2433,14 +2447,21 @@ impl RustAdapter {
             &options.test_harnesses,
             loaded_files,
         );
+        trace_latency_phase(
+            "diff_drop_unreached_test_files",
+            &format!("loaded_files_{}", loaded_files.len()),
+            unreached_started.elapsed(),
+        );
         // #8547: when the dependent-scope admission probe already built
         // the changed packages' index, reuse it as the main index: only
         // the admitted extras (and any file whose bytes moved since the
         // probe read them) are parsed, through the same fact cache, and
         // post-processing re-runs once over the merged index. Without an
         // admission probe the main build is the only build, as before.
+        let main_index_started = std::time::Instant::now();
+        let admission_reused = admission_core.is_some();
         let cached = match admission_core {
-            Some(core) => rust_index::reuse_cached_index_with_loaded_files(
+            Some(core) => rust_index::reuse_cached_index_in_run(
                 core,
                 &options.root,
                 &loaded_files,
@@ -2452,6 +2473,15 @@ impl RustAdapter {
                 &options.test_harnesses,
             )?,
         };
+        trace_latency_phase(
+            "diff_main_index",
+            if admission_reused {
+                "reused_admission_core"
+            } else {
+                "built"
+            },
+            main_index_started.elapsed(),
+        );
         #[cfg(test)]
         {
             rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();

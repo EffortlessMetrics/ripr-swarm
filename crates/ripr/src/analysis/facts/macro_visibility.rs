@@ -299,21 +299,33 @@ fn may_follow_attribute(item: &str) -> bool {
 
 impl MacroVisibility {
     pub(crate) fn new(files: impl Iterator<Item = (PathBuf, Arc<str>)>) -> Self {
+        use rayon::prelude::*;
         let sources: BTreeMap<PathBuf, Arc<str>> = files.collect();
-        let mut generators = BTreeSet::new();
-        for source in sources.values() {
-            if !source.contains("macro_rules") || !source.contains("test") {
-                continue;
-            }
-            let Some(scope) = shared_scope(source) else {
-                continue;
-            };
-            for scoped in &scope.macros {
-                if scoped.text.contains("test") {
-                    generators.insert(scoped.name.clone());
-                }
-            }
-        }
+        // Each candidate's scope parse is independent and the result is a
+        // name set, so the scan runs on the rayon pool; the union is
+        // order-free and `shared_scope` is already a shared, locked memo.
+        let candidates: Vec<&Arc<str>> = sources
+            .values()
+            .filter(|source| source.contains("macro_rules") && source.contains("test"))
+            .collect();
+        let generators: BTreeSet<String> = candidates
+            .par_iter()
+            .map(|source| {
+                shared_scope(source)
+                    .map(|scope| {
+                        scope
+                            .macros
+                            .iter()
+                            .filter(|scoped| scoped.text.contains("test"))
+                            .map(|scoped| scoped.name.clone())
+                            .collect::<BTreeSet<_>>()
+                    })
+                    .unwrap_or_default()
+            })
+            .reduce(BTreeSet::new, |mut left, right| {
+                left.extend(right);
+                left
+            });
         Self {
             sources,
             generators,

@@ -299,15 +299,23 @@ impl AdmissionQuery {
         // Calling it per changed-span owner re-parsed crates/ripr on every
         // doctor.rs / cli_smoke.rs function and hung PR evidence at 3600s.
         let unseen = classify::UnseenReachNames::build(index);
-        for facts in index.files().values() {
-            if facts.source.contains("macro_rules") {
-                query
-                    .empty_macro_names
-                    .extend(crate::analysis::syntax::local_empty_macro_names(
-                        &facts.source,
-                    ));
-            }
-        }
+        // Each file's parse is independent and the answer is a name set, so
+        // the scan fans out over the rayon pool; the union is order-free.
+        let macro_sources: Vec<&str> = index
+            .files()
+            .values()
+            .map(|facts| facts.data().source.as_ref())
+            .filter(|source| source.contains("macro_rules"))
+            .collect();
+        query.empty_macro_names.extend(
+            macro_sources
+                .par_iter()
+                .map(|source| crate::analysis::syntax::local_empty_macro_names(source))
+                .reduce(BTreeSet::new, |mut left, right| {
+                    left.extend(right);
+                    left
+                }),
+        );
         for (file, lines) in changed_lines {
             query
                 .package_prefixes
@@ -762,7 +770,7 @@ pub(super) fn admit_dependents(
                 loaded.push((file, bytes));
             }
         }
-        let scanned: Vec<Result<Option<FileTokens>, String>> = loaded
+        let scanned: Vec<Result<Option<(FileTokens, bool)>, String>> = loaded
             .par_iter()
             .map(|(file, bytes)| {
                 cancellation::with_optional_token(token.as_ref(), || {
@@ -771,7 +779,17 @@ pub(super) fn admit_dependents(
                         .iter()
                         .any(|registration| registration.target == **file);
                     let admit = !core_only && (harness_target || query.admits(bytes));
-                    Ok((!admit).then(|| FileTokens::scan(bytes)))
+                    // The routing probe parses the file, so it runs here on
+                    // the worker beside the token scan, not on the serial
+                    // fold below.
+                    Ok((!admit).then(|| {
+                        (
+                            FileTokens::scan(bytes),
+                            crate::analysis::workspace::withheld_source_disables_crate_root_routing(
+                                file, bytes,
+                            ),
+                        )
+                    }))
                 })
             })
             .collect();
@@ -784,10 +802,8 @@ pub(super) fn admit_dependents(
                     }
                     admitted.push((*file).clone());
                 }
-                Some(file_tokens) => {
-                    if crate::analysis::workspace::withheld_source_disables_crate_root_routing(
-                        file, bytes,
-                    ) {
+                Some((file_tokens, disables_routing)) => {
+                    if disables_routing {
                         withheld_routing_disabled = true;
                     }
                     let id = u32::try_from(withheld.len()).map_err(|err| {

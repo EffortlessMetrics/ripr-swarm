@@ -609,3 +609,38 @@ fn original_empty_property_receipts_survive_index_paths_and_revoke_on_unchanged_
     assert_eq!(snapshot(&reused.index, true)?, expected);
     Ok(())
 }
+
+#[test]
+fn same_run_reuse_serves_identical_files_without_rebuilding_property_authority()
+-> Result<(), String> {
+    let fixture = Fixture::new()?;
+    if !proptest_identity_available(&fixture.0) {
+        return Ok(());
+    }
+    let files = fixture.loaded()?;
+    let original =
+        build_index_from_loaded_files_with_cache_and_test_harnesses(&fixture.0, &files, &[])?;
+    let source_hash = original.files_content_hash.clone();
+    let before = assert_state(&original.index, true, "before")?;
+    // Ordinary reuse revokes property authority when configuration moves
+    // under unchanged bytes; the same-run form keeps the run's one view.
+    fixture.write(".cargo/config.toml", "[env]\nPROPTEST_CASES='0'\n")?;
+    let reused = reuse_cached_index_in_run(original, &fixture.0, &files, &[])?;
+    assert_eq!(reused.files_content_hash, source_hash);
+    assert_eq!(assert_state(&reused.index, true, "same-run reuse")?, before);
+    // An added file still takes the ordinary path.
+    let mut changed = files.clone();
+    changed.push((
+        std::path::PathBuf::from("src/added.rs"),
+        b"pub fn added() -> u8 { 1 }\n".to_vec(),
+    ));
+    let extended = reuse_cached_index_in_run(reused, &fixture.0, &changed, &[])?;
+    assert!(
+        extended
+            .index
+            .files()
+            .get(std::path::Path::new("src/added.rs"))
+            .is_some()
+    );
+    Ok(())
+}

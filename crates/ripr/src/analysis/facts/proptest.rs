@@ -53,11 +53,23 @@ pub(super) fn register_proptest_tests(
 ) -> Result<(), String> {
     index.proptest_receipts.clear();
     index.proptest_metadata_failures.clear();
-    let files = index
+    // Each candidate file's parse is independent; the indexed collect keeps
+    // the walk's file order for everything below.
+    use rayon::prelude::*;
+    let candidates = index
         .files()
         .iter()
         .filter(|(_, file)| !file.used_lexical_fallback && file.source.contains("proptest"))
-        .map(|(path, file)| (path.clone(), proptest_expansions(&file.source)))
+        .map(|(path, file)| (path.clone(), Arc::clone(&file.data().source)))
+        .collect::<Vec<_>>();
+    let files = candidates
+        .into_par_iter()
+        .map(|(path, source)| {
+            let expansions = proptest_expansions(&source);
+            (path, expansions)
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
         .filter(|(_, expansions)| !expansions.is_empty())
         .collect::<Vec<_>>();
     if files.is_empty() {
