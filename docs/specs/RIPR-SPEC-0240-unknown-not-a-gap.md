@@ -1052,6 +1052,33 @@ This does not make the cut-short run complete: the limitation still marks the
 outcome partial. Reference-tree pruning, walk order by changed paths and the
 read budget are separate work.
 
+### Dependent-crate tests dropped by the package-prefix guard (#5395)
+
+Rust related-test selection drops another crate's tests unless they call the
+owner by a unique name, through a helper-chain entry, or through a
+path-dependency edge that still requires a named owner call. A test that
+reaches the owner only through trait dispatch (`serialize()` then `Serialize`
+then `write_escaped`) is therefore not related.
+
+When the remaining related tests are empty and a complete path-dependency
+graph shows at least one other package that depends on the owner's crate
+through a normal or dev path dependency and hosts tests, a `no_static_path`
+finding is rewritten through `withhold_gap`
+to `static_unknown` under `rust_dependent_crate_reach_unresolved`. Reach that
+had been ruled out (`no`) becomes `unknown`, and stop reason
+`gap_evidence_unresolved` is recorded. Named `no_static_path` limitations
+already on the finding (RIPR-SPEC-0118 and siblings) are replaced: keeping
+them would leave a kind whose documented class is `no_static_path`. Fast or
+Draft may omit a dependent integration test from the main index while a
+widened witness search still names it; a `tests/` tree on disk under a
+callable reverse neighbor that contains a `.rs` file is enough to refuse a
+confident empty related-test list. An empty `tests/` directory is not.
+
+Findings that already related a test are not touched. A workspace with no
+reverse dependents, an incomplete graph, or dependents that host no tests
+keeps `no_static_path`. This is not cross-crate trait resolution and not
+nested `macro_rules!` expansion; those remain residual.
+
 ## Scope boundary
 
 - Rust check findings only, except the TypeScript truncated-discovery rule above. The pilot seam rule is RIPR-SPEC-0230 (#5569).
@@ -1064,7 +1091,9 @@ read budget are separate work.
   a strong oracle's text does not name the changed arm hid the sibling-arm
   gaps that the `match_arm_*` integration tests pin (#5432).
 - A third, withholding reach with no retained related test, moved no corpus
-  case and withheld four correct fixture gaps, so it was dropped too.
+  case and withheld four correct fixture gaps, so it was dropped too. The
+  dependent-crate rule above is narrower: it withholds only when a complete
+  graph shows reverse dependents that host tests.
 
 ## Required Evidence
 
@@ -1087,6 +1116,13 @@ read budget are separate work.
   catches the mutant at runtime, moves from a false gap to `static_unknown`.
 - On the verdict corpus, false actionable falls and false silent and false
   exposed do not rise.
+- #5395: `dependent_crate_tests_withhold_no_static_path` and
+  `dependent_crate_withhold_leaves_related_or_other_classes` pin the
+  class rewrite; `dependent_packages_host_indexed_tests_requires_complete_graph_and_a_test`
+  pins the predicate; `crates/ripr/tests/dependent_crate_trait_dispatch.rs`
+  pins the two-crate trait-dispatch fixture, the no-dependent and no-test
+  controls, a still-related unique owner call, and the nested `test!` →
+  `test_fn!` residual.
 
 ## Measured effect
 
@@ -1269,6 +1305,11 @@ Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 `no_static_path`; a truncated walk withholds it, names the cap, keeps the changed
 file in scope and leaves the outcome partial).
 
+`crates/ripr/tests/dependent_crate_trait_dispatch.rs` (a two-crate trait-dispatch
+test withholds `no_static_path`; a workspace with no dependents, a dependent
+with no tests, and a dependent that names the owner keep their classes; nested
+`test!` → `test_fn!` generators stay unindexed).
+
 Wire strings are pinned by
 `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
 and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
@@ -1286,6 +1327,10 @@ and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_cl
 - `crates/ripr/src/analysis/classifier/evidence.rs` computes the refusal
   scope; `crates/ripr/src/analysis/classifier/finding.rs` marks the finding.
 - `crates/ripr/src/analysis/classify/gap_admission.rs` owns the decision.
+- `crates/ripr/src/analysis/classify/related_tests.rs`
+  (`dependent_packages_host_indexed_tests`) owns the dependent-crate
+  predicate; `withhold_dependent_crate_reach_gap` consumes it after
+  `apply_probe_and_oracle_limits` in `crates/ripr/src/analysis/language/rust/mod.rs`.
 - `crates/ripr/src/analysis/classify/implicit_call.rs` owns the implicit-call
   rule (#9441).
 - `crates/ripr/src/analysis/classify/indirect_owner.rs` owns the
