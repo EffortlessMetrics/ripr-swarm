@@ -6,7 +6,7 @@ name: Windows Gate
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [labeled]
   push:
     branches: [main, master]
   workflow_dispatch:
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-gate-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
+  group: windows-gate-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.event_name == 'pull_request' && (github.event.pull_request.draft || github.event.label.name != 'merge-ready') && github.run_id || 'request' }}
   cancel-in-progress: true
 
 env:
@@ -24,6 +24,7 @@ env:
 jobs:
   detect:
     name: windows-gate-detect
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.label.name == 'merge-ready')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -239,7 +240,7 @@ jobs:
   result:
     name: Ripr Windows Gate Result
     needs: [detect, run]
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.label.name == 'merge-ready'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

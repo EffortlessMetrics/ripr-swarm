@@ -191,6 +191,16 @@ pre-merge CI. Do not run full qualification on every alternative. Independent
 objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
+Steven's selected lifecycle keeps CI out of ordinary Draft, Ready, push and
+label activity; qualification follows an explicit merge request and, after
+verified cutover, runs on the native merge-group composition. Current workflows
+may still violate that target: inspect their actual event triggers before opening
+a PR or changing its state. In particular, `ub-review.yml` currently starts on
+PR opening, including Drafts, and the Python wheel workflow starts for matching
+PR paths. Do not trigger those runs merely to publish a candidate. Coordinate
+their existing repair (#12116), retain local evidence, and continue independent
+work until publication can respect the user's no-Draft-CI instruction.
+
 Use the actual installed request interface described in
 [merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
 qualification of the actual merge composition. Workflow support does not establish

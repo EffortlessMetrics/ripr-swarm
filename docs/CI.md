@@ -126,7 +126,7 @@ The non-required lanes gated by `merge-ready` do not run on a Draft or plain Rea
 PR without the label.
 Routed Rust Small is also requested by the `merge-ready` label (#4986; the
 required `Ripr Rust Small Result` exists only for that request). ub-review, the
-Python wheel workflow and source-of-truth still follow their own triggers until
+Python wheel workflow still follow their own triggers until
 #4984/#8082 integrate them. Agents and authors prove
 the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
 publish a Draft, mark it Ready once review is complete, and add the `merge-ready`
@@ -147,11 +147,12 @@ superseded.
   only when `merge-ready` is re-applied.
 - Gated: `ci.yml` jobs, `coverage`, `test-analytics`, `future-clippy`,
   `windows-advisory` (both jobs), `macos-advisory`, `security`, `printed-command-paste`,
-  `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
+  `npm-launcher`, `zed-extension`, `pilot-ranking`, `public-proof`, `windows-gate`
+  and `source-of-truth`. Push,
   schedule and manual runs are unchanged.
 - Not changed here: `ub-review` (its triggers are pinned by
-  `pr_readiness_workflow_contract`), the Python wheel workflow, and
-  `source-of-truth`. Their cutover is tracked under #4984.
+  `pr_readiness_workflow_contract`) and the Python wheel workflow. Their cutover
+  is tracked under #4984.
 
 ### What starts what
 
@@ -461,7 +462,7 @@ implement and validate the lane-selection logic.
 
 | Label | Effect |
 | --- | --- |
-| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
+| `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review and wheel keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
 | `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
@@ -590,8 +591,8 @@ and single-platform CI was the root cause enabling both.
   product behavior remains an author and audit responsibility.
 
 - **Diff-scoped gate (#5088).** `.github/workflows/windows-gate.yml` posts
-  `Ripr Windows Gate Result` on every pull request `opened`/`synchronize`/`reopened`
-  event, on `main`/`master` pushes, and on `workflow_dispatch`. An ubuntu
+  `Ripr Windows Gate Result` on a non-draft pull request `merge-ready` label
+  request, on `main`/`master` pushes, and on `workflow_dispatch`. An ubuntu
   detection job conservatively marks a diff `windows_relevant` when it touches
   `cfg(windows)` in changed Rust, contains `cfg(windows)` anywhere in a changed
   `*.rs` file, or edits the Windows advisory/gate workflow definitions; detection
@@ -782,7 +783,8 @@ The Source of Truth workflow owns the advisory spec maintenance digest
 retained as the `ripr-spec-maintenance` artifact.
 
 - **Triggers.** A weekly schedule (no more frequent than weekly), explicit
-  `workflow_dispatch`, and pull requests that touch spec governance paths
+  `workflow_dispatch`, and non-draft pull requests with an explicit `merge-ready`
+  label request that touch spec governance paths
   (`docs/specs/**`, `docs/templates/**`, `.ripr/traceability.toml`,
   `.allow/spec-system/**`, `docs/status/SUPPORT_TIERS.md`, or the workflow
   itself). Source-only PRs do not start it.
