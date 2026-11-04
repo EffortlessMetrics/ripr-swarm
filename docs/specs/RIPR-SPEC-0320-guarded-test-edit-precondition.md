@@ -69,6 +69,12 @@ or mutated value is held to the builder's rules:
   fidelity to the paragraph and is not an independent oracle. A precondition
   without a `document_version` still mints but can never verify:
   `verify_document_version` refuses absent versions.
+- **Range.** `assertion_range` uses the LSP convention: 0-based lines and UTF-16
+  character offsets, end exclusive. It must cover exactly the retained
+  `original_source_text`: a single-line range is as wide as the text in UTF-16
+  units, and a multi-line range spans one line per line break and ends at the
+  width of the last line. A range one unit short or long refuses with
+  `source_text_mismatch`, in the builder and in `validate`.
 - **Validation evidence.** Parse and format validation must both be `passed`.
   `failed` names `parse_validation_failed` / `format_validation_failed`;
   `not_run`, including an omitted field, is `source_precondition_missing`.

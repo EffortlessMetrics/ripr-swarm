@@ -23,7 +23,7 @@
           "start_line": 12,
           "start_character": 4,
           "end_line": 12,
-          "end_character": 28
+          "end_character": 29
         },
         "original_source_text": "assert!(result.is_err());",
         "document_version": 3,
@@ -54,7 +54,7 @@
         "test_selector": "tests/standings.rs::rejects_self_game",
         "test_file": "tests/standings.rs",
         "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
-        "edit_instruction_id": "edit-instruction:99ad9b7ba1164e9f",
+        "edit_instruction_id": "edit-instruction:99aa357ba1136b76",
         "original_source_digest": "sha256:bf98ee362ba027c8b120eebee62cb44319a9d6bfc2a46c5b3491d9a779f552f9"
       }
     },
@@ -72,7 +72,7 @@
           "start_line": 18,
           "start_character": 4,
           "end_line": 18,
-          "end_character": 24
+          "end_character": 26
         },
         "original_source_text": "assert_eq!(total, 50);",
         "document_version": 3,
@@ -103,7 +103,7 @@
         "test_selector": "tests/pricing.rs::boundary_equality",
         "test_file": "tests/pricing.rs",
         "exact_replacement_text": "assert_eq!(total, discount_threshold);",
-        "edit_instruction_id": "edit-instruction:b0aad19c46de8d3e",
+        "edit_instruction_id": "edit-instruction:b0a4059c46d8c6ec",
         "original_source_digest": "sha256:9cfb7c3b1b3931522e0c4cd3afb97d74fc3a5a850adba6fec1421a9ab21da141"
       }
     },
@@ -119,7 +119,7 @@
           "start_line": 1,
           "start_character": 0,
           "end_line": 1,
-          "end_character": 10
+          "end_character": 14
         },
         "original_source_text": "assert!(flag);",
         "exact_replacement_text": "assert!(other);",
@@ -157,7 +157,7 @@
           "start_line": 2,
           "start_character": 0,
           "end_line": 2,
-          "end_character": 20
+          "end_character": 25
         },
         "original_source_text": "assert!(result.is_err());",
         "exact_replacement_text": "assert_eq!(result, Err(ForeignError));",
@@ -195,7 +195,7 @@
           "start_line": 3,
           "start_character": 0,
           "end_line": 3,
-          "end_character": 20
+          "end_character": 25
         },
         "original_source_text": "assert!(result.is_err());",
         "exact_replacement_text": "assert_eq!(result, Err(E));",
@@ -233,7 +233,7 @@
           "start_line": 4,
           "start_character": 0,
           "end_line": 4,
-          "end_character": 10
+          "end_character": 14
         },
         "original_source_text": "assert!(flag);",
         "exact_replacement_text": "assert!(other);",
@@ -271,7 +271,7 @@
           "start_line": 5,
           "start_character": 0,
           "end_line": 5,
-          "end_character": 10
+          "end_character": 14
         },
         "original_source_text": "assert!(flag);",
         "exact_replacement_text": "assert!(other);",
@@ -310,7 +310,7 @@
           "start_line": 6,
           "start_character": 0,
           "end_line": 6,
-          "end_character": 10
+          "end_character": 14
         },
         "original_source_text": "assert!(flag);",
         "exact_replacement_text": "assert!(other);",
@@ -348,7 +348,7 @@
           "start_line": 7,
           "start_character": 0,
           "end_line": 7,
-          "end_character": 10
+          "end_character": 14
         },
         "original_source_text": "assert!(flag);",
         "exact_replacement_text": "assert!(!!!",
@@ -395,7 +395,7 @@
           "start_line": 12,
           "start_character": 4,
           "end_line": 12,
-          "end_character": 28
+          "end_character": 29
         },
         "original_source_text": "assert!(result.is_err());",
         "document_version": 3,
@@ -442,7 +442,7 @@
           "start_line": 12,
           "start_character": 4,
           "end_line": 12,
-          "end_character": 28
+          "end_character": 29
         },
         "original_source_text": "assert!(result.is_err());",
         "document_version": 3,
@@ -489,7 +489,7 @@
           "start_line": 12,
           "start_character": 4,
           "end_line": 12,
-          "end_character": 28
+          "end_character": 29
         },
         "original_source_text": "assert!(result.is_err());",
         "document_version": 3,
@@ -537,7 +537,7 @@
           "start_line": 12,
           "start_character": 4,
           "end_line": 12,
-          "end_character": 28
+          "end_character": 29
         },
         "original_source_text": "assert!(result.is_err());",
         "document_version": 3,
@@ -585,7 +585,7 @@
           "start_line": 12,
           "start_character": 4,
           "end_line": 12,
-          "end_character": 28
+          "end_character": 29
         },
         "original_source_text": "assert!(result.is_err());",
         "document_version": 3,
@@ -633,7 +633,7 @@
           "start_line": 12,
           "start_character": 4,
           "end_line": 12,
-          "end_character": 28
+          "end_character": 29
         },
         "original_source_text": "assert!(result.is_err());",
         "document_version": 3,
@@ -642,6 +642,102 @@
         "format_validation_status": "passed",
         "allowed_edit_surface": [
           "../other/tests/demo.rs"
+        ],
+        "must_not_change": [
+          "src/standings.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "range_one_short_of_text",
+      "expect": "unavailable",
+      "reason": "source_text_mismatch",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123",
+          "input_identity": "input:1",
+          "snapshot_identity": "snap:1",
+          "config_identity": "cfg:1",
+          "base_revision": "base:1"
+        },
+        "canonical_item": "gap:67f9714ba37b3967",
+        "seam_id": "seam:broad-error",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "tests/standings.rs",
+        "assertion_range": {
+          "start_line": 12,
+          "start_character": 4,
+          "end_line": 12,
+          "end_character": 28
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/standings.rs"
+        ],
+        "must_not_change": [
+          "src/standings.rs"
+        ],
+        "verification_command_refs": [
+          "ripr agent verify --phase after"
+        ],
+        "receipt_command_refs": [
+          "ripr agent receipt --phase after"
+        ],
+        "ambiguous_fix_site": false,
+        "required_import": false,
+        "preview_or_static_limitation": false,
+        "stale_snapshot": false,
+        "production_file_target": false,
+        "multi_file_edit": false
+      }
+    },
+    {
+      "id": "range_one_long_of_text",
+      "expect": "unavailable",
+      "reason": "source_text_mismatch",
+      "input": {
+        "identity": {
+          "workspace_identity": "ws:demo",
+          "repository_head": "abc123",
+          "input_identity": "input:1",
+          "snapshot_identity": "snap:1",
+          "config_identity": "cfg:1",
+          "base_revision": "base:1"
+        },
+        "canonical_item": "gap:67f9714ba37b3967",
+        "seam_id": "seam:broad-error",
+        "test_selector": "tests/standings.rs::rejects_self_game",
+        "test_file": "tests/standings.rs",
+        "assertion_range": {
+          "start_line": 12,
+          "start_character": 4,
+          "end_line": 12,
+          "end_character": 30
+        },
+        "original_source_text": "assert!(result.is_err());",
+        "document_version": 3,
+        "exact_replacement_text": "assert_eq!(result, Err(StandingsError::SelfGame));",
+        "parse_validation_status": "passed",
+        "format_validation_status": "passed",
+        "allowed_edit_surface": [
+          "tests/standings.rs"
         ],
         "must_not_change": [
           "src/standings.rs"

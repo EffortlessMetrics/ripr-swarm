@@ -165,6 +165,27 @@ impl NegotiatedSourceRange {
         }
         Ok(())
     }
+
+    /// Whether this range covers exactly `text`: 0-based lines and UTF-16
+    /// character offsets, end exclusive, the LSP convention. A single-line
+    /// range is as wide as the text; a multi-line range spans one line per line
+    /// break in the text and ends at the width of its last line.
+    pub fn covers_text(&self, text: &str) -> bool {
+        let utf16 = |segment: &str| u32::try_from(segment.encode_utf16().count()).ok();
+        let segments: Vec<&str> = text.split('\n').collect();
+        let Some(breaks) = u32::try_from(segments.len() - 1).ok() else {
+            return false;
+        };
+        if self.end_line.checked_sub(self.start_line) != Some(breaks) {
+            return false;
+        }
+        let last = segments.last().copied().unwrap_or_default();
+        if breaks == 0 {
+            self.end_character.checked_sub(self.start_character) == utf16(last)
+        } else {
+            Some(self.end_character) == utf16(last)
+        }
+    }
 }
 
 impl Default for GuardedEditBuildInput {
@@ -427,6 +448,12 @@ pub fn try_build_exact_test_edit_precondition(
         ));
     }
 
+    if !input.assertion_range.covers_text(original_text) {
+        return Err(GuardedEditUnavailable::with_detail(
+            GuardedEditUnavailableReason::SourceTextMismatch,
+            "assertion_range does not cover original_source_text",
+        ));
+    }
     let original_source_digest = sha256_digest(original_text);
     let canonical_gap_id = input
         .canonical_item
@@ -564,6 +591,14 @@ impl ExactTestEditPrecondition {
         if self.original_source_text.as_deref() == Some("") {
             return Err(GuardedEditUnavailable::new(
                 GuardedEditUnavailableReason::SourcePreconditionMissing,
+            ));
+        }
+        if let Some(text) = self.original_source_text.as_deref()
+            && !self.assertion_range.covers_text(text)
+        {
+            return Err(GuardedEditUnavailable::with_detail(
+                GuardedEditUnavailableReason::SourceTextMismatch,
+                "assertion_range does not cover original_source_text",
             ));
         }
         if self.must_not_change.is_empty()
@@ -789,7 +824,7 @@ mod tests {
                 start_line: 10,
                 start_character: 4,
                 end_line: 10,
-                end_character: 28,
+                end_character: 29,
             },
             original_source_text: Some("assert!(result.is_err());".to_string()),
             document_version: Some(3),
@@ -840,6 +875,7 @@ mod tests {
         input.test_selector = "tests/pricing.rs::boundary_equality".to_string();
         input.test_file = "tests/pricing.rs".to_string();
         input.original_source_text = Some("assert_eq!(total, 50);".to_string());
+        input.assertion_range.end_character = 26;
         input.exact_replacement_text = "assert_eq!(total, discount_threshold);".to_string();
         input.allowed_edit_surface = vec!["tests/pricing.rs".to_string()];
         let precondition = try_build_exact_test_edit_precondition(&input)
@@ -990,6 +1026,37 @@ mod tests {
     }
 
     #[test]
+    fn fix_instruction_guarded_edit_range_must_cover_the_retained_text() -> Result<(), String> {
+        let range = |sl, sc, el, ec| NegotiatedSourceRange {
+            start_line: sl,
+            start_character: sc,
+            end_line: el,
+            end_character: ec,
+        };
+        // Single line, UTF-16 units: U+1D11E is two units, U+00E9 one.
+        assert!(range(2, 4, 2, 29).covers_text("assert!(result.is_err());"));
+        assert!(!range(2, 4, 2, 28).covers_text("assert!(result.is_err());"));
+        assert!(!range(2, 4, 2, 30).covers_text("assert!(result.is_err());"));
+        assert!(range(0, 0, 0, 3).covers_text("\u{1d11e}\u{e9}"));
+        assert!(!range(0, 0, 0, 2).covers_text("\u{1d11e}\u{e9}"));
+        // Multi-line: one line per break, ends at the last line's width.
+        assert!(range(1, 4, 3, 2).covers_text("a(\n  b,\n);"));
+        assert!(!range(1, 4, 2, 2).covers_text("a(\n  b,\n);"));
+        assert!(!range(1, 4, 3, 3).covers_text("a(\n  b,\n);"));
+        // The builder refuses with the named reason, in both directions.
+        for end in [28, 30] {
+            let mut input = sample_input();
+            input.assertion_range.end_character = end;
+            assert_eq!(
+                reason_of(&input)?,
+                GuardedEditUnavailableReason::SourceTextMismatch,
+                "end_character {end}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn fix_instruction_guarded_edit_document_and_source_checks() -> Result<(), String> {
         let precondition = try_build_exact_test_edit_precondition(&sample_input())
             .map_err(|unavailable| format!("{unavailable:?}"))?;
@@ -1068,12 +1135,16 @@ mod tests {
                 i.identity.snapshot_identity = None
             }),
             ("seam_id", |i| i.seam_id = Some("seam:other".into())),
-            ("range", |i| i.assertion_range.end_character = 29),
+            ("range", |i| {
+                i.assertion_range.start_character = 5;
+                i.assertion_range.end_character = 30;
+            }),
             ("replacement", |i| {
                 i.exact_replacement_text = "assert_eq!(a, b);".into()
             }),
             ("original text", |i| {
-                i.original_source_text = Some("assert!(other.is_err());".into())
+                i.original_source_text = Some("assert!(other.is_err());".into());
+                i.assertion_range.end_character = 28;
             }),
             ("test_selector", |i| {
                 i.test_selector = "tests/demo.rs::other".into()
@@ -1223,6 +1294,14 @@ mod tests {
                 Box::new(|v| {
                     v["identity"]["snapshot_identity"] = "snap:other".into();
                 }),
+            ),
+            (
+                "range one short of the retained text",
+                Box::new(|v| v["assertion_range"]["end_character"] = 28.into()),
+            ),
+            (
+                "range one long for the retained text",
+                Box::new(|v| v["assertion_range"]["end_character"] = 30.into()),
             ),
             (
                 "digest malformed",
