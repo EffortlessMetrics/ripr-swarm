@@ -4955,6 +4955,36 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('unavailable_languages rows survive a mixed limited run status for setup diagnosis (#2962)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'limited',
+        attempt_id: 'run-lang-mixed',
+        snapshot_id: 'snapshot:run-lang-mixed',
+        unavailable_languages: [{
+          language: 'python',
+          file_count: 1,
+          availability_state: 'detected_compiled_disabled',
+          remediation: ['enable `python` under `[languages]` in ripr.toml (`enabled = [..., "python"]`)']
+        }]
+      });
+      // The limited run keeps its own presentation and primary next step.
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      assert.ok(!context.status.text.includes('language off'), context.status.text);
+      const diagnosis = await diagnoseSetupReport(context);
+      assert.ok(diagnosis.includes('Language availability (python): detected_compiled_disabled'), diagnosis);
+      assert.ok(diagnosis.includes('enable `python` under `[languages]`'), diagnosis);
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('closing an unsaved buffer before any completed refresh reports paused analysis, not queued', async () => {
     const context = createControllerTestContext({});
     try {

@@ -9094,6 +9094,12 @@ fn lsp_recovery_from_availability_report(
         return recovery.to_string();
     }
     let language = report.language;
+    // An adapter that is not compiled into this binary cannot be enabled by
+    // configuration (config parsing rejects it), whatever the configured
+    // intent resolved to; the only route is the build prerequisite.
+    if !report.compiled_available {
+        return language.unavailable_adapter_recovery();
+    }
     let mut recovery = format!(
         "add \"{}\" to [languages] enabled in ripr.toml, then restart the language server \
          so the enabled adapter is read",
@@ -9246,6 +9252,29 @@ mod language_adapter_recovery_tests {
             return Err(format!(
                 "uncompiled python must read as detected_not_compiled: {:?}",
                 report.state
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn uncompiled_adapter_recovery_ignores_default_disabled_intent() -> Result<(), String> {
+        // With a loaded default configuration the language is not in
+        // `[languages] enabled`, so the resolver reads the intent as disabled
+        // and returns `NotEnabled` with no remediation. The recovery must
+        // still be the build route, never "add the language to ripr.toml".
+        let Some(language) = LanguageId::ALL
+            .into_iter()
+            .find(|language| *language != LanguageId::Rust && !language.is_available())
+        else {
+            return Ok(());
+        };
+        let config = crate::lsp::config::LspAnalysisConfig::default();
+        let recovery = language_adapter_not_enabled_recovery(language, Some(&config), 1);
+        let expected = language.unavailable_adapter_recovery();
+        if recovery != expected {
+            return Err(format!(
+                "uncompiled {language:?} with default config must name the build route, got {recovery:?} expected {expected:?}"
             ));
         }
         Ok(())

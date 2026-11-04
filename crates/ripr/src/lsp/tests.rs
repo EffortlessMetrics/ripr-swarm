@@ -24587,9 +24587,18 @@ async fn analysis_status_unavailable_languages_carry_availability_report() -> Re
     let state = row["availability_state"].as_str().ok_or_else(|| {
         format!("availability_state must be a string when config is loaded: {row}")
     })?;
-    if state.is_empty() {
+    // The default loaded configuration lists only rust, so python reads as an
+    // explicit disable: `detected_compiled_disabled` when the adapter is
+    // compiled in, and `not_enabled` (no enable route) when it is not. A
+    // mislabeled enabled state must fail here.
+    let expected_state = if LanguageId::Python.is_available() {
+        "detected_compiled_disabled"
+    } else {
+        "not_enabled"
+    };
+    if state != expected_state {
         return Err(format!(
-            "availability_state must name a closed state: {row}"
+            "availability_state must be {expected_state:?}, got {state:?}: {row}"
         ));
     }
     let remediation = row["remediation"]

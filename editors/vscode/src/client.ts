@@ -4367,6 +4367,31 @@ export function statusForRunStatus(
     unavailableLanguages?: readonly AnalysisStatusUnavailableLanguage[];
   } = {}
 ): RiprStatusState {
+  const status = presentRunStatus(runStatus, input);
+  // #2962: the validated unavailable-language rows ride on every status, not
+  // only the `languageNotEnabled` presentation, so Diagnose Setup still prints
+  // their availability state and remediation when a stale, deferred, cache,
+  // limited or partition state keeps the primary presentation and next step.
+  if (status.unavailableLanguages) {
+    return status;
+  }
+  const rows = validUnavailableLanguages(input.unavailableLanguages);
+  return rows.length > 0
+    ? { ...status, unavailableLanguages: rows.map((row) => ({ ...row })) }
+    : status;
+}
+
+function presentRunStatus(
+  runStatus: string | undefined,
+  input: {
+    detail?: string;
+    retryCommand?: string;
+    retryRecovery?: string;
+    dirtyRoutedDocuments?: readonly string[];
+    components?: readonly AnalysisStatusComponent[];
+    unavailableLanguages?: readonly AnalysisStatusUnavailableLanguage[];
+  }
+): RiprStatusState {
   const dirty = input.dirtyRoutedDocuments ?? [];
   if (dirty.length > 0) {
     return {
@@ -4412,7 +4437,7 @@ export function statusForRunStatus(
   ) {
     // Compose with the presentation the run would otherwise get, so degraded
     // component recoveries and the untrustworthy-findings warning survive.
-    const base = statusForRunStatus(runStatus, { ...input, unavailableLanguages: undefined });
+    const base = presentRunStatus(runStatus, { ...input, unavailableLanguages: undefined });
     return statusForUnavailableLanguages(unavailable, base);
   }
   const limited = LIMITED_RUN_STATUS_PRESENTATIONS[runStatus ?? ''];
