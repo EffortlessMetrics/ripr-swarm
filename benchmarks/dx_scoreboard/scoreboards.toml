@@ -57,6 +57,9 @@ url = "https://github.com/EffortlessMetrics/ripr-swarm"
 sha = "7c64b9c8d0778cc7a6aeaab0deb0452d9e521663"
 note = "large workspace (~900 files); pinned, not the checkout under test"
 heavy = true
+# Ratchet ceilings (smaller-size control): just above the hosted run of
+# 2026-11-04 (8.2 s / 551 MB warm). Hold this row where it is.
+ceilings = { "speed.warm_check_ms" = 10000, "speed.warm_check_peak_rss_mb" = 640 }
 
 # Larger workspaces, where the inner loop is judged. Warm checks on small
 # libraries meet the 2 s bar easily; these rows are the ones that can miss it.
@@ -101,6 +104,13 @@ url = "https://github.com/EffortlessMetrics/ripr-swarm"
 sha = "8fbe8bd1598e0b11752c6c989aa54198a0510a2f"
 note = "this repository at its 2026-10 size (~2100 .rs files), a fixed pin that will stop being current; the commit edits product Rust under crates/ripr, so the warm check pays for the macro-binding scan"
 heavy = true
+# Ratchet ceilings, not goals. Set just above what main measures today so the
+# row stops creeping: warm check 49.8 s / 1,275 MB and cold pilot 269 s /
+# 1,446 MB hosted (run 41750179854); 35.5 s warm / 59.6 s cold / 1.3 GB local
+# on a 3,280-file checkout. Goal for the large tier: warm check 10 s / 768 MB,
+# cold pilot 60 s (RSS 1 GiB). Lower these in the PR that earns the gain; never
+# raise them.
+ceilings = { "speed.warm_check_ms" = 60000, "speed.warm_check_peak_rss_mb" = 1536, "speed.cold_pilot_ms" = 300000, "speed.cold_pilot_peak_rss_mb" = 2048 }
 
 # No-Rust diffs. The pinned change touches no `.rs` file, so the warm check
 # should finish without analyzing the workspace. `cargo xtask dx-scoreboard`
