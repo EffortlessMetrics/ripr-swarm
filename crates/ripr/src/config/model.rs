@@ -483,6 +483,9 @@ pub struct PythonLanguageConfig {
     /// Exact normalized repository-relative Python paths admitted past the
     /// built-in excluded-directory conventions (#7386).
     pub handwritten_files: Vec<String>,
+    /// Additional repository-relative globs omitted from Python preview indexing
+    /// (#5380).
+    pub excluded_file_patterns: Vec<String>,
 }
 
 /// `[languages.typescript]` repository configuration.
@@ -491,6 +494,9 @@ pub struct TypescriptLanguageConfig {
     /// Exact normalized repository-relative TypeScript/JavaScript paths
     /// admitted past the built-in excluded-directory conventions (#7386).
     pub handwritten_files: Vec<String>,
+    /// Additional repository-relative globs omitted from TypeScript preview
+    /// indexing (#5380).
+    pub excluded_file_patterns: Vec<String>,
 }
 
 fn canonical_sorted_strings(patterns: &[String]) -> String {
@@ -915,10 +921,12 @@ impl RiprConfig {
             python:
                 PythonLanguageConfig {
                     handwritten_files: python_handwritten_files,
+                    excluded_file_patterns: python_excluded_file_patterns,
                 },
             typescript:
                 TypescriptLanguageConfig {
                     handwritten_files: typescript_handwritten_files,
+                    excluded_file_patterns: typescript_excluded_file_patterns,
                 },
         } = languages;
         let ProfilesConfig { bun_ub } = profiles;
@@ -946,11 +954,22 @@ impl RiprConfig {
         } else {
             String::new()
         };
+        let python_excluded_file_patterns_identity = if enabled.contains(&LanguageId::Python) {
+            canonical_sorted_strings(python_excluded_file_patterns)
+        } else {
+            String::new()
+        };
         let typescript_handwritten_files_identity = if enabled.contains(&LanguageId::TypeScript) {
             canonical_sorted_strings(typescript_handwritten_files)
         } else {
             String::new()
         };
+        let typescript_excluded_file_patterns_identity =
+            if enabled.contains(&LanguageId::TypeScript) {
+                canonical_sorted_strings(typescript_excluded_file_patterns)
+            } else {
+                String::new()
+            };
         let mut fields = vec![
             ConfigIdentityField {
                 name: "analysis.mode",
@@ -1085,10 +1104,22 @@ impl RiprConfig {
                 note: "explicit handwritten Python files change the analyzed source corpus (#7386)",
             },
             ConfigIdentityField {
+                name: "languages.python.excluded_file_patterns",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(python_excluded_file_patterns_identity),
+                note: "preview Python exclusion globs change which source files are indexed (#5380)",
+            },
+            ConfigIdentityField {
                 name: "languages.typescript.handwritten_files",
                 role: ConfigIdentityRole::FindingAffecting,
                 value: Some(typescript_handwritten_files_identity),
                 note: "explicit handwritten TypeScript files change the analyzed source corpus (#7386)",
+            },
+            ConfigIdentityField {
+                name: "languages.typescript.excluded_file_patterns",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(typescript_excluded_file_patterns_identity),
+                note: "preview TypeScript exclusion globs change which source files are indexed (#5380)",
             },
         ]);
         match bun_ub {
