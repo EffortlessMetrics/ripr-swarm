@@ -11263,28 +11263,28 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -11308,28 +11308,28 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -11353,43 +11353,43 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::load_as_object",
           "expression": "JsonValue::Object(7).as_object()",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
+          "grip_class": "activation_unknown",
+          "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::read_load_as_object",
           "expression": "load_as_object()",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
+          "grip_class": "activation_unknown",
+          "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
@@ -11419,36 +11419,36 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::load_as_object",
           "expression": "JsonValue::Object(7).as_object()",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
+          "grip_class": "activation_unknown",
+          "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
@@ -11478,28 +11478,28 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "weakly_gripped",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -11523,36 +11523,36 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::load_as_object",
           "expression": "value.as_object()",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
+          "grip_class": "activation_unknown",
+          "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
@@ -11582,28 +11582,28 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -11627,28 +11627,28 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -11748,36 +11748,36 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::as_object",
           "expression": "Some(7)",
-          "grip_class": "strongly_gripped",
-          "reach": "yes"
+          "grip_class": "activation_unknown",
+          "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
@@ -11800,28 +11800,28 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -11920,35 +11920,35 @@
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "match self",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Self::Object(value) =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "Some(*value)",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl JsonValue::as_object",
           "expression": "_ =>",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::impl Alien::as_object",
           "expression": "Some(7)",
-          "grip_class": "opaque",
+          "grip_class": "activation_unknown",
           "reach": "weak"
         },
         {
@@ -17834,6 +17834,13 @@
           "file": "src/lib.rs",
           "oracle_strength": "strong",
           "relation_reason": "helper_owner_call"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::read_leaf_value",
+          "expression": "Some(7)",
+          "grip_class": "activation_unknown",
+          "reach": "weak"
         }
       ]
     },

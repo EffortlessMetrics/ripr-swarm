@@ -3597,3 +3597,12 @@ Rust type and value namespaces are distinct: type parameters, aliases and braced
 structs do not hide bare value calls, while functions/constants do not hide
 module prefixes. Native original/mutant controls distinguish these positive
 bindings from the shadowing decoys.
+
+Recapture all affected reports without conflating unresolved static authority
+with runtime nonexecution. Native mutants confirm that discarded futures and
+unused namesakes do not observe the owner, while explicit polling, a selected
+trait default and a generic trait-return path can execute it despite remaining
+outside this bounded helper resolver. Those cases retain unknown activation;
+the real local-wrapper, namespace and integration-support controls retain
+strong attribution. Raw import/module shadows also need explicit `crate::`
+controls: normalization must remove false credit without hiding the real path.

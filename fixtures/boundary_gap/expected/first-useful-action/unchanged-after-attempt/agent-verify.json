@@ -1,11 +1,13 @@
 {
+  "after_produced_from_dirty": true,
   "artifact_currentness": "historical_noncurrent",
+  "before_produced_from_dirty": true,
   "changed_seams": [],
   "inputs": {
     "after": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
-    "after_content_sha256": "sha256:248eb002b4017c3c364631d6bf13ec4fcaadb1e586afcd115fb05fa03e90c734",
+    "after_content_sha256": "sha256:b8888498c412d60768aa0bc7dfb50789f5a29947c48b39b9298141ee690e5192",
     "before": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
-    "before_content_sha256": "sha256:248eb002b4017c3c364631d6bf13ec4fcaadb1e586afcd115fb05fa03e90c734"
+    "before_content_sha256": "sha256:b8888498c412d60768aa0bc7dfb50789f5a29947c48b39b9298141ee690e5192"
   },
   "new_gaps": [],
   "resolved_gaps": [],

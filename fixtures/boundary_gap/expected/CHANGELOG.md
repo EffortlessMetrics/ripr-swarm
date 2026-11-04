@@ -1,5 +1,13 @@
 # Golden Output Changes
 
+## Pending — helper binding cache generation (#12891)
+
+RIPR-SPEC-0005: recapture the portable unchanged-attempt snapshots through the
+repo-exposure producer at corpus generation 1.157, then regenerate their native
+verify and receipt artifacts. Apply the existing CLI fixture normalization for
+machine-bound provenance. Weak grip, unchanged movement and incomplete receipt
+status remain unchanged.
+
 ## Pending — proposed repair-target projection (#3162)
 
 PR-guidance working-set cards now emit `suggested_test.proposed_target`
