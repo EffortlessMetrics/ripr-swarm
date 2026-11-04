@@ -16,6 +16,7 @@
 
 use proptest::prelude::*;
 use proptest::test_runner::Config;
+use ripr::ExposureClass;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -304,6 +305,7 @@ fn replace_diff(path: &str, old: &str, new: &[u8]) -> Vec<u8> {
 
 struct Workspace {
     root: PathBuf,
+    out: PathBuf,
 }
 
 impl Workspace {
@@ -323,7 +325,10 @@ impl Workspace {
             std::fs::write(&path, bytes)
                 .map_err(|error| format!("write {} failed: {error}", path.display()))?;
         }
-        Ok(Self { root })
+        let out = root.with_extension("out");
+        std::fs::create_dir_all(&out)
+            .map_err(|error| format!("create {} failed: {error}", out.display()))?;
+        Ok(Self { root, out })
     }
 
     fn command(&self) -> std::process::Command {
@@ -338,23 +343,27 @@ impl Workspace {
         command
     }
 
-    /// Runs one `ripr check` as a child process. The CLI adapter is what
-    /// enables the Python and TypeScript preview languages, and a child turns
-    /// a stack overflow or abort into a reportable signal instead of killing
-    /// the test binary. A signal, a Rust panic exit (101) or a missed
-    /// deadline is a finding; any other refusal is an acceptable answer to
-    /// hostile input.
-    fn check_within_deadline(&self) -> Result<(), String> {
+    /// Runs one `ripr check` as a child process and returns its exit status
+    /// and stdout. The CLI adapter is what enables the Python and TypeScript
+    /// preview languages, and a child turns a stack overflow or abort into a
+    /// reportable signal instead of killing the test binary. A signal, a Rust
+    /// panic exit (101) or a missed deadline is a finding; any other refusal
+    /// is an acceptable answer to hostile input. Stdout goes to a file so a
+    /// large report cannot block the child while the deadline loop polls.
+    fn run_once(&self, run: u8) -> Result<(std::process::ExitStatus, Vec<u8>), String> {
+        let stdout_path = self.out.join(format!("stdout-{run}.json"));
+        let stdout = std::fs::File::create(&stdout_path)
+            .map_err(|error| format!("create {} failed: {error}", stdout_path.display()))?;
         let mut child = self
             .command()
-            .stdout(std::process::Stdio::null())
+            .stdout(stdout)
             .stderr(std::process::Stdio::null())
             .spawn()
             .map_err(|error| format!("spawn ripr failed: {error}"))?;
         let started = std::time::Instant::now();
-        loop {
+        let status = loop {
             match child.try_wait() {
-                Ok(Some(status)) => return judge(status),
+                Ok(Some(status)) => break status,
                 Ok(None) if started.elapsed() >= CASE_DEADLINE => {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -363,8 +372,167 @@ impl Workspace {
                 Ok(None) => std::thread::sleep(Duration::from_millis(5)),
                 Err(error) => return Err(format!("wait failed: {error}")),
             }
+        };
+        let bytes = std::fs::read(&stdout_path)
+            .map_err(|error| format!("read {} failed: {error}", stdout_path.display()))?;
+        Ok((status, bytes))
+    }
+
+    /// Crash-freedom (`judge`), then output invariants (`judge_output`), then
+    /// determinism on a second run over the same bytes (#12924).
+    fn check_within_deadline(&self) -> Result<(), String> {
+        let (status, stdout) = self.run_once(0)?;
+        judge(status)?;
+        judge_output(status.code(), &stdout)?;
+        if rerun_for_determinism(&self.root) {
+            let (second_status, second_stdout) = self.run_once(1)?;
+            judge_repeat(
+                (status.code(), &stdout),
+                (second_status.code(), &second_stdout),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+/// Exit codes `ripr check` may use for a run that ended normally
+/// (`docs/EXIT_CODES.md`): 0 completed, 2 could not complete, 3 declined,
+/// 130 interrupted.
+const DOCUMENTED_EXIT_CODES: [i32; 4] = [0, 2, 3, 130];
+
+/// Words that would claim a runtime mutation outcome. `ripr check` is static
+/// evidence only (CLAUDE.md product contract). The seeds and mutation tokens
+/// contain none of them, so a hit is ripr's own output, not echoed input.
+const RUNTIME_MUTATION_WORDS: [&str; 3] = ["killed", "survived", "mutant"];
+
+/// The class vocabulary comes from the domain owner. The exhaustive match
+/// makes a new `ExposureClass` variant a compile error here instead of a
+/// silently stale list.
+fn class_vocabulary() -> Vec<ExposureClass> {
+    let all = vec![
+        ExposureClass::Exposed,
+        ExposureClass::WeaklyExposed,
+        ExposureClass::ReachableUnrevealed,
+        ExposureClass::NoStaticPath,
+        ExposureClass::InfectionUnknown,
+        ExposureClass::PropagationUnknown,
+        ExposureClass::StaticUnknown,
+    ];
+    for class in &all {
+        match class {
+            ExposureClass::Exposed
+            | ExposureClass::WeaklyExposed
+            | ExposureClass::ReachableUnrevealed
+            | ExposureClass::NoStaticPath
+            | ExposureClass::InfectionUnknown
+            | ExposureClass::PropagationUnknown
+            | ExposureClass::StaticUnknown => {}
         }
     }
+    all
+}
+
+/// Invariants on whatever a normally ending `ripr check --format json`
+/// printed: documented exit code, and for a completed run valid JSON whose
+/// finding classes are in the vocabulary (unknown classes carry a stop
+/// reason) with no runtime-mutation claim.
+fn judge_output(code: Option<i32>, stdout: &[u8]) -> Result<(), String> {
+    let Some(code) = code else {
+        return Err("ripr check ended without an exit code or signal".to_string());
+    };
+    if !DOCUMENTED_EXIT_CODES.contains(&code) {
+        return Err(format!(
+            "exit code {code} is not in docs/EXIT_CODES.md {DOCUMENTED_EXIT_CODES:?}"
+        ));
+    }
+    if code != 0 {
+        return Ok(());
+    }
+    let text =
+        std::str::from_utf8(stdout).map_err(|error| format!("stdout is not UTF-8: {error}"))?;
+    let report: serde_json::Value =
+        serde_json::from_str(text).map_err(|error| format!("stdout is not JSON: {error}"))?;
+    for key in [
+        "schema_version",
+        "tool",
+        "mode",
+        "root",
+        "summary",
+        "findings",
+    ] {
+        if report.get(key).is_none() {
+            return Err(format!("report is missing required key `{key}`"));
+        }
+    }
+    let findings = report
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "`findings` is not an array".to_string())?;
+    let vocabulary = class_vocabulary();
+    for (index, finding) in findings.iter().enumerate() {
+        let label = finding
+            .get("classification")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("finding {index} has no string classification"))?;
+        let Some(class) = vocabulary.iter().find(|class| class.as_str() == label) else {
+            return Err(format!(
+                "finding {index} classification `{label}` is not in the exposure vocabulary"
+            ));
+        };
+        if class.requires_stop_reason() {
+            let has_reason = finding
+                .get("stop_reasons")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|reasons| !reasons.is_empty());
+            if !has_reason {
+                return Err(format!(
+                    "finding {index} is `{label}` but carries no stop reason"
+                ));
+            }
+        }
+    }
+    let lowered = text.to_ascii_lowercase();
+    for word in RUNTIME_MUTATION_WORDS {
+        if lowered.contains(word) {
+            return Err(format!(
+                "output contains runtime-mutation term `{word}` (static-language boundary)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Two runs over the same bytes must agree on exit code and stdout.
+fn judge_repeat(first: (Option<i32>, &[u8]), second: (Option<i32>, &[u8])) -> Result<(), String> {
+    if first.0 != second.0 {
+        return Err(format!(
+            "nondeterministic exit code: {:?} then {:?}",
+            first.0, second.0
+        ));
+    }
+    if first.1 != second.1 {
+        return Err(format!(
+            "nondeterministic stdout: {} bytes then {} bytes",
+            first.1.len(),
+            second.1.len()
+        ));
+    }
+    Ok(())
+}
+
+/// The determinism rerun doubles a case's child time. The weekly lane
+/// (`PROPTEST_CASES` set) reruns every case; the default lane reruns one case
+/// in eight, chosen from the workspace path hash so it stays cheap (#12924
+/// asks for at most +20% default-lane runtime).
+fn rerun_for_determinism(root: &std::path::Path) -> bool {
+    if std::env::var_os("PROPTEST_CASES").is_some() {
+        return true;
+    }
+    let mut hash: u32 = 2_166_136_261;
+    for byte in root.to_string_lossy().bytes() {
+        hash = (hash ^ u32::from(byte)).wrapping_mul(16_777_619);
+    }
+    hash.is_multiple_of(8)
 }
 
 fn judge(status: std::process::ExitStatus) -> Result<(), String> {
@@ -395,6 +563,7 @@ fn judge(status: std::process::ExitStatus) -> Result<(), String> {
 impl Drop for Workspace {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
+        let _ = std::fs::remove_dir_all(&self.out);
     }
 }
 
@@ -595,4 +764,77 @@ fn unmutated_seeds_reach_analysis() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn good_report() -> String {
+    r#"{"schema_version":"0.1","tool":"ripr","mode":"ready","root":".","summary":{},"findings":[{"classification":"weakly_exposed","stop_reasons":[]},{"classification":"static_unknown","stop_reasons":["opaque"]}]}"#
+        .to_string()
+}
+
+/// The oracle must reject deliberately bad outputs (#12924), or the suites
+/// above would pass whatever `ripr check` printed. Each case is one planted
+/// fault against a known-good report, which must itself be accepted.
+#[test]
+fn output_oracle_rejects_planted_faults() {
+    assert_eq!(judge_output(Some(0), good_report().as_bytes()), Ok(()));
+    let good = good_report();
+    let bad_cases: Vec<(&str, Option<i32>, String)> = vec![
+        ("invalid json", Some(0), "{\"findings\": [".to_string()),
+        ("missing key", Some(0), good.replace("\"summary\":{},", "")),
+        (
+            "unknown class",
+            Some(0),
+            good.replace("weakly_exposed", "mostly_exposed"),
+        ),
+        (
+            "unknown class without stop reason",
+            Some(0),
+            good.replace("[\"opaque\"]", "[]"),
+        ),
+        (
+            "runtime mutation word",
+            Some(0),
+            good.replace(
+                "\"tool\":\"ripr\"",
+                "\"tool\":\"ripr\",\"note\":\"mutant survived\"",
+            ),
+        ),
+        ("undocumented exit code", Some(1), good.clone()),
+        ("no exit code", None, good.clone()),
+    ];
+    for (name, code, body) in bad_cases {
+        assert!(
+            judge_output(code, body.as_bytes()).is_err(),
+            "oracle accepted planted fault: {name}"
+        );
+    }
+    assert!(judge_output(Some(0), b"\xff\xfe").is_err());
+    assert_eq!(judge_output(Some(2), b"not json at all"), Ok(()));
+}
+
+#[test]
+fn determinism_oracle_rejects_differing_runs() {
+    let a = good_report();
+    let b = a.replace("opaque", "opaqu3");
+    assert_eq!(
+        judge_repeat((Some(0), a.as_bytes()), (Some(0), a.as_bytes())),
+        Ok(())
+    );
+    assert!(judge_repeat((Some(0), a.as_bytes()), (Some(0), b.as_bytes())).is_err());
+    assert!(judge_repeat((Some(0), a.as_bytes()), (Some(2), a.as_bytes())).is_err());
+}
+
+/// The vocabulary the oracle checks against is the domain owner's, not a
+/// second spelling.
+#[test]
+fn class_vocabulary_matches_domain_owner() {
+    let vocabulary = class_vocabulary();
+    let labels: Vec<&str> = vocabulary.iter().map(ExposureClass::as_str).collect();
+    assert_eq!(labels.len(), 7);
+    assert!(labels.contains(&"static_unknown"));
+    let needing_reason = vocabulary
+        .iter()
+        .filter(|class| class.requires_stop_reason())
+        .count();
+    assert_eq!(needing_reason, 3);
 }
