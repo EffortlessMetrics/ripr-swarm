@@ -81,32 +81,12 @@ impl Repo {
         Ok(Self { base, root })
     }
 
-    fn human(&self) -> Result<String, String> {
+    fn run(&self, extra: &[&std::ffi::OsStr]) -> Result<Vec<u8>, String> {
         let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(["check", "--mode", "draft", "--root"])
             .arg(&self.root)
             .arg("--diff")
             .arg(self.base.join("change.diff"))
-            .env("RIPR_CACHE_DIR", self.base.join("cache"))
-            .output()
-            .map_err(|e| format!("run ripr check: {e}"))?;
-        if !output.status.success() {
-            return Err(format!("ripr check failed: {}", output.status));
-        }
-        String::from_utf8(output.stdout).map_err(|e| e.to_string())
-    }
-
-    fn report(&self) -> Result<serde_json::Value, String> {
-        self.report_with(&[])
-    }
-
-    fn report_with(&self, extra: &[&std::ffi::OsStr]) -> Result<serde_json::Value, String> {
-        let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .args(["check", "--mode", "draft", "--root"])
-            .arg(&self.root)
-            .arg("--diff")
-            .arg(self.base.join("change.diff"))
-            .args(["--format", "json"])
             .args(extra)
             .env("RIPR_CACHE_DIR", self.base.join("cache"))
             .output()
@@ -118,7 +98,24 @@ impl Repo {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-        serde_json::from_slice(&output.stdout).map_err(|e| format!("report is not JSON: {e}"))
+        Ok(output.stdout)
+    }
+
+    fn human(&self) -> Result<String, String> {
+        String::from_utf8(self.run(&[])?).map_err(|e| e.to_string())
+    }
+
+    fn report(&self) -> Result<serde_json::Value, String> {
+        self.report_with(&[])
+    }
+
+    fn report_with(&self, extra: &[&std::ffi::OsStr]) -> Result<serde_json::Value, String> {
+        let mut args = vec![
+            std::ffi::OsStr::new("--format"),
+            std::ffi::OsStr::new("json"),
+        ];
+        args.extend_from_slice(extra);
+        serde_json::from_slice(&self.run(&args)?).map_err(|e| format!("report is not JSON: {e}"))
     }
 }
 
