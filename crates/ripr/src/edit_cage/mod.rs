@@ -907,7 +907,7 @@ fn capture_repository_state(
                 .allowed_edit_surface
                 .iter()
                 .any(|rule| rule.matches(&path));
-        let exact_ignored = (expected_write && !is_attempt_store_path(&path))
+        let exact_ignored = (expected_write && !is_bulk_attempt_artifact(&root, &path))
             || policy.selected_target.matches(&path)
             || policy
                 .allowed_edit_surface
@@ -1014,7 +1014,7 @@ fn capture_repository_state(
             &mut remaining_work_bytes,
             ignored_paths.contains(path.as_str()),
             ignored_paths.contains(path.as_str())
-                && ((!is_attempt_store_path(path)
+                && ((!is_bulk_attempt_artifact(&root, path)
                     && policy
                         .expected_operational_writes
                         .iter()
@@ -2089,15 +2089,24 @@ fn eol_normalized_file_digest(bytes: &[u8]) -> Option<String> {
     Some(format!("{:x}", Sha256::digest(&normalized)))
 }
 
-/// Retained repair-attempt artifacts (`target/ripr/repair-attempts/**`) are
-/// operational output that grows with every attempt (about 9 MB each on a
-/// repository with ~1000 seams). Hashing every retained byte exactly spent the
-/// shared capture budget, so after a handful of attempts every new baseline
-/// came back ambiguous and the attempt could not be scored. They get the same
-/// bounded identity as other ignored files, decided by path alone so the
-/// baseline and after captures treat each file identically.
-fn is_attempt_store_path(path: &str) -> bool {
+/// Largest retained attempt-store file still hashed exactly. Manifests,
+/// receipts and packets stay under it; sibling attempts bind their exact bytes.
+const ATTEMPT_STORE_EXACT_MAX_BYTES: u64 = 1024 * 1024;
+
+/// A large retained repair-attempt artifact (`target/ripr/repair-attempts/**`,
+/// such as a `before.repo-exposure.json` snapshot). Each attempt retains about
+/// 9 MB of these on a ~1000-seam repository; hashing every retained byte
+/// exactly spent the shared capture budget, so after a handful of attempts
+/// every new baseline came back ambiguous and the attempt could not be scored.
+/// They get the same bounded identity as other ignored files. The rule reads
+/// only the path and the file length, so baseline and after captures treat
+/// an unchanged file identically; a file crossing the size threshold between
+/// captures changes identity and fails closed.
+fn is_bulk_attempt_artifact(root: &Path, path: &str) -> bool {
     path.starts_with("target/ripr/repair-attempts/")
+        && fs::symlink_metadata(root.join(path)).is_ok_and(|metadata| {
+            metadata.is_file() && metadata.len() > ATTEMPT_STORE_EXACT_MAX_BYTES
+        })
 }
 
 fn worktree_identity(
