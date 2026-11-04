@@ -8,11 +8,15 @@
 
 use serde_json::Value;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::cli::unknown_argument;
 use crate::output::workflow_escape::{
     escape_data, escape_property, path_is_unplaceable, unplaced_location_prefix,
+};
+
+use super::subcommand::{
+    NonEmptyPlaceholder, invocation_repo_root_with_directory_hint, non_empty_arg,
 };
 
 const DEFAULT_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
@@ -41,7 +45,7 @@ pub(crate) fn run_annotations(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let options = parse_options(args)?;
-    let repo = repo_root()?;
+    let repo = invocation_repo_root_with_directory_hint()?;
     let generated = render_annotations(&repo, &options)?;
     let out = repo.join(&options.out);
     if options.check {
@@ -58,11 +62,20 @@ fn parse_options(args: &[String]) -> Result<AnnotationOptions, String> {
         match args[i].as_str() {
             "--comments" => {
                 i += 1;
-                options.comments = non_empty_arg(args, i, "--comments")?.to_string();
+                options.comments = non_empty_arg(
+                    "annotations",
+                    args,
+                    i,
+                    "--comments",
+                    NonEmptyPlaceholder::Path,
+                )?
+                .to_string();
             }
             "--out" => {
                 i += 1;
-                options.out = non_empty_arg(args, i, "--out")?.to_string();
+                options.out =
+                    non_empty_arg("annotations", args, i, "--out", NonEmptyPlaceholder::Path)?
+                        .to_string();
             }
             "--check" => options.check = true,
             other => return Err(unknown_argument("annotations", other)),
@@ -70,18 +83,6 @@ fn parse_options(args: &[String]) -> Result<AnnotationOptions, String> {
         i += 1;
     }
     Ok(options)
-}
-
-fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}; pass a value after it"));
-    };
-    if value.trim().is_empty() {
-        return Err(format!(
-            "annotations {flag} requires a non-empty value; pass `{flag} <path>`"
-        ));
-    }
-    Ok(value)
 }
 
 fn print_help() {
@@ -276,15 +277,10 @@ fn write_annotations(
     Ok(())
 }
 
-fn repo_root() -> Result<PathBuf, String> {
-    std::env::current_dir().map_err(|err| {
-        format!("failed to determine working directory: {err}; run ripr from an existing directory")
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn parse_supports_paths_and_check() -> Result<(), String> {
