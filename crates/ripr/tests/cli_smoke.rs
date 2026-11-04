@@ -15829,6 +15829,42 @@ fn doctor_reports_ripr_facts_exporter_without_version_flag_as_compatible() -> Re
     Ok(())
 }
 
+#[test]
+#[cfg(unix)]
+fn doctor_keeps_non_exporter_and_silent_version_binaries_distinct() -> Result<(), String> {
+    // #12937 controls: a binary that answers neither `--version` nor
+    // `ripr-facts` stays not found; one whose `--version` succeeds silently
+    // but rejects `ripr-facts` stays incompatible.
+    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
+        "doctor-perl-neither-answers",
+        "#!/bin/sh\nexit 1\n",
+    )?;
+    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("exporter: NOT found") && !stdout.contains("exporter: compatible"),
+        "a binary answering nothing must stay not found:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+
+    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
+        "doctor-perl-silent-version",
+        "#!/bin/sh\ncase \"$1\" in\n  --version) exit 0 ;;\n  *) exit 2 ;;\nesac\n",
+    )?;
+    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("not a compatible exporter"),
+        "a silent --version binary rejecting ripr-facts must stay incompatible:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    Ok(())
+}
+
 /// #5349: a marker-writing `perllsp` exporter. Every invocation creates
 /// `marker`, so a test can prove doctor did (or did not) execute it.
 fn write_marker_perl_exporter(dir: &Path, marker: &Path) -> Result<(), String> {
