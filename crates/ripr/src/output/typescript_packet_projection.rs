@@ -1640,6 +1640,20 @@ fn is_incomplete_repair_packet(finding: &Finding) -> bool {
     evidence_value(finding, "actionability_category: ") == Some("incomplete_repair_packet")
 }
 
+/// Explain the missing selected-oracle value without inferring a replacement
+/// exception or relaxing the projection's expected-value requirement.
+pub(crate) fn typescript_error_expected_blocker(finding: &Finding) -> Option<String> {
+    if !is_incomplete_repair_packet(finding)
+        || finding.probe.family != crate::domain::ProbeFamily::ErrorPath
+        || has_named_typescript_limitation(finding)
+        || evidence_value(finding, "typescript_oracle_observed: ").is_none()
+        || evidence_value(finding, "typescript_oracle_expected: ").is_some()
+    {
+        return None;
+    }
+    Some("the selected error assertion has no resolved expected value, so ripr cannot choose a safe repair target".to_string())
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;

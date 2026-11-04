@@ -2702,6 +2702,28 @@ pub(crate) fn check_repair_route(
                 reason,
             });
         }
+        if !static_limited
+            && matches!(
+                finding.language,
+                Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
+            )
+            && (crate::output::typescript_packet_projection::typescript_error_expected_blocker(
+                finding,
+            )
+            .is_some()
+                || (finding
+                    .evidence
+                    .iter()
+                    .any(|line| line == "probe_fact: ambiguous_fallback")
+                    && finding
+                        .evidence
+                        .iter()
+                        .any(|line| line == "actionability_category: missing_target_shape")))
+            && crate::output::preview_actionability::preview_actionability_for(finding)
+                .is_some_and(|actionability| !actionability.repair_packet_ready)
+        {
+            return CheckRepairRoute::Refused(RepairRouteRefusal::PreviewPacketUnavailable);
+        }
         return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
     };
     // #9102: the seam inventory `ripr repair` binds from is built from the

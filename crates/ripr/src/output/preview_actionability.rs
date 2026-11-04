@@ -120,6 +120,11 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
             ) =>
             {
                 super::typescript_packet_projection::typescript_moved_selection_blocker(finding)
+                    .or_else(|| {
+                        super::typescript_packet_projection::typescript_error_expected_blocker(
+                            finding,
+                        )
+                    })
                     .unwrap_or_else(|| {
                         specific
                             .unwrap_or("TypeScript preview lacks a complete repair packet contract")

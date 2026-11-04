@@ -112,6 +112,9 @@ pub(crate) enum RepairRouteRefusal {
     },
     /// The finding has no canonical gap to bind a seam from.
     NoCanonicalGap,
+    /// A preview packet was not produced; its reason is already shown in
+    /// the selected finding's safe action.
+    PreviewPacketUnavailable,
     /// A TypeScript/JavaScript preview finding whose repair packet is not
     /// complete: the delegated loop starts from a complete packet's gap id,
     /// not from a Rust seam, so the absent seam is not the reason.
@@ -190,6 +193,8 @@ impl RepairRouteRefusal {
                  no gap to start a repair from; follow the Next step above"
                     .to_string()
             }
+            Self::PreviewPacketUnavailable =>
+                "no repair start offered; follow the Safe next action above".to_string(),
             Self::PreviewPacketNotComplete { language, reason } => format!(
                 "no repair start offered: ripr has no complete repair packet for this {language} \
                  finding ({reason}); add or strengthen the test by hand as the Next step above \
