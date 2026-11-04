@@ -184,7 +184,7 @@ fn inputs_far_from_the_threshold_do_not_expose_the_returned_comparison() -> Resu
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -223,7 +223,7 @@ fn a_returned_compound_predicate_keeps_the_return_value_reading() -> Result<(), 
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -245,7 +245,7 @@ fn an_operator_change_keeps_the_return_value_reading() -> Result<(), String> {
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -275,7 +275,7 @@ fn an_explicit_return_is_read_at_its_boundary_like_the_tail_form() -> Result<(),
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -300,7 +300,7 @@ fn an_explicit_return_followed_by_a_tab_is_read_at_its_boundary() -> Result<(), 
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -341,7 +341,7 @@ fn an_explicit_return_operator_change_keeps_the_return_value_reading() -> Result
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -361,7 +361,7 @@ fn an_explicit_return_of_a_compound_value_keeps_the_return_value_reading() -> Re
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -376,7 +376,7 @@ fn assert_gap_named(findings: &[Finding], named: bool) -> Result<(), String> {
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         named,
         "{return_value:?}"
     );

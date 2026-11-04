@@ -30,7 +30,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max
-    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+    - infection weak: Related tests contain input values, but the equality-boundary check is missing
     - 19 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

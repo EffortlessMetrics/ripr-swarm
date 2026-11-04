@@ -896,7 +896,10 @@ fn finding_json_with_config_and_counts(
         out,
         indent + 1,
         "severity",
-        config.severity().for_exposure(&finding.class).as_str(),
+        config
+            .severity_for_file(&finding.probe.location.file)
+            .for_exposure(&finding.class)
+            .as_str(),
         true,
     );
     float_field(out, indent + 1, "confidence", finding.confidence, true);

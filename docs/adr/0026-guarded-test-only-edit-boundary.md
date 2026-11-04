@@ -1,4 +1,4 @@
-# ADR 0025: Guarded test-only assertion replacement boundary
+# ADR 0026: Guarded test-only assertion replacement boundary
 
 Status: proposed
 

@@ -20,7 +20,7 @@ Support-tier impact:
 Policy impact:
 
 - None beyond documenting the proposed edit-class exception to the read-only
-  default in RIPR-SPEC-0069 (see ADR 0025).
+  default in RIPR-SPEC-0069 (see ADR 0026).
 
 ## Problem
 
@@ -31,7 +31,7 @@ missing, stale, ambiguous, or outside the allowed edit surface.
 
 ## Behavior
 
-ADR 0025 proposes one additional edit class:
+ADR 0026 proposes one additional edit class:
 
 ```text
 one existing assertion expression/node in one recognized Rust test file
@@ -81,7 +81,7 @@ or mutated value is held to the builder's rules:
 Visibility: `domain::guarded_edit` is a `#[doc(hidden)]` public module, like
 `domain::context_packet`, so the documented path is importable by sibling
 adapters. Its items are recorded in `policy/public_api.txt`; the contract stays
-proposed with ADR 0025, and no consumer emits an edit from it yet.
+proposed with ADR 0026, and no consumer emits an edit from it yet.
 
 Forbidden in v1: create/delete/rename, imports, fixtures/setup, control flow,
 production files, multi-file edits, generated tests, provider calls, and
@@ -89,7 +89,7 @@ automatic test execution.
 
 ## Required Evidence
 
-- ADR 0025 (proposed) records the design and, once accepted, amends the read-only default
+- ADR 0026 (proposed) records the design and, once accepted, amends the read-only default
   documented in RIPR-SPEC-0069.
 - Positive fixtures in
   `fixtures/boundary_gap/expected/guarded-edit-precondition/corpus.json` for a
@@ -134,7 +134,7 @@ automatic test execution.
 | Surface | Responsibility |
 | --- | --- |
 | `crates/ripr/src/domain/guarded_edit.rs` | DTOs, builder, apply-time checks, unit tests |
-| `docs/adr/0025-guarded-test-only-edit-boundary.md` | proposed edit-class decision |
+| `docs/adr/0026-guarded-test-only-edit-boundary.md` | proposed edit-class decision |
 | `docs/specs/RIPR-SPEC-0069-lsp-agent-feedback-use-case.md` | read-only default amended to reference the guarded exception |
 | `fixtures/boundary_gap/expected/guarded-edit-precondition/corpus.json` | schema-backed positive and negative fixtures |
 

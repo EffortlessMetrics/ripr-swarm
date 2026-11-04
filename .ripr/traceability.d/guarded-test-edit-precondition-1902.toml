@@ -24,7 +24,7 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0320-guarded-test-edit-precondition.md",
-  "docs/adr/0025-guarded-test-only-edit-boundary.md",
+  "docs/adr/0026-guarded-test-only-edit-boundary.md",
 ]
 metrics = [
   "exact_test_edit_precondition_schema_version",
