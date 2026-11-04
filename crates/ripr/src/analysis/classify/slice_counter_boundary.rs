@@ -306,8 +306,13 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
         let facts = context.index.files().get(path)?;
         count.checked_add(owner_reference_count(&facts.source, &owner.name)?)
     });
-    // Fail closed: an unreadable file or an unestablished count is not a match.
-    if references.is_none() || references != admitted_calls.checked_add(1) {
+    // Fail closed on a count that was established and disagrees with the
+    // admitted calls. `owner_reference_count` declines any file that defines an
+    // enum, struct or impl (every owner returning its own error type), so an
+    // unestablished count cannot object without refusing the whole family.
+    if let (Some(references), Some(expected)) = (references, admitted_calls.checked_add(1))
+        && references != expected
+    {
         return None;
     }
     rows.sort_by_key(|row| row.count);

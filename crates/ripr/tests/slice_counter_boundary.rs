@@ -170,3 +170,71 @@ fn one_asserted_side_or_equal_outcomes_are_not_a_pin() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The same owner without a type definition in its file, so the reference
+/// count is established: `owner_reference_count` declines any file that
+/// defines an enum, struct or impl.
+const OWNER_PLAIN: &str = "pub fn chunk_size(hex: &[u8]) -> Result<u64, &'static str> {
+    let mut size: u64 = 0;
+    let mut count = 0;
+    for &b in hex {
+        count += 1;
+        if 16 < count {
+            return Err(\"too long\");
+        }
+        let digit = (b as char).to_digit(16).ok_or(\"bad digit\")?;
+        size = (size << 4) | u64::from(digit);
+    }
+    Ok(size)
+}
+";
+
+fn plain_class(assertions: &str, extra_reference: &str) -> Result<ExposureClass, String> {
+    let lib = format!(
+        "{OWNER_PLAIN}{extra_reference}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn chunk_sizes() {{\n{assertions}\n    }}\n}}\n"
+    );
+    let line = OWNER_PLAIN
+        .lines()
+        .position(|text| text.contains("16 < count"))
+        .map_or(0, |index| index + 1);
+    let patch = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -{start},3 +{start},3 @@
+         count += 1;
+-        if count > 16 {{
++        if 16 < count {{
+             return Err(\"too long\");
+",
+        start = line - 1
+    );
+    let findings = TempRepo::create(&lib, &patch)?.findings()?;
+    let mut predicate = findings
+        .iter()
+        .filter(|finding| finding.probe.family == ProbeFamily::Predicate);
+    match (predicate.next(), predicate.next()) {
+        (Some(finding), None) => Ok(finding.class.clone()),
+        other => Err(format!(
+            "premise: exactly one predicate finding, got {other:?} in {findings:?}"
+        )),
+    }
+}
+
+const PLAIN_PINS: &str = "        assert_eq!(chunk_size(&[b'f'; 16]), Ok(u64::MAX));
+        assert_eq!(chunk_size(&[b'f'; 17]), Err(\"too long\"));";
+
+#[test]
+fn an_established_reference_count_still_credits_the_pinned_boundary() -> Result<(), String> {
+    assert_eq!(plain_class(PLAIN_PINS, "")?, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn an_established_count_that_disagrees_with_the_admitted_calls_refuses() -> Result<(), String> {
+    // A function-pointer use is a reference the two admitted calls do not cover.
+    let alias = "\npub const SIZER: fn(&[u8]) -> Result<u64, &'static str> = chunk_size;\n";
+    assert_ne!(plain_class(PLAIN_PINS, alias)?, ExposureClass::Exposed);
+    Ok(())
+}
