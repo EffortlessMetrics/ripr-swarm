@@ -143,6 +143,9 @@ pub(super) struct PythonNoBehaviorContext {
     /// (`module_value.rs`, #9423). A diff with any other changed line cannot
     /// reconstruct the old module and keeps the abstention.
     pub(super) sole_line_replacement: bool,
+    /// This owner's loop header changed in a multi-line diff. Without an
+    /// isolated old-body witness, sibling edits cannot borrow oracle credit.
+    pub(super) compound_loop_edit: bool,
 }
 
 /// An old declaration line (`def`, `async def`, `class` or a decorator) in
@@ -685,6 +688,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             line_text,
             old_line_text,
             no_behavior.sole_line_replacement,
+            no_behavior.compound_loop_edit,
         )
     })
     // A pinned lambda body edit or dataclass default edit is read by the

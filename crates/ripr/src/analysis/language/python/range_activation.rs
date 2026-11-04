@@ -385,7 +385,15 @@ pub(super) fn loop_context_limit(
     new_line: &str,
     old_line: Option<&str>,
     sole_line_replacement: bool,
+    compound_loop_edit: bool,
 ) -> Option<PythonStaticLimit> {
+    if compound_loop_edit {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::UnsupportedSyntax,
+            evidence: "static_limit unsupported_syntax: combined loop-header and owner edits lack an old-body witness".to_string(),
+            missing: "Static limit `unsupported_syntax`: a changed loop header shares this owner with an unresolved multi-line diff. Sibling body or return edits may cancel the apparent range difference; an owner-name assertion alone does not establish different old and new results.".to_string(),
+        });
+    }
     let old_header = sole_line_replacement
         && old_line
             .and_then(|old| replaced_line(source, line, new_line, old))
@@ -406,6 +414,67 @@ pub(super) fn loop_context_limit(
         evidence: "static_limit unsupported_syntax: changed loop header lacks a supported isolated range replacement".to_string(),
         missing: "Static limit `unsupported_syntax`: multiline or wrapped iterators and changes without an unchanged old-body witness remain unresolved. The bounded range model requires a single-line header replacement with no other changes in the production file.".to_string(),
     })
+}
+
+pub(super) type CompoundLoopOwners = std::collections::BTreeSet<crate::domain::SymbolId>;
+
+/// Bind header edits to the narrowest source owner before quiet-line filtering.
+/// Old-side coordinates are read only against reconstructed old facts; a
+/// deletion's insertion point must never taint the next independent owner.
+pub(super) fn compound_loop_owners(
+    changed: &crate::analysis::diff::ChangedFile,
+    source: &str,
+    owners: &[PythonOwner],
+    old_source: Option<&str>,
+    old_owners: &[PythonOwner],
+) -> CompoundLoopOwners {
+    let mut affected = std::collections::BTreeSet::new();
+    if matches!((changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
+        ([added], [removed]) if added.line == removed.line)
+    {
+        return affected;
+    }
+    for added in &changed.added_lines {
+        if let Some(owner) = super::owner_for_changed_line(&changed.path, added.line, owners)
+            && (starts_loop_header(&added.text) || owner_header_at_line(owner, source, added.line))
+        {
+            affected.insert(owner.symbol_id());
+        }
+    }
+    if let Some(old_source) = old_source {
+        for removed in &changed.removed_lines {
+            let Some(old_owner) =
+                super::owner_for_changed_line(&changed.path, removed.line, old_owners)
+            else {
+                continue;
+            };
+            if !starts_loop_header(&removed.text)
+                && !owner_header_at_line(old_owner, old_source, removed.line)
+            {
+                continue;
+            }
+            // A retained qualified symbol supplies the association; moving or
+            // deleting another function cannot transfer its loop to a neighbor.
+            for owner in owners.iter().filter(|owner| {
+                owner.file == changed.path
+                    && owner.qualified_name == old_owner.qualified_name
+                    && owner.owner_kind == old_owner.owner_kind
+            }) {
+                affected.insert(owner.symbol_id());
+            }
+        }
+    } else {
+        // Missing old source permits only the diff's explicit replacement
+        // association. Never infer ownership from a deletion insertion point.
+        for (line, old) in changed.aligned_counterparts() {
+            if starts_loop_header(&old.text)
+                && let Some(owner) = super::owner_for_changed_line(&changed.path, line, owners)
+            {
+                affected.insert(owner.symbol_id());
+            }
+        }
+    }
+    affected
 }
 
 fn starts_loop_header(line: &str) -> bool {

@@ -1699,6 +1699,17 @@ Applicability uses the native For iterator's line span, so changed interior
 lines of multiline headers and wrapped iterators fail closed rather than
 bypassing the model. Only bare single-line range replacements are evaluated.
 
+In a multi-line production diff, a changed For/AsyncFor header also withholds
+credit from every other changed finding on that same qualified owner,
+including removed-only evidence. A sibling accumulator or return edit can
+cancel the apparent range difference; the generic owner-name exact oracle
+cannot establish the combined old/new result. Header ownership comes from
+the narrowest native source owner before quiet-line filtering. Old headers
+use reconstructed old-source coordinates and retained qualified symbols,
+never a deletion insertion point that may belong to the next function.
+Independent and enclosing owners do not inherit a nested helper's limit;
+ambiguous repeated qualified definitions conservatively share it.
+
 Without that witness, the change carries `unsupported_syntax`, unknown
 infection and a non-exposed classification. Missing old text, unreadable
 inputs, zero steps, rebinding, other loop bodies and unavailable owner source
