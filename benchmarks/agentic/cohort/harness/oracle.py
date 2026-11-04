@@ -31,7 +31,7 @@ def filter_mutants(task_id, test_dirs):
     json.dump(keep, open(f"{md}/{task_id}.json", "w"))
     print(task_id, "candidates", len(cands), "killable kept", len(keep), flush=True)
 if __name__ == "__main__":
-    ids = ["calendar", "expr", "textfmt"]
+    ids = sys.argv[1:] or ["calendar", "expr", "textfmt"]
     jobs = [(i, k, m) for i in ids for k, m in enumerate(["sonnet", "sonnet"])]
     with ThreadPoolExecutor(3) as ex: dirs = list(ex.map(lambda j: (j[0], agent(*j)), jobs))
     for i in ids: filter_mutants(i, [d for (ti, d) in dirs if ti == i])

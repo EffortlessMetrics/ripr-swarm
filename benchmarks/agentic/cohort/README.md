@@ -31,11 +31,25 @@ Escaped-defect rate, mean over runs (tasks × reps):
 
 **Finding: no measurable lift, because the tasks have no headroom.** Unaided agents already kill over 98% of hidden mutants. The differences between arms are within run-to-run noise (a handful of survivors, mostly the same mutants in `expr` and `calendar`). For Haiku the brief loop cost 3.5× the tokens and 2× the wall time with the same escape rate. This does not show that ripr fails to help; it shows these tasks cannot detect help.
 
+## Second result: real code, config matrix, current main (2026-11-04, ripr 0.11.0 @ 7d04028)
+
+Three published crates already vendored in the local cargo registry (`strsim`, `shlex`, `percent-encoding`; 325-756 lines, doctests off) with 44-50 mechanical mutants each, filtered by two Sonnet-written oracle suites. 36 runs: tasks × {none, `ripr check`, `ripr agent brief`} × {Haiku, Sonnet} × 2 reps, all mandatory use. Receipts: `receipts/real-pilot-main-0.11.0-2026-11-04.jsonl`; scoreboard: `scoreboard/real-pilot-2026-11-04.md`.
+
+- `shlex` and `percent-encoding` still saturate: every run kills every mutant, in every config.
+- `strsim` (756 lines) has headroom. Mean mutants escaped, out of 46, over 4 runs per config (Haiku and Sonnet pooled): none 6.5, `ripr check` 7.5, `ripr agent brief` 9.5. Per-run range is 3 to 13. With 4 runs per cell, none of these gaps is distinguishable from noise, and the direction is not in ripr's favor.
+- Tokens: brief loop 2.2× control for Haiku, about 1× for Sonnet.
+
+So even with headroom, no config of ripr 0.11.0 beat an unaided agent in this pilot. The instrument now separates good from bad runs (escape 3 to 13), so more reps per cell can answer it.
+
+## Per-config scoreboard
+
+`harness/scoreboard.py` groups runs by ripr version, model, turn cap and config, and reports fix rate (valid tests, zero escaped mutants) with a Wilson interval, escaped mutants, tokens, wall time and ripr calls, each against the `none` control. Configs live in `CONFIGS` in `harness/run_one.py`: surface (check, brief, MCP), optional vs mandatory use, output flags (`--json`, `--mode fast`, `--max-seams`), plus model and turn cap (`COHORT_MAX_TURNS`). To re-run on a new ripr: `COHORT_RIPR_BIN=/path/to/ripr python3 sweep.py ... out.jsonl` then `python3 scoreboard.py OUT out.jsonl`.
+
 ## Limits
 
 - One provider (Anthropic), two models. The "two providers" bar is not met; no other provider is reachable from this environment.
-- Mutants for the large tasks are filtered by Sonnet-written suites, so bugs those suites could not kill are excluded; this biases toward bugs that are easy to kill.
-- Tasks are first-party and small (under 120 lines). Real-repo, multi-file tasks with cargo-mutants mutants are the next slice.
+- Mutants for the large and real-code tasks are mechanical (not cargo-mutants, which is not installed here) and filtered by Sonnet-written suites, so bugs those suites could not kill are excluded; this biases toward bugs that are easy to kill.
+- First-party tasks are small (under 120 lines). Real-code tasks are single-crate, and only `src/lib.rs` is mutated.
 - Installed ripr is 0.10.0, not main. Reps per cell are 1–2 per task; no significance test is claimed.
 - Optional use: when ripr was only offered, agents ran it 0 of 3 times (#13050); the arms above force the first call.
 

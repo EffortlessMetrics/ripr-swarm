@@ -1,0 +1,130 @@
+[
+ {
+  "ripr": "-",
+  "model": "haiku",
+  "max_turns": 40,
+  "config": "none",
+  "runs": 6,
+  "fix_rate": 0.667,
+  "fix_ci95": [
+   0.3,
+   0.903
+  ],
+  "invalid_runs": 0,
+  "escape_rate": 0.0435,
+  "escaped_mutants": 12,
+  "tokens": 491493,
+  "cost_usd": 0.0204,
+  "wall_s": 86.1,
+  "turns": 9.8,
+  "ripr_calls": 0
+ },
+ {
+  "ripr": "-",
+  "model": "sonnet",
+  "max_turns": 40,
+  "config": "none",
+  "runs": 6,
+  "fix_rate": 0.667,
+  "fix_ci95": [
+   0.3,
+   0.903
+  ],
+  "invalid_runs": 0,
+  "escape_rate": 0.0507,
+  "escaped_mutants": 14,
+  "tokens": 586380,
+  "cost_usd": 0.2076,
+  "wall_s": 78.5,
+  "turns": 14,
+  "ripr_calls": 0
+ },
+ {
+  "ripr": "0.11.0/7d04028",
+  "model": "haiku",
+  "max_turns": 40,
+  "config": "brief-mandatory",
+  "runs": 6,
+  "fix_rate": 0.667,
+  "fix_ci95": [
+   0.3,
+   0.903
+  ],
+  "invalid_runs": 0,
+  "escape_rate": 0.0725,
+  "escaped_mutants": 20,
+  "tokens": 1068881,
+  "cost_usd": 0.0426,
+  "wall_s": 111.5,
+  "turns": 17.8,
+  "ripr_calls": 3.83,
+  "fix_rate_vs_none": 0.0,
+  "tokens_vs_none_x": 2.17
+ },
+ {
+  "ripr": "0.11.0/7d04028",
+  "model": "haiku",
+  "max_turns": 40,
+  "config": "check-mandatory",
+  "runs": 6,
+  "fix_rate": 0.667,
+  "fix_ci95": [
+   0.3,
+   0.903
+  ],
+  "invalid_runs": 0,
+  "escape_rate": 0.0362,
+  "escaped_mutants": 10,
+  "tokens": 836246,
+  "cost_usd": 0.0308,
+  "wall_s": 125.8,
+  "turns": 14.2,
+  "ripr_calls": 1.83,
+  "fix_rate_vs_none": 0.0,
+  "tokens_vs_none_x": 1.7
+ },
+ {
+  "ripr": "0.11.0/7d04028",
+  "model": "sonnet",
+  "max_turns": 40,
+  "config": "brief-mandatory",
+  "runs": 6,
+  "fix_rate": 0.667,
+  "fix_ci95": [
+   0.3,
+   0.903
+  ],
+  "invalid_runs": 0,
+  "escape_rate": 0.0652,
+  "escaped_mutants": 18,
+  "tokens": 623267,
+  "cost_usd": 0.2469,
+  "wall_s": 81.3,
+  "turns": 15.3,
+  "ripr_calls": 1,
+  "fix_rate_vs_none": 0.0,
+  "tokens_vs_none_x": 1.06
+ },
+ {
+  "ripr": "0.11.0/7d04028",
+  "model": "sonnet",
+  "max_turns": 40,
+  "config": "check-mandatory",
+  "runs": 6,
+  "fix_rate": 0.667,
+  "fix_ci95": [
+   0.3,
+   0.903
+  ],
+  "invalid_runs": 0,
+  "escape_rate": 0.0725,
+  "escaped_mutants": 20,
+  "tokens": 547880,
+  "cost_usd": 0.2058,
+  "wall_s": 66.4,
+  "turns": 13,
+  "ripr_calls": 1,
+  "fix_rate_vs_none": 0.0,
+  "tokens_vs_none_x": 0.93
+ }
+]

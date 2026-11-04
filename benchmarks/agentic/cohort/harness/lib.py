@@ -1,9 +1,9 @@
 import os, subprocess, shutil, json, sys
 from tasks import TASKS
 import json as _j, os as _o
-for _f in ('tasks_big',):
+for _f in ('tasks_big', 'tasks_real'):
     try:
-        from tasks_big import BIG
+        BIG = __import__(_f).__dict__.get('BIG') or __import__(_f).__dict__.get('REAL')
         for _k,_t in BIG.items():
             _m=_o.path.join(_o.path.dirname(_o.path.abspath(__file__)),'..','mutants',_k+'.json')
             if _o.path.exists(_m): _t['mutants']=[tuple(x) for x in _j.load(open(_m))]
@@ -27,11 +27,12 @@ def build_repo(t, dest):
     if os.path.exists(dest): shutil.rmtree(dest)
     os.makedirs(dest)
     sh("git init -q -b main", dest, GIT, check=True)
-    write(f"{dest}/Cargo.toml", f'[package]\nname = "{t["id"]}"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\npath = "src/lib.rs"\n')
+    write(f"{dest}/Cargo.toml", t.get("cargo_toml") or f'[package]\nname = "{t["id"]}"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\npath = "src/lib.rs"\n')
     write(f"{dest}/.gitignore", "target\n")
     write(f"{dest}/src/lib.rs", t["base_src"])
     sh("git add -A && git commit -q -m base", dest, GIT, check=True)
     write(f"{dest}/src/lib.rs", t["new_src"])
+    for rel, content in (t.get("extra_files") or {}).items(): write(f"{dest}/{rel}", content)
     write(f"{dest}/tests/behavior.rs", t["weak_tests"])
     sh(["git", "add", "-A"], dest, GIT, check=True)
     sh(["git", "commit", "-q", "-m", t["msg"]], dest, GIT, check=True)

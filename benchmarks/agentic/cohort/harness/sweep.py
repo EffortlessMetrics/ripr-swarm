@@ -1,4 +1,4 @@
-import sys, json, itertools
+import sys, os, json, itertools
 from concurrent.futures import ThreadPoolExecutor
 from run_one import run
 from tasks import TASKS
@@ -7,7 +7,7 @@ arms = sys.argv[2].split(","); models = sys.argv[3].split(","); reps = range(int
 jobs = list(itertools.product(tasks, arms, models, reps))
 out = open(sys.argv[6], "a")
 def go(j):
-    try: r = run(*j)
+    try: r = run(*j, max_turns=int(os.environ.get("COHORT_MAX_TURNS", "40")))
     except Exception as e: r = dict(task=j[0], arm=j[1], model=j[2], rep=j[3], error=repr(e))
     out.write(json.dumps(r) + "\n"); out.flush()
     return r
