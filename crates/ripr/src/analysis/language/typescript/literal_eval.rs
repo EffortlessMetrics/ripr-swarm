@@ -345,7 +345,9 @@ fn evaluate(expression: &Expression<'_>, env: &Env, depth: usize) -> Option<Val>
                 evaluate(&conditional.alternate, env, next)
             }
         }
-        Expression::CallExpression(call) => math_call(call, env, next),
+        Expression::CallExpression(call) => {
+            math_call(call, env, next).or_else(|| conversion_call(call, env, next))
+        }
         _ => None,
     }
 }
@@ -388,6 +390,58 @@ fn binary_value(operator: BinaryOperator, left: Val, right: Val) -> Option<Val> 
 
 fn same_type(a: &Val, b: &Val) -> bool {
     std::mem::discriminant(a) == std::mem::discriminant(b)
+}
+
+/// `String(<primitive>)` and `JSON.stringify(<primitive>)` of a literal-bound
+/// number, boolean or string (#12296): the two conversions agree on every
+/// number and boolean and differ on a string (`JSON.stringify` quotes it), so
+/// a `typeof` branch whose arms are these calls can be shown to converge for
+/// the asserted input. A shadowing parameter named `String` or `JSON`, any
+/// other argument count, or a value the conversion cannot print exactly is
+/// unsupported.
+fn conversion_call(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    env: &Env,
+    depth: usize,
+) -> Option<Val> {
+    let shadowed = |name: &str| env.iter().any(|(bound, _)| bound == name);
+    let [argument] = call.arguments.as_slice() else {
+        return None;
+    };
+    let value = evaluate(argument.as_expression()?, env, depth)?;
+    match &call.callee {
+        Expression::Identifier(callee) if callee.name == "String" && !shadowed("String") => {
+            to_text(&value).map(Val::Str)
+        }
+        Expression::StaticMemberExpression(member)
+            if member.property.name == "stringify"
+                && matches!(&member.object, Expression::Identifier(object)
+                    if object.name == "JSON")
+                && !shadowed("JSON") =>
+        {
+            match value {
+                Val::Str(text) => json_quote(&text).map(Val::Str),
+                other => to_text(&other).map(Val::Str),
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The JSON text of a string with no character that needs more than the two
+/// plain escapes; anything else is unsupported rather than guessed.
+fn json_quote(text: &str) -> Option<String> {
+    let mut out = String::from("\"");
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            ch if ch.is_control() || !ch.is_ascii() => return None,
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    Some(out)
 }
 
 fn math_call(call: &oxc_ast::ast::CallExpression<'_>, env: &Env, depth: usize) -> Option<Val> {
@@ -537,6 +591,39 @@ mod tests {
         let old = "typeof n === \"number\"";
         let new = "\"number\" === typeof n";
         assert_eq!(agree(old, new, &["n"], &["1"]), None);
+    }
+
+    /// #12296: converging `typeof` arms. `String(42)` and
+    /// `JSON.stringify(42)` both print `42`, so the asserted number cannot
+    /// tell the branches apart, while a string input can.
+    #[test]
+    fn typeof_arms_that_print_alike_agree_on_a_number_and_differ_on_a_string() {
+        let old = "typeof input === \"object\" ? JSON.stringify(input) : String(input)";
+        let new = "typeof input !== \"object\" ? JSON.stringify(input) : String(input)";
+        assert_eq!(agree(old, new, &["input"], &["42"]), Some(true));
+        assert_eq!(agree(old, new, &["input"], &["\"a\""]), Some(false));
+    }
+
+    #[test]
+    fn conversion_calls_stay_unsupported_when_shadowed_or_inexact() {
+        let old = "String(String)";
+        assert_eq!(
+            agree(old, "String(String) + \"\"", &["String"], &["1"]),
+            None
+        );
+        assert_eq!(
+            agree("String(n)", "String(n) + \"\"", &["n"], &["0.5"]),
+            None
+        );
+        assert_eq!(
+            agree(
+                "JSON.stringify(s)",
+                "JSON.stringify(s) + \"\"",
+                &["s"],
+                &["\"\\u00e9\""]
+            ),
+            None
+        );
     }
 
     #[test]

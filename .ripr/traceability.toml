@@ -3808,12 +3808,16 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/changed_return.rs::tests::a_line_outside_any_return_yields_no_pair",
   "crates/ripr/src/analysis/language/typescript/changed_return.rs::tests::a_class_member_owner_is_located_through_the_class_wrapper",
   "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::typeof_clause_agrees_when_the_asserted_flag_decides_the_value",
-  "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::a_behavior_preserving_typeof_rewrite_is_not_unexercised"
+  "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::a_behavior_preserving_typeof_rewrite_is_not_unexercised",
+  "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::typeof_arms_that_print_alike_agree_on_a_number_and_differ_on_a_string",
+  "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::conversion_calls_stay_unsupported_when_shadowed_or_inexact"
 ]
 fixtures = [
   "fixtures/typescript_typeof_kind_gap",
   "fixtures/typescript_typeof_kind_exposed",
   "fixtures/typescript_typeof_negation_other_kind_exposed",
+  "fixtures/ts_typeof_arms_converge",
+  "fixtures/ts_typeof_arms_diverge",
   "fixtures/ts_multiline_return_continuation_clause",
   "fixtures/ts_multiline_return_first_line_clause",
   "fixtures/ts_multiline_ternary_arm_clause",
