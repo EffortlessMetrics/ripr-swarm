@@ -1,0 +1,9 @@
+use std::ops::Add;
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Money(pub i64);
+impl Add for Money {
+    type Output = Money;
+    fn add(self, other: Money) -> Money {
+        Self(other.0 - self.0)
+    }
+}

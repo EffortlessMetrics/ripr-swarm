@@ -1,0 +1,44 @@
+{
+  "case_id": "trap-tuple-zero-equal-result",
+  "subject_id": "authored-tuple-zero",
+  "diff": "cases/trap-tuple-zero-equal-result.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "tuple_method_zero_input_projection",
+  "hard_case": "The projection pins the method result, but both old and new arithmetic return zero for the only tested operands.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Self(other.0 + self.0)",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "The edit itself: subtraction and addition differ for Money(2) and Money(3), but both return zero for the only tested operands."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only related test calls the method at two zero operands and asserts its projected field. Both versions return zero, so this test cannot distinguish the behavior change.",
+  "labeling_observation": {
+    "ripr_commit": "cd97e53755a5018955b28fa1f8656312c8920368",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

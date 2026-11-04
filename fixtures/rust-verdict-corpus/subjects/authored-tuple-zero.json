@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-tuple-zero",
+  "origin": "authored",
+  "version_label": "authored 2026-11-04 for tuple-struct zero-input false exposure (#12808)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "38cc43b518df10a661664791c4d0151993a4d9ba99c4efec6b2b85616334a00a"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "8d5daf617b774bf8c68da26e27095103fc72257780301e6d911efc933b017330"
+    },
+    {
+      "path": "tests/zero.rs",
+      "sha256": "aafcb2537b21129a4eb238e4fcd511ea7f84e64f817406a6f22603693e7508c9"
+    }
+  ]
+}

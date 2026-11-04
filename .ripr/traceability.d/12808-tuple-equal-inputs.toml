@@ -1,0 +1,12 @@
+# Bounded equal-input tuple method infection witness (#12808).
+[[extend]]
+id = "RIPR-SPEC-0229"
+tests = [
+  "crates/ripr/tests/tuple_owner_equal_inputs.rs::zero_projection",
+  "crates/ripr/tests/tuple_owner_equal_inputs.rs::zero_whole",
+  "crates/ripr/tests/tuple_owner_equal_inputs.rs::separating_projection",
+  "crates/ripr/tests/tuple_owner_equal_inputs.rs::mixed_inputs_keep_the_separating_test",
+  "crates/ripr/tests/tuple_owner_equal_inputs.rs::separate_related_test_can_discriminate",
+  "crates/ripr/tests/tuple_owner_equal_inputs.rs::unknown_operand_does_not_claim_invisibility",
+  "crates/ripr/tests/tuple_owner_equal_inputs.rs::overflow_and_shadowed_constructor_decline_the_witness",
+]

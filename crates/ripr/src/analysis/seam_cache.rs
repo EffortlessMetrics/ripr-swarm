@@ -678,7 +678,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (#12733, #12734).
 /// `1.157`: the repo-wide audit credits a claims `assert_ok_eq!` / `assert_some_eq!`
 /// statement through the same owner-pin decision as `ripr check` (#12394).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.157";
+/// `1.158`: equal tuple-method results on each observed input no longer read as exposed (#12808).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -877,7 +878,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.157";
 /// `0.157`: same generated-test invocation-scope rule as full `1.155` (#12320).
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.159";
+/// `0.160`: same tuple-method equal-input witness as full `1.158` (#12808).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1078,7 +1080,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.159";
 /// `0.157`: same generated-test invocation-scope rule as full `1.155` (#12320).
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.159";
+/// `0.160`: same tuple-method equal-input witness as full `1.158` (#12808).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5156,7 +5159,7 @@ mod tests {
         // 1.154 -> 1.155: macro-generated tests borrow invocation-site name scopes only when the expansion declares nothing (#12320).
         // 1.155 -> 1.156: different-arm error pin is one fact in every view (#12733, #12734).
         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.157");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.158");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5295,8 +5298,8 @@ mod tests {
         // 0.156 -> 0.157: same generated-test invocation-scope rule as full 1.155 (#12320).
         // 0.157 -> 0.158: same different-arm error-pin rule as full 1.156 (#12733, #12734).
         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.159");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.159");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
     }
 
     #[test]
