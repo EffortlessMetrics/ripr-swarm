@@ -2235,11 +2235,11 @@ metric = "language_adapter_ruby_spec_registered"
 id = "go_preview_static_facts"
 name = "Go preview static facts"
 status = "planned"
-spec = "RIPR-SPEC-0413"
+spec = "RIPR-SPEC-0414"
 evidence = [
-  "docs/specs/RIPR-SPEC-0413-go-preview-static-facts.md defines wire language go, lang-go feature gate, module/package/build identity, owner and exact-span probe families, test admission and focused go test -count=1 routes, the control-flow oracle model, Go-specific static limit tokens, and the soundness invariant that unresolved Go semantics cannot become no_static_path",
-  "docs/spec-index.d/RIPR-SPEC-0413.md registers the spec in the doc index",
-  ".ripr/traceability.d/5533-go-preview-static-facts.toml registers RIPR-SPEC-0413",
+  "docs/specs/RIPR-SPEC-0414-go-preview-static-facts.md defines wire language go, lang-go feature gate, module/package/build identity, owner and exact-span probe families, test admission and focused go test -count=1 routes, the control-flow oracle model, Go-specific static limit tokens, and the soundness invariant that unresolved Go semantics cannot become no_static_path",
+  "docs/spec-index.d/RIPR-SPEC-0414.md registers the spec in the doc index",
+  ".ripr/traceability.d/5533-go-preview-static-facts.toml registers RIPR-SPEC-0414",
   "docs/CAPABILITY_MATRIX.md lists go_preview_static_facts as planned with no gate, badge, baseline, RIPR Zero, or repair-loop authority",
   "Parent epic #5520 and issue #5533 acceptance: contract-only slice with positive and negative acceptance examples; parser substrate is decided in ADR 0025 and the adapter lands in follow-on PRs",
 ]

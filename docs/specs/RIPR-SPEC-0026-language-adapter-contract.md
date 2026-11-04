@@ -24,7 +24,7 @@ specs:
 - [RIPR-SPEC-0027: TypeScript preview static facts](RIPR-SPEC-0027-typescript-preview-static-facts.md)
 - [RIPR-SPEC-0028: Python preview static facts](RIPR-SPEC-0028-python-preview-static-facts.md)
 - [RIPR-SPEC-0391: Ruby preview static facts](RIPR-SPEC-0391-ruby-preview-static-facts.md) (proposed contract; no adapter yet)
-- [RIPR-SPEC-0413: Go preview static facts](RIPR-SPEC-0413-go-preview-static-facts.md) (proposed contract; no adapter yet)
+- [RIPR-SPEC-0414: Go preview static facts](RIPR-SPEC-0414-go-preview-static-facts.md) (proposed contract; no adapter yet)
 - [RIPR-SPEC-0405: Julia preview package, dispatch, Test, numerical, array, and native boundaries](RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md) (proposed contract; no adapter yet)
 
 The proposal context is in
@@ -140,7 +140,7 @@ Routing rules:
   built with `lang-julia`; routes production and test Julia sources only after
   project role classification (see RIPR-SPEC-0405).
 - `*.go` → Go adapter (preview, opt-in) when enabled and the binary was built
-  with `lang-go`; `*_test.go` is test source (see RIPR-SPEC-0413). Until the
+  with `lang-go`; `*_test.go` is test source (see RIPR-SPEC-0414). Until the
   adapter lands `.go` stays an unanalyzed source language with a typed limitation.
 - Perl fact-packet preview is a producer/consumer path, not a live Perl parser
   route in this contract slice. A configured Perl language value must fail
@@ -309,7 +309,7 @@ Follow-up fixtures and tests cover:
 - Repo configuration parsing rejects `julia` with a clear `lang-julia` message
   when the current binary lacks the Julia preview feature.
 - Repo configuration parsing rejects `go` with a clear `lang-go` message when the
-  current binary lacks the Go preview feature (planned with RIPR-SPEC-0413; the
+  current binary lacks the Go preview feature (planned with RIPR-SPEC-0414; the
   `go` value is rejected as unknown until the scaffold lands).
 - Generated CI fixtures for Rust-default and language-grouped advisory
   summaries.

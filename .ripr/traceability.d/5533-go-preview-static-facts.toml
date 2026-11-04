@@ -1,16 +1,16 @@
 [[behavior]]
-id = "RIPR-SPEC-0413"
+id = "RIPR-SPEC-0414"
 name = "Go preview static facts contract"
-spec = "docs/specs/RIPR-SPEC-0413-go-preview-static-facts.md"
+spec = "docs/specs/RIPR-SPEC-0414-go-preview-static-facts.md"
 tests = []
 fixtures = []
 code = []
 outputs = [
-  "docs/specs/RIPR-SPEC-0413-go-preview-static-facts.md",
-  "docs/spec-index.d/RIPR-SPEC-0413.md",
+  "docs/specs/RIPR-SPEC-0414-go-preview-static-facts.md",
+  "docs/spec-index.d/RIPR-SPEC-0414.md",
   "docs/CAPABILITY_MATRIX.md",
   "metrics/capabilities.toml",
-  "policy/doc-artifacts.d/RIPR-SPEC-0413.toml",
+  "policy/doc-artifacts.d/RIPR-SPEC-0414.toml",
 ]
 metrics = [
   "language_adapter_go_spec_registered",

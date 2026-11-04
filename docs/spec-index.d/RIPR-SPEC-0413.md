@@ -1,1 +1,1 @@
-| [RIPR-SPEC-0413](../specs/RIPR-SPEC-0413-go-preview-static-facts.md) | proposed | Go preview static facts: wire identity, build and module law, control-flow oracle model, focused `go test -count=1` routes, and fail-closed Go limitations (#5533, #5520) |
+| [RIPR-SPEC-0413](../specs/RIPR-SPEC-0413-history-sync-exact-composition-qualification.md) | proposed | Exact S/B/H/G history-sync admission may exclude only diff-scoped evidence; docs-only imports still require product CI (#12437) |

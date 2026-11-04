@@ -156,6 +156,78 @@ an old fixture pin can hide it even on current G. Preserve the existing repair
 owner and prove declared fixture preparation from a cold dependency state; do not
 repin audited fixture authority merely to follow the workspace's cache contents.
 
+## History-sync route (source and swarm merges)
+
+This is the interim history-sync profile under the currently installed
+`merge-ready` label route (#12437). It is valid only until queue-only
+enforcement (`Require merge queue`, #4838, accepted under #4840) is active, and
+it is not a new pull_request-triggered CI lane: it rides the existing
+merge-ready-requested run and adds no workflow trigger. The selected steady
+state (#4984) runs product CI only on `merge_group`; history-preserving syncs
+and release transactions are a separate exceptional profile there. The
+successor is a history-sync profile in the #4984 design, which must keep the
+S/B/H/G identity binding, the privileged authorization and the typed
+diff-scoped `not_applicable: history_sync` semantics described here.
+
+Use it only for a history-preserving sync merge between
+`EffortlessMetrics/ripr` and `EffortlessMetrics/ripr-swarm`: the source-to-swarm
+sync, the swarm-to-source promotion, or a post-release back-sync. A true merge
+cannot be split without losing the history it exists to keep, so it would
+otherwise be refused as `qualification_scope_oversized`, and its diff is far
+above the PR-evidence producer's changed-line guard.
+
+The PR body carries the ordinary claim lines plus exactly one of each:
+
+```text
+History-sync source: EffortlessMetrics/ripr@<full 40-hex sha>
+History-sync destination base: <full 40-hex sha>
+```
+
+Admission honors the route only when every condition holds; otherwise the PR
+gets the ordinary route, and an oversized refusal says why the label was not
+honored:
+
+- the `history-sync` label is present and its latest label event is a labeling
+  by an account whose role on this repository is `admin` or `maintain`;
+- the request is a `merge-ready` pull_request event (never a merge-queue entry),
+  and head and base are this repository (no fork);
+- the declared source repository is the other repository of the pair, and the
+  source commit `S` exists there and is on (or is) its default-branch tip;
+- with `H` the exact admitted PR head and `B` the declared destination base,
+  `S` and `B` are both ancestors of `H`, `B` is an ancestor of the live base
+  tip, and `S` is not reachable from `B`, so the PR genuinely brings in new
+  source history. The shape of `H` itself is not authority: repair commits
+  after the sync merge are expected.
+
+The rust-gates job then binds the tested commit `G` (the pull_request merge
+ref) to the same identities before it records anything: `G`'s parents must be
+the base tip then `H`, `B` must be in that base tip, `S` must be in `H`, and `S`
+must not already be in that base tip. A moved head, a base that already carries
+`S`, or any unreadable ancestry fails the job.
+
+A validated subject is admitted as `history_sync_admitted`, past the size caps
+only. Claim identity, competing candidates, the hard-cut packet, unresolved
+threads, Draft state and head binding still refuse as usual. Every gate still
+runs: formatting, policies, clippy, goldens, fixtures, corpora, the full tests,
+doctests, the extension e2e when selected, and the late eligibility recheck,
+which also requires the `history-sync` label to still be present. Only the
+diff-scoped PR-evidence producers (`ripr-pr` and its check, review comments,
+impacted evidence, PR summary, annotations, and the schema sweep's PR rows) are
+not run, because a sync merge is not one reviewable change. The PR evidence step
+records `not_applicable:history_sync:<head>` instead, and `Ripr Rust Small
+Result` accepts that record only for a `history_sync_admitted` admission of the
+same head. Any other run that carries it fails.
+
+The merge queue is never relaxed: a `merge_group` run keeps the squash-only
+queued-commit rule, admission does not honor `history-sync` there, and a
+two-parent queued commit is refused. A history-sync PR therefore qualifies
+through the pull_request-mode `merge-ready` request and lands as a true merge
+commit, never a squash or rebase, bound to the qualified head `H`:
+`gh pr merge <n> --merge --match-head-commit <H>`. That works only while
+queue-only enforcement (#4838) is not active. After activation, a history sync
+needs an explicitly authorized protection exception or a separately decided
+route (#4838, #4840); neither is provided here.
+
 ## Conflicts, incidents and landing
 
 A behind-only branch normally needs no update or unaffected proof replay. Resolve
