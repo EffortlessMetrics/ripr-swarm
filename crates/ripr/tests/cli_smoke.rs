@@ -22260,8 +22260,8 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                         summary["current_change"]["top_recommendation_in_change"], false,
                         "{summary}"
                     );
-                    assert!(stdout.contains("withheld: 3 seams"), "{stdout}");
-                    assert!(md.contains("Withheld: 3 seams"), "{md}");
+                    assert!(stdout.contains("withheld: 3 spots"), "{stdout}");
+                    assert!(md.contains("Withheld: 3 spots"), "{md}");
                 } else {
                     assert_eq!(
                         summary["top_actionable_seams"][0]["line"], expected_line,
