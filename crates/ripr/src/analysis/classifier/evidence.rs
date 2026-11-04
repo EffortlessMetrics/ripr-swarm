@@ -392,6 +392,11 @@ impl ClassifiedProbeEvidence {
             &mut gathered,
             &mut flow_sinks,
         );
+        crate::analysis::classify::refine_slice_counter_boundary(
+            context,
+            pin_syntax,
+            &mut gathered,
+        );
         let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related
@@ -486,6 +491,7 @@ impl ClassifiedProbeEvidence {
             OwnerInputs {
                 owner: context.owner_fn,
                 literal_length_boundary: gathered.literal_length_boundary.as_ref(),
+                slice_counter_boundary: gathered.slice_counter_boundary.as_ref(),
             },
             owner_has_other_callers,
             assertion_macros_rebound,
@@ -1458,6 +1464,21 @@ impl ClassifiedProbeEvidence {
             && !guard_side_flip_paired
             && !gathered
                 .literal_length_boundary
+                .as_ref()
+                .is_some_and(|boundary| {
+                    context.owner_fn.is_some_and(|owner| {
+                        boundary.pairs(
+                            context.probe,
+                            owner,
+                            &test_summaries,
+                            context.index,
+                            &assertion_admitted,
+                            &owner_pin_admits,
+                        )
+                    })
+                })
+            && !gathered
+                .slice_counter_boundary
                 .as_ref()
                 .is_some_and(|boundary| {
                     context.owner_fn.is_some_and(|owner| {
