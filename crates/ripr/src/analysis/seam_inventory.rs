@@ -30,8 +30,9 @@ use super::seam_cache::{
     CLASSIFIED_SEAM_STORE_FAILURE_PATH, CORPUS_FINGERPRINT_STORE_FAILURE_PATH, CacheLoad,
     CachedSeamLimitInfo, CorpusFingerprintLookup, FileFactCacheStats, FileFactStoreError,
     FileFactStoreStage, FilesContentHashBuilder, RepoCorpusFingerprintCache, RepoSeamCacheKey,
-    RepoSeamFactCache, WorkspaceKeyContext, classified_seam_cache_store_limit,
-    compact_classified_seam_cache_store_limit, corpus_fingerprint,
+    RepoSeamFactCache, WorkspaceKeyContext, claim_base_untrusted_reason_emission,
+    classified_seam_cache_store_limit, compact_classified_seam_cache_store_limit,
+    corpus_fingerprint,
 };
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
@@ -47,7 +48,7 @@ use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::RiprConfig;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 pub(crate) const REPO_EXPOSURE_SEAM_LIMIT_ENV: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
@@ -260,6 +261,30 @@ impl From<&SeamLimitInfo> for CachedSeamLimitInfo {
     }
 }
 
+pub(crate) fn seam_facts_cache_miss_message(compact: bool) -> &'static str {
+    if compact {
+        "ripr: no usable compact cache entry for this workspace state; running the full compact classified walk"
+    } else {
+        "ripr: no usable cache entry for this workspace state; running the full classified walk"
+    }
+}
+
+/// Set once by an invocation that already announced the full-repo audit path
+/// (`ripr check --format repo-*`, #4945). Only those runs print the miss
+/// notice: the same inventory also backs `agent stub`, `continue`, `pilot` and
+/// the editor, whose stderr contracts (and `RIPR_QUIET`) must not change.
+static ANNOUNCE_CACHE_MISS: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn announce_seam_facts_cache_misses() {
+    ANNOUNCE_CACHE_MISS.store(true, Ordering::Relaxed);
+}
+
+fn disclose_seam_facts_cache_miss(compact: bool) {
+    if ANNOUNCE_CACHE_MISS.load(Ordering::Relaxed) {
+        eprintln!("{}", seam_facts_cache_miss_message(compact));
+    }
+}
+
 /// Walk production Rust files at `root` and emit per-seam evidence and
 /// classification. This is the input to `output/repo-exposure-report-v1`.
 /// The discard hook in `inventory_seams_at` from #237 is replaced by
@@ -423,10 +448,17 @@ fn inventory_classified_seams_report_collect(
             }
             CacheLoad::Miss => {
                 trace_latency_phase("cache_load", "miss", cache_started.elapsed());
+                // The stat-only key is rebuilt from the same inputs; the
+                // post-collect load below is the one authoritative miss, so
+                // disclose there and print once per run (#12505).
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
-                eprintln!("ripr: repo seam cache entry ignored ({reason})");
+                // #12432: a run-stable base-class reason reports once per
+                // base per process; ordinary per-entry reasons always print.
+                if claim_base_untrusted_reason_emission(&reason) {
+                    eprintln!("ripr: repo seam cache entry ignored ({reason})");
+                }
             }
         }
     }
@@ -486,12 +518,17 @@ fn inventory_classified_seams_report_collect(
         }
         CacheLoad::Miss => {
             trace_latency_phase("cache_load", "miss", cache_started.elapsed());
+            disclose_seam_facts_cache_miss(false);
         }
         CacheLoad::CorruptIgnored { reason } => {
             trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
             // Advisory: surface the reason so operators can see why a
             // warm path degraded to cold. Never fail analysis.
-            eprintln!("ripr: repo seam cache entry ignored ({reason})");
+            // #12432: a run-stable base-class reason reports once per base
+            // per process; ordinary per-entry reasons always print.
+            if claim_base_untrusted_reason_emission(&reason) {
+                eprintln!("ripr: repo seam cache entry ignored ({reason})");
+            }
         }
     }
     let compute_started = Instant::now();
@@ -862,7 +899,9 @@ pub(crate) fn inventory_seam_grip_class_counts_at_with_config(
         CacheLoad::Hit(cached) => return Ok(cached),
         CacheLoad::Miss => {}
         CacheLoad::CorruptIgnored { reason } => {
-            eprintln!("ripr: repo seam count cache entry ignored ({reason})");
+            if claim_base_untrusted_reason_emission(&reason) {
+                eprintln!("ripr: repo seam count cache entry ignored ({reason})");
+            }
         }
     }
     let counts = inventory_seam_grip_class_counts_from_state_with_config(&state, config)?;
@@ -905,6 +944,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
             }
             CacheLoad::Miss => {
                 trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
+                // Disclosed once at the post-collect load below (#12505).
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase(
@@ -912,7 +952,9 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
                     "corrupt_ignored",
                     cache_started.elapsed(),
                 );
-                eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
+                if claim_base_untrusted_reason_emission(&reason) {
+                    eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
+                }
             }
         }
     }
@@ -941,6 +983,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         }
         CacheLoad::Miss => {
             trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
+            disclose_seam_facts_cache_miss(true);
         }
         CacheLoad::CorruptIgnored { reason } => {
             trace_latency_phase(
@@ -948,7 +991,9 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
                 "corrupt_ignored",
                 cache_started.elapsed(),
             );
-            eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
+            if claim_base_untrusted_reason_emission(&reason) {
+                eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
+            }
         }
     }
 
@@ -1187,6 +1232,57 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     pub(crate) consumed_sources: super::consumed_source::ConsumedRustSources,
 }
 
+/// Whole-workspace content read, file-fact index build, and oracle-policy
+/// application for diff-scoped classification (#3862). One immutable
+/// preparation serves every scope-local evaluation in a multi-scope
+/// canonical-gap rerun.
+pub(crate) struct PreparedDiffScopedClassifiedWorkspace {
+    pub(crate) consumed_sources: super::consumed_source::ConsumedRustSources,
+    cached: super::facts::CachedRustIndex,
+    pub(crate) workspace_cache_key: super::seam_cache::RepoSeamCacheKey,
+    pub(crate) total_rust_files: usize,
+    pub(crate) total_production_files: usize,
+    production_files: Vec<PathBuf>,
+}
+
+/// Whether scope-local inventory results include the shared preparation's
+/// file-fact cache statistics (#3862).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DiffScopedCacheStatsAttribution {
+    Preparation,
+    Omit,
+}
+
+/// Scope-local inputs for [`evaluate_diff_scoped_classified_seams_from_prepared`].
+pub(crate) struct PreparedDiffScopedEvaluationInput<'a> {
+    pub changed_files: &'a [PathBuf],
+    pub changed_owner_names: &'a [String],
+    pub absent_changed_files: Vec<PathBuf>,
+    pub with_repo_seam_limit: bool,
+    pub stages: Option<&'a DiffScopeEvidenceStages<'a>>,
+    pub consumer: Option<(&'a mut dyn ScopedEvidenceConsumer, usize)>,
+    pub cache_stats: DiffScopedCacheStatsAttribution,
+}
+
+impl<'a> PreparedDiffScopedEvaluationInput<'a> {
+    pub(crate) fn canonical_gap_rerun_scope(
+        changed_files: &'a [PathBuf],
+        changed_owner_names: &'a [String],
+        absent_changed_files: Vec<PathBuf>,
+        cache_stats: DiffScopedCacheStatsAttribution,
+    ) -> Self {
+        Self {
+            changed_files,
+            changed_owner_names,
+            absent_changed_files,
+            with_repo_seam_limit: false,
+            stages: None,
+            consumer: None,
+            cache_stats,
+        }
+    }
+}
+
 /// Two-stage evidence for the diff-scoped inventory.
 ///
 /// Test-grip evidence costs tens of milliseconds per seam, and a diff
@@ -1272,11 +1368,16 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     changed_test: &Path,
     test_node: Option<&str>,
 ) -> Result<TargetedTestClassifiedSeamInventory, TargetedTestInventoryError> {
-    let state = collect_workspace_state(root, config)?;
+    let rust_files = discover_analyzable_rust_corpus(root, config)
+        .map_err(TargetedTestInventoryError::from)?
+        .analyzable;
+    let mut state = workspace_state_from_paths(root, config, rust_files);
+    let mut cached = state
+        .build_index_single_pass(config)
+        .map_err(TargetedTestInventoryError::from)?;
     let workspace_cache_key = state.cache_key();
     let changed_test_key = inventory_scope_key(changed_test);
     let changed_test = normalized_inventory_path(changed_test);
-    let mut cached = state.build_index(config)?;
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let selector_limitation =
         |kind, message, selected_test_count| TargetedTestInventoryError::Selector {
@@ -1956,7 +2057,7 @@ mod bound_inventory_reuse {
 mod persisted_bound_inventory {
     use super::{
         FileFactCacheStats, RepoSeamCacheKey, ScopedClassifiedSeamInventory, SeamLimitInfo,
-        trace_latency_phase,
+        claim_base_untrusted_reason_emission, trace_latency_phase,
     };
     use crate::analysis::seam_cache::{
         CacheLoad, CachedSeamLimitInfo, PersistedScopedInventory, PersistedSeamLimit,
@@ -1979,7 +2080,9 @@ mod persisted_bound_inventory {
                     "persisted_result_corrupt_ignored",
                     Duration::ZERO,
                 );
-                eprintln!("ripr: scoped inventory cache entry ignored ({reason})");
+                if claim_base_untrusted_reason_emission(&reason) {
+                    eprintln!("ripr: scoped inventory cache entry ignored ({reason})");
+                }
                 None
             }
         }
@@ -2198,6 +2301,44 @@ pub(crate) fn inventory_diff_scoped_streamed_seams_at_with_config(
     changed_owner_names: &[String],
     consumer: &mut dyn ScopedEvidenceConsumer,
 ) -> Result<ScopedClassifiedSeamInventory, String> {
+    inventory_diff_scoped_streamed_seams_with_optional_prepared(
+        root,
+        config,
+        changed_files,
+        changed_owner_names,
+        consumer,
+        None,
+    )
+}
+
+/// Diff-scoped streamed inventory with an optional prepared workspace (#4692).
+/// When `prepared` is `Some`, the workspace index is not built again.
+pub(crate) fn inventory_diff_scoped_streamed_seams_with_optional_prepared(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    changed_owner_names: &[String],
+    consumer: &mut dyn ScopedEvidenceConsumer,
+    prepared: Option<&PreparedDiffScopedClassifiedWorkspace>,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    if let Some(prepared) = prepared {
+        let absent_changed_files = workspace::changed_source_files_absent_from_worktree(
+            root,
+            changed_files.iter().map(PathBuf::as_path),
+        );
+        return evaluate_diff_scoped_classified_seams_from_prepared(
+            prepared,
+            PreparedDiffScopedEvaluationInput {
+                changed_files,
+                changed_owner_names,
+                absent_changed_files,
+                with_repo_seam_limit: false,
+                stages: None,
+                consumer: Some((consumer, review_evidence_window_size()?)),
+                cache_stats: DiffScopedCacheStatsAttribution::Omit,
+            },
+        );
+    }
     inventory_diff_scoped_classified_seams_inner(
         root,
         config,
@@ -2320,17 +2461,180 @@ impl<'a> DiffScopeInputs<'a> {
     }
 }
 
+pub(crate) fn prepare_diff_scoped_classified_workspace(
+    root: &Path,
+    config: &RiprConfig,
+    generated_context: Option<&[PathBuf]>,
+) -> Result<PreparedDiffScopedClassifiedWorkspace, String> {
+    let state = if let Some(paths) = generated_context {
+        let (corpus, _) = discover_analyzable_rust_corpus_for_changed_paths(root, config, paths)?;
+        collect_workspace_state_from_files(root, config, corpus.analyzable)?
+    } else {
+        collect_workspace_state(root, config)?
+    };
+    prepare_diff_scoped_classified_workspace_from_state(state, config, false)
+}
+
+fn prepare_diff_scoped_classified_workspace_from_state(
+    mut state: OwnedWorkspaceState,
+    config: &RiprConfig,
+    single_pass: bool,
+) -> Result<PreparedDiffScopedClassifiedWorkspace, String> {
+    cancellation::checkpoint()?;
+    let total_rust_files = state.files.len();
+    let production_files = production_files_from_state_with_role(&state, config);
+    let total_production_files = production_files.len();
+    let build_started = Instant::now();
+    trace_latency_phase(
+        "file_fact_cache",
+        &format!(
+            "start_review_scope_files_{}_production_{}",
+            state.files.len(),
+            production_files.len()
+        ),
+        Duration::ZERO,
+    );
+    let mut cached = if single_pass {
+        state.build_index_single_pass(config)?
+    } else {
+        state.build_index(config)?
+    };
+    let consumed_sources = state.consumed.clone();
+    let workspace_cache_key = state.cache_key();
+    trace_latency_phase(
+        "file_fact_cache",
+        &cached.file_fact_cache.status_label(),
+        build_started.elapsed(),
+    );
+    cancellation::checkpoint()?;
+    rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
+    cancellation::checkpoint()?;
+    #[cfg(test)]
+    diff_scoped_preparation_probe::record();
+    Ok(PreparedDiffScopedClassifiedWorkspace {
+        consumed_sources,
+        cached,
+        workspace_cache_key,
+        total_rust_files,
+        total_production_files,
+        production_files,
+    })
+}
+
+pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
+    prepared: &PreparedDiffScopedClassifiedWorkspace,
+    input: PreparedDiffScopedEvaluationInput<'a>,
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    let PreparedDiffScopedEvaluationInput {
+        changed_files,
+        changed_owner_names,
+        absent_changed_files,
+        with_repo_seam_limit,
+        stages,
+        consumer,
+        cache_stats,
+    } = input;
+    // `prepare_diff_scoped_classified_workspace_from_state` already refused a
+    // corpus change via `build_index`; repeating `verify_corpus_unchanged` on
+    // every scope-local evaluation would reread the whole workspace (#3862).
+    let production_files = &prepared.production_files;
+    let cached = &prepared.cached;
+    let production_file_set = production_files
+        .iter()
+        .map(|path| inventory_scope_key(path))
+        .collect::<BTreeSet<_>>();
+    let changed_file_set = changed_files
+        .iter()
+        .map(|path| inventory_scope_key(path))
+        .filter(|path| production_file_set.contains(path))
+        .collect::<BTreeSet<_>>();
+    cancellation::checkpoint()?;
+    let repo_seam_limit = with_repo_seam_limit
+        .then(|| repo_seam_limit_from_index(production_files, &cached.index))
+        .transpose()?;
+    let caller_file_set = immediate_caller_file_set(
+        &cached.index,
+        &production_file_set,
+        &changed_file_set,
+        changed_owner_names,
+    );
+    let mut scoped_file_set = changed_file_set.clone();
+    scoped_file_set.extend(caller_file_set.iter().cloned());
+    let scoped_production_files = production_files
+        .iter()
+        .filter(|path| scoped_file_set.contains(&inventory_scope_key(path)))
+        .cloned()
+        .collect::<Vec<_>>();
+    let (parser_declined_files, changed_production_files): (Vec<PathBuf>, Vec<PathBuf>) =
+        production_files
+            .iter()
+            .filter(|path| changed_file_set.contains(&inventory_scope_key(path)))
+            .cloned()
+            .partition(|path| {
+                cached
+                    .index
+                    .files()
+                    .get(path)
+                    .is_none_or(|facts| facts.used_lexical_fallback)
+            });
+    let immediate_caller_files = production_files
+        .iter()
+        .filter(|path| caller_file_set.contains(&inventory_scope_key(path)))
+        .cloned()
+        .collect::<Vec<_>>();
+    cancellation::checkpoint()?;
+    let seams_started = Instant::now();
+    let seams = inventory_seams_from_index(&scoped_production_files, &cached.index);
+    trace_latency_phase(
+        "inventory_seams",
+        "review_scope_ok",
+        seams_started.elapsed(),
+    );
+    cancellation::checkpoint()?;
+    let (classified, classified_seams_considered, unevaluated_seams) =
+        if let Some((consumer, window_size)) = consumer {
+            let (evaluated, unevaluated) =
+                classify_scoped_seams_streamed(&seams, &cached.index, consumer, window_size)?;
+            (Vec::new(), evaluated, unevaluated)
+        } else {
+            let (classified, unevaluated) = classify_scoped_seams(seams, &cached.index, stages)?;
+            let evaluated = classified.len();
+            (classified, evaluated, unevaluated)
+        };
+    cancellation::checkpoint()?;
+    let file_fact_cache = match cache_stats {
+        DiffScopedCacheStatsAttribution::Preparation => prepared.cached.file_fact_cache.clone(),
+        DiffScopedCacheStatsAttribution::Omit => FileFactCacheStats::zero_work(),
+    };
+    Ok(ScopedClassifiedSeamInventory {
+        consumed_sources: prepared.consumed_sources.clone(),
+        classified,
+        classified_seams_considered,
+        file_fact_cache,
+        workspace_cache_key: prepared.workspace_cache_key.clone(),
+        total_rust_files: prepared.total_rust_files,
+        total_production_files: prepared.total_production_files,
+        scoped_production_files,
+        changed_production_files,
+        parser_declined_files,
+        immediate_caller_files,
+        unevaluated_seams,
+        absent_changed_files,
+        repo_seam_limit,
+    })
+}
+
 /// Shared body behind [`inventory_diff_scoped_classified_seams_at_with_config`].
 /// The explicit `fast_path_enabled` flag is the removal control (issue
 /// #3859, control 12): tests drive the disabled route directly instead
 /// of mutating the process environment.
-fn inventory_diff_scoped_classified_seams_inner(
+fn inventory_diff_scoped_classified_seams_inner<'a>(
     root: &Path,
     config: &RiprConfig,
-    inputs: DiffScopeInputs<'_>,
+    inputs: DiffScopeInputs<'a>,
     fast_path_enabled: bool,
-    stages: Option<&DiffScopeEvidenceStages<'_>>,
-    consumer: Option<(&mut dyn ScopedEvidenceConsumer, usize)>,
+    stages: Option<&'a DiffScopeEvidenceStages<'a>>,
+    consumer: Option<(&'a mut dyn ScopedEvidenceConsumer, usize)>,
 ) -> Result<ScopedClassifiedSeamInventory, String> {
     let DiffScopeInputs {
         changed_files,
@@ -2367,19 +2671,34 @@ fn inventory_diff_scoped_classified_seams_inner(
             Duration::ZERO,
         );
     }
-    let state = if let Some(paths) = generated_context {
+    let reuse_requested = stages.and_then(|stages| stages.reuse).is_some() && consumer.is_none();
+    let state = if reuse_requested {
+        if let Some(paths) = generated_context {
+            let (corpus, _) =
+                discover_analyzable_rust_corpus_for_changed_paths(root, config, paths)?;
+            collect_workspace_state_from_files(root, config, corpus.analyzable)?
+        } else {
+            collect_workspace_state(root, config)?
+        }
+    } else if let Some(paths) = generated_context {
         let (corpus, _) = discover_analyzable_rust_corpus_for_changed_paths(root, config, paths)?;
-        collect_workspace_state_from_files(root, config, corpus.analyzable)?
+        workspace_state_from_paths(root, config, corpus.analyzable)
     } else {
-        collect_workspace_state(root, config)?
+        let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
+        workspace_state_from_paths(root, config, rust_files)
     };
     cancellation::checkpoint()?;
-    let workspace_cache_key = state.cache_key();
     let reuse_identity = stages
         .and_then(|stages| stages.reuse)
-        .filter(|_| consumer.is_none() && workspace_cache_key.is_reusable());
-    if let Some(identity) = reuse_identity
-        && let Some(mut reused) = bound_inventory_reuse::lookup(&workspace_cache_key, identity)
+        .filter(|_| consumer.is_none());
+    let (reuse_identity, workspace_cache_key) = if reuse_requested {
+        let key = state.cache_key();
+        (reuse_identity.filter(|_| key.is_reusable()), Some(key))
+    } else {
+        (None, None)
+    };
+    if let (Some(identity), Some(key)) = (reuse_identity, workspace_cache_key.as_ref())
+        && let Some(mut reused) = bound_inventory_reuse::lookup(key, identity)
     {
         trace_latency_phase(
             "diff_scoped_inventory",
@@ -2398,10 +2717,9 @@ fn inventory_diff_scoped_classified_seams_inner(
     // root runs at most once for the lookup and the store.
     let persisted_cache =
         reuse_identity.map(|_| crate::analysis::seam_cache::RepoScopedInventoryCache::at(root));
-    if let Some(identity) = reuse_identity
+    if let (Some(identity), Some(key)) = (reuse_identity, workspace_cache_key.as_ref())
         && let Some(cache) = persisted_cache.as_ref()
-        && let Some(mut persisted) =
-            persisted_bound_inventory::lookup(cache, &workspace_cache_key, identity)
+        && let Some(mut persisted) = persisted_bound_inventory::lookup(cache, key, identity)
     {
         trace_latency_phase(
             "diff_scoped_inventory",
@@ -2415,119 +2733,23 @@ fn inventory_diff_scoped_classified_seams_inner(
         persisted.consumed_sources = state.consumed.clone();
         state.verify_corpus_unchanged()?;
         cancellation::checkpoint()?;
-        bound_inventory_reuse::store(&workspace_cache_key, identity, &persisted);
+        bound_inventory_reuse::store(key, identity, &persisted);
         return Ok(persisted);
     }
-    let total_rust_files = state.files.len();
-    let production_files = production_files_from_state_with_role(&state, config);
-    let total_production_files = production_files.len();
-    let production_file_set = production_files
-        .iter()
-        .map(|path| inventory_scope_key(path))
-        .collect::<BTreeSet<_>>();
-    let changed_file_set = changed_files
-        .iter()
-        .map(|path| inventory_scope_key(path))
-        .filter(|path| production_file_set.contains(path))
-        .collect::<BTreeSet<_>>();
-
-    let build_started = Instant::now();
-    trace_latency_phase(
-        "file_fact_cache",
-        &format!(
-            "start_review_scope_files_{}_production_{}",
-            state.files.len(),
-            production_files.len()
-        ),
-        Duration::ZERO,
-    );
-    let mut cached = state.build_index(config)?;
-    // The index and cache key own their data; the state is not needed past here.
-    // `build_index` just re-read the corpus and refused any bytes other than
-    // the ones this carrier observed, so the observations are validated.
-    let consumed_sources = state.consumed.clone();
-    drop(state);
-    trace_latency_phase(
-        "file_fact_cache",
-        &cached.file_fact_cache.status_label(),
-        build_started.elapsed(),
-    );
-    cancellation::checkpoint()?;
-    rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
-
-    cancellation::checkpoint()?;
-    let repo_seam_limit = with_repo_seam_limit
-        .then(|| repo_seam_limit_from_index(&production_files, &cached.index))
-        .transpose()?;
-    let caller_file_set = immediate_caller_file_set(
-        &cached.index,
-        &production_file_set,
-        &changed_file_set,
-        changed_owner_names,
-    );
-    let mut scoped_file_set = changed_file_set.clone();
-    scoped_file_set.extend(caller_file_set.iter().cloned());
-
-    let scoped_production_files = production_files
-        .iter()
-        .filter(|path| scoped_file_set.contains(&inventory_scope_key(path)))
-        .cloned()
-        .collect::<Vec<_>>();
-    let (parser_declined_files, changed_production_files): (Vec<PathBuf>, Vec<PathBuf>) =
-        production_files
-            .iter()
-            .filter(|path| changed_file_set.contains(&inventory_scope_key(path)))
-            .cloned()
-            .partition(|path| {
-                cached
-                    .index
-                    .files()
-                    .get(path)
-                    .is_none_or(|facts| facts.used_lexical_fallback)
-            });
-    let immediate_caller_files = production_files
-        .iter()
-        .filter(|path| caller_file_set.contains(&inventory_scope_key(path)))
-        .cloned()
-        .collect::<Vec<_>>();
-
-    cancellation::checkpoint()?;
-    let seams_started = Instant::now();
-    let seams = inventory_seams_from_index(&scoped_production_files, &cached.index);
-    trace_latency_phase(
-        "inventory_seams",
-        "review_scope_ok",
-        seams_started.elapsed(),
-    );
-    cancellation::checkpoint()?;
-    let (classified, classified_seams_considered, unevaluated_seams) =
-        if let Some((consumer, window_size)) = consumer {
-            let (evaluated, unevaluated) =
-                classify_scoped_seams_streamed(&seams, &cached.index, consumer, window_size)?;
-            (Vec::new(), evaluated, unevaluated)
-        } else {
-            let (classified, unevaluated) = classify_scoped_seams(seams, &cached.index, stages)?;
-            let evaluated = classified.len();
-            (classified, evaluated, unevaluated)
-        };
-
-    cancellation::checkpoint()?;
-    let inventory = ScopedClassifiedSeamInventory {
-        consumed_sources,
-        classified,
-        classified_seams_considered,
-        file_fact_cache: cached.file_fact_cache,
-        workspace_cache_key,
-        total_rust_files,
-        total_production_files,
-        scoped_production_files,
-        changed_production_files,
-        parser_declined_files,
-        immediate_caller_files,
-        unevaluated_seams,
-        absent_changed_files,
-        repo_seam_limit,
-    };
+    let prepared =
+        prepare_diff_scoped_classified_workspace_from_state(state, config, !reuse_requested)?;
+    let inventory = evaluate_diff_scoped_classified_seams_from_prepared(
+        &prepared,
+        PreparedDiffScopedEvaluationInput {
+            changed_files,
+            changed_owner_names,
+            absent_changed_files,
+            with_repo_seam_limit,
+            stages,
+            consumer,
+            cache_stats: DiffScopedCacheStatsAttribution::Preparation,
+        },
+    )?;
     if let Some(identity) = reuse_identity {
         bound_inventory_reuse::store(&inventory.workspace_cache_key, identity, &inventory);
         if let Some(cache) = persisted_cache.as_ref() {
@@ -2540,6 +2762,27 @@ fn inventory_diff_scoped_classified_seams_inner(
         }
     }
     Ok(inventory)
+}
+
+/// Test-only count of whole-workspace diff-scoped preparations on this thread
+/// (#3862).
+#[cfg(test)]
+pub(crate) mod diff_scoped_preparation_probe {
+    use std::cell::Cell;
+
+    thread_local! {
+        static PREPARATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn record() {
+        PREPARATIONS.with(|count| count.set(count.get() + 1));
+    }
+
+    pub(crate) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        PREPARATIONS.with(|count| count.set(0));
+        let result = work();
+        (result, PREPARATIONS.with(Cell::get))
+    }
 }
 
 /// Test-only count of seams handed to evidence evaluation on this thread, so
@@ -3109,6 +3352,8 @@ fn collect_workspace_state_from_files(
         let bytes = std::fs::read(root.join(path))
             .map_err(|err| format!("read {} failed: {err}", path.display()))?;
         builder.push(path, &bytes);
+        #[cfg(test)]
+        hash_pass_source_reads::record_file_read();
         // #7357: the raw buffer is observed here, before any parse or cache
         // lookup; the later index read is refused unless it hashes the same.
         consumed.record(path, Some(&bytes));
@@ -3125,6 +3370,48 @@ fn collect_workspace_state_from_files(
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
     })
+}
+
+/// Path and key-context state without a hashing read (#6758). The content
+/// hash and consumed-source observations are filled by
+/// [`OwnedWorkspaceState::build_index_single_pass`].
+fn workspace_state_from_paths(
+    root: &Path,
+    config: &RiprConfig,
+    rust_files: Vec<PathBuf>,
+) -> OwnedWorkspaceState {
+    let mut sorted_files = rust_files;
+    sorted_files.sort();
+    OwnedWorkspaceState {
+        consumed: super::consumed_source::ConsumedRustSources::default(),
+        workspace_root: root.to_path_buf(),
+        files: sorted_files,
+        files_content_hash: String::new(),
+        config_text: Some(classified_config_identity(config)),
+        test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
+        suppressions_text: read_optional(&root.join(config.suppressions().path())),
+    }
+}
+
+/// Test-only counter for corpus content reads in
+/// [`collect_workspace_state_from_files`] (#6758).
+#[cfg(test)]
+pub(in crate::analysis) mod hash_pass_source_reads {
+    use std::cell::Cell;
+
+    thread_local! {
+        static READS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(in crate::analysis) fn record_file_read() {
+        READS.with(|reads| reads.set(reads.get().saturating_add(1)));
+    }
+
+    pub(in crate::analysis) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        READS.with(|reads| reads.set(0));
+        let result = work();
+        (result, READS.with(Cell::get))
+    }
 }
 
 /// Discover the analyzable corpus and compute its stat-only fingerprint
@@ -3424,6 +3711,25 @@ impl OwnedWorkspaceState {
                 self.workspace_root.display()
             ));
         }
+        Ok(cached)
+    }
+
+    /// Build the file-fact index in one streaming read pass (#6758). The
+    /// aggregate hash, cache key inputs and consumed-source carrier all come
+    /// from this pass; there is no separate hashing read.
+    fn build_index_single_pass(
+        &mut self,
+        config: &RiprConfig,
+    ) -> Result<super::facts::CachedRustIndex, String> {
+        debug_assert!(self.files_content_hash.is_empty());
+        debug_assert!(self.files.windows(2).all(|pair| pair[0] <= pair[1]));
+        let cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses_and_consumed(
+            &self.workspace_root,
+            &self.files,
+            harness_registrations(config),
+            Some(&mut self.consumed),
+        )?;
+        self.files_content_hash = cached.files_content_hash.clone();
         Ok(cached)
     }
 
@@ -4100,6 +4406,20 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
+
+    #[test]
+    fn seam_facts_cache_miss_messages_name_each_family_walk() {
+        assert!(
+            seam_facts_cache_miss_message(false).contains("full classified walk"),
+            "{}",
+            seam_facts_cache_miss_message(false)
+        );
+        assert!(
+            seam_facts_cache_miss_message(true).contains("compact classified walk"),
+            "{}",
+            seam_facts_cache_miss_message(true)
+        );
+    }
 
     #[test]
     fn cache_receipt_retains_producer_order_and_portable_failure_rows() {
@@ -6084,6 +6404,13 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
 }
 "#,
             )?;
+            // The committed expected file is what lets the file-backed
+            // snapshot discriminate at all (#12189); this test varies only
+            // the configured strength.
+            write_file(
+                &root.join("src/snapshots/krate__tests__snapshots_discount.snap"),
+                "---\nsource: src/lib.rs\nexpression: discount(12, 10)\n---\ntrue\n",
+            )?;
             let medium = if loaded {
                 write_file(
                     &root.join("ripr.toml"),
@@ -6860,6 +7187,165 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
+    /// #3862: one canonical-gap rerun prepares the Rust workspace once and
+    /// evaluates each scope independently with identical classified results.
+    #[test]
+    fn diff_scoped_shared_preparation_serves_two_rust_scopes_once() -> Result<(), String> {
+        let root = make_tempdir("3862-shared-prep")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"gap3862\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n",
+        )?;
+        write_file(
+            &root.join("src/fees.rs"),
+            "pub fn fee(total: i32) -> i32 { total + 1 }\n",
+        )?;
+        write_file(
+            &root.join("tests/it.rs"),
+            "use gap3862::{discount, fee};\n\n#[test]\nfn integration() {\n    assert_eq!(discount(200), 20);\n    assert_eq!(fee(1), 2);\n}\n",
+        )?;
+        let config = RiprConfig::default();
+        let scope_a = (PathBuf::from("src/lib.rs"), vec!["discount".to_string()]);
+        let scope_b = (PathBuf::from("src/fees.rs"), vec!["fee".to_string()]);
+        let seam_ids = |inventory: &ScopedClassifiedSeamInventory| {
+            inventory
+                .classified
+                .iter()
+                .map(|entry| entry.seam.id().as_str().to_string())
+                .collect::<BTreeSet<_>>()
+        };
+        let legacy_a = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            std::slice::from_ref(&scope_a.0),
+            &scope_a.1,
+        )?;
+        let legacy_b = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            std::slice::from_ref(&scope_b.0),
+            &scope_b.1,
+        )?;
+        let (_, legacy_preparations) = diff_scoped_preparation_probe::observe(|| {
+            let _ = inventory_diff_scoped_classified_seams_at_with_config(
+                &root,
+                &config,
+                std::slice::from_ref(&scope_a.0),
+                &scope_a.1,
+            );
+            let _ = inventory_diff_scoped_classified_seams_at_with_config(
+                &root,
+                &config,
+                std::slice::from_ref(&scope_b.0),
+                &scope_b.1,
+            );
+        });
+        let (shared_result, shared_preparations): (
+            Result<(ScopedClassifiedSeamInventory, ScopedClassifiedSeamInventory), String>,
+            usize,
+        ) = diff_scoped_preparation_probe::observe(|| {
+            let prepared = prepare_diff_scoped_classified_workspace(&root, &config, None)?;
+            let shared_a = evaluate_diff_scoped_classified_seams_from_prepared(
+                &prepared,
+                PreparedDiffScopedEvaluationInput::canonical_gap_rerun_scope(
+                    std::slice::from_ref(&scope_a.0),
+                    &scope_a.1,
+                    Vec::new(),
+                    DiffScopedCacheStatsAttribution::Preparation,
+                ),
+            )?;
+            let shared_b = evaluate_diff_scoped_classified_seams_from_prepared(
+                &prepared,
+                PreparedDiffScopedEvaluationInput::canonical_gap_rerun_scope(
+                    std::slice::from_ref(&scope_b.0),
+                    &scope_b.1,
+                    Vec::new(),
+                    DiffScopedCacheStatsAttribution::Omit,
+                ),
+            )?;
+            Ok((shared_a, shared_b))
+        });
+        let (shared_a, shared_b) = shared_result?;
+        if legacy_preparations != 2 {
+            return Err(format!(
+                "per-scope inventory must prepare twice before repair, got {legacy_preparations}"
+            ));
+        }
+        if shared_preparations != 1 {
+            return Err(format!(
+                "shared preparation must run once for two scopes, got {shared_preparations}"
+            ));
+        }
+        if seam_ids(&legacy_a) != seam_ids(&shared_a) || seam_ids(&legacy_b) != seam_ids(&shared_b)
+        {
+            return Err("shared scope evaluation must match per-scope classified seams".into());
+        }
+        if shared_b.file_fact_cache.hits != 0 || shared_b.file_fact_cache.misses != 0 {
+            return Err("secondary scope evaluations must omit duplicated file-fact stats".into());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn optional_prepared_streamed_inventory_skips_second_preparation() -> Result<(), String> {
+        let root = make_tempdir("optional-prepared-streamed")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"prep4692\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n",
+        )?;
+        write_file(
+            &root.join("tests/it.rs"),
+            "use prep4692::discount;\n\n#[test]\nfn integration() {\n    assert_eq!(discount(200), 20);\n}\n",
+        )?;
+        let config = RiprConfig::default();
+        let changed_files = vec![PathBuf::from("src/lib.rs")];
+        let changed_owners = vec!["discount".to_string()];
+        let prepared = prepare_diff_scoped_classified_workspace(&root, &config, None)?;
+        struct NoopConsumer;
+        impl ScopedEvidenceConsumer for NoopConsumer {
+            fn in_first_stage(&self, _seam: &RepoSeam) -> bool {
+                true
+            }
+            fn observe(&mut self, _ordinal: usize, _entry: ClassifiedSeam) -> Result<(), String> {
+                Ok(())
+            }
+            fn first_stage_sufficient(&self) -> bool {
+                false
+            }
+            fn retained_payloads(&self) -> usize {
+                0
+            }
+        }
+        let (inventory, builds) = diff_scoped_preparation_probe::observe(|| {
+            let mut consumer = NoopConsumer;
+            inventory_diff_scoped_streamed_seams_with_optional_prepared(
+                &root,
+                &config,
+                &changed_files,
+                &changed_owners,
+                &mut consumer,
+                Some(&prepared),
+            )
+        });
+        inventory?;
+        if builds != 0 {
+            return Err(format!(
+                "prepared handoff must not rebuild the workspace index, got {builds} preparations"
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     /// #8547 acceptance 1, build-count proof: a check-shaped sequence
     /// (admission core, main reuse, then both human-output routes over a
     /// shared seam index) starts exactly one workspace index build and
@@ -7041,7 +7527,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         const ORIGINAL: &str = "pub fn check(value: i32) -> bool { value > 0 }\n";
         const EDITED: &str = "pub fn check(value: i32) -> bool { value >= 10 }\n";
         let config = RiprConfig::default();
-        for path in ["full", "compact", "counts", "review", "rerun"] {
+        for path in ["full", "compact", "counts"] {
             let root = make_tempdir(&format!("stream-moved-{path}"))?;
             let lib = root.join("src/lib.rs");
             write_file(
@@ -7087,6 +7573,39 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
                 && !stored_inventory_entry(path, &root, &edited_key)
             {
                 return Err(format!("{path}: an unmoved build must store its entry"));
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    /// Issue #6758: changed-test and diff-scoped review inventory derive the
+    /// workspace key from the same streaming index read and must not run the
+    /// separate hashing pass in [`collect_workspace_state_from_files`].
+    #[test]
+    fn single_pass_inventory_entry_points_skip_hash_pass_reads() -> Result<(), String> {
+        let config = RiprConfig::default();
+        for path in ["review", "rerun"] {
+            let root = make_tempdir(&format!("hash-pass-skip-{path}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(
+                &root.join("src/lib.rs"),
+                "pub fn check(value: i32) -> bool { value > 0 }\n",
+            )?;
+            write_file(
+                &root.join("tests/basic.rs"),
+                "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+            )?;
+            let (result, hash_reads) =
+                super::hash_pass_source_reads::observe(|| run_inventory_path(path, &root, &config));
+            result?;
+            if hash_reads != 0 {
+                return Err(format!(
+                    "{path}: hashing pass must not read sources, got {hash_reads} reads"
+                ));
             }
             let _ = std::fs::remove_dir_all(&root);
         }

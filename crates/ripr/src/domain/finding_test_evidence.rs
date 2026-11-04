@@ -4,7 +4,8 @@
 //! diff path a portable summary while preserving the authority boundary that
 //! a `Finding` does not carry repo-seam `TestTargetEvidence`.
 
-use super::{Finding, TestEvidenceEntry, TestEvidenceSummary};
+use super::Finding;
+use crate::domain::{TestEvidenceEntry, TestEvidenceSummary, normalize_transport_path};
 
 impl Finding {
     /// Project this finding's related-test and discriminator facts into the
@@ -25,7 +26,7 @@ impl Finding {
             .iter()
             .map(|test| TestEvidenceEntry {
                 test_name: test.name.clone(),
-                file: normalize_path(&test.file.to_string_lossy()),
+                file: normalize_transport_path(&test.file.to_string_lossy()),
                 line: test.line,
                 oracle_kind: test.oracle_kind.as_str().to_string(),
                 oracle_strength: test.oracle_strength.as_str().to_string(),
@@ -51,16 +52,10 @@ impl Finding {
     }
 }
 
-fn normalize_path(path: &str) -> String {
-    let normalized = path.replace('\\', "/");
-    normalized.trim_start_matches("./").to_string()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, FindingCanonicalGap,
+        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
         MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
         RelatedTest, RelationReason, RevealEvidence, RiprEvidence, SourceCurrentness,
         SourceLocation, StageEvidence, StageState,
@@ -285,8 +280,18 @@ mod tests {
 
     #[test]
     fn transport_path_normalization_is_separator_and_prefix_only() {
-        assert_eq!(normalize_path("tests\\pricing.rs"), "tests/pricing.rs");
-        assert_eq!(normalize_path("././tests/pricing.rs"), "tests/pricing.rs");
-        assert_eq!(normalize_path("../tests/pricing.rs"), "../tests/pricing.rs");
+        use crate::domain::normalize_transport_path;
+        assert_eq!(
+            normalize_transport_path("tests\\pricing.rs"),
+            "tests/pricing.rs"
+        );
+        assert_eq!(
+            normalize_transport_path("././tests/pricing.rs"),
+            "tests/pricing.rs"
+        );
+        assert_eq!(
+            normalize_transport_path("../tests/pricing.rs"),
+            "../tests/pricing.rs"
+        );
     }
 }

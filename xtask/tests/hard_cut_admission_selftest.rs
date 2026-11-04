@@ -4,14 +4,14 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-fn run_self_test(script: &str, expected: &str) -> Result<(), String> {
+fn run_python_control(script: &str, argument: &str, expected: &str) -> Result<(), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let path = root
         .join(".github/actions/pr-candidate-admission")
         .join(script);
     let output = Command::new("python3")
         .arg(&path)
-        .arg("--self-test")
+        .arg(argument)
         .output()
         .map_err(|error| format!("python3 must be available for {script}: {error}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -21,10 +21,26 @@ fn run_self_test(script: &str, expected: &str) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    if !stdout.contains(expected) {
+    if !stdout.contains(expected) && !String::from_utf8_lossy(&output.stderr).contains(expected) {
         return Err(format!("{script} unexpected output: {stdout}"));
     }
     Ok(())
+}
+
+fn run_self_test(script: &str, expected: &str) -> Result<(), String> {
+    run_python_control(script, "--self-test", expected)
+}
+
+#[cfg(unix)]
+#[test]
+fn history_sync_scope_real_bash_controls_pass() -> Result<(), String> {
+    run_python_control("test_history_sync_scope.py", "-q", "Ran 22 tests in")
+}
+
+#[cfg(unix)]
+#[test]
+fn history_sync_live_authorization_controls_pass() -> Result<(), String> {
+    run_python_control("test_history_sync_live.py", "-q", "Ran 26 tests in")
 }
 
 #[test]
@@ -245,6 +261,7 @@ case "$url" in
     base64 "$CONTROL_TMP/inactive.json" | tr -d '\r\n' | jq -R '{content: .}' ;;
   */files?*) if [ -e "$CONTROL_TMP/files.json" ]; then cat "$CONTROL_TMP/files.json"; else echo '[{"filename":"src/lib.rs","status":"modified"}]'; fi ;;
   */pulls\?state*) echo '[]' ;;
+  */issues/*comments*) echo '[]' ;;
   *) if [ -e "$CONTROL_TMP/hostile_head" ]; then printf '%s\n' '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaa\nstatus=admitted","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; elif [ -e "$CONTROL_TMP/missing_body" ]; then echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":""}'; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; fi ;;
 esac
 "#;
@@ -458,7 +475,9 @@ fn wrapper_sanitizes_newline_bearing_head_in_outputs() -> Result<(), String> {
             "newline-bearing head must not forge an extra GITHUB_OUTPUT line, got: {outputs}"
         ));
     }
-    if outputs.lines().count() != 11
+    // 11 candidate/cut lines, four history-sync lines (#12437), and the
+    // observational concurrent-claims line (#11736), each sanitized.
+    if outputs.lines().count() != 16
         || !outputs
             .lines()
             .any(|line| line.starts_with("detail=") && line.contains("status=admitted"))

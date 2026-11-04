@@ -426,7 +426,9 @@ fn finding_result(
     suppressions: &[SuppressionEntry],
     today: &str,
 ) -> Option<Value> {
-    let severity = config.severity().for_exposure(&finding.class);
+    let severity = config
+        .severity_for_file(&finding.probe.location.file)
+        .for_exposure(&finding.class);
     let level = sarif_level(severity)?;
     let rule_id = finding_rule_id(&finding.class);
     // The location and fingerprints must not move with `--root` spelling:
@@ -476,7 +478,9 @@ fn finding_result(
 }
 
 fn seam_result(entry: &ClassifiedSeam, ordinal: usize, config: &RiprConfig) -> Option<Value> {
-    let severity = config.severity().for_seam(entry.class);
+    let severity = config
+        .severity_for_file(entry.seam.file())
+        .for_seam(entry.class);
     let level = sarif_level(severity)?;
     let rule_id = seam_rule_id(entry.class);
     let file = normalize_path(entry.seam.file());
@@ -2177,6 +2181,12 @@ mod tests {
         let sarif = parse_json(&rendered)?;
         let result = first_result(&sarif)?;
         let card = &result["properties"]["perl_preview_card"];
+        let shared = perl_preview_card_json(&output.findings[0])
+            .ok_or_else(|| "expected shared perl_preview_card_json projection".to_string())?;
+        assert_eq!(
+            card, &shared,
+            "SARIF must embed the same shared JSON projection as check JSON (#3225)"
+        );
 
         assert_eq!(card["card_version"], "perl_preview_card.v1");
         assert_eq!(card["language"], "perl");

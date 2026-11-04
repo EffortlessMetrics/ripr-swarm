@@ -441,7 +441,10 @@ row, `row[key]`, `row?.key`, an assignment, a declaration or shadowing
 parameter is refused. Every `row.key` read, scalar or container, resolves only when the
 callback is exactly one `expect(..).matcher(..)` statement and the read is
 a direct argument of the call that is the whole argument of `expect(` or of
-the matcher call. A second statement, or a read wrapped in parentheses, a
+the matcher call. A complete `//` or `/* */` comment before, after or
+between the parts of that one statement is not code and does not count as a
+second statement (#12494); a comment inside the call's brackets, or an
+unterminated one, still refuses. A second statement, or a read wrapped in parentheses, a
 comma list, `void`, `delete`, an array, an operator, a further member
 (`t.out.toString()`, `(t.input).pop()`) or an argument of any other call
 (`Object.assign(t.input, ..)`, `fix(t.input)`) refuses the table. A
@@ -1170,7 +1173,8 @@ a nested callback that rebinds the same name (a subtest's own context); `skip` /
 without a context parameter, is unaffected.
 
 **Rule 18. A returned expression that agrees on every asserted input is
-unexercised (#9497).** For a changed complete one-line `return <expr>;` in a
+unexercised (#9497, #12380).** For a changed complete one-line `return <expr>;`
+(or the reduction of a multi-line `return` described below) in a
 fixed-signature owner, when every strong assertion of every oracle-eligible
 related test observes owner calls whose arguments are all literals, and the
 old and new expressions evaluate to the same value on each of those
@@ -1180,7 +1184,8 @@ bound whose changed side no input reaches). The evaluator is exact and
 small: number, string and boolean literals, the owner's parameters,
 `+ - * / %`, comparisons, `&&` `||` `!`, unary `-`, conditionals (only the
 selected arm is evaluated), template literals with literal substitutions
-and `Math.min` / `max` / `abs` / `floor` / `ceil` / `trunc`. Anything else
+`typeof` of a literal-bound value (its kind string) and
+`Math.min` / `max` / `abs` / `floor` / `ceil` / `trunc`. Anything else
 (a free identifier, another call, a non-literal argument, mixed-type
 coercion, a parameter reassigned in the owner, a class pin credit, a lookup
 table change) makes the answer unknown and keeps the existing verdict, so
@@ -1189,6 +1194,23 @@ be at the owner's own function level (no earlier arrow, `function` or
 method head, since a nested parameter can shadow the owner's), the observed
 value may call nothing but the owner directly, and `0` versus `-0` counts
 as different values.
+
+A changed line inside a multi-line `return` (#12380) is judged on the
+enclosing expression, never on the line alone: the continuation line of a
+boolean `return`, the first line, or a `? ...` / `: ...` arm of a conditional
+reduces to the whole `return` argument, and a property line of a returned
+object literal reduces to that one property value (a computed key, method,
+shorthand, spread, or a second property on the changed line is not reduced).
+Both versions of the owner are parsed, the old one by replacing the changed
+line with its counterpart, and a pair is used only when every byte outside
+the selected expression is identical in both, so an edited key, a
+neighbouring property or a guard on the `return` line is never hidden behind
+the evaluated expression. A class member owner parses inside a class
+wrapper; any parse failure keeps the existing verdict.
+
+When either version contains `typeof`, the probe also tries other value
+kinds (a string, `true`, `false`, `0`) for every argument, and flips boolean
+arguments, because a shifted number cannot separate a kind test.
 
 The two versions must also differ on some probe input, so an equivalent
 rewrite is never reported as unexercised. Each numeric argument is probed at
@@ -1262,7 +1284,7 @@ with control flow stays `no_static_path` exactly as before.
 `dynamic_dispatch`, `metaprogramming`, `decorator_indirection`,
 `mocked_module`, then `missing_import_graph`. `mocked_module` reads the
 mocks of every related test the mock collector selects
-(`collect_related_mock_paths`), including heuristic-only links. The limit
+(`mock_paths_from_candidates`), including heuristic-only links. The limit
 is appended to `missing` after the class is chosen. Actionability reads
 `gap_state: static_limitation` before the `already_observed` branch
 (RIPR-SPEC-0087 F10); RIPR-SPEC-0087 orders actionability only and says
@@ -1729,6 +1751,23 @@ the masker.
     parse, and a worker-refusal textual fallback likewise retain the existing
     reading (a disclosed fail-open). `toHaveBeenCalledTimes` already reads weak mock
     evidence without an exact-value equality.
+    For the separately bounded #12949 case, a direct Vitest test passes a fresh
+    empty array and an ASCII string literal to a single-statement owner whose
+    `array.push(value)` argument changes to `value.toUpperCase()`. A length
+    pin does not observe the appended value. The recognizer admits only the
+    exact straight-line shape, standard bindings and inert literal assertions;
+    it withholds count and unrelated assertions from both oracle ranking and
+    sink observation. An exact pin on index zero that distinguishes the
+    literal from its uppercase form retains credit. Added or multiple push
+    arguments, aliases, mutation, shadowing and unrecognized forms retain
+    their prior readings. This syntax-first preview assumes ordinary native
+    Array and String behavior; it cannot inspect every external setup module.
+    Input and expected string literals are compared as parser-decoded values;
+    different escape spellings cannot supply or suppress value credit merely
+    because their source text happens to match.
+    Empty `[]` array-type brackets do not count as computed member writes;
+    nonempty computed writes remain replacement refusals. The factory-getter
+    consumer has a separate reach and replacement control for that distinction.
 23. **Factory-built getter receivers (2026-10-30, #10402).** Adopted: a getter
     owner is related to a test that binds `const box = factory(...)` once and
     asserts `expect(box.<getter>)`, when the owner's module exports `factory`
@@ -2182,6 +2221,19 @@ keys); do not take the next number.
   production `check` path; fixtures `ts_table_row_expected_credit` and
   `ts_table_row_expected_refused` pin the credited and refused sets.
 
+- #12253 (rule 11, quoted words): the table-row text guard refuses `eval`,
+  `with`, `Function`, `arguments` and `this` as code. A text that parses is
+  judged on its syntax tree (identifiers, property names, `this`,
+  `new.target`, `with`), so the same words in a title, string or comment no
+  longer unresolve the table; a text that does not parse keeps the
+  whole-word check, which refuses them anywhere. A computed member key
+  (`globalThis["eval"]`, `globalThis["eval" + ""]`) is a route when a string
+  or template text inside it holds one of the words. `for...of` tables keep
+  the raw-text statement-list and loop-body guards (#12572). Unit
+  `row_text_guard_refuses_hidden_mutation_routes_outside_quotes`; fixture
+  `ts_table_row_quoted_words_credited` pins a credited quoted-word title and a
+  refused real `this`.
+
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row
   `ts-trap-empty-table` moves from credited to gap.
@@ -2420,7 +2472,7 @@ keys); do not take the next number.
   (`static_limit_for_change`, `imported_symbol_call`,
   `named_limitation_for_static_limit`).
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
-  `collect_related_mock_paths`, unchanged for the advisory limit; rule 8
+  `mock_paths_from_candidates`, unchanged for the advisory limit; rule 8
   reads mock paths per test file.
 - #8569: `crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs`
   reads the enclosing conditions and evaluates literal call inputs;

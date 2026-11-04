@@ -374,13 +374,18 @@ pub(crate) fn render_human_triage(
         ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("\nNext: drill into the top finding:\n");
-            for command in [
-                navigation.explain_command(&finding.id),
-                navigation.context_command(&finding.id),
-            ] {
-                out.push_str(&format!("  {command}\n"));
-                super::push_powershell_variant(out, "  ", &command);
-            }
+            // #12431: the finding-id label names the selector domain of the
+            // explain/context pair, like the repair start's spot-id label
+            // below and the digest's `Gap ID (for scripts):`.
+            super::push_labeled_commands(
+                out,
+                "  ",
+                super::FINDING_ID_COMMAND_LABEL,
+                &[
+                    navigation.explain_command(&finding.id),
+                    navigation.context_command(&finding.id),
+                ],
+            );
             let stub_eligible = offers_test_stub(finding);
             // The test route is mentioned beside a held repair start only
             // when a runnable stub is actually rendered below.
@@ -452,8 +457,16 @@ pub(crate) fn render_human_triage(
                                 "  Repair start (needs a committed `{file}`; it has uncommitted changes, so commit or stash it first{alternative}): {command}\n"
                             ));
                             } else {
-                                out.push_str(&format!("  {command}\n"));
-                                super::push_powershell_variant(out, "  ", &command);
+                                // #12431: the repair start keys on the seam
+                                // identity, a different id domain from the
+                                // explain/context pair above; label it in
+                                // glossary-safe plain words.
+                                super::push_labeled_commands(
+                                    out,
+                                    "  ",
+                                    super::SPOT_ID_COMMAND_LABEL,
+                                    std::slice::from_ref(&command),
+                                );
                             }
                         }
                     }
@@ -948,6 +961,7 @@ pub(crate) fn canonical_next_action_for_triage(
         check_item: triage.selected.map(|finding| finding.id.clone()),
         card_item: None,
         item_candidates: Vec::new(),
+        item_candidate_labels: Vec::new(),
         attempts: Vec::new(),
         // Finding currentness is enforced upstream by the triage candidate
         // filter; the check producer tracks no git-head axis here.
@@ -1469,7 +1483,7 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
             )
         } else {
             (
-                "static evidence names no concrete missing discriminator".to_string(),
+                "static evidence names no concrete missing check".to_string(),
                 "add or strengthen a test by hand",
             )
         }
@@ -3442,7 +3456,7 @@ mod tests {
             "{action}"
         );
         assert!(
-            !action.contains("names no concrete missing discriminator"),
+            !action.contains("names no concrete missing check"),
             "{action}"
         );
         // #10990: the unresolved-call boundary decline gets its own plain
@@ -3459,7 +3473,7 @@ mod tests {
             "{unresolved_action}"
         );
         assert!(
-            !unresolved_action.contains("names no concrete missing discriminator"),
+            !unresolved_action.contains("names no concrete missing check"),
             "{unresolved_action}"
         );
         // A weak finding without the unresolved-operand shape keeps the
@@ -3470,7 +3484,7 @@ mod tests {
         generic.language_status = Some(LanguageStatus::Preview);
         let generic_action = python_preview_safe_action(&generic, false);
         assert!(
-            generic_action.contains("static evidence names no concrete missing discriminator"),
+            generic_action.contains("static evidence names no concrete missing check"),
             "{generic_action}"
         );
     }

@@ -241,7 +241,7 @@ esac
             .split_once("      - name: Recheck initially admitted eligibility\n")
             .ok_or("missing actual eligibility step")?;
         let (step, _) = job
-            .split_once("      - name: Read the extension e2e check for the admitted head\n")
+            .split_once("      - name: Require the extension e2e result for the admitted head\n")
             .ok_or("missing summary after eligibility")?;
         let eligibility_script = scratch.0.join("eligibility.sh");
         fs::write(&eligibility_script, result_shell(step)?).map_err(|e| e.to_string())?;
@@ -258,9 +258,9 @@ esac
         "ELIGIBILITY_RESULT".to_string(),
         eligibility_outcome.to_string(),
     );
-    // The extension e2e step (#12122) reads live check runs and runs only for
-    // an admitted merge-ready pull_request; its own verdict is exercised by
-    // repo-policy's docs_only_routing and the synthetic-JSON run on #12148.
+    // The extension e2e step (#12122, #12252) judges this run's own `needs`
+    // results and runs only for an admitted merge-ready pull_request; its
+    // verdict matrix is exercised by repo-policy's docs_only_routing.
     env.insert(
         "VSCODE_CHECK_RESULT".to_string(),
         if event == "pull_request" && eligibility_outcome != "skipped" {
@@ -422,6 +422,33 @@ fn hard_cut_refusal_of_admitted_candidate_names_the_cut_reason() -> Result<(), S
     assert!(
         !report.contains("candidate_current_unique_bounded —"),
         "result must not pair the success reason with the cut detail, got: {report}"
+    );
+    Ok(())
+}
+
+/// #11736 Proposal B v1: the result report carries the live ownership claims
+/// next to the competing PRs row, without failing an admitted qualification.
+#[test]
+fn live_ownership_claims_surface_in_the_result_report() -> Result<(), String> {
+    let claims = "root (@steven), updated 40m";
+    let (success, report) = run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "success",
+        "admitted",
+        &[
+            ("ADMISSION_REASON", "candidate_current_unique_bounded"),
+            ("ADMISSION_CONCURRENT_CLAIMS", claims),
+        ],
+    )?;
+    assert!(
+        success,
+        "a live ownership claim annotates the run, it must not fail it: {report}"
+    );
+    assert!(
+        report.contains(&format!("- concurrent claims: `{claims}`")),
+        "result summary must carry the concurrent claims row next to competing PRs, got: {report}"
     );
     Ok(())
 }
@@ -1087,7 +1114,7 @@ fn succession_reads_are_pinned_read_only_gets_of_the_same_workflow_head_and_even
         .split_once("      - name: Recheck initially admitted eligibility\n")
         .ok_or("missing eligibility step")?;
     let (step, _) = job
-        .split_once("      - name: Read the extension e2e check for the admitted head\n")
+        .split_once("      - name: Require the extension e2e result for the admitted head\n")
         .ok_or("missing summary")?;
     for needle in [
         "gh api \"repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID\"",
@@ -1161,5 +1188,376 @@ fn removed_succession_guard_exposes_the_superseded_false_green() -> Result<(), S
     // eligibility outcome, and a failed outcome fails the Result.
     assert!(source.contains("ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}"));
     assert!(source.contains("GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}"));
+    Ok(())
+}
+
+/// #12437: the live PR as the eligibility recheck reads it for a history-sync
+/// admission: both the request label and the route label are still present.
+const SYNC_LIVE_PR: &str = r#"{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"EffortlessMetrics/ripr-swarm"}},"base":{"ref":"main","repo":{"full_name":"EffortlessMetrics/ripr-swarm"}},"labels":[{"name":"merge-ready"},{"name":"history-sync"}]}"#;
+
+fn sync_record(head: &str) -> String {
+    format!("not_applicable:history_sync:{head}")
+}
+
+/// A merge-ready pull_request on the hosted route: the self-hosted jobs were
+/// skipped, the hosted gates and sharded tests succeeded, and the hosted job
+/// recorded `evidence` for its PR-evidence step.
+fn sync_result(
+    reason: &str,
+    evidence: &str,
+    extra: &[(&str, &str)],
+) -> Result<(bool, String), String> {
+    let admitted_sync = reason == "history_sync_admitted";
+    let mut overrides = vec![
+        ("ADMISSION_REASON", reason),
+        (
+            "ADMISSION_HISTORY_SYNC",
+            if admitted_sync { "validated" } else { "" },
+        ),
+        (
+            "HISTORY_SYNC_LIVE_RESULT",
+            if admitted_sync { "success" } else { "skipped" },
+        ),
+        ("ADMISSION_HEAD", PR_HEAD),
+        ("MOCK_PR", SYNC_LIVE_PR),
+        ("CX43_RESULT", "skipped"),
+        ("CPX42_RESULT", "skipped"),
+        ("CX53_RESULT", "skipped"),
+        ("CX43_PR_EVIDENCE", ""),
+        ("CPX42_PR_EVIDENCE", ""),
+        ("CX53_PR_EVIDENCE", ""),
+        ("GITHUB_PR_EVIDENCE", evidence),
+    ];
+    overrides.extend_from_slice(extra);
+    run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "success",
+        "admitted",
+        &overrides,
+    )
+}
+
+#[test]
+fn history_sync_skip_qualifies_only_for_a_history_sync_admission_of_the_same_head()
+-> Result<(), String> {
+    let record = sync_record(PR_HEAD);
+    let (success, report) = sync_result("history_sync_admitted", &record, &[])?;
+    assert!(
+        success,
+        "the typed skip for the admitted head qualifies: {report}"
+    );
+    assert!(
+        report.contains(&format!("- github pr evidence: `{record}`")),
+        "{report}"
+    );
+    // The positive needs the actual admission profile, protected live
+    // authorization/composition outcome, and full non-docs qualification.
+    // A successful job with a missing or downgraded authority cannot confer it.
+    for (name, value, reason) in [
+        (
+            "ADMISSION_HISTORY_SYNC",
+            "",
+            "consistent exact-head admission",
+        ),
+        (
+            "ADMISSION_HISTORY_SYNC",
+            "rejected",
+            "consistent exact-head admission",
+        ),
+        ("DOCS_ONLY", "true", "full product scope"),
+        (
+            "HISTORY_SYNC_LIVE_RESULT",
+            "failure",
+            "authorization or composition continuity",
+        ),
+    ] {
+        let (success, report) = sync_result("history_sync_admitted", &record, &[(name, value)])?;
+        assert!(!success, "{name}={value:?} was accepted: {report}");
+        assert!(report.contains(reason), "{report}");
+    }
+    // The same typed skip under any other admission reason fails the Result.
+    for reason in ["candidate_current_unique_bounded", "fixture", ""] {
+        let (success, report) = sync_result(reason, &record, &[])?;
+        assert!(
+            !success,
+            "{reason:?}: a skip without the history-sync admission must fail: {report}"
+        );
+        assert!(
+            report.contains("without a history-sync admission"),
+            "{report}"
+        );
+    }
+    // A record bound to another head fails, as does a missing record or the
+    // ordinary producer marker under a history-sync admission.
+    for evidence in [
+        sync_record(&"b".repeat(40)),
+        String::new(),
+        "produced".to_string(),
+        "not_applicable:history_sync:".to_string(),
+    ] {
+        let (success, report) = sync_result("history_sync_admitted", &evidence, &[])?;
+        assert!(
+            !success,
+            "{evidence:?}: must not qualify a history-sync admission: {report}"
+        );
+    }
+    // A malformed admitted head can never match a record.
+    let (success, report) = sync_result(
+        "history_sync_admitted",
+        &record,
+        &[("ADMISSION_HEAD", "short")],
+    )?;
+    assert!(!success, "{report}");
+    // Every succeeded implementation job must carry the record.
+    let (success, report) = sync_result(
+        "history_sync_admitted",
+        &record,
+        &[("CX43_RESULT", "success"), ("CX43_PR_EVIDENCE", "produced")],
+    )?;
+    assert!(!success, "{report}");
+    // A mandatory lane failure still fails a history-sync subject.
+    for (lane, outcome) in [
+        ("GITHUB_RESULT", "failure"),
+        ("GITHUB_TESTS_RESULT", "failure"),
+        ("ROUTE_RESULT", "failure"),
+    ] {
+        let (success, report) = sync_result("history_sync_admitted", &record, &[(lane, outcome)])?;
+        assert!(!success, "{lane}={outcome} must fail: {report}");
+    }
+    // A history-sync admission needs its label at the late recheck too.
+    let (success, report) = sync_result("history_sync_admitted", &record, &[("MOCK_PR", LIVE_PR)])?;
+    assert!(
+        !success,
+        "a removed history-sync label must fail the recheck: {report}"
+    );
+    assert!(report.contains("stage pull_request_state"), "{report}");
+    // An ordinary admission keeps today's behavior with the ordinary producer.
+    let (success, report) = sync_result(
+        "candidate_current_unique_bounded",
+        "produced",
+        &[("MOCK_PR", LIVE_PR)],
+    )?;
+    assert!(success, "{report}");
+    Ok(())
+}
+
+#[test]
+fn history_sync_skip_cannot_qualify_a_merge_group() -> Result<(), String> {
+    let record = sync_record(PR_HEAD);
+    let (success, report) = run_result(
+        &workflow()?,
+        "merge_group",
+        "refs/heads/gh-readonly-queue/main/pr-10-aaaa",
+        "success",
+        "admitted",
+        &[
+            ("ADMISSION_REASON", "history_sync_admitted"),
+            ("ADMISSION_HISTORY_SYNC", "validated"),
+            ("HISTORY_SYNC_LIVE_RESULT", "success"),
+            ("ADMISSION_HEAD", PR_HEAD),
+            ("CX43_RESULT", "skipped"),
+            ("CPX42_RESULT", "skipped"),
+            ("CX53_RESULT", "skipped"),
+            ("GITHUB_PR_EVIDENCE", record.as_str()),
+        ],
+    )?;
+    assert!(
+        !success,
+        "a merge group never takes the history-sync skip: {report}"
+    );
+    Ok(())
+}
+
+/// The commit identities of a scratch sync history (#12437): B is the declared
+/// destination base, S the declared source (unrelated history, as from the other
+/// repository), M the sync merge, H a single-parent repair commit on top of M,
+/// T the moved base tip, and G the tested commit `layout` builds from T and H.
+struct SyncHistory {
+    base: String,
+    source: String,
+    head: String,
+    tested: String,
+}
+
+/// `layout`: `good` is G = (T, H); `swapped` reverses G's parents; `contains`
+/// builds G on a base tip that already merged S; `single` makes G = H.
+fn sync_history(dir: &std::path::Path, layout: &str) -> Result<SyncHistory, String> {
+    let setup = r#"set -e
+git init -q .
+git config user.email ci@example.invalid
+git config user.name ci
+tree=$(git mktree </dev/null)
+c() { git commit-tree "$tree" "$@"; }
+b=$(c -m B)
+s=$(c -m S)
+m=$(c -p "$b" -p "$s" -m sync)
+h=$(c -p "$m" -m repair)
+t=$(c -p "$b" -m tip)
+case "$LAYOUT" in
+  good) g=$(c -p "$t" -p "$h" -m G) ;;
+  swapped) g=$(c -p "$h" -p "$t" -m G) ;;
+  contains) t2=$(c -p "$t" -p "$s" -m earlier-sync); g=$(c -p "$t2" -p "$h" -m G) ;;
+  single) g=$h ;;
+esac
+git checkout -q --detach "$g"
+printf '%s %s %s %s\n' "$b" "$s" "$h" "$g"
+"#;
+    // A file, not `-c <script>`: Windows argv quoting mangles multi-line scripts (#9272).
+    let script = dir.join("setup.sh");
+    fs::write(&script, setup).map_err(|e| e.to_string())?;
+    // An explicit PATH makes Windows resolve Git's bash from PATH, not System32's.
+    let output = Command::new("bash")
+        .arg(&script)
+        .current_dir(dir)
+        .env("PATH", std::env::var_os("PATH").ok_or("PATH unavailable")?)
+        .env("LAYOUT", layout)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    let ids = String::from_utf8_lossy(&output.stdout).into_owned();
+    let mut ids = ids.split_whitespace().map(str::to_string);
+    let mut next = || ids.next().ok_or("missing commit id".to_string());
+    Ok(SyncHistory {
+        base: next()?,
+        source: next()?,
+        head: next()?,
+        tested: next()?,
+    })
+}
+
+/// Runs the real rust-gates PR-evidence shell with a recording `cargo` stub in
+/// a scratch repository checked out at G. `env` overrides the bound identities.
+/// Returns (exit success, GITHUB_OUTPUT text, recorded cargo argv lines).
+fn pr_evidence_step(
+    layout: &str,
+    env: &dyn Fn(&SyncHistory) -> Vec<(&'static str, String)>,
+) -> Result<(bool, String, String, SyncHistory), String> {
+    let source = fs::read_to_string(root().join(".github/workflows/rust-gates.yml"))
+        .map_err(|e| e.to_string())?;
+    let (_, step) = source
+        .split_once("      - name: PR evidence\n")
+        .ok_or("missing PR evidence step")?;
+    let (_, body) = step
+        .split_once("        run: |\n")
+        .ok_or("missing PR evidence shell")?;
+    let script = body
+        .lines()
+        .take_while(|line| line.starts_with("          "))
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(script.contains("cargo xtask ripr-annotations --check"));
+    let scratch = Scratch::new()?;
+    let history = sync_history(&scratch.0, layout)?;
+    let output_file = scratch.0.join("output");
+    let script_path = scratch.0.join("evidence.sh");
+    fs::write(
+        &script_path,
+        format!("cargo() {{ printf '%s\\n' \"$*\" >> cargo-calls; }}\n{script}\n"),
+    )
+    .map_err(|e| e.to_string())?;
+    let mut bindings = BTreeMap::from([
+        ("EVENT_NAME", "pull_request".to_string()),
+        ("ADMISSION_REASON", "history_sync_admitted".to_string()),
+        ("ADMISSION_HEAD", history.head.clone()),
+        ("HEAD_SHA", history.head.clone()),
+        ("BASE_SHA", history.base.clone()),
+        (
+            "SYNC_SOURCE",
+            format!("EffortlessMetrics/ripr@{}", history.source),
+        ),
+        ("SYNC_BASE", history.base.clone()),
+    ]);
+    bindings.extend(env(&history));
+    let output = Command::new("bash")
+        .arg("-e")
+        .arg(&script_path)
+        .current_dir(&scratch.0)
+        .env("PATH", std::env::var_os("PATH").ok_or("PATH unavailable")?)
+        .envs(&bindings)
+        .env("GITHUB_OUTPUT", &output_file)
+        .env("GITHUB_STEP_SUMMARY", scratch.0.join("summary"))
+        .output()
+        .map_err(|e| e.to_string())?;
+    let outputs = fs::read_to_string(&output_file).unwrap_or_default();
+    let cargo = fs::read_to_string(scratch.0.join("cargo-calls")).unwrap_or_default();
+    Ok((output.status.success(), outputs, cargo, history))
+}
+
+#[test]
+fn rust_gates_skips_pr_evidence_only_for_a_bound_history_sync_admission() -> Result<(), String> {
+    // A single-parent repair commit H on top of the sync merge, tested as G.
+    let (success, outputs, cargo, history) = pr_evidence_step("good", &|_| Vec::new())?;
+    assert!(success, "{outputs}");
+    assert_eq!(
+        outputs.trim(),
+        format!("evidence={}", sync_record(&history.head))
+    );
+    assert!(cargo.is_empty(), "no diff-scoped producer runs: {cargo}");
+    // Every unbound identity fails the step before any record is written.
+    type Override = fn(&SyncHistory) -> Vec<(&'static str, String)>;
+    let unbound: [(&str, &str, Override); 9] = [
+        ("merge group", "good", |_| {
+            vec![("EVENT_NAME", "merge_group".to_string())]
+        }),
+        ("other admitted head", "good", |_| {
+            vec![("ADMISSION_HEAD", "b".repeat(40))]
+        }),
+        ("no admitted head", "good", |_| {
+            vec![("ADMISSION_HEAD", String::new())]
+        }),
+        ("abbreviated source", "good", |h| {
+            vec![(
+                "SYNC_SOURCE",
+                format!(
+                    "EffortlessMetrics/ripr@{}",
+                    h.source.get(..12).unwrap_or_default()
+                ),
+            )]
+        }),
+        ("no destination base", "good", |_| {
+            vec![("SYNC_BASE", String::new())]
+        }),
+        ("G parents reversed", "swapped", |_| Vec::new()),
+        ("G is not a merge onto the base", "single", |_| Vec::new()),
+        ("S already in the tested base tip", "contains", |_| {
+            Vec::new()
+        }),
+        ("B not in the tested base tip", "good", |h| {
+            vec![("SYNC_BASE", h.tested.clone())]
+        }),
+    ];
+    for (name, layout, env) in unbound {
+        let (success, outputs, cargo, _) = pr_evidence_step(layout, &env)?;
+        assert!(
+            !success,
+            "{name}: an unbound history-sync admission must fail the step"
+        );
+        assert!(
+            outputs.is_empty() && cargo.is_empty(),
+            "{name}: {outputs}{cargo}"
+        );
+    }
+    // Any other reason runs the ordinary producers, whatever the declared S/B.
+    for reason in [
+        "candidate_current_unique_bounded",
+        "",
+        "history_sync",
+        "HISTORY_SYNC_ADMITTED",
+    ] {
+        let (success, outputs, cargo, _) =
+            pr_evidence_step("good", &|_| vec![("ADMISSION_REASON", reason.to_string())])?;
+        assert!(success, "{reason:?}");
+        assert_eq!(outputs.trim(), "evidence=produced", "{reason:?}");
+        assert!(
+            cargo.starts_with("xtask ripr-pr --base"),
+            "{reason:?}: the producers run: {cargo}"
+        );
+        assert!(cargo.contains("xtask ripr-annotations --check"), "{cargo}");
+    }
     Ok(())
 }

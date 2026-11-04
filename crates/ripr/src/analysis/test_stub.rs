@@ -28,7 +28,8 @@ use super::syntax::fn_signature::{
     identifier_offsets, owner_signature_at, single_comparison,
 };
 use super::syntax::{
-    GovernedCfgTestModule, governed_cfg_test_modules, has_test_attribute, parse_clean_source_file,
+    GovernedCfgTestModule, governed_cfg_test_modules, has_test_attribute,
+    owner_gated_by_parent_mod_declarations, parse_clean_source_file,
 };
 use super::test_grip_evidence::TestKind;
 use ra_ap_syntax::AstNode;
@@ -260,7 +261,7 @@ pub(crate) fn rust_test_stub_for_classified_seam(
         }
         _ => None,
     };
-    rust_test_stub_for_target(&entry.seam, target, source)
+    rust_test_stub_for_target(&entry.seam, target, source, Some(root))
 }
 
 /// An integration test file a stub is routed to instead of the owner file.
@@ -283,19 +284,34 @@ pub(crate) fn rust_test_stub(
     seam: &RepoSeam,
     integration: Option<&NewTestTargetProposal>,
     source: &str,
+    package_root: Option<&Path>,
 ) -> Result<RustTestStub, TestStubRefusal> {
-    rust_test_stub_for_target(seam, integration.map(IntegrationTarget::New), source)
+    rust_test_stub_for_target(
+        seam,
+        integration.map(IntegrationTarget::New),
+        source,
+        package_root,
+    )
 }
 
 fn rust_test_stub_for_target(
     seam: &RepoSeam,
     integration: Option<IntegrationTarget<'_>>,
     source: &str,
+    package_root: Option<&Path>,
 ) -> Result<RustTestStub, TestStubRefusal> {
     if seam.file().extension().and_then(|ext| ext.to_str()) != Some("rs") {
         return Err(TestStubRefusal::NotRustSource);
     }
     match seam.kind() {
+        // #11402: a changed push into a bare collection may still be
+        // written as an exact contents check, decided once the signature
+        // is read below; any other effect needs an observer or mock.
+        SeamKind::SideEffect
+            if crate::analysis::classify::direct_collection_mutation_receiver(
+                seam.expression(),
+            )
+            .is_some() => {}
         SeamKind::SideEffect | SeamKind::CallPresence => {
             return Err(TestStubRefusal::ObserverRequired);
         }
@@ -307,6 +323,14 @@ fn rust_test_stub_for_target(
     }
     let signature =
         owner_signature_at(source, seam.byte_offset()).ok_or(TestStubRefusal::SourceUnparsed)?;
+    if seam.kind() == SeamKind::SideEffect
+        && pushed_buffer_parameter(seam, &signature, source).is_none()
+    {
+        return Err(TestStubRefusal::ObserverRequired);
+    }
+    if package_root.is_some_and(|root| owner_gated_by_parent_mod_declarations(root, seam.file())) {
+        return Err(TestStubRefusal::OwnerUnsupported);
+    }
     check_signature(&signature)?;
     // #11398: a field write in a method (`self.timeout = t * 2`) builds no
     // returned literal; the value to assert on is the receiver after the
@@ -396,11 +420,18 @@ fn rust_test_stub_for_target(
         "use super::*;".to_string()
     };
 
-    let base_name = format!(
-        "{}_{}",
-        snake_case(&signature.name),
-        name_suffix(seam.kind())
-    );
+    // #12711: the contents-check stub is not an observer test; it takes the
+    // name ending the repair brief suggests for the same check.
+    let contents_check = pushed_buffer_parameter(seam, &signature, source).is_some();
+    let base_name = if contents_check {
+        crate::analysis::repair_route::collection_contents_test_name(&signature.name)
+    } else {
+        format!(
+            "{}_{}",
+            snake_case(&signature.name),
+            name_suffix(seam.kind())
+        )
+    };
     let path_scope = if integration_placement {
         PathScope::Integration(integration_crate.unwrap_or("crate"))
     } else {
@@ -435,6 +466,35 @@ fn rust_test_stub_for_target(
             break;
         }
         candidate_number += 1;
+    }
+    // #12711: a contents-check stub written before the rename sits under the
+    // kind's own name; the identical test under that name is still ripr's
+    // earlier write, not a reason to write a second copy.
+    if matched.is_none() && contents_check {
+        let earlier_base = format!(
+            "{}_{}",
+            snake_case(&signature.name),
+            name_suffix(seam.kind())
+        );
+        // The earlier writer may have suffixed (`_2`, ...) when another test
+        // owned the name, so search every candidate up to the first free one.
+        let mut number = 1usize;
+        loop {
+            let earlier = if number == 1 {
+                earlier_base.clone()
+            } else {
+                format!("{earlier_base}_{number}")
+            };
+            if !scope_contains_fn_named(&scope, &earlier) {
+                break;
+            }
+            let rendered = render_test_fn(seam, &signature, &earlier, &body, &indent);
+            if scope_contains_test_fn(&scope, &rendered, &earlier) {
+                matched = Some((earlier, rendered));
+                break;
+            }
+            number += 1;
+        }
     }
     let (test_name, test_fn, already_present) = match matched {
         Some((name, rendered)) => (name, rendered, true),
@@ -827,6 +887,10 @@ fn stub_body(
         });
     }
 
+    // #11402: the pushed-into buffer starts empty, so the contents check
+    // below reads exactly what this one call pushed.
+    let pushed = pushed_buffer_parameter(seam, signature, source);
+
     let receiver = match (signature.receiver, self_type) {
         (Some(receiver), Some(self_type)) => {
             let label = format!(
@@ -868,12 +932,19 @@ fn stub_body(
             None => (ty.clone(), binding.clone(), false),
         };
         let keyword = if mutable { "let mut" } else { "let" };
-        match boundary.iter().find(|(name, _)| name == &binding) {
-            Some((_, value)) => {
+        let empty = pushed
+            .as_ref()
+            .filter(|(name, _)| name == &binding)
+            .map(|(_, empty)| empty);
+        match (empty, boundary.iter().find(|(name, _)| name == &binding)) {
+            (Some(empty), _) => {
+                lines.push(format!("{keyword} {binding}: {binding_ty} = {empty};"));
+            }
+            (None, Some((_, value))) => {
                 lines.push(format!("{keyword} {binding}: {binding_ty} = {value};"));
                 derived_inputs.push(format!("{binding} = {value}"));
             }
-            None => {
+            (None, None) => {
                 let label = format!("ripr: choose `{binding}`{}", input_hint(seam, &binding));
                 lines.push(format!(
                     "{keyword} {binding}: {binding_ty} = todo!(\"{}\");",
@@ -1002,10 +1073,17 @@ fn stub_body(
             format!(" for {}", derived_inputs.join(", "))
         };
         for (binding, ty) in targets {
-            let label = format!(
-                "ripr: write the value `{binding}` should hold after `{}` runs{hint}; delete the assertion for a `&mut` input the change does not reach",
-                signature.name
-            );
+            let label = if pushed.as_ref().is_some_and(|(name, _)| name == &binding) {
+                format!(
+                    "ripr: write the full contents `{binding}` should hold after `{}` runs",
+                    signature.name
+                )
+            } else {
+                format!(
+                    "ripr: write the value `{binding}` should hold after `{}` runs{hint}; delete the assertion for a `&mut` input the change does not reach",
+                    signature.name
+                )
+            };
             match value_traits(&ty, source) {
                 ValueTraits::PartialEqAndDebug => {
                     lines.push(format!(
@@ -1084,6 +1162,43 @@ fn render_test_fn(
     }
     out.push_str(&format!("{indent}}}\n"));
     out
+}
+
+/// #11402: for a side-effect seam that pushes into a `&mut Vec<..>` or
+/// `&mut String` parameter of a free function, that parameter's name and a
+/// fresh, empty value for it. The owner must be exactly the shape the
+/// propagation rule follows (`sole_pushed_buffer_at`, the one owner of that
+/// decision): its only statement is one unconditional push into that
+/// parameter, so a conditional push or a local that shadows the parameter
+/// is refused. `None` for any other seam or owner, and when the owner's
+/// file declares its own `Vec` or `String`, so the stub never names a type
+/// other than the standard one.
+fn pushed_buffer_parameter(
+    seam: &RepoSeam,
+    signature: &OwnerSignature,
+    source: &str,
+) -> Option<(String, String)> {
+    if seam.kind() != SeamKind::SideEffect
+        || !matches!(signature.container, OwnerContainer::Free)
+        || signature.receiver.is_some()
+        || crate::analysis::classify::file_shadows_buffer_types(source)
+    {
+        return None;
+    }
+    let receiver =
+        crate::analysis::classify::direct_collection_mutation_receiver(seam.expression())?;
+    signature
+        .params
+        .iter()
+        .find(|parameter| parameter.name.as_deref() == Some(receiver))?;
+    let string =
+        crate::analysis::classify::sole_pushed_buffer_at(source, seam.byte_offset(), receiver)?;
+    let empty = if string {
+        "String::new()"
+    } else {
+        "Vec::new()"
+    };
+    Some((receiver.to_string(), empty.to_string()))
 }
 
 /// Concrete boundary inputs from a single comparison over integer
@@ -1764,7 +1879,7 @@ fn scope_contains_fn_named(scope: &StubScope<'_>, name: &str) -> bool {
         })
 }
 
-fn snake_case(name: &str) -> String {
+pub(crate) fn snake_case(name: &str) -> String {
     let mut out = String::new();
     for (index, c) in name.chars().enumerate() {
         if c.is_ascii_uppercase() {

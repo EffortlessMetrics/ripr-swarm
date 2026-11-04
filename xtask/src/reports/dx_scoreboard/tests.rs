@@ -2076,6 +2076,7 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         heavy: false,
         language: None,
         ceilings: BTreeMap::new(),
+        expected_partial: None,
     };
     let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
     assert_eq!(validate_corpus(&[entry("a", full)]), Ok(()));
@@ -3416,6 +3417,7 @@ fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_par
         heavy: false,
         language: None,
         ceilings: BTreeMap::new(),
+        expected_partial: None,
     };
 
     let refused = super::measure::prepare_checkout(&entry, &options);
@@ -3652,6 +3654,7 @@ fn admission_subject() -> CheckSubject {
         mode: "draft".to_string(),
         base: "HEAD~1".to_string(),
         head: Some("abc123".to_string()),
+        expected_partial: None,
     }
 }
 
@@ -4813,10 +4816,15 @@ fn agent_coverage_check_names_dropped_metrics_and_samples() -> Result<(), String
 /// The nightly `first-run-main` job gates the committed
 /// `first-run-main-baseline.json` against the rows `cargo xtask first-run`
 /// writes. This runs the same comparison on rows built here, so a baseline
-/// refresh or a converter change cannot silently stop failing the lane on a
-/// crate that stops ending decisive (#9276).
+/// refresh or a converter change cannot silently stop failing the lane (#9276).
+///
+/// The baseline records the honest state (#11519): all three pinned crates end
+/// `static_unknown`. The earlier "3 of 3 exposed" was `verdict_of` reading the
+/// `exposed/weak` legend prose, and the semver and bytesize abstentions are
+/// spec-defined (RIPR-SPEC-0158 example 12). The lane therefore fails a walk
+/// whose `check` output outgrows the read budget.
 #[test]
-fn first_run_main_gate_fails_a_crate_that_ends_unknown() -> Result<(), String> {
+fn first_run_main_gate_fails_a_walk_that_outgrows_its_budget() -> Result<(), String> {
     let config = load_config(&committed_config())?;
     let baseline = check_baseline(
         serde_json::from_str(include_str!(
@@ -4825,21 +4833,18 @@ fn first_run_main_gate_fails_a_crate_that_ends_unknown() -> Result<(), String> {
         .map_err(|err| err.to_string())?,
     )?;
     let boards = vec!["first_run".to_string()];
-    let gate = |third: (&str, &str)| -> Result<Value, String> {
+    let gate = |check_lines: u32| -> Result<Value, String> {
         let mut lines = Vec::new();
-        for (case, verdict, reading) in [
-            ("semver-1.0.23", "exposed", "agrees with the tests"),
-            ("fastrand-2.3.0", "exposed", "agrees with the tests"),
-            ("bytesize-1.3.0", third.0, third.1),
-        ] {
+        for case in ["semver-1.0.23", "fastrand-2.3.0", "bytesize-1.3.0"] {
             lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"secs","value":3.0,"budget":60,"better":"lower"}}"#));
             lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}}"#));
-            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict","value":"{verdict}","budget":null,"better":"review_on_change"}}"#));
-            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict_reading","value":"{reading}","budget":null,"better":"review_on_change"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"stdout_lines","value":{check_lines},"budget":60,"better":"lower"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict","value":"static_unknown","budget":null,"better":"review_on_change"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict_reading","value":"unresolved","budget":null,"better":"review_on_change"}}"#));
         }
         let samples = parse_ingest(&parse_ingest_text(&lines.join("\n"))?, &config)?;
         // A runner class the baseline was not recorded on, as on a hosted
-        // runner: only the verdict rows are compared.
+        // runner: only the verdict and count rows are compared.
         Ok(build_report(
             &config,
             &boards,
@@ -4849,28 +4854,21 @@ fn first_run_main_gate_fails_a_crate_that_ends_unknown() -> Result<(), String> {
             true,
         ))
     };
-    let healthy = gate(("exposed", "agrees with the tests"))?;
+    let healthy = gate(60)?;
     assert_eq!(
         healthy["gate"]["status"].as_str(),
         Some("pass"),
         "{}",
         gate_failure_message(&healthy)
     );
-    let regressed = gate(("infection_unknown", "unresolved"))?;
-    assert_eq!(regressed["gate"]["status"].as_str(), Some("fail"));
-    let message = gate_failure_message(&regressed);
-    // The decisive count is what fails the gate; the changed verdict list
-    // is listed for review on the unknown-verdict row.
+    // Discriminating negative: the same verdicts with one `check` step one line
+    // past the 60-line budget is the regression the nightly turned red on.
+    let over_budget = gate(61)?;
+    assert_eq!(over_budget["gate"]["status"].as_str(), Some("fail"));
+    let message = gate_failure_message(&over_budget);
     assert!(
-        message.contains("first_run.decisive_verdicts"),
-        "decisive_verdicts not named in: {message}"
-    );
-    assert!(
-        regressed["gate"]["review"]
-            .to_string()
-            .contains("first_run.unknown_verdicts"),
-        "unknown_verdicts not listed for review: {}",
-        regressed["gate"]["review"]
+        message.contains("first_run.over_budget_steps"),
+        "over_budget_steps not named in: {message}"
     );
     Ok(())
 }
@@ -5162,6 +5160,88 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
                 entry.ceilings
             ));
         }
+    }
+    // Only the two heavy TypeScript rows expect a partial outcome; a row that
+    // expected one by accident would admit an incomplete analysis.
+    for entry in &config.corpus {
+        let expected = matches!(
+            entry.id.as_str(),
+            "typescript-compiler" | "vscode-typescript"
+        )
+        .then_some("language_scope_unsupported");
+        if entry.expected_partial.as_deref() != expected {
+            return Err(format!(
+                "{} expected_partial must be {expected:?}, got {:?}",
+                entry.id, entry.expected_partial
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn an_expected_partial_limit_must_be_a_snake_case_name() -> Result<(), String> {
+    let mut config = ceilinged_config("\"speed.warm_check_ms\" = 2000.0")?;
+    let entry = config.corpus.first_mut().ok_or("config has no rows")?;
+    entry.expected_partial = Some("typescript_workspace_discovery_truncated".to_string());
+    validate_corpus(&config.corpus)?;
+    let entry = config.corpus.first_mut().ok_or("config has no rows")?;
+    entry.expected_partial = Some("made_up_limit".to_string());
+    if validate_corpus(&config.corpus).is_ok() {
+        return Err("a limit with no known typed cause must not validate".to_string());
+    }
+    for bad in ["", "Truncated", "two words", "limit-kind"] {
+        let entry = config.corpus.first_mut().ok_or("config has no rows")?;
+        entry.expected_partial = Some(bad.to_string());
+        if validate_corpus(&config.corpus).is_ok() {
+            return Err(format!("`{bad}` must not be a valid expected_partial"));
+        }
+    }
+    Ok(())
+}
+
+/// An expected partial outcome is a measured speed value that stays visibly
+/// partial, and its document never feeds the contradiction scan (#12052).
+#[cfg(unix)]
+#[test]
+fn an_expected_partial_warm_check_is_a_value_that_trust_does_not_scan() -> Result<(), String> {
+    use std::os::unix::process::ExitStatusExt;
+    let limit = "typescript_workspace_discovery_truncated";
+    let mut doc = complete_check_json(1);
+    doc["findings"][0]["classification"] = json!("static_unknown");
+    doc["findings"][0]["static_limit_kind"] = json!(limit);
+    doc["analysis_outcome"]["analysis_complete"] = json!(false);
+    doc["analysis_outcome"]["outcome"]["kind"] = json!("partial_with_limitations");
+    doc["analysis_outcome"]["outcome"]["limitations"] = json!([{ "kind": "diff_scope_oversized" }]);
+    let stdout = doc.to_string();
+    let run = || {
+        let mut run = measured(false, Some(64 * 1024 * 1024));
+        run.output.status = Some(std::process::ExitStatus::from_raw(0));
+        run.output.stdout = stdout.clone();
+        run
+    };
+    let mut subject = admission_subject();
+    subject.expected_partial = Some(limit.to_string());
+
+    let (samples, contradictions, missing) =
+        record_with_subject(&subject, Ok(run()), Ok(Some(run())));
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    if !matches!(warm.outcome, SampleOutcome::Value(_)) {
+        return Err(format!("expected a measured value, got {:?}", warm.outcome));
+    }
+    if !warm.detail.contains("expected partial outcome") || !warm.detail.contains(limit) {
+        return Err(format!("the row must read as partial, got {}", warm.detail));
+    }
+    if contradictions.is_some() || !missing.contains(&"warm check JSON") {
+        return Err(format!(
+            "a partial document must not be scanned: {contradictions:?} {missing:?}"
+        ));
+    }
+    // The same document on a row that did not declare it stays incomplete.
+    let (samples, _, _) = record_with_subject(&admission_subject(), Ok(run()), Ok(Some(run())));
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    if !matches!(warm.outcome, SampleOutcome::Incomplete(_)) {
+        return Err(format!("expected incomplete, got {:?}", warm.outcome));
     }
     Ok(())
 }

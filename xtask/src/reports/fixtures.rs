@@ -143,6 +143,15 @@ enum GoldenCheckRun {
 }
 
 fn golden_check_run() -> Result<GoldenCheckRun, String> {
+    if let Err(err) = preparation::ensure_ready() {
+        let violations = vec![err];
+        let provenance = golden_drift_provenance();
+        let message = goldens_check_failure_message(&[], &violations, &provenance);
+        return Ok(GoldenCheckRun::Failed {
+            message,
+            violations,
+        });
+    }
     let run_set = collect_golden_runs()?;
     // #8614: warn (do not fail) when a fixture input's working-tree endings
     // differ from its normalized form; `goldens bless` refuses on the same
@@ -721,7 +730,9 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                 name,
                 "active-goal-authority-audit"
                     | "actionable-gap-outcomes-corpus"
+                    | "admission_incident_route"
                     | "blind_journey_contract"
+                    | "cache-payload-tamper-recovery"
                     | "blind_journey_execute"
                     | "blind_journey_installed_rust"
                     | "blind_journey_installed_python"
@@ -729,6 +740,8 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "bun-ub-cross-language-dogfood"
                     | "convergence"
                     | "cross-language-oracle-graph-corpus"
+                    | "cross-language-edge-registry-corpus"
+                    | "dotnet-evidence-contract-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
                     | "editor_first_pr_bridge"
@@ -745,8 +758,11 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "issue_lifecycle_contract_plan"
                     | "issue_lifecycle_intake"
                     | "issue_lifecycle_real_rows"
+                    | "incomplete_diff_corpus"
                     | "github_unanalyzed_states"
                     | "orchestration_attempt_receipts"
+                    | "packaged_repair_parity"
+                    | "packaged-repair-parity"
                     | "perl_lsp_facts_exporter"
                     | "perl-real-repo-evals"
                     | "perl_packet_contract_migration"
@@ -755,6 +771,8 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "python-judged-pr-panel"
                     | "python-real-repo-evals"
                     | "real-repair-attempts"
+                    | "readiness-snapshot"
+                    | "repair_funnel"
                     | "rust-verdict-corpus"
                     | "typescript-verdict-corpus"
                     | "python-verdict-corpus"
@@ -780,6 +798,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
                     | "user-surface-projection-alignment"
+                    | "verification_run_snapshot_binding"
             )
         })
 }
@@ -1072,9 +1091,7 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
             normalize_path(path)
         ));
     }
-    if name == preparation::FIXTURE {
-        preparation::ensure_ready()?;
-    }
+    preparation::ensure_ready()?;
 
     let actual_dir = Path::new("target")
         .join("ripr")
@@ -1170,6 +1187,20 @@ static RIPR_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 /// function — the single place every fixture, golden, drift, and dogfood spawn
 /// reaches the binary through — rather than to individual command entry points,
 /// where a newly added entry point (as `golden-drift` was) silently opts out.
+/// Build `ripr` once and resolve an explicit workspace-anchored debug binary
+/// path. Used when the caller already knows the workspace target layout but
+/// must not resolve through process CWD (#4974).
+pub(crate) fn ripr_fixture_binary_at(binary: PathBuf) -> Result<String, String> {
+    ripr_fixture_binary_built_by(binary, &RIPR_BINARY_BUILD, &|| {
+        // The build output goes straight to the console here, so the retry
+        // cannot read why it failed; it is Windows-only and bounded.
+        crate::run::retry_while_binary_busy(
+            |_| true,
+            || preparation::build(&["build", "-p", "ripr"]),
+        )
+    })
+}
+
 pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     if isolate_fixture_binary() {
         let target = isolated_default_target_dir(&ripr_debug_binary())?;
@@ -1180,14 +1211,7 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     }
     // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
     // routed CI jobs set it, so `cargo build` writes there.
-    ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
-        // The build output goes straight to the console here, so the retry
-        // cannot read why it failed; it is Windows-only and bounded.
-        crate::run::retry_while_binary_busy(
-            |_| true,
-            || preparation::build(&["build", "-p", "ripr"]),
-        )
-    })
+    ripr_fixture_binary_at(ripr_debug_binary())
 }
 
 /// Set by a lane whose test run is itself built with a different feature set
@@ -3267,14 +3291,14 @@ mod tests {
 
     #[test]
     fn precommit_goldens_treat_only_preparation_failures_as_an_environment_gap() {
-        let gap = "fixture dependency preparation failed for owner_return_pin_fallible_literal\nenvironment: X\nerror".to_string();
+        let gap = "fixture dependency preparation failed for locked owner-return golden fixtures\nenvironment: X\nerror".to_string();
         let drift = "drift for fixture `rust_map_overwrite_count` [human.txt]".to_string();
         let other = "fixture contract violation".to_string();
 
         assert_eq!(
             super::classify_precommit_goldens(std::slice::from_ref(&gap)),
             Some(super::PrecommitGoldens::EnvironmentGap(vec![
-                "fixture dependency preparation failed for owner_return_pin_fallible_literal"
+                "fixture dependency preparation failed for locked owner-return golden fixtures"
                     .to_string()
             ]))
         );
@@ -4284,6 +4308,39 @@ mod tests {
 
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    /// #4974: eval-sweep refresh cold checkout must resolve an explicit
+    /// workspace target path instead of `ripr_debug_binary()`'s CWD-relative path.
+    #[test]
+    fn ripr_fixture_binary_at_honors_explicit_workspace_path() -> Result<(), String> {
+        let root = unique_temp_path("4974-workspace-anchor");
+        fs::create_dir_all(&root).map_err(|err| format!("create {}: {err}", root.display()))?;
+        let binary = root
+            .join("workspace-target")
+            .join("debug")
+            .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+        let parent = binary
+            .parent()
+            .ok_or_else(|| "missing workspace binary parent".to_string())?;
+        fs::create_dir_all(parent).map_err(|err| format!("create {}: {err}", parent.display()))?;
+        fs::write(&binary, b"stub").map_err(|err| format!("write {}: {err}", binary.display()))?;
+
+        let cell = OnceLock::new();
+        let build = || Ok(());
+        let resolved = ripr_fixture_binary_built_by(binary.clone(), &cell, &build)?;
+        assert_eq!(
+            resolved,
+            std::path::absolute(&binary)
+                .map_err(|err| err.to_string())?
+                .to_string_lossy()
+        );
+        assert_ne!(
+            PathBuf::from(resolved),
+            ripr_debug_binary(),
+            "explicit path must not fall back to CWD-relative resolution"
+        );
+        fs::remove_dir_all(&root).map_err(|err| format!("cleanup {}: {err}", root.display()))
+    }
+
     /// #3054 root cause: the previous guard was `if !binary.exists()`, so a
     /// `target/debug/ripr` left by an earlier build was reused and the golden
     /// gates validated previous code. The binary existing must not skip the
@@ -4449,9 +4506,9 @@ mod tests {
         let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
         let untied_list = transitional::NO_SEAM_UNTIED_SURFACES;
         let gripped_list = transitional::NO_SEAM_GRIPPED_SURFACES;
-        if untied_list.len() != 44 || gripped_list.len() != 92 {
+        if untied_list.len() != 44 || gripped_list.len() != 94 {
             return Err(format!(
-                "expected 44 untied and 92 gripped surfaces, got {} and {}",
+                "expected 44 untied and 94 gripped surfaces, got {} and {}",
                 untied_list.len(),
                 gripped_list.len()
             ));

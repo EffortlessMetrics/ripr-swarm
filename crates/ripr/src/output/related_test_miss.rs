@@ -4,19 +4,19 @@
 //! single place that turns it into prose, so human, JSON, LSP and agent output
 //! say the same thing about the same test.
 
-use crate::domain::{ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
+use crate::domain::{
+    Finding, LanguageId, ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason,
+};
 
 /// Why a TypeScript or JavaScript assertion's observation stays unconfirmed.
 const SCRIPT_OBSERVATION_UNCONFIRMED: &str =
     "the preview adapter could not confirm that this assertion observes the changed behavior";
 
-/// The one related-test selection rule shared by the check headline, the
-/// preview card, the repair packet and the JSON oracle summary (#11228).
+/// Strength-only row pick kept for non-script callers and legacy tests.
 ///
-/// The strongest oracle wins; equal strength keeps the earliest row, which is
-/// the row the human `Related test` line names (`related_tests.first()`).
-/// `Iterator::max_by_key` returns the *last* maximum, which made the packet
-/// name a different test than the headline whenever two tests tied.
+/// TypeScript/JavaScript preview surfaces must use
+/// [`typescript_script_preview_related_test`] instead (#5505).
+#[cfg(test)]
 pub(crate) fn strongest_related_test(tests: &[RelatedTest]) -> Option<&RelatedTest> {
     let mut best: Option<&RelatedTest> = None;
     for test in tests {
@@ -27,23 +27,40 @@ pub(crate) fn strongest_related_test(tests: &[RelatedTest]) -> Option<&RelatedTe
     best
 }
 
-/// The row the human `Related test` headline names (#11228).
+/// The row the human `Related test` headline names for one finding.
+pub(crate) fn headline_related_test_for_finding(finding: &Finding) -> Option<&RelatedTest> {
+    if matches!(
+        finding.language,
+        Some(LanguageId::TypeScript | LanguageId::JavaScript)
+    ) {
+        return typescript_script_preview_related_test(finding);
+    }
+    finding.related_tests.first()
+}
+
+/// Legacy entry point for table tests that only hold related-test rows.
 ///
-/// TypeScript and JavaScript findings use [`strongest_related_test`] so the
-/// headline, card, packet and oracle summary all name one row, including when
-/// a weak direct call precedes a strong re-exported one. Other languages keep
-/// the first row; moving them is a separate, golden-wide change.
+/// Script findings should prefer [`headline_related_test_for_finding`] or
+/// [`typescript_script_preview_related_test`].
+#[cfg(test)]
 pub(crate) fn headline_related_test(
-    language: Option<crate::domain::LanguageId>,
+    language: Option<LanguageId>,
     tests: &[RelatedTest],
 ) -> Option<&RelatedTest> {
     if matches!(
         language,
-        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
+        Some(LanguageId::TypeScript | LanguageId::JavaScript)
     ) {
         return strongest_related_test(tests);
     }
     tests.first()
+}
+
+/// The one TypeScript/JavaScript preview related-test row shared by the check
+/// headline, preview card, packet projection, JSON oracle summary and miss
+/// explanation (#11228 tie-break, #5505 family-aware evidence).
+pub(crate) fn typescript_script_preview_related_test(finding: &Finding) -> Option<&RelatedTest> {
+    crate::domain::typescript_script_preview_related_test(finding)
 }
 
 /// Short reason the test misses the changed behavior, or `None` when the
@@ -333,6 +350,239 @@ mod tests {
             );
         }
         assert!(headline_related_test(Some(LanguageId::TypeScript), &[]).is_none());
+    }
+
+    /// #5505: preview surfaces prefer a family-relevant producer oracle ref
+    /// only when it matches the missing-check family; equal-strength later
+    /// same-file refs cannot displace the first family-relevant row.
+    #[test]
+    fn typescript_script_preview_related_test_controls() {
+        use crate::domain::{
+            ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageStatus,
+            Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceLocation,
+            StageEvidence, StageState,
+        };
+
+        fn stage(state: StageState) -> StageEvidence {
+            StageEvidence {
+                state,
+                confidence: Confidence::Low,
+                summary: String::new(),
+            }
+        }
+
+        fn ts_finding(family: ProbeFamily, rows: Vec<RelatedTest>) -> Finding {
+            Finding {
+                analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
+                id: "probe:src/a.ts:typescript_preview:deadbeef".to_string(),
+                canonical_gap: None,
+                probe: Probe {
+                    id: ProbeId("probe:src/a.ts:typescript_preview:deadbeef".to_string()),
+                    family,
+                    delta: DeltaKind::Control,
+                    location: SourceLocation::new("src/a.ts", 1, 1),
+                    expression: "if (x)".to_string(),
+                    before: None,
+                    after: Some("if (x)".to_string()),
+                    owner: None,
+                    expected_sinks: Vec::new(),
+                    required_oracles: Vec::new(),
+                },
+                class: ExposureClass::WeaklyExposed,
+                ripr: RiprEvidence {
+                    reach: stage(StageState::Yes),
+                    infect: stage(StageState::Unknown),
+                    propagate: stage(StageState::Unknown),
+                    reveal: RevealEvidence {
+                        observe: stage(StageState::Weak),
+                        discriminate: stage(StageState::Weak),
+                    },
+                },
+                evidence: Vec::new(),
+                missing: Vec::new(),
+                activation: ActivationEvidence::default(),
+                stop_reasons: Vec::new(),
+                related_tests_matched_total: None,
+                related_tests: rows,
+                recommended_next_step: None,
+                language: Some(LanguageId::TypeScript),
+                language_status: Some(LanguageStatus::Preview),
+                confidence: 0.4,
+                flow_sinks: Vec::new(),
+                owner_kind: None,
+                source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+                static_limit_kind: None,
+                changed_sink: None,
+                observed_sink: None,
+                oracle_alignment: None,
+                alignment_reason: None,
+            }
+        }
+
+        let mut wrong_family = test_with(None, None);
+        wrong_family.name = "throw-only".to_string();
+        wrong_family.oracle_strength = OracleStrength::Unknown;
+        wrong_family.oracle_kind = OracleKind::Unknown;
+        let mut family_match = test_with(None, None);
+        family_match.name = "value".to_string();
+        family_match.oracle_strength = OracleStrength::Weak;
+        family_match.oracle_kind = OracleKind::ExactValue;
+        let finding = ts_finding(
+            ProbeFamily::Predicate,
+            vec![wrong_family.clone(), family_match.clone()],
+        );
+        assert_eq!(
+            typescript_script_preview_related_test(&finding).map(|row| row.name.as_str()),
+            Some("value")
+        );
+
+        let mut first = family_match.clone();
+        first.name = "first".to_string();
+        let mut second = family_match.clone();
+        second.name = "second".to_string();
+        second.oracle_strength = OracleStrength::Strong;
+        let tied = ts_finding(ProbeFamily::Predicate, vec![first, second.clone()]);
+        assert_eq!(
+            typescript_script_preview_related_test(&tied).map(|row| row.name.as_str()),
+            Some("second")
+        );
+
+        let mut evidence_row = family_match.clone();
+        evidence_row.name = "evidence".to_string();
+        evidence_row.file = PathBuf::from("tests/discount.test.ts");
+        evidence_row.line = 3;
+        let mut stronger = family_match.clone();
+        stronger.name = "stronger".to_string();
+        stronger.oracle_strength = OracleStrength::Strong;
+        let mut with_ref = ts_finding(ProbeFamily::Predicate, vec![stronger, evidence_row.clone()]);
+        with_ref.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount == threshold".to_string(),
+            reason: "changed TypeScript equality-boundary lacks a concrete preview discriminator"
+                .to_string(),
+            flow_sink: None,
+        }];
+        with_ref
+            .evidence
+            .push("typescript_oracle_observed: applyDiscount(100, 100)".to_string());
+        with_ref
+            .evidence
+            .push("typescript_oracle_evidence_ref: tests/discount.test.ts:5".to_string());
+        assert_eq!(
+            typescript_script_preview_related_test(&with_ref).map(|row| row.name.as_str()),
+            Some("evidence")
+        );
+
+        let only_unknown = ts_finding(ProbeFamily::ErrorPath, vec![wrong_family]);
+        assert_eq!(
+            typescript_script_preview_related_test(&only_unknown).map(|row| row.name.as_str()),
+            Some("throw-only")
+        );
+    }
+
+    /// `fixtures/typescript_strong_oracle`: missing check is `amount == threshold`.
+    /// Producer oracle-ref points at the later far-from-boundary `toBe` row;
+    /// preview must keep the first family/boundary-matching test.
+    #[test]
+    fn typescript_strong_oracle_preview_keeps_at_threshold_related_test() {
+        use crate::domain::{
+            ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageStatus,
+            Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceLocation,
+            StageEvidence, StageState,
+        };
+
+        fn stage(state: StageState) -> StageEvidence {
+            StageEvidence {
+                state,
+                confidence: Confidence::Low,
+                summary: String::new(),
+            }
+        }
+
+        let mut at_threshold = test_with(None, None);
+        at_threshold.name = "at threshold discounts".to_string();
+        at_threshold.file = PathBuf::from("tests/discount.test.ts");
+        at_threshold.line = 5;
+        at_threshold.oracle_strength = OracleStrength::Strong;
+        at_threshold.oracle_kind = OracleKind::ExactValue;
+        let mut above_threshold = at_threshold.clone();
+        above_threshold.name = "above threshold discounts".to_string();
+        above_threshold.line = 9;
+        let mut finding = Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
+            id: "probe:src/discount.ts:typescript_preview:2396aec1".to_string(),
+            canonical_gap: None,
+            probe: Probe {
+                id: ProbeId(
+                    "probe:src/discount.ts:typescript_preview:2396aec1".to_string(),
+                ),
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                location: SourceLocation::new("src/discount.ts", 2, 1),
+                expression: "if (amount >= threshold)".to_string(),
+                before: None,
+                after: Some("if (amount >= threshold)".to_string()),
+                owner: None,
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            class: ExposureClass::WeaklyExposed,
+            ripr: RiprEvidence {
+                reach: stage(StageState::Yes),
+                infect: stage(StageState::Unknown),
+                propagate: stage(StageState::Unknown),
+                reveal: RevealEvidence {
+                    observe: stage(StageState::Weak),
+                    discriminate: stage(StageState::Weak),
+                },
+            },
+            evidence: vec![
+                "typescript_oracle_observed: applyDiscount(10000, 100)".to_string(),
+                "typescript_oracle_evidence_ref: tests/discount.test.ts:10".to_string(),
+            ],
+            missing: Vec::new(),
+            activation: ActivationEvidence {
+                observed_values: Vec::new(),
+                missing_discriminators: vec![MissingDiscriminatorFact {
+                    value: "amount == threshold".to_string(),
+                    reason:
+                        "changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"
+                            .to_string(),
+                    flow_sink: None,
+                }],
+            },
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
+            related_tests: vec![at_threshold, above_threshold],
+            recommended_next_step: None,
+            language: Some(LanguageId::TypeScript),
+            language_status: Some(LanguageStatus::Preview),
+            confidence: 0.4,
+            flow_sinks: Vec::new(),
+            owner_kind: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+        };
+
+        let selected = typescript_script_preview_related_test(&finding);
+        assert_eq!(selected.map(|row| row.line), Some(5));
+        assert_eq!(
+            selected.map(|row| row.name.as_str()),
+            Some("at threshold discounts")
+        );
+
+        finding.language = Some(LanguageId::JavaScript);
+        let selected = typescript_script_preview_related_test(&finding);
+        assert_eq!(selected.map(|row| row.line), Some(5));
+        assert_eq!(
+            selected.map(|row| row.name.as_str()),
+            Some("at threshold discounts")
+        );
     }
 
     #[test]
@@ -1060,6 +1310,230 @@ mod tests {
             // Not vacuous: five of the six findings carry one explained row,
             // checked under both currentness values.
             assert_eq!(explained_rows, 10);
+            Ok(())
+        }
+    }
+
+    /// #5496: production-classified Python findings through every report
+    /// surface this module's callers own.
+    #[cfg(feature = "lang-python")]
+    mod python_production {
+        use super::*;
+
+        fn report_with(findings: Vec<crate::domain::Finding>) -> crate::app::CheckOutput {
+            crate::app::CheckOutput {
+                value_origins: Default::default(),
+                harness_projections: Vec::new(),
+                schema_version: "0.2".to_string(),
+                tool: "ripr".to_string(),
+                mode: crate::app::Mode::Draft,
+                root: PathBuf::from("."),
+                base: None,
+                summary: crate::domain::Summary::default(),
+                findings,
+                preview_language_advisories: Vec::new(),
+                language_runs: Vec::new(),
+                no_scope_provided: false,
+                unanalyzed_working_tree: false,
+                untracked_working_tree_source_paths: Vec::new(),
+                ignored_working_tree_source_paths: Vec::new(),
+                suppression: None,
+                analysis_outcome: None,
+                partial_scope: None,
+                unlinked_python_tests: None,
+                analyzed_revisions: None,
+            }
+        }
+
+        fn json_row<'a>(
+            rows: &'a serde_json::Value,
+            name: &str,
+        ) -> Result<&'a serde_json::Map<String, serde_json::Value>, String> {
+            rows.as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_object)
+                .find(|row| row.get("name").and_then(serde_json::Value::as_str) == Some(name))
+                .ok_or_else(|| format!("no JSON row for `{name}` in {rows}"))
+        }
+
+        fn line_naming<'a>(text: &'a str, prefix: &str, name: &str) -> Result<&'a str, String> {
+            let mut lines = text
+                .lines()
+                .filter(|line| line.trim_start().starts_with(prefix) && line.contains(name));
+            match (lines.next(), lines.next()) {
+                (Some(line), None) => Ok(line),
+                _ => Err(format!(
+                    "expected one `{prefix}` line for `{name}` in:\n{text}"
+                )),
+            }
+        }
+
+        #[test]
+        fn python_production_rows_agree_across_report_surfaces() -> Result<(), String> {
+            let finding = crate::analysis::python_direct_and_advisory_finding()?;
+            let explained = finding
+                .related_tests
+                .iter()
+                .find(|row| row.miss.is_some())
+                .ok_or("expected one explained row")?;
+            let withheld = finding
+                .related_tests
+                .iter()
+                .find(|row| row.miss.is_none())
+                .ok_or("expected one withheld row")?;
+            let why = related_test_miss_reason(explained, &finding.probe.family)
+                .ok_or("the explained row should have a reason")?;
+            assert_eq!(
+                related_test_miss_reason(withheld, &finding.probe.family),
+                None
+            );
+            let label = related_test_miss_label(explained);
+            let output = report_with(vec![finding.clone()]);
+
+            let json: serde_json::Value =
+                serde_json::from_str(&crate::output::json::render(&output))
+                    .map_err(|error| format!("parse check JSON: {error}"))?;
+            let context: serde_json::Value =
+                serde_json::from_str(&crate::output::json::render_context_packet(
+                    &finding,
+                    8,
+                    &crate::config::RiprConfig::default(),
+                    std::path::Path::new("."),
+                ))
+                .map_err(|error| format!("parse context packet: {error}"))?;
+            for rows in [
+                &json["findings"][0]["related_tests"],
+                &context["related_tests"],
+            ] {
+                let row = json_row(rows, &explained.name)?;
+                let miss_token = explained
+                    .miss
+                    .ok_or("explained row should carry a miss token")?
+                    .as_str();
+                assert_eq!(
+                    row.get("miss").and_then(serde_json::Value::as_str),
+                    Some(miss_token)
+                );
+                assert_eq!(
+                    row.get("why").and_then(serde_json::Value::as_str),
+                    Some(why.as_str())
+                );
+                let row = json_row(rows, &withheld.name)?;
+                assert!(!row.contains_key("miss") && !row.contains_key("why"));
+            }
+
+            let full = crate::render_check(&output, &crate::OutputFormat::HumanFull)?;
+            let explain = crate::output::human::render_finding_with_context_command(
+                &finding,
+                &crate::config::RiprConfig::default(),
+                "ripr explain probe",
+                std::path::Path::new("."),
+            );
+            let (evidence, verdict) = explain
+                .split_once("Why this verdict")
+                .ok_or("explain should add the verdict section")?;
+            for (text, prefix, separator) in [
+                (full.as_str(), "- related test", "; "),
+                (evidence, "- related test", "; "),
+                (verdict, "- tests/test_subject.py", ": "),
+            ] {
+                let line = line_naming(text, prefix, &explained.name)?;
+                assert!(
+                    line.ends_with(&format!("{separator}{label}: {why}")),
+                    "{line}"
+                );
+                let line = line_naming(text, prefix, &withheld.name)?;
+                assert!(
+                    !line.contains(&why) && !line.contains(&format!("{label}:")),
+                    "{line}"
+                );
+            }
+            Ok(())
+        }
+
+        #[test]
+        fn python_production_miss_changes_no_projected_decision() -> Result<(), String> {
+            use crate::domain::Finding;
+
+            fn without_miss_keys(value: &mut serde_json::Value) {
+                match value {
+                    serde_json::Value::Object(map) => {
+                        map.remove("miss");
+                        map.remove("why");
+                        map.values_mut().for_each(without_miss_keys);
+                    }
+                    serde_json::Value::Array(items) => items.iter_mut().for_each(without_miss_keys),
+                    _ => {}
+                }
+            }
+            fn decisions(finding: &Finding) -> Result<String, String> {
+                let output = report_with(vec![finding.clone()]);
+                let config = crate::config::RiprConfig::default();
+                let mut report: serde_json::Value =
+                    serde_json::from_str(&crate::output::json::render(&output))
+                        .map_err(|error| format!("parse check JSON: {error}"))?;
+                without_miss_keys(&mut report);
+                let mut context: serde_json::Value =
+                    serde_json::from_str(&crate::output::json::render_context_packet(
+                        finding,
+                        8,
+                        &config,
+                        std::path::Path::new("."),
+                    ))
+                    .map_err(|error| format!("parse context packet: {error}"))?;
+                without_miss_keys(&mut context);
+                let mut sarif: serde_json::Value = serde_json::from_str(
+                    &crate::output::sarif::render_findings_sarif(&output, &config, &[]),
+                )
+                .map_err(|error| format!("parse SARIF: {error}"))?;
+                without_miss_keys(&mut sarif);
+                Ok(format!(
+                    "{report}\n{context}\n{sarif}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{}\n{:?}",
+                    crate::output::github::render_with_config(&output, &config),
+                    crate::output::badge::ripr_badge_summary(
+                        &output,
+                        crate::output::badge::BadgePolicy::default()
+                    ),
+                    crate::domain::DiagnosticWitness::from_finding(finding),
+                    crate::output::preview_actionability::preview_actionability_for(finding),
+                    crate::output::python_repair_card::python_repair_card(finding),
+                    crate::output::next_step::reconcile_next_step(finding),
+                    finding
+                        .oracle_related_tests()
+                        .map(|test| &test.name)
+                        .collect::<Vec<_>>(),
+                ))
+            }
+            let mut explained_rows = 0;
+            let findings = crate::analysis::python_miss_matrix_findings()?;
+            let current = findings.iter().cloned().map(|mut finding| {
+                finding.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+                finding
+            });
+            let findings = findings
+                .clone()
+                .into_iter()
+                .chain(current)
+                .collect::<Vec<_>>();
+            for finding in findings {
+                let mut cleared = finding.clone();
+                for row in &mut cleared.related_tests {
+                    row.miss = None;
+                    row.miss_support = None;
+                }
+                assert_eq!(decisions(&finding)?, decisions(&cleared)?);
+                let mut full = crate::output::human::render_finding(&finding);
+                for row in &finding.related_tests {
+                    if let Some(why) = related_test_miss_reason(row, &finding.probe.family) {
+                        explained_rows += 1;
+                        full =
+                            full.replace(&format!("; {}: {why}", related_test_miss_label(row)), "");
+                    }
+                }
+                assert_eq!(full, crate::output::human::render_finding(&cleared));
+            }
+            assert!(explained_rows > 0, "matrix should explain at least one row");
             Ok(())
         }
     }

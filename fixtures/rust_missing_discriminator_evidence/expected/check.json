@@ -46,7 +46,7 @@
         {"kind":"error_variant","text":"Result::Err(PricingError::Other)","line":9}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence error variant: Result::Err(PricingError::Other)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach classify_boundary: rejects_boundary"],
-      "missing": ["Missing discriminator value: PricingError::Other", "No strong discriminator was detected"],
+      "missing": ["Missing check value: PricingError::Other", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "assert!(classify_boundary(100).is_err());"
       },
@@ -140,7 +140,7 @@
         {"kind":"error_variant","text":"Result::Err(PricingError::Other)","line":9}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(PricingError::Other)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach classify_boundary: rejects_boundary"],
-      "missing": ["Missing discriminator value: PricingError::Other", "No exact error variant discriminator was detected"],
+      "missing": ["Missing check value: PricingError::Other", "No exact error variant discriminator was detected"],
       "assertion_texts": {
         "5": "assert!(classify_boundary(100).is_err());"
       },

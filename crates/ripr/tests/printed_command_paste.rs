@@ -413,23 +413,89 @@ fn powershell_label_rest(line: &str) -> Option<&str> {
 /// Commands in plain text or Markdown, with each PowerShell form folded into
 /// the command before it. A PowerShell form is a line labelled `(PowerShell)`
 /// or the line of a fenced `powershell` block.
+fn pair_powershell_fence_line(
+    source: &str,
+    found: &mut [Printed],
+    pending_bash_indices: &[usize],
+    ps_fence_line: usize,
+    body: &str,
+) -> Result<(), String> {
+    let Some(&index) = pending_bash_indices.get(ps_fence_line) else {
+        return Err(format!(
+            "printed command paste harness: powershell fence line {} has no matching bash command in the preceding ```bash block; source={source}",
+            ps_fence_line + 1
+        ));
+    };
+    let Some(previous) = found.get_mut(index) else {
+        return Err(format!(
+            "printed command paste harness: internal pairing index {index} is out of range; source={source}"
+        ));
+    };
+    if is_powershell_unavailable_disclosure(body) {
+        previous.powershell_unavailable = true;
+    } else {
+        previous.powershell = Some(body.to_string());
+    }
+    Ok(())
+}
+
+fn finish_powershell_fence_pairing(
+    source: &str,
+    pending_bash_indices: &[usize],
+    ps_fence_line: usize,
+) -> Result<(), String> {
+    if ps_fence_line != pending_bash_indices.len() {
+        return Err(format!(
+            "printed command paste harness: powershell fence has {ps_fence_line} paste line(s) but the preceding ```bash block listed {} command(s); pair adjacent fences line-for-line in {source}",
+            pending_bash_indices.len()
+        ));
+    }
+    Ok(())
+}
+
 fn extract_text(
     source: &str,
     text: &str,
     origin: Origin,
     subcommands: &BTreeSet<String>,
-) -> Vec<Printed> {
+) -> Result<Vec<Printed>, String> {
     let mut found: Vec<Printed> = Vec::new();
     let mut fence: Option<String> = None;
+    // Bash commands collected in the open ```bash fence, paired positionally
+    // when the next ```powershell fence closes.
+    let mut pending_bash_indices: Vec<usize> = Vec::new();
+    let mut ps_fence_line = 0usize;
     // A `(PowerShell):` label alone on its line is followed by the form.
     let mut form_on_next_line = false;
     for line in text.lines() {
         let trimmed = line.trim_start();
         if let Some(info) = trimmed.strip_prefix("```") {
-            fence = match fence {
-                Some(_) => None,
-                None => Some(info.trim().to_ascii_lowercase()),
-            };
+            match fence.take() {
+                Some(open_language) => {
+                    if matches!(open_language.as_str(), "powershell" | "pwsh" | "ps1") {
+                        finish_powershell_fence_pairing(
+                            source,
+                            &pending_bash_indices,
+                            ps_fence_line,
+                        )?;
+                        pending_bash_indices.clear();
+                        ps_fence_line = 0;
+                    }
+                }
+                None => {
+                    let language = info.trim().to_ascii_lowercase();
+                    if matches!(language.as_str(), "bash" | "sh" | "shell" | "")
+                        && !pending_bash_indices.is_empty()
+                    {
+                        pending_bash_indices.clear();
+                        ps_fence_line = 0;
+                    }
+                    if matches!(language.as_str(), "powershell" | "pwsh" | "ps1") {
+                        ps_fence_line = 0;
+                    }
+                    fence = Some(language);
+                }
+            }
             continue;
         }
         if let Some(language) = &fence {
@@ -438,11 +504,14 @@ fn extract_text(
                 continue;
             }
             if matches!(language.as_str(), "powershell" | "pwsh" | "ps1") {
-                if let Some(previous) = found.last_mut()
-                    && previous.powershell.is_none()
-                {
-                    previous.powershell = Some(body.to_string());
-                }
+                pair_powershell_fence_line(
+                    source,
+                    &mut found,
+                    &pending_bash_indices,
+                    ps_fence_line,
+                    body,
+                )?;
+                ps_fence_line += 1;
             } else if matches!(language.as_str(), "bash" | "sh" | "shell" | "")
                 && is_paste_target(body, false, subcommands)
             {
@@ -454,6 +523,7 @@ fn extract_text(
                     bash_only: false,
                     powershell_unavailable: false,
                 });
+                pending_bash_indices.push(found.len() - 1);
             }
             continue;
         }
@@ -550,7 +620,7 @@ fn extract_text(
             });
         }
     }
-    found
+    Ok(found)
 }
 
 fn extract_json(source: &str, value: &Value, subcommands: &BTreeSet<String>) -> Vec<Printed> {
@@ -610,21 +680,31 @@ struct Sink<'a> {
 impl Sink<'_> {
     /// File one flow's output: JSON is walked for command strings and finding
     /// ids, anything else is read as text or Markdown.
-    fn ingest(&mut self, source: &str, text: &str, stderr: &str) {
+    fn ingest(&mut self, source: &str, text: &str, stderr: &str) -> Result<(), String> {
         let found = match serde_json::from_str::<Value>(text.trim()) {
             Ok(value) => {
                 collect_strings(&value, "id", &mut self.known_ids);
-                extract_json(source, &value, self.subcommands)
+                let mut found = extract_json(source, &value, self.subcommands);
+                if !stderr.trim().is_empty() {
+                    found.extend(extract_text(
+                        source,
+                        stderr,
+                        Origin::Foreign,
+                        self.subcommands,
+                    )?);
+                }
+                found
             }
             Err(_) => extract_text(
                 source,
                 &format!("{text}\n{stderr}"),
                 Origin::Foreign,
                 self.subcommands,
-            ),
+            )?,
         };
         *self.per_source.entry(source.to_string()).or_default() += found.len();
         self.printed.extend(found);
+        Ok(())
     }
 }
 
@@ -848,8 +928,8 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
             ),
         ]
     };
-    sink.ingest("check-json", &check_json, "");
-    sink.ingest("repo-exposure-json", &snapshot, "");
+    sink.ingest("check-json", &check_json, "")?;
+    sink.ingest("repo-exposure-json", &snapshot, "")?;
     for (prefix, root_arg, cwd, only) in [
         ("", root.to_string(), &fixture.collection, None),
         (
@@ -917,7 +997,7 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
                     ));
                 }
             }
-            sink.ingest(&format!("{prefix}{label}"), &stdout, &stderr);
+            sink.ingest(&format!("{prefix}{label}"), &stdout, &stderr)?;
         }
         for (label, minimum, _) in &flows {
             let seen = sink
@@ -961,7 +1041,7 @@ fn ingest_artifacts(sink: &mut Sink, fixture: &Fixture) -> Result<(), String> {
             .replace('\\', "/");
         let text = std::fs::read_to_string(&path)
             .map_err(|err| format!("read artifact {}: {err}", path.display()))?;
-        sink.ingest(&format!("artifact:{relative}"), &text, "");
+        sink.ingest(&format!("artifact:{relative}"), &text, "")?;
     }
     Ok(())
 }
@@ -1418,7 +1498,13 @@ fn paste_subcommands() -> BTreeSet<String> {
 }
 
 fn extracted(text: &str) -> Vec<Printed> {
-    extract_text("test.md", text, Origin::Foreign, &paste_subcommands())
+    match extract_text("test.md", text, Origin::Foreign, &paste_subcommands()) {
+        Ok(found) => found,
+        Err(message) => {
+            assert!(message.is_empty(), "{message}");
+            Vec::new()
+        }
+    }
 }
 
 #[test]
@@ -1495,4 +1581,106 @@ fn extract_text_marks_unavailable_powershell_disclosure_and_does_not_paste_it() 
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(!found[0].powershell_unavailable, "{found:?}");
     assert_eq!(found[0].powershell.as_deref(), Some(embedded.as_str()));
+}
+
+#[test]
+fn extract_text_pairs_multi_command_bash_and_powershell_fences_by_position() {
+    let found = extracted(
+        "```bash\n\
+         ripr check --root repo --diff HEAD\n\
+         ripr first-pr --root repo --base HEAD\n\
+         ```\n\
+         ```powershell\n\
+         ripr check --root repo --diff HEAD\n\
+         ripr first-pr --root repo --base HEAD\n\
+         ```\n",
+    );
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert_eq!(found[0].bash, "ripr check --root repo --diff HEAD");
+    assert_eq!(
+        found[0].powershell.as_deref(),
+        Some("ripr check --root repo --diff HEAD")
+    );
+    assert_eq!(found[1].bash, "ripr first-pr --root repo --base HEAD");
+    assert_eq!(
+        found[1].powershell.as_deref(),
+        Some("ripr first-pr --root repo --base HEAD")
+    );
+}
+
+#[test]
+fn extract_text_rejects_mismatched_multi_command_fence_counts() {
+    let message = match extract_text(
+        "test.md",
+        "```bash\nripr check --root repo --diff HEAD\nripr first-pr --root repo --base HEAD\n```\n```powershell\nripr check --root repo --diff HEAD\n```\n",
+        Origin::Foreign,
+        &paste_subcommands(),
+    ) {
+        Err(message) => message,
+        Ok(found) => {
+            assert!(
+                found.is_empty(),
+                "expected fence count error, got {found:?}"
+            );
+            String::new()
+        }
+    };
+    assert!(
+        message.contains("powershell fence has 1 paste line(s) but the preceding"),
+        "{message}"
+    );
+}
+
+#[test]
+fn extract_text_second_powershell_fence_line_is_paired_to_the_second_bash_command() {
+    // Falsifier for #5434: pairing only the last bash command would assign the
+    // first PowerShell translation to `first-pr` instead of `check`.
+    let found = extracted(
+        "```bash\n\
+         ripr check --root repo --diff HEAD\n\
+         ripr first-pr --root repo --base HEAD\n\
+         ```\n\
+         ```powershell\n\
+         ps-check\n\
+         ps-first-pr\n\
+         ```\n",
+    );
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert_eq!(
+        found[0].powershell.as_deref(),
+        Some("ps-check"),
+        "{found:?}"
+    );
+    assert_eq!(
+        found[1].powershell.as_deref(),
+        Some("ps-first-pr"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn sink_ingest_extracts_stderr_commands_when_stdout_is_json() {
+    let subcommands = paste_subcommands();
+    let mut sink = Sink {
+        printed: Vec::new(),
+        known_ids: BTreeSet::new(),
+        per_source: BTreeMap::new(),
+        subcommands: &subcommands,
+    };
+    assert!(
+        sink.ingest(
+            "json-flow",
+            r#"{"status":"ok"}"#,
+            "`ripr first-pr --root repo --base HEAD`\n",
+        )
+        .is_ok(),
+        "ingest json flow"
+    );
+    assert!(
+        sink.printed
+            .iter()
+            .any(|printed| { printed.bash == "ripr first-pr --root repo --base HEAD" }),
+        "{:?}",
+        sink.printed
+    );
 }

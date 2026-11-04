@@ -43,7 +43,7 @@ Policy impact:
   `.ripr/traceability.toml`.
 - No schema version bump. The missing discriminator reuses the existing
   `MissingDiscriminatorFact` (`value`, `reason`) and the existing
-  `Missing discriminator value:` entry in `Finding.missing`.
+  `Missing check value:` entry in `Finding.missing`.
 
 ## Problem
 
@@ -469,17 +469,25 @@ implies but does not spell out:
   owner's file must declare exactly one enum of that name listing `NAME`
   and no struct, union, trait or type alias of that name, import nothing by
   that name, glob-import no module (a `use super::*` inside an inline
-  module, such as `mod tests`, brings in only that file's items) and call
+  module, such as `mod tests`, brings in only that file's items)   and call
   no macro at file or module item level, nor any macro in statement
   position inside a function named like the owner (its expansion may
   declare a local `Kind` scoped to the match), and no function named like
-  the owner may be nested in a block. Alternatively, the owner's file
+  the owner may be nested in a block. The owner function, and any item in
+  its body, may carry no attribute other than a compiler builtin (a derive
+  only of the standard derivable traits, and no `cfg_attr`); an import that
+  shadows a builtin attribute or derive makes that attribute unread (a glob of the enum's own variants
+  cannot, so it does not). An
+  unread proc-macro attribute or custom derive may declare a local `Kind`
+  whose associated constant a pattern compares by value (#7692).
+  Alternatively, the owner's file
   may bind that name through exactly one import, a top-level `use` without
   a rename, whose module path (`kinds::Kind` after `mod kinds;`,
   `crate::a::Kind`, `self::`, `super::`) follows recorded out-of-line `mod`
   declarations to exactly one workspace file, and that file must meet the
   same declaration rule. The owner's file must then declare no item of
-  that name and call no such macro, glob-import no module inside an
+  that name, call no such macro, and carry no such attribute on the owner
+  function or an item in its body, glob-import no module inside an
   inline module (except `super::*`), and its recorded module chain must
   start at the workspace's `src/lib.rs` or `src/main.rs` or a
   `crates/<name>/src/` one. That root must be its package manifest's
@@ -523,6 +531,11 @@ implies but does not spell out:
   since that value may stand on the expected side and move with the arm.
   The module-glob rule for bindings above is broad: a `use super::*` in an
   inline test module of the owner's file demotes every binding arm there.
+
+- A `match` whose value is consumed before the owner returns it (a method
+  call on the closing brace, or `let x = match ..;` followed by anything but
+  the bare `x`) can remap the arm's result, so no assertion confirms that
+  arm (#12143). A bare `let`-then-return and a tail `match` do not remap.
 
 ## Required Evidence
 
@@ -604,6 +617,8 @@ the diff changes `None => 1` to `None => 0`.
   rebindings. Verdict corpus cases `old-unit-assert-matches-macro` and
   `old-unit-assert-matches-sibling-arm` (negative control).
 
+- `fixtures/match_arm_result_method_tail_not_credited`,
+  `fixtures/match_arm_let_bound_returned_bare_credited` (#12143)
 - `fixtures/match_arm_blind` (example 1, with the arm added rather than
   changed; the expected result is the same)
 - `fixtures/match_arm_selected_credit` (example 2, with the arm added)
@@ -623,9 +638,10 @@ the diff changes `None => 1` to `None => 0`.
   declares `mod lib` through a macro (`mod $name;` or a passed `mod`
   token) or an included file, a module file compiled out by an inner
   `#![cfg]`, a sibling root whose unread macro, proc-macro attribute or
-  custom derive may declare the owner a module, and a statement macro in
+  custom derive may declare the owner a module, a statement macro in
   the owner, including one shadowing
-  `assert!`, that may declare a local `Kind`.
+  `assert!`, that may declare a local `Kind`, and a proc-macro attribute
+  on the owner or a custom derive on an item in its body (#7692).
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).

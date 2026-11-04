@@ -24,6 +24,7 @@ mod installed_journey;
 mod installed_journey_recipe;
 mod installed_journey_refresh;
 mod native_python;
+mod packaged_repair_parity;
 mod report_validators;
 mod retained_files;
 mod upstream_python;
@@ -79,6 +80,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_surface_projection_alignment_fixture_corpus(&mut violations)?;
     validate_typescript_bun_ub_calibration_fixture_corpus(&mut violations)?;
     validate_cross_language_oracle_graph_fixture_corpus(&mut violations)?;
+    validate_dotnet_evidence_contract_fixture_corpus(&mut violations)?;
     validate_bun_ub_cross_language_dogfood_fixture_corpus(&mut violations)?;
     validate_typescript_preview_repair_loop_fixture_corpus(&mut violations)?;
     validate_typescript_preview_false_actionable_audit_fixture_corpus(&mut violations)?;
@@ -94,10 +96,15 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_release_scope_fixture_corpus(&mut violations)?;
     validate_intervention_study_fixture_corpus(&mut violations)?;
     validate_blind_journey_contract_fixture_corpus(&mut violations)?;
+    validate_cache_payload_tamper_recovery_fixture_corpus(&mut violations)?;
+    validate_incomplete_diff_corpus_fixture_corpus(&mut violations)?;
+    validate_repair_funnel_fixture_corpus(&mut violations)?;
     validate_orchestration_attempt_receipts_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_attempts_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_intake_fixture_corpus(&mut violations)?;
+    validate_verification_run_snapshot_binding_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_contract_plan_fixture_corpus(&mut violations)?;
+    validate_admission_incident_route_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_real_rows_corpus(&mut violations)?;
     crate::work_portfolio::validate_work_portfolio_fixture_corpus(&mut violations);
     crate::work_selection_identity::validate_work_selection_identity_fixture_corpus(
@@ -114,10 +121,13 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     crate::work_intake_identity::validate_work_intake_identity_fixture_corpus(&mut violations);
     crate::work_plan_identity::validate_work_plan_identity_fixture_corpus(&mut violations);
     crate::work_adapter_identity::validate_work_adapter_identity_fixture_corpus(&mut violations);
+    crate::readiness_snapshot::validate_readiness_snapshot_fixture_corpus(&mut violations);
     validate_blind_journey_execute_fixture_corpus(&mut violations)?;
     validate_blind_journey_installed_rust_fixture(&mut violations)?;
     validate_blind_journey_installed_python_fixture(&mut violations)?;
     validate_blind_journey_installed_typescript_fixture(&mut violations)?;
+    packaged_repair_parity::validate_packaged_repair_parity_fixture(&mut violations)?;
+    validate_packaged_repair_parity_fixture(&mut violations)?;
     for entry in
         fs::read_dir(fixtures_dir).map_err(|err| format!("failed to read fixtures: {err}"))?
     {
@@ -1897,6 +1907,14 @@ pub(crate) const TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES: &[(&str, &str)] 
     (
         "javascript_already_observed_unchanged",
         "unanchored_relation_holds_advisory",
+    ),
+    (
+        "typescript_load_profile_already_observed_unchanged",
+        "already_observed_unchanged",
+    ),
+    (
+        "typescript_dynamic_oracle_spurious_already_observed_guard",
+        "intentionally_skipped",
     ),
     ("typescript_complete_boundary_packet_closed", "resolved"),
 ];

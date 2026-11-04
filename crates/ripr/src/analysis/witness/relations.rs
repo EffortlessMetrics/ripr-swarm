@@ -21,7 +21,7 @@ pub(in crate::analysis) enum RelationStatus {
 }
 
 impl RelationStatus {
-    fn as_str(self) -> &'static str {
+    pub(in crate::analysis::witness) fn as_str(self) -> &'static str {
         match self {
             Self::Established => "established",
             Self::Candidate => "candidate",
