@@ -3,6 +3,13 @@ use ripr::domain::ExposureClass;
 use ripr::{CheckInput, Mode, OutputFormat, check_workspace};
 
 fn finding(body: &str) -> Result<ripr::Finding, Box<dyn std::error::Error>> {
+    finding_with_equality(body, false)
+}
+
+fn finding_with_equality(
+    body: &str,
+    custom: bool,
+) -> Result<ripr::Finding, Box<dyn std::error::Error>> {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let root = std::env::temp_dir().join(format!(
         "ripr-tuple-{}-{}",
@@ -16,10 +23,12 @@ fn finding(body: &str) -> Result<ripr::Finding, Box<dyn std::error::Error>> {
         root.join("Cargo.toml"),
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
     )?;
-    std::fs::write(
-        root.join("src/lib.rs"),
-        "use std::ops::Add;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n",
-    )?;
+    let mut source = "use std::ops::Add;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n".to_string();
+    if custom {
+        source = source.replace("Clone, Copy, PartialEq", "Clone, Copy");
+        source.push_str("impl PartialEq for Money { fn eq(&self, _: &Self) -> bool { true } }\n");
+    }
+    std::fs::write(root.join("src/lib.rs"), source)?;
     std::fs::write(
         root.join("tests/t.rs"),
         format!("use demo::Money;\nuse std::ops::Add;\n#[test]\nfn adds() {{\n{body}\n}}\n"),
@@ -57,6 +66,8 @@ fn assert_separating_guidance(finding: &ripr::Finding) {
     let step = finding.recommended_next_step.as_deref().unwrap_or("");
     assert!(step.contains("separating input"), "{step}");
     assert!(step.contains("assert"), "{step}");
+    assert!(step.contains(".0"), "{step}");
+    assert!(!step.contains("assertions observe"), "{step}");
     assert!(!step.contains("does not establish observation"), "{step}");
     assert!(
         !step.contains("Check whether the change can affect"),
@@ -84,6 +95,19 @@ fn zero_whole() -> Result<(), Box<dyn std::error::Error>> {
     assert_separating_guidance(&finding(
         "let r = Money(0).add(Money(0));\nassert_eq!(r, Money(0));",
     )?);
+    Ok(())
+}
+#[test]
+fn whole_value_custom_equality_needs_a_field_assertion() -> Result<(), Box<dyn std::error::Error>> {
+    let result = finding_with_equality(
+        "let r = Money(0).add(Money(0));\nassert_eq!(r, Money(0));",
+        true,
+    )?;
+    assert_eq!(result.class, ExposureClass::WeaklyExposed);
+    assert_eq!(result.ripr.infect.state, ripr::domain::StageState::Weak);
+    let step = result.recommended_next_step.as_deref().unwrap_or("");
+    assert!(!step.contains("assertions observe"), "{step}");
+    assert!(step.contains(".0"), "{step}");
     Ok(())
 }
 #[test]

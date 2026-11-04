@@ -97,8 +97,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "The existing assertions observe the returned value, but their inputs produce the same result in both versions. Add a separating input and assert the returned value.",
-      "suggested_next_action": "The existing assertions observe the returned value, but their inputs produce the same result in both versions. Add a separating input and assert the returned value.",
+      "recommended_next_step": "The existing calls use inputs that produce the same returned field in both versions. Add a separating input and assert the returned `.0` field.",
+      "suggested_next_action": "The existing calls use inputs that produce the same returned field in both versions. Add a separating input and assert the returned `.0` field.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

@@ -41,7 +41,7 @@ Evidence
   - source assertion argument value 0 at line 6
 
 Next step
-  The existing assertions observe the returned value, but their inputs produce the same result in both versions. Add a separating input and assert the returned value
+  The existing calls use inputs that produce the same returned field in both versions. Add a separating input and assert the returned `.0` field
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/tuple_equal_inputs/input --diff <cwd>/fixtures/tuple_equal_inputs/diff.patch --mode fast probe:src_lib.rs:return_value:d642f199

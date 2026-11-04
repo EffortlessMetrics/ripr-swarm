@@ -181,7 +181,7 @@ pub(in crate::analysis) fn build_finding_with_origins(
     {
         Some("Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.".to_string())
     } else if class == ExposureClass::WeaklyExposed && evidence.tuple_invisible {
-        Some("The existing assertions observe the returned value, but their inputs produce the same result in both versions. Add a separating input and assert the returned value.".to_string())
+        Some("The existing calls use inputs that produce the same returned field in both versions. Add a separating input and assert the returned `.0` field.".to_string())
     } else if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
         None
     } else if matches!(
