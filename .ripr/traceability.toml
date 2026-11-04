@@ -21640,31 +21640,6 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0420"
-name = "Verification plan corpus PR A mechanics"
-spec = "docs/specs/RIPR-SPEC-0420-verification-plan-corpus-pr-a.md"
-tests = [
-  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_row_digest_is_stable",
-  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_wrong_plan_digest",
-  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_zero_subject_success",
-  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_unselected_executed_subject",
-  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_validator_rejects_removed_row_without_evidence",
-  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_corpus_identity_is_order_independent",
-  "xtask/src/verification_plan_corpus.rs::tests::verification_plan_fixture_identity_changes_when_expectation_drifts",
-  "xtask/src/verification_plan_corpus.rs::tests::committed_fixture_corpus_covers_required_mechanics_scenarios",
-  "xtask/src/reports/verification_plan_corpus.rs::tests::verification_plan_corpus_report_json_and_markdown_agree_on_totals",
-  "xtask/src/reports/verification_plan_corpus.rs::tests::verification_plan_real_case_safe_rate_excludes_inconclusive_dispositions",
-  "xtask/src/reports/verification_plan_corpus.rs::tests::verification_plan_negative_control_mutation_fails_check",
-]
-fixtures = [
-  "fixtures/verification-plan-corpus/corpus.json",
-]
-code = [
-  "xtask/src/verification_plan_corpus.rs",
-  "xtask/src/reports/verification_plan_corpus.rs",
-]
-outputs = [
-  "docs/specs/RIPR-SPEC-0420-verification-plan-corpus-pr-a.md",
 id = "RIPR-SPEC-0411"
 name = "Stop reason emission contract"
 spec = "docs/specs/RIPR-SPEC-0411-stop-reason-contract.md"
