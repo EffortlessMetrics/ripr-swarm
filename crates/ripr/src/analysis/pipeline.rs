@@ -3163,7 +3163,8 @@ fn is_excluded_from_typescript_preview_analysis(
             &language_config.typescript.excluded_file_patterns,
             path,
         )
-        || (crate::config::is_detectable_excluded_typescript_path(path)
+        || ((crate::config::is_detectable_excluded_typescript_path(path)
+            || crate::config::is_typescript_docs_site_path(path))
             && !crate::config::is_declared_handwritten_typescript_path(
                 &language_config.typescript.handwritten_files,
                 path,
