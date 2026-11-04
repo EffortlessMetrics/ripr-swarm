@@ -183,7 +183,7 @@
       "flow_sinks": [
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Only relational oracle found; it may not discriminate the changed value exactly", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach thr: at, high, low", "Related tests contain input values, but the equality-boundary check is missing"],
-      "missing": ["Missing discriminator value: x == 100", "No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
+      "missing": ["Missing check value: x == 100", "No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
       "assertion_texts": {
         "3": "assert!(!thr::internal::thr(50));",
         "8": "assert!(thr::internal::thr(500));",

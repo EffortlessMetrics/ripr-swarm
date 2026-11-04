@@ -289,10 +289,10 @@ missing" reason was reworded at its producer (#12907).
 
 The line carries the discriminator value alone; the label is not restated
 inside it. `Finding.missing` mixes value-shaped entries, which the classifier
-builds as `Missing discriminator value: <value>`, with prose entries such as
+builds as `Missing check value: <value>`, with prose entries such as
 `No strong discriminator was detected`. Rendering a value-shaped entry verbatim
 under the label produced
-`Missing discriminator: Missing discriminator value: AuthError::RevokedToken`,
+`Missing discriminator: Missing check value: AuthError::RevokedToken`,
 so the renderer strips that prefix and emits
 `Missing check: AuthError::RevokedToken`. Prose entries carry no such
 prefix and are rendered unchanged. This governs the human digest only; no

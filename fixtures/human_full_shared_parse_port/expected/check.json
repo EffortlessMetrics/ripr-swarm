@@ -234,7 +234,7 @@
         {"kind":"error_variant","text":"Result::Err(\"zero port\")","line":4}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence error variant: Result::Err(\"zero port\")", "Related tests appear to reach parse_port: parses_valid_port", "Related tests contain input values, but the equality-boundary check is missing", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["Missing discriminator value: p == 0"],
+      "missing": ["Missing check value: p == 0"],
       "assertion_texts": {
         "15": "assert_eq!(parse_port(\"8080\").unwrap(), 8080);"
       },

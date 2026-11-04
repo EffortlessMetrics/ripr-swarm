@@ -4972,9 +4972,9 @@ mod tests {
 
     /// RIPR-SPEC-0122: the digest line carries the discriminator value alone.
     /// `decision.rs` builds value-shaped entries as
-    /// `Missing discriminator value: <value>`, which the renderer used to print
+    /// `Missing check value: <value>`, which the renderer used to print
     /// verbatim under its own label, producing
-    /// `Missing discriminator: Missing discriminator value: X`.
+    /// `Missing discriminator: Missing check value: X`.
     #[test]
     fn digest_missing_discriminator_line_does_not_restate_its_label() {
         let mut finding = sample_finding();
@@ -5031,8 +5031,8 @@ mod tests {
             "No strong assertion was detected"
         );
         assert_eq!(
-            super::evidence_lines::plain_default_missing("Missing discriminator value: 100"),
-            "Missing discriminator value: 100",
+            super::evidence_lines::plain_default_missing("Missing check value: 100"),
+            "Missing check value: 100",
             "other entries are not this fixed form"
         );
         assert_eq!(
@@ -7438,7 +7438,7 @@ mod tests {
     fn render_finding_deduplicates_missing_discriminator_value_line() {
         let mut finding = sample_finding();
         finding.missing = vec![
-            "Missing discriminator value: enabled == false".to_string(),
+            "Missing check value: enabled == false".to_string(),
             "another gap".to_string(),
         ];
 

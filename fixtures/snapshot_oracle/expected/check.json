@@ -46,7 +46,7 @@
         {"kind":"return_value","text":"\"ok\".to_string()","line":3}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"ok\".to_string()", "Medium oracle found: snapshot assertion observes the changed behavior", "Related tests appear to reach render_status: renders_error_status_snapshot", "Related tests contain input values, but the equality-boundary check is missing"],
-      "missing": ["Missing discriminator value: code == 299", "No strong discriminator was detected"],
+      "missing": ["Missing check value: code == 299", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "let rendered = render_status(404);"
       },
