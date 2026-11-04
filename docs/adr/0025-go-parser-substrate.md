@@ -109,6 +109,19 @@ unchanged until a separate support-tier decision.
   nodes and file names. Mutually exclusive files are never merged into one
   program (#5537).
 
+## Alternatives Considered
+
+- **`gosyn` 0.2.15.** Pure Rust and about 3x faster, and equally correct on
+  structural counts. Rejected because AST nodes carry only a start offset in
+  Unicode scalars (end offsets exist only on the separate token stream), and a
+  single syntax error rejects the whole file with no partial tree. Revisit if
+  it gains end spans and recovery.
+- **Go toolchain facts (`go/parser`, `go list`) as the syntax source.**
+  Rejected for baseline analysis: #5520 requires a usable path without a Go
+  toolchain. `go list` stays an optional, bounded enrichment (#5554).
+- **A RIPR-owned Go parser.** Rejected: the cost and the risk of
+  repair-shaped false positives from an incomplete grammar outweigh any gain.
+
 ## Consequences
 
 Positive:
@@ -127,6 +140,13 @@ Negative and accepted:
 - Binary and build-time cost is small (about 6 s of clean build time and
   about 25 KB in the spike binary), but must be re-measured inside the real
   `lang-go` feature build.
+
+## Follow-up Specs / Plans
+
+- #5533: Go preview static-facts and fail-closed evidence spec.
+- #5535: `lang-go` scaffold, which adds the Cargo dependency.
+- #5537: module, package and build-constraint identity.
+- #5538: owner and exact-span probe extraction on this substrate.
 
 ## Revisit criteria
 
