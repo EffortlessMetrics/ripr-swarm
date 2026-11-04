@@ -1,6 +1,8 @@
 # Fixture: typescript_push_argument_length
 
-Spec: RIPR-SPEC-0243. Additional contract: RIPR-SPEC-0108; #12949.
+Spec: RIPR-SPEC-0243
+
+Additional contract: RIPR-SPEC-0108; #12949.
 
 ## Given
 
