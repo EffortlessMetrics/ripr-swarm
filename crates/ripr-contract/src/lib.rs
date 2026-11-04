@@ -1,5 +1,5 @@
 //! Contract types shared by the `ripr` facade and its internal support
-//! crates (ADR 0026, #8382/#12726).
+//! crates (ADR 0027, #8382/#12726).
 //!
 //! This crate owns the language-neutral domain DTOs and value-origin shells
 //! that language adapters and the facade exchange. It is an implementation

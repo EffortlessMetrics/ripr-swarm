@@ -3800,12 +3800,25 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::the_old_source_is_rebuilt_from_the_diff_and_fails_closed_when_it_cannot_be",
   "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::a_paired_old_line_inside_a_template_keeps_its_probe_when_the_new_line_is_code",
   "crates/ripr/src/analysis/language/typescript/tests/infection_tests.rs::old_template_content_is_found_through_a_two_hunk_diff",
-  "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::multiline_constructs_are_found_from_the_whole_file"
+  "crates/ripr/src/analysis/language/typescript/comment_whitespace_only_tests.rs::multiline_constructs_are_found_from_the_whole_file",
+  "crates/ripr/src/analysis/language/typescript/changed_return.rs::tests::a_continuation_line_reads_as_the_whole_returned_expression",
+  "crates/ripr/src/analysis/language/typescript/changed_return.rs::tests::the_return_keyword_line_and_a_ternary_arm_are_located",
+  "crates/ripr/src/analysis/language/typescript/changed_return.rs::tests::a_returned_object_reduces_to_the_one_property_value_holding_the_line",
+  "crates/ripr/src/analysis/language/typescript/changed_return.rs::tests::a_change_outside_the_expression_yields_no_pair",
+  "crates/ripr/src/analysis/language/typescript/changed_return.rs::tests::a_line_outside_any_return_yields_no_pair",
+  "crates/ripr/src/analysis/language/typescript/changed_return.rs::tests::a_class_member_owner_is_located_through_the_class_wrapper",
+  "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::typeof_clause_agrees_when_the_asserted_flag_decides_the_value",
+  "crates/ripr/src/analysis/language/typescript/literal_eval.rs::tests::a_behavior_preserving_typeof_rewrite_is_not_unexercised"
 ]
 fixtures = [
   "fixtures/typescript_typeof_kind_gap",
   "fixtures/typescript_typeof_kind_exposed",
   "fixtures/typescript_typeof_negation_other_kind_exposed",
+  "fixtures/ts_multiline_return_continuation_clause",
+  "fixtures/ts_multiline_return_first_line_clause",
+  "fixtures/ts_multiline_ternary_arm_clause",
+  "fixtures/ts_multiline_object_property_clause",
+  "fixtures/ts_multiline_return_clause_taken",
   "fixtures/typescript_typeof_negation_compound_gap",
   "fixtures/typescript_empty_each",
   "fixtures/benches_harness_evidence",

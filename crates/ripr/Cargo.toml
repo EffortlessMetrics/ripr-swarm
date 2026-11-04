@@ -60,7 +60,7 @@ name = "ripr"
 path = "src/main.rs"
 
 [dependencies]
-# ADR 0026 (#8382/#12726): internal contract crate, published in lockstep with
+# ADR 0027 (#8382/#12726): internal contract crate, published in lockstep with
 # `ripr` (same workspace version, exact requirement). It owns the domain DTOs
 # re-exported at `ripr::domain`; it is not a separate public API.
 ripr-contract = { path = "../ripr-contract", version = "=0.11.0", default-features = false }
@@ -169,7 +169,7 @@ lang-python = ["dep:rustpython-parser", "dep:unicode-ident", "ripr-contract/lang
 lang-perl = ["ripr-contract/lang-perl"]
 
 [dev-dependencies]
-# ADR 0026: facade tests import shared fixtures from the contract crate.
+# ADR 0027: facade tests import shared fixtures from the contract crate.
 # `default-features = false` is load-bearing: language enablement is forwarded
 # from this crate's own features, and the contract's defaults would unify on.
 ripr-contract = { version = "=0.11.0", path = "../ripr-contract", default-features = false, features = ["test-fixtures"] }

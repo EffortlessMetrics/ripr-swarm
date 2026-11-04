@@ -271,9 +271,9 @@
     },
     {
       "kind": "EditInstructionId",
-      "canonical_type": "(not yet typed; #4806)",
-      "owner_path": "crates/ripr/src/lsp/saved_edit_sequence.rs",
-      "owner_issue": "#1571/#1895/#4806",
+      "canonical_type": "domain::guarded_edit::EditInstructionId",
+      "owner_path": "crates/ripr/src/domain/guarded_edit.rs",
+      "owner_issue": "#1571/#1902/#4806",
       "portability": "snapshot-bound",
       "semantic_inputs": ["instruction_instance", "original_source_digest", "range", "document_version"],
       "volatile_excluded": ["timestamp", "timestamps", "created_unix_ms", "pid", "client_name", "display", "display_text", "markdown", "scheduler_generation", "request_order", "traversal_order", "absolute_checkout", "absolute_path", "effective_root"],

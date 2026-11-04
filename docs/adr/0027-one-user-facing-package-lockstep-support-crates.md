@@ -1,4 +1,4 @@
-# ADR 0026: One user-facing package, lockstep internal support crates
+# ADR 0027: One user-facing package, lockstep internal support crates
 
 - Status: Accepted
 - Date: 2026-11-04

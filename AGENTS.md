@@ -257,7 +257,7 @@ Do not promote static evidence to `killed`, `survived`, `untested`, `proven` or
 
 Keep one user-facing published package/library/binary `ripr`, plus unpublished
 `xtask`. Internal support crates may be published in lockstep with `ripr` when
-compiler-unit evidence requires a split (ADR 0026, #8382/#12726); they are
+compiler-unit evidence requires a split (ADR 0027, #8382/#12726); they are
 implementation packages, re-exported at their established `ripr::` paths, and
 do not expose a product API. The first is `ripr-contract` (domain DTOs and
 adapter result shells).
@@ -266,7 +266,7 @@ exception: it owns only workflow-policy, agent-skill and Git-index executable-fi
 checks and has no normal/build dependency on the product or its parser stack.
 It does not expose a product API.
 Do not split into `ripr-core`, `ripr-cli`, `ripr-lsp`, `ripr-engine` or
-`ripr-schema` without a real external contract; ADR 0026 support crates are
+`ripr-schema` without a real external contract; ADR 0027 support crates are
 the measured exception, not a general decomposition licence.
 
 Internal owners:

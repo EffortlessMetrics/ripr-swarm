@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal contract types for the ripr facade: domain DTOs and adapter result shells (ADR 0026). Implementation package; the public API is the ripr crate."
+description = "Internal contract types for the ripr facade: domain DTOs and adapter result shells (ADR 0027). Implementation package; the public API is the ripr crate."
 keywords = ["mutation-testing", "testing", "static-analysis"]
 categories = ["development-tools", "development-tools::testing"]
 

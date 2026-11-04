@@ -231,9 +231,9 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     },
     IdentityRecord {
         kind: IdentityKind::EditInstructionId,
-        canonical_type: "(not yet typed; #4806)",
-        owner_path: "crates/ripr/src/lsp/saved_edit_sequence.rs",
-        owner_issue: "#1571/#1895/#4806",
+        canonical_type: "domain::guarded_edit::EditInstructionId",
+        owner_path: "crates/ripr/src/domain/guarded_edit.rs",
+        owner_issue: "#1571/#1902/#4806",
         portability: PortabilityClass::SnapshotBound,
         semantic_inputs: &[
             "instruction_instance",

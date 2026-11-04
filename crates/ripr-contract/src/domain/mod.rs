@@ -120,7 +120,7 @@ pub use probe::{
     SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
 pub use refusal_remedy::RefusalRemedy;
-// Public so the `ripr` facade can re-export it; not part of a product API (ADR 0026).
+// Public so the `ripr` facade can re-export it; not part of a product API (ADR 0027).
 pub use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub use probe::boundary_input_observed_with_weak_oracle;

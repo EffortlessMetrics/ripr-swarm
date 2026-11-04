@@ -1,9 +1,9 @@
-//! Facade for the domain compartment (ADR 0026, #8382/#12726).
+//! Facade for the domain compartment (ADR 0027, #8382/#12726).
 //!
 //! The domain DTOs live in `ripr-contract` and are re-exported here at their
 //! established `ripr::domain` paths, item by item, so every existing
 //! consumer keeps its import path and the public API is unchanged (the
-//! explicit list is what `check-public-api` records; no glob). Six modules
+//! explicit list is what `check-public-api` records; no glob). Seven modules
 //! stay in this crate because they consume analysis/agent/app helpers that
 //! have not moved: `context_packet`, `diagnostic_witness`, `next_action`,
 //! `fix_instruction`, `repair_card`, and `verification_result`.
@@ -183,6 +183,8 @@ pub(crate) use ripr_contract::domain::{
 pub mod context_packet;
 mod diagnostic_witness;
 mod fix_instruction;
+#[doc(hidden)]
+pub mod guarded_edit;
 #[doc(hidden)]
 pub mod language_availability;
 mod next_action;

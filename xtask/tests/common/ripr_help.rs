@@ -222,7 +222,7 @@ pub fn extracted_package(root: &Path) -> Result<PathBuf, String> {
         .get_or_init(|| {
             let scratch = Scratch::new("help-package")?;
             let mut command = cargo();
-            // ADR 0026: `ripr` depends on the lockstep support crate
+            // ADR 0027: `ripr` depends on the lockstep support crate
             // `ripr-contract`, which is not on crates.io yet, so packaging
             // `ripr` alone cannot resolve it offline. Package both crates
             // (Cargo resolves the interdependent pair from the workspace)

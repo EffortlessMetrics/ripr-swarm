@@ -1639,9 +1639,6 @@ pub(crate) fn plain_changed_return<'t>(
     owner: &TypeScriptOwner,
     workspace_root: Option<&Path>,
 ) -> Option<(&'t str, &'t str)> {
-    if owner.arity.is_none() || owner.params.is_empty() {
-        return None;
-    }
     let (Some(old_line_text), Some(_)) = (old_line_text, workspace_root) else {
         return None;
     };
@@ -1651,6 +1648,22 @@ pub(crate) fn plain_changed_return<'t>(
     ) else {
         return None;
     };
+    evaluable_return_lines(line, owner, workspace_root)?;
+    Some((old_expression, new_expression))
+}
+
+/// The owner's source lines and the 0-based index of the changed `line` when
+/// a returned expression there can be evaluated on the call arguments: the
+/// owner declares parameters, never reassigns one, and opens no nested
+/// function before the changed line.
+fn evaluable_return_lines(
+    line: usize,
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> Option<(Vec<String>, usize)> {
+    if owner.arity.is_none() || owner.params.is_empty() {
+        return None;
+    }
     // An earlier statement may rebind a parameter, so the call arguments
     // would not be the values the returned expression reads.
     let lines = owner_source_lines(owner, workspace_root)?;
@@ -1688,7 +1701,36 @@ pub(crate) fn plain_changed_return<'t>(
     {
         return None;
     }
-    Some((old_expression, new_expression))
+    Some((lines, changed))
+}
+
+/// The old and new returned expression of the changed line for the
+/// unexercised-change check: a complete one-line `return <expression>;`, or
+/// the statement-level expression of a multi-line `return` (or the one
+/// property value of a returned object literal) that holds the changed line
+/// (#12380). Only withdraws credit; never used to grant it.
+fn changed_return_expressions(
+    line: usize,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> Option<(String, String)> {
+    if let Some((old, new)) =
+        plain_changed_return(line, line_text, old_line_text, owner, workspace_root)
+    {
+        return Some((old.to_string(), new.to_string()));
+    }
+    let (Some(old_line_text), Some(_)) = (old_line_text, workspace_root) else {
+        return None;
+    };
+    let (lines, changed) = evaluable_return_lines(line, owner, workspace_root)?;
+    changed_return::changed_multiline_return_expressions(
+        &owner.file,
+        &lines,
+        changed,
+        old_line_text,
+    )
 }
 
 /// Whether the test file names `name` anywhere outside its test bodies (a
@@ -1869,12 +1911,14 @@ pub(crate) fn ts_returned_expression_unexercised(
     // amount` to `+= amount * 2`) is judged on its operand. The state
     // accumulates across calls, so every owner call in a test must be one of
     // the evaluated assertions' calls.
-    let plain = plain_changed_return(line, line_text, old_line_text, owner, workspace_root);
+    let plain = changed_return_expressions(line, line_text, old_line_text, owner, workspace_root);
     let state_operands = match plain {
         Some(_) => None,
         None => returned_state_operands(line_text, old_line_text, owner),
     };
-    let Some((old_expression, new_expression)) = plain.or(state_operands) else {
+    let Some((old_expression, new_expression)) =
+        plain.or_else(|| state_operands.map(|(old, new)| (old.to_string(), new.to_string())))
+    else {
         return false;
     };
     let mut evaluated = false;
@@ -1962,8 +2006,8 @@ pub(crate) fn ts_returned_expression_unexercised(
             for arguments in argument_lists {
                 match literal_eval::return_expressions_agree(
                     &owner.file,
-                    old_expression,
-                    new_expression,
+                    &old_expression,
+                    &new_expression,
                     &owner.params,
                     &arguments,
                 ) {
