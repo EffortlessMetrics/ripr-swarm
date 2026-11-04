@@ -233,7 +233,8 @@ fn rehearsal_identity_missing_blob_cannot_invoke_promisor_transport() -> Result<
             .join(&blob[2..]),
     )
     .map_err(|e| e.to_string())?;
-    assert!(collect_identity_inputs_for_commit(&fixture.root, &head).is_err());
+    collect_identity_inputs_for_commit(&fixture.root, &head)
+        .expect_err("missing object must be rejected");
     assert!(
         !fixture.root.join(".git/transport-marker").exists(),
         "identity read invoked transport"
@@ -246,7 +247,7 @@ fn rehearsal_identity_rejects_same_size_preserved_mtime_changes() -> Result<(), 
     let fixture = Fixture::new()?;
     let path = fixture.root.join("Cargo.lock");
     let original = fs::read(&path).map_err(|e| e.to_string())?;
-    let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_200_000_000);
+    let old = std::time::UNIX_EPOCH + std::time::Duration::from_mins(20_000_000);
     let set_time = || -> Result<(), String> {
         fs::OpenOptions::new()
             .write(true)
@@ -447,12 +448,12 @@ fn rehearsal_identity_refuses_split_index_without_freshening_it() -> Result<(), 
     } else {
         fixture.root.join(shared)
     };
-    let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_200_000_000);
+    let old = std::time::UNIX_EPOCH + std::time::Duration::from_mins(20_000_000);
     fs::File::open(&shared)
         .map_err(|e| e.to_string())?
         .set_times(fs::FileTimes::new().set_modified(old))
         .map_err(|e| e.to_string())?;
-    assert!(git_worktree_clean().is_err());
+    git_worktree_clean().expect_err("split index must be rejected");
     assert_eq!(
         fs::metadata(&shared)
             .map_err(|e| e.to_string())?

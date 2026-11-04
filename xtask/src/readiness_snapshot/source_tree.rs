@@ -38,7 +38,8 @@ pub(super) fn tracked_bytes_match(root: &Path, commit: &str) -> Result<bool, Str
             .iter()
             .position(|byte| *byte == b'\t')
             .ok_or("invalid committed tree record")?;
-        let header = std::str::from_utf8(&record[..tab]).map_err(|_| "invalid tree metadata")?;
+        let header = std::str::from_utf8(&record[..tab])
+            .map_err(|error| format!("invalid tree metadata: {error}"))?;
         let fields = header.split_ascii_whitespace().collect::<Vec<_>>();
         if fields.len() != 3
             || fields[1] != "blob"
@@ -51,7 +52,7 @@ pub(super) fn tracked_bytes_match(root: &Path, commit: &str) -> Result<bool, Str
             );
         }
         let relative = std::str::from_utf8(&record[tab + 1..])
-            .map_err(|_| "tracked source paths must be UTF-8")?;
+            .map_err(|error| format!("tracked source paths must be UTF-8: {error}"))?;
         let relative = Path::new(relative);
         if relative.as_os_str().is_empty() || !relative.components().all(|part| {
             matches!(part, Component::Normal(name) if !name.to_string_lossy().eq_ignore_ascii_case(".git"))
@@ -143,7 +144,8 @@ fn batch_matches(prefix: &[&str], files: &[&TrackedFile]) -> Result<bool, String
     if !output.status.success() {
         return Err("could not hash tracked source bytes without filters".to_string());
     }
-    let text = std::str::from_utf8(&output.stdout).map_err(|_| "invalid Git hash output")?;
+    let text = std::str::from_utf8(&output.stdout)
+        .map_err(|error| format!("invalid Git hash output: {error}"))?;
     let hashes = text.lines().collect::<Vec<_>>();
     if hashes.len() != files.len() || hashes.iter().any(|oid| !valid_oid(oid)) {
         return Err("Git hash output does not cover the complete source batch".to_string());

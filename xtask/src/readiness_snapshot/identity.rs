@@ -139,8 +139,8 @@ fn git_path(args: &[&str]) -> Result<PathBuf, String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    let root =
-        std::str::from_utf8(&output.stdout).map_err(|_| "source root is not UTF-8".to_string())?;
+    let root = std::str::from_utf8(&output.stdout)
+        .map_err(|error| format!("source root is not UTF-8: {error}"))?;
     let root = root
         .strip_suffix('\n')
         .ok_or("git root output has no line terminator")?;

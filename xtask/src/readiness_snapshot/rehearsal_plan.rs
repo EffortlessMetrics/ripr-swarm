@@ -156,7 +156,8 @@ mod tests {
             vec!["--sha", "HEAD", "--plan", "--no-publish"],
             vec!["--sha", "HEAD", "--plan", "--execute"],
         ] {
-            assert!(parse_args(&args.into_iter().map(str::to_string).collect::<Vec<_>>()).is_err());
+            parse_args(&args.into_iter().map(str::to_string).collect::<Vec<_>>())
+                .expect_err("invalid arguments must be rejected");
         }
         assert_eq!(
             parse_args(&["--sha", "HEAD", "--plan", "--json"].map(str::to_string)),
