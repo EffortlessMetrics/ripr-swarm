@@ -297,7 +297,20 @@ impl RiprConfig {
     pub(crate) fn severity_for(&self, crate_name: Option<&str>, path: &str) -> SeverityConfig {
         let mut severity = self.severity.clone();
         severity.overlays.clear();
-        if let Some(overlay) = best_override(&self.overrides, crate_name, path) {
+        // Only rows that set severity compete, matching the compiled
+        // `SeverityConfig::resolved_for_path` path; an oracle-only row must
+        // not shadow a less specific severity row.
+        let severity_rows = self
+            .overrides
+            .iter()
+            .filter(|row| {
+                row.severity
+                    .as_ref()
+                    .is_some_and(|partial| !partial.is_empty())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if let Some(overlay) = best_override(&severity_rows, crate_name, path) {
             overlay.apply_severity(&mut severity);
         }
         severity

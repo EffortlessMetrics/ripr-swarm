@@ -385,3 +385,33 @@ fn listed_manifests_bind_candidate_crate_and_reject_unknown() -> Result<(), Stri
     }
     Ok(())
 }
+
+#[test]
+fn oracle_only_row_does_not_shadow_a_less_specific_severity_row() -> Result<(), String> {
+    let config = tests_only_parse(
+        "[severity.findings]\nweakly_exposed = \"warning\"\n\n\
+         [[overrides]]\npath = \"crates/**\"\nseverity.findings.weakly_exposed = \"note\"\n\n\
+         [[overrides]]\npath = \"crates/alpha/**\"\noracles.snapshot_strength = \"weak\"\n",
+    )?;
+    let path = "crates/alpha/src/lib.rs";
+    let direct = config
+        .severity_for(None, path)
+        .for_exposure(&ExposureClass::WeaklyExposed);
+    let compiled = config
+        .severity
+        .for_exposure_in(&ExposureClass::WeaklyExposed, Path::new(path));
+    if direct != ConfigSeverity::Note {
+        return Err(format!(
+            "severity_for must keep the crates/** severity row, got {}",
+            direct.as_str()
+        ));
+    }
+    if direct != compiled {
+        return Err(format!(
+            "severity_for ({}) and the compiled overlay path ({}) must agree",
+            direct.as_str(),
+            compiled.as_str()
+        ));
+    }
+    Ok(())
+}
