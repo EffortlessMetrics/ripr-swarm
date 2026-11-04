@@ -225,20 +225,10 @@
       "probe_family": "return_value",
       "vector": "raw_module_associated_extension_iterator_discards_literal_fixture_data_before_projection",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -1021,16 +1011,9 @@
       "vector": "later_local_binding_cannot_hide_an_earlier_primitive_operand_call",
       "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -4978,29 +4961,29 @@
       "vector": "every_strong_call_takes_the_early_exit_so_the_changed_fallthrough_return_is_not_exposed",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_disclose_scope"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+       {
+        "type": "must_not_report_clean"
+       },
+       {
+        "type": "must_disclose_scope"
+       },
+       {
+        "type": "expected_finding_count",
+        "count": 1
+       },
+       {
+        "type": "must_not_promote"
+       },
+       {
+        "type": "expected_class",
+        "class": "weakly_exposed"
+       },
+       {
+        "type": "maximum_class",
+        "class": "weakly_exposed"
+       }
       ]
-    },
+     },
     {
       "id": "py_message_only_raise_pattern_fits_both_no_exposed_credit",
       "language": "python",
@@ -5009,29 +4992,29 @@
       "vector": "a_literal_match_pattern_fits_the_old_and_new_message_so_the_message_change_is_not_exposed",
       "probe_family": "error_path",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_disclose_scope"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+       {
+        "type": "must_not_report_clean"
+       },
+       {
+        "type": "must_disclose_scope"
+       },
+       {
+        "type": "expected_finding_count",
+        "count": 1
+       },
+       {
+        "type": "must_not_promote"
+       },
+       {
+        "type": "expected_class",
+        "class": "weakly_exposed"
+       },
+       {
+        "type": "maximum_class",
+        "class": "weakly_exposed"
+       }
       ]
-    },
+     },
     {
       "id": "py_message_only_local_raise_pattern_fits_both_no_exposed_credit",
       "language": "python",
@@ -5040,121 +5023,121 @@
       "vector": "a_literal_match_pattern_fits_the_old_and_new_message_of_a_local_raised_through_so_the_message_change_is_not_exposed",
       "probe_family": "predicate",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_disclose_scope"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+       {
+        "type": "must_not_report_clean"
+       },
+       {
+        "type": "must_disclose_scope"
+       },
+       {
+        "type": "expected_finding_count",
+        "count": 1
+       },
+       {
+        "type": "must_not_promote"
+       },
+       {
+        "type": "expected_class",
+        "class": "weakly_exposed"
+       },
+       {
+        "type": "maximum_class",
+        "class": "weakly_exposed"
+       }
       ]
+     },
+    {
+     "id": "py_protocol_entry_bracketed_rebind_no_exposed_credit",
+     "language": "python",
+     "tier": "pure",
+     "source_fixture": "fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit",
+     "vector": "a_bracketed_rebind_of_the_protocol_entry_receiver_is_not_credited",
+     "probe_family": "predicate",
+     "assertions": [
+      {
+       "type": "must_not_report_clean"
+      },
+      {
+       "type": "must_disclose_scope"
+      },
+      {
+       "type": "expected_finding_count",
+       "count": 1
+      },
+      {
+       "type": "must_not_promote"
+      },
+      {
+       "type": "expected_class",
+       "class": "static_unknown"
+      },
+      {
+       "type": "maximum_class",
+       "class": "weakly_exposed"
+      }
+     ]
     },
     {
-      "id": "py_protocol_entry_bracketed_rebind_no_exposed_credit",
-      "language": "python",
-      "tier": "pure",
-      "source_fixture": "fixtures/python_protocol_entry_bracketed_rebind_no_exposed_credit",
-      "vector": "a_bracketed_rebind_of_the_protocol_entry_receiver_is_not_credited",
-      "probe_family": "predicate",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_disclose_scope"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
-      ]
+     "id": "py_protocol_entry_augmented_bracket_rebind_no_exposed_credit",
+     "language": "python",
+     "tier": "pure",
+     "source_fixture": "fixtures/python_protocol_entry_augmented_bracket_rebind_no_exposed_credit",
+     "vector": "an_augmented_bracketed_rebind_of_the_protocol_entry_receiver_is_not_credited",
+     "probe_family": "predicate",
+     "assertions": [
+      {
+       "type": "must_not_report_clean"
+      },
+      {
+       "type": "must_disclose_scope"
+      },
+      {
+       "type": "expected_finding_count",
+       "count": 1
+      },
+      {
+       "type": "must_not_promote"
+      },
+      {
+       "type": "expected_class",
+       "class": "static_unknown"
+      },
+      {
+       "type": "maximum_class",
+       "class": "weakly_exposed"
+      }
+     ]
     },
     {
-      "id": "py_protocol_entry_augmented_bracket_rebind_no_exposed_credit",
-      "language": "python",
-      "tier": "pure",
-      "source_fixture": "fixtures/python_protocol_entry_augmented_bracket_rebind_no_exposed_credit",
-      "vector": "an_augmented_bracketed_rebind_of_the_protocol_entry_receiver_is_not_credited",
-      "probe_family": "predicate",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_disclose_scope"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
-      ]
-    },
-    {
-      "id": "py_protocol_entry_tripled_quote_header_rebind_no_exposed_credit",
-      "language": "python",
-      "tier": "pure",
-      "source_fixture": "fixtures/python_protocol_entry_tripled_quote_header_rebind_no_exposed_credit",
-      "vector": "a_tripled_quote_header_rebind_of_the_protocol_entry_receiver_is_not_credited",
-      "probe_family": "predicate",
-      "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_disclose_scope"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
-      ]
+     "id": "py_protocol_entry_tripled_quote_header_rebind_no_exposed_credit",
+     "language": "python",
+     "tier": "pure",
+     "source_fixture": "fixtures/python_protocol_entry_tripled_quote_header_rebind_no_exposed_credit",
+     "vector": "a_tripled_quote_header_rebind_of_the_protocol_entry_receiver_is_not_credited",
+     "probe_family": "predicate",
+     "assertions": [
+      {
+       "type": "must_not_report_clean"
+      },
+      {
+       "type": "must_disclose_scope"
+      },
+      {
+       "type": "expected_finding_count",
+       "count": 1
+      },
+      {
+       "type": "must_not_promote"
+      },
+      {
+       "type": "expected_class",
+       "class": "static_unknown"
+      },
+      {
+       "type": "maximum_class",
+       "class": "weakly_exposed"
+      }
+     ]
     },
     {
       "id": "py_else_arm_no_strong_call_enters_no_exposed_credit",
@@ -5164,29 +5147,29 @@
       "vector": "every_strong_call_takes_an_earlier_arm_so_the_changed_else_return_is_not_exposed",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_disclose_scope"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+       {
+        "type": "must_not_report_clean"
+       },
+       {
+        "type": "must_disclose_scope"
+       },
+       {
+        "type": "expected_finding_count",
+        "count": 1
+       },
+       {
+        "type": "must_not_promote"
+       },
+       {
+        "type": "expected_class",
+        "class": "weakly_exposed"
+       },
+       {
+        "type": "maximum_class",
+        "class": "weakly_exposed"
+       }
       ]
-    },
+     },
     {
       "id": "python_guarded_write_alias_overwrite",
       "language": "python",
@@ -7038,24 +7021,11 @@
       "vector": "imported_formatter_constant_does_not_observe_terminal_relation",
       "probe_family": "match_arm",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "expected_finding_count", "count": 2 },
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -7066,24 +7036,11 @@
       "vector": "inherited_value_constructor_constant_does_not_observe_relation",
       "probe_family": "match_arm",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_finding_count", "count": 2 },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -7094,24 +7051,11 @@
       "vector": "generated_inherited_constructor_constant_does_not_observe_relation",
       "probe_family": "match_arm",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 2
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_finding_count", "count": 2 },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -10471,20 +10415,10 @@
       "vector": "boundary_binding_post_assertion_mutation_still_pairs",
       "probe_family": "predicate",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        },
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
         {
           "type": "expected_related_test",
           "name": "after_assert",
@@ -10504,20 +10438,10 @@
       "vector": "boundary_binding_comment_interior_mutation_still_pairs",
       "probe_family": "predicate",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        },
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
         {
           "type": "expected_related_test",
           "name": "commented",
@@ -10537,20 +10461,10 @@
       "vector": "boundary_binding_nested_shadow_mutation_still_pairs",
       "probe_family": "predicate",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        },
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
         {
           "type": "expected_related_test",
           "name": "nested",
@@ -13837,16 +13751,9 @@
       "vector": "len_count_cannot_confirm_insert_overwriting_preexisting_key",
       "probe_family": "call_deletion",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -13857,16 +13764,9 @@
       "vector": "len_count_cannot_confirm_insert_overwriting_preexisting_key",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -13877,17 +13777,9 @@
       "vector": "len_count_confirms_insert_into_empty_map",
       "probe_family": "call_deletion",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ],
       "control": "must_stay_exposed"
     },
@@ -13899,16 +13791,9 @@
       "vector": "len_count_cannot_confirm_changed_insert_value",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -13919,17 +13804,9 @@
       "vector": "len_count_confirms_deleted_direct_push",
       "probe_family": "call_deletion",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ],
       "control": "must_stay_exposed"
     },
@@ -13941,16 +13818,9 @@
       "vector": "len_count_cannot_confirm_changed_direct_push_payload",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -13962,25 +13832,11 @@
       "control": "must_stay_weakly_exposed",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "mock_expectation",
-          "strength": "medium"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "mock_expectation", "strength": "medium" }
       ]
     },
     {
@@ -13991,24 +13847,11 @@
       "vector": "sibling_element_field_may_exit_before_indexed_pin_assertion",
       "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14019,24 +13862,11 @@
       "vector": "sibling_element_field_may_exit_before_return_value_oracle",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14047,10 +13877,7 @@
       "vector": "sibling_element_field_plain_path_keeps_indexed_pin",
       "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -14061,24 +13888,11 @@
       "vector": "element_type_non_plain_drop_exits_during_unwind",
       "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14089,10 +13903,7 @@
       "vector": "element_type_plain_drop_keeps_indexed_pin",
       "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -14103,24 +13914,11 @@
       "vector": "element_type_non_plain_drop_exits_during_unwind",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14131,10 +13929,7 @@
       "vector": "element_type_plain_drop_keeps_returned_array_credit",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -14145,24 +13940,11 @@
       "vector": "returned_type_non_plain_drop_exits_during_unwind",
       "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14173,10 +13955,7 @@
       "vector": "returned_type_plain_drop_keeps_field_pin",
       "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -14187,24 +13966,11 @@
       "vector": "returned_type_non_plain_drop_exits_during_unwind",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14215,10 +13981,7 @@
       "vector": "returned_type_plain_drop_keeps_whole_value_credit",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -14229,24 +13992,11 @@
       "vector": "returned_type_non_plain_drop_exits_during_unwind",
       "probe_family": "error_path",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14257,10 +14007,7 @@
       "vector": "returned_type_plain_drop_keeps_whole_value_credit",
       "probe_family": "error_path",
       "assertions": [
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -14271,24 +14018,11 @@
       "vector": "returned_type_non_plain_drop_exits_during_unwind",
       "probe_family": "predicate",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14299,10 +14033,7 @@
       "vector": "returned_type_plain_drop_keeps_whole_value_credit",
       "probe_family": "predicate",
       "assertions": [
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -14313,10 +14044,7 @@
       "vector": "local_non_plain_drop_guard_never_becomes_returned_value",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -14327,20 +14055,10 @@
       "vector": "returned_type_non_plain_drop_in_if_arm_tail_exits_during_unwind",
       "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14351,20 +14069,10 @@
       "vector": "returned_type_non_plain_drop_wrapped_in_ok_exits_during_unwind",
       "probe_family": "field_construction",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14375,24 +14083,11 @@
       "vector": "expected_operand_read_from_file_the_test_writes",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14403,24 +14098,11 @@
       "vector": "expected_operand_bound_from_file_the_test_writes",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14432,17 +14114,9 @@
       "control": "must_stay_exposed",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -14453,24 +14127,11 @@
       "vector": "expected_operand_read_from_committed_golden_file",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
+        { "type": "maximum_class", "class": "exposed" }
       ]
     },
     {
@@ -14569,25 +14230,11 @@
       "vector": "finally_return_swallows_awaited_rejection_matcher_failure",
       "probe_family": "error_path",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "unknown",
-          "strength": "unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
       ]
     },
     {
@@ -14598,29 +14245,12 @@
       "vector": "self_comparing_exact_matcher_cannot_discriminate_return_value",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "relational_check",
-          "strength": "weak"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "relational_check", "strength": "weak" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14631,29 +14261,12 @@
       "vector": "self_comparing_one_hop_local_cannot_discriminate_return_value",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "relational_check",
-          "strength": "weak"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "relational_check", "strength": "weak" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14664,29 +14277,12 @@
       "vector": "parenthesised_second_snapshot_call_advances_the_counter_so_committed_entry_is_not_credited",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "snapshot",
-          "strength": "medium"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "snapshot", "strength": "medium" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14698,22 +14294,10 @@
       "control": "must_stay_exposed",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "snapshot",
-          "strength": "strong"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
+        { "type": "expected_oracle", "kind": "snapshot", "strength": "strong" }
       ]
     },
     {
@@ -14725,17 +14309,9 @@
       "control": "must_stay_exposed",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -14747,17 +14323,9 @@
       "control": "must_stay_exposed",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -14768,24 +14336,11 @@
       "vector": "inline_snapshot_of_an_unrelated_local_is_not_the_owner_result",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14796,24 +14351,11 @@
       "vector": "committed_snapshot_entry_of_an_unrelated_local_is_not_the_owner_result",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14824,24 +14366,11 @@
       "vector": "owner_result_local_rewritten_by_destructuring_before_the_snapshot",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14852,24 +14381,11 @@
       "vector": "receiver_name_redeclared_in_an_inner_block_is_not_the_owner_class",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14880,24 +14396,11 @@
       "vector": "snapshot_of_a_spy_recorded_calls_is_not_the_owner_result",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14908,24 +14411,11 @@
       "vector": "owner_name_bound_to_another_module_is_not_the_owner_call",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14936,24 +14426,11 @@
       "vector": "receiver_initializer_that_only_contains_new_owner_class_is_not_an_instance",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "weakly_exposed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },
     {
@@ -14964,12 +14441,8 @@
       "vector": "owner_pin_expected_value_the_test_writes_the_owner_result_into",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -14980,12 +14453,8 @@
       "vector": "owner_pin_expected_static_the_test_writes_through_a_ref_mut_or_addr_of_mut_alias",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -14996,24 +14465,11 @@
       "vector": "effect_assertion_after_unconditional_return_is_not_credited",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "reachable_unrevealed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "reachable_unrevealed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
       ]
     },
     {
@@ -15024,24 +14480,11 @@
       "vector": "effect_assertion_after_unconditional_return_is_not_credited",
       "probe_family": "call_deletion",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "reachable_unrevealed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "reachable_unrevealed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
       ]
     },
     {
@@ -15052,24 +14495,11 @@
       "vector": "effect_assertion_in_literal_false_block_is_not_credited",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "reachable_unrevealed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "reachable_unrevealed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
       ]
     },
     {
@@ -15080,24 +14510,11 @@
       "vector": "effect_assertion_in_literal_false_block_is_not_credited",
       "probe_family": "call_deletion",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "reachable_unrevealed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "reachable_unrevealed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
       ]
     },
     {
@@ -15108,24 +14525,11 @@
       "vector": "effect_assertion_in_uncalled_closure_is_not_credited",
       "probe_family": "side_effect",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "reachable_unrevealed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "reachable_unrevealed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
       ]
     },
     {
@@ -15136,24 +14540,11 @@
       "vector": "effect_assertion_in_uncalled_closure_is_not_credited",
       "probe_family": "call_deletion",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "reachable_unrevealed"
-        },
-        {
-          "type": "maximum_class",
-          "class": "reachable_unrevealed"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
       ]
     },
     {
@@ -15164,20 +14555,10 @@
       "vector": "atomic_ordering_only_call_edit_cannot_borrow_a_strong_whole_object_oracle",
       "probe_family": "static_unknown",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -15188,12 +14569,8 @@
       "vector": "returned_bare_comparison_exposed_without_an_input_on_the_changed_boundary",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -15204,12 +14581,8 @@
       "vector": "explicit_return_comparison_exposed_without_an_input_on_the_changed_boundary",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -16342,50 +15715,50 @@
         }
       ]
     },
-    {
-      "id": "rust_semicolon_effect_line18_side_effect",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/observation_verified_semicolon_effect",
-      "vector": "aligned_standalone_call_with_persisted_payload_observer",
-      "probe_family": "side_effect",
-      "control": "must_stay_exposed",
-      "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
-      ]
-    },
-    {
-      "id": "rust_semicolon_effect_line18_call_deletion",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/observation_verified_semicolon_effect",
-      "vector": "aligned_standalone_call_with_persisted_payload_observer",
-      "probe_family": "call_deletion",
-      "control": "must_stay_exposed",
-      "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
-      ]
-    },
+      {
+        "id": "rust_semicolon_effect_line18_side_effect",
+        "language": "rust",
+        "tier": "pure",
+        "source_fixture": "fixtures/observation_verified_semicolon_effect",
+        "vector": "aligned_standalone_call_with_persisted_payload_observer",
+        "probe_family": "side_effect",
+        "control": "must_stay_exposed",
+        "assertions": [
+          {
+            "type": "expected_finding_count",
+            "count": 1
+          },
+          {
+            "type": "must_promote"
+          },
+          {
+            "type": "expected_class",
+            "class": "exposed"
+          }
+        ]
+      },
+      {
+        "id": "rust_semicolon_effect_line18_call_deletion",
+        "language": "rust",
+        "tier": "pure",
+        "source_fixture": "fixtures/observation_verified_semicolon_effect",
+        "vector": "aligned_standalone_call_with_persisted_payload_observer",
+        "probe_family": "call_deletion",
+        "control": "must_stay_exposed",
+        "assertions": [
+          {
+            "type": "expected_finding_count",
+            "count": 1
+          },
+          {
+            "type": "must_promote"
+          },
+          {
+            "type": "expected_class",
+            "class": "exposed"
+          }
+        ]
+      },
     {
       "id": "python_module_reader_replacement",
       "language": "python",
@@ -17061,20 +16434,10 @@
       "source_fixture": "fixtures/python_table_bool_key_get_fallback",
       "vector": "unsupported_bool_key_is_unknown_not_a_missing_key_in_get_fallback",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17085,17 +16448,9 @@
       "vector": "missing_integer_key_reads_the_changed_get_fallback",
       "control": "must_stay_exposed",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -17105,20 +16460,10 @@
       "source_fixture": "fixtures/python_table_parenthesized_foreign_store",
       "vector": "parenthesized_dict_binding_is_watched_for_foreign_stores",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17129,17 +16474,9 @@
       "vector": "parenthesized_dict_without_a_foreign_store_keeps_credit",
       "control": "must_stay_exposed",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -17149,20 +16486,10 @@
       "source_fixture": "fixtures/python_table_scalar_get_receiver",
       "vector": "get_on_a_non_table_receiver_is_unknown_not_the_default",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17172,20 +16499,10 @@
       "source_fixture": "fixtures/python_table_subscript_method_call",
       "vector": "method_call_on_a_subscripted_table_value_is_a_possible_write",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17393,20 +16710,10 @@
       "source_fixture": "fixtures/python_table_continued_foreign_store",
       "vector": "dict_after_a_semicolon_continuation_is_watched_for_foreign_stores",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17417,17 +16724,9 @@
       "vector": "continued_dict_without_a_foreign_store_keeps_credit",
       "control": "must_stay_exposed",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -17437,20 +16736,10 @@
       "source_fixture": "fixtures/python_table_reexport_reflection",
       "vector": "reflective_store_through_a_reexported_module_withholds_credit",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17461,17 +16750,9 @@
       "vector": "reexported_table_without_reflection_keeps_credit",
       "control": "must_stay_exposed",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -17481,20 +16762,10 @@
       "source_fixture": "fixtures/python_table_code_replacement",
       "vector": "reader_code_replacement_withholds_table_credit",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17505,17 +16776,9 @@
       "vector": "reader_without_code_replacement_keeps_credit",
       "control": "must_stay_exposed",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -17525,20 +16788,10 @@
       "source_fixture": "fixtures/python_scalar_code_replacement",
       "vector": "scalar_reader_code_replacement_withholds_credit",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17549,17 +16802,9 @@
       "vector": "scalar_reader_without_code_replacement_keeps_credit",
       "control": "must_stay_exposed",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -17590,17 +16835,9 @@
       "vector": "reflection_outside_the_tables_import_component_keeps_credit",
       "control": "must_stay_exposed",
       "assertions": [
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "exposed"
-        }
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
       ]
     },
     {
@@ -17610,20 +16847,10 @@
       "source_fixture": "fixtures/python_table_reflection_helper_argument",
       "vector": "reflective_helper_connected_through_a_test_withholds_credit",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17633,20 +16860,10 @@
       "source_fixture": "fixtures/python_table_reflection_dynamic_import",
       "vector": "reflective_dynamic_import_makes_reach_unknown",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17656,20 +16873,10 @@
       "source_fixture": "fixtures/python_table_reflection_multiline_import",
       "vector": "parenthesized_import_continuation_links_the_reexported_module",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17679,20 +16886,10 @@
       "source_fixture": "fixtures/python_table_reflection_exec",
       "vector": "evaluated_code_makes_reach_unknown",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17702,20 +16899,10 @@
       "source_fixture": "fixtures/python_table_reflection_import_delimiters",
       "vector": "brackets_in_strings_do_not_end_an_import_statement",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -17862,20 +17049,10 @@
       "vector": "registry_namesake_does_not_bind_indexed_wrapper",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "no_static_path"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "no_static_path" }
       ]
     },
     {
@@ -17886,12 +17063,8 @@
       "vector": "assertion_on_untouched_struct_literal_field_does_not_expose_a_changed_default",
       "probe_family": "call_deletion",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "must_not_promote"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -18523,20 +17696,10 @@
       "vector": "nested_block_var_captures_callback_receiver_outside_block",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "static_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
@@ -18547,20 +17710,10 @@
       "vector": "returned_then_asserts_on_inline_receiver_shadow_instead_of_owner",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "no_static_path"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "no_static_path" }
       ]
     },
     {
@@ -18571,25 +17724,11 @@
       "vector": "nested_function_result_discarded_by_enclosing_body_cannot_credit_a_changed_nested_return",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "weakly_exposed"
-        },
-        {
-          "type": "expected_oracle",
-          "kind": "exact_value",
-          "strength": "strong"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" }
       ]
     },
     {
@@ -18600,16 +17739,9 @@
       "vector": "method_call_on_match_remaps_arm_result_so_pin_holds_before_and_after",
       "probe_family": "match_arm",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
       ]
     },
     {
@@ -18620,20 +17752,10 @@
       "vector": "whole_test_contradiction_withholds_the_only_related_tests_activation_credit",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "infection_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "infection_unknown" }
       ]
     },
     {
@@ -18644,20 +17766,10 @@
       "vector": "unrelated_file_mate_composition_cannot_restore_withheld_contradiction_credit",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "must_not_promote"
-        },
-        {
-          "type": "expected_class",
-          "class": "infection_unknown"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "infection_unknown" }
       ]
     },
     {
@@ -18668,17 +17780,9 @@
       "vector": "file_mate_proximity_never_establishes_reach_so_the_refusal_stays_no_static_path",
       "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
-        {
-          "type": "expected_class",
-          "class": "no_static_path"
-        }
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "expected_class", "class": "no_static_path" }
       ]
     },
     {
