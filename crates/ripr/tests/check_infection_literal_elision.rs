@@ -10,7 +10,7 @@ impl Drop for Fixture {
     }
 }
 
-fn report(late_match: bool) -> Result<serde_json::Value, String> {
+fn report(late_match: bool, oversized: bool) -> Result<serde_json::Value, String> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|error| error.to_string())?
@@ -29,6 +29,11 @@ fn report(late_match: bool) -> Result<serde_json::Value, String> {
     let mut source = String::from(
         "pub fn classify(x: i32) -> bool {\n    x >= 999\n}\nfn wrapper() -> bool { classify(5) }\n#[cfg(test)] mod tests {\nuse super::*;\n#[test] fn exercise() {\nlet values = [\n",
     );
+    if oversized {
+        // A valid integer literal whose value is one but whose spelling exceeds
+        // the byte budget. The leading zeros do not overflow the inferred i32.
+        source.push_str(&format!("    0x{}1,\n", "0".repeat(1200)));
+    }
     for value in 100..140 {
         let value = if late_match && value == 139 {
             999
@@ -83,7 +88,7 @@ fn predicate(report: &serde_json::Value) -> Result<&serde_json::Value, String> {
 #[test]
 fn infection_literal_preview_discloses_elision_without_hiding_late_boundary() -> Result<(), String>
 {
-    let missing = report(false)?;
+    let missing = report(false, false)?;
     let finding = predicate(&missing)?;
     let infection = &finding["ripr"]["infect"];
     let summary = infection["summary"]
@@ -98,7 +103,7 @@ fn infection_literal_preview_discloses_elision_without_hiding_late_boundary() ->
     {
         return Err(format!("unexpected missing-boundary evidence: {finding}"));
     }
-    let late = report(true)?;
+    let late = report(true, false)?;
     let finding = predicate(&late)?;
     let infection = &finding["ripr"]["infect"];
     let summary = infection["summary"]
@@ -110,6 +115,25 @@ fn infection_literal_preview_discloses_elision_without_hiding_late_boundary() ->
         || summary.contains("Tests have literals")
     {
         return Err(format!("late oracle literal was not recognized: {finding}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn infection_literal_preview_elides_oversized_source_literal_whole() -> Result<(), String> {
+    let report = report(false, true)?;
+    let finding = predicate(&report)?;
+    let infection = &finding["ripr"]["infect"];
+    let summary = infection["summary"]
+        .as_str()
+        .ok_or("missing infection summary")?;
+    if finding["classification"] != "weakly_exposed"
+        || infection["state"] != "weak"
+        || !summary.contains("(42 values elided)")
+        || !summary.contains("changed boundary [999]")
+        || summary.len() > 300
+    {
+        return Err(format!("unexpected oversized-literal evidence: {finding}"));
     }
     Ok(())
 }
