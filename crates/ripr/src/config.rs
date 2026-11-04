@@ -588,6 +588,11 @@ pub(crate) fn check_artifact_config_identity_hash(config: &RiprConfig) -> String
         .check_artifact_identity_fields()
         .into_iter()
         .filter(|field| field.role == ConfigIdentityRole::FindingAffecting)
+        // A config without oracle overlays keeps its pre-override identity so
+        // adding the override model does not invalidate existing artifacts.
+        .filter(|field| {
+            !(field.name == "overrides.oracles" && field.value.as_deref() == Some("0\u{0}"))
+        })
         .map(|field| format!("{}={}", field.name, field.value.clone().unwrap_or_default()))
         .collect::<Vec<_>>();
     pairs.sort();
