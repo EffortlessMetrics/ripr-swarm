@@ -19541,6 +19541,7 @@ const PROOF_PACK_KNOWN_REPO_COMMANDS: &[&str] = &[
     "cargo check --workspace --all-targets",
     "cargo test --workspace",
     "cargo test -p ripr",
+    "cargo test -p ripr-contract",
     "cargo test -p xtask",
     "cargo clippy --workspace --all-targets -- -D warnings",
     "cargo doc --workspace --no-deps",

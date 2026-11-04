@@ -427,6 +427,10 @@ fn decision_helpers_never_branch_on_the_miss() -> Result<(), String> {
     }
     let sources =
         production_sources(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"))?;
+    let mut sources = sources;
+    sources.extend(production_sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ripr-contract/src"),
+    )?);
     assert!(
         sources.len() > 100,
         "scan found only {} files",

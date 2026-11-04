@@ -158,7 +158,11 @@ fn corpus() -> Result<Vec<String>, String> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files = Vec::new();
     source_files(&manifest.join("src"), &mut files)?;
-    source_files(&manifest.join("../ripr/src"), &mut files)?;
+    let facade = manifest.join("../ripr/src");
+    // Absent in a packaged tarball; the workspace run scans both trees.
+    if facade.is_dir() {
+        source_files(&facade, &mut files)?;
+    }
     files.sort();
     let mut messages = Vec::new();
     for path in files {

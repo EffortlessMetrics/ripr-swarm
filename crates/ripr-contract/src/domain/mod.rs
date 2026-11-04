@@ -95,6 +95,7 @@ pub use identity::{
     REQUIRED_TAXONOMY_KINDS, identity_field_disposition, identity_registry_canonical_json,
     identity_registry_markdown, identity_registry_violations,
 };
+#[cfg(any(test, feature = "test-fixtures"))]
 pub use intervention_study::example_preregistered_study;
 pub use intervention_study::{
     InterventionStudyError, RIPR_INTERVENTION_STUDY_SCHEMA_VERSION, RiprInterventionStudyV1,
@@ -119,8 +120,7 @@ pub use probe::{
     SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
 pub use refusal_remedy::RefusalRemedy;
-// Internal formatting convention, not library API: `lib.rs` re-exports
-// `pub mod domain`, so this stays crate-private.
+// Public so the `ripr` facade can re-export it; not part of a product API (ADR 0026).
 pub use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub use probe::boundary_input_observed_with_weak_oracle;

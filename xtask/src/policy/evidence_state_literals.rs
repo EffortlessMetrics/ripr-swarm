@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 const BASELINE_PATH: &str = "policy/evidence-state-literals.txt";
 const OWNER_PATH: &str = "crates/ripr-contract/src/domain/evidence_state.rs";
-const SOURCE_ROOT: &str = "crates/ripr/src/";
+const SOURCE_ROOTS: [&str; 2] = ["crates/ripr/src/", "crates/ripr-contract/src/"];
 const STATE_WORDS: [&str; 5] = [
     "actionable",
     "already_observed",
@@ -21,7 +21,7 @@ const STATE_WORDS: [&str; 5] = [
 ];
 
 fn is_scanned_path(path: &str) -> bool {
-    path.starts_with(SOURCE_ROOT)
+    SOURCE_ROOTS.iter().any(|root| path.starts_with(root))
         && path.ends_with(".rs")
         && path != OWNER_PATH
         && !path.contains("/tests/")

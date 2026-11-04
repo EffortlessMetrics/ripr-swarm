@@ -1076,7 +1076,7 @@ mod tests {
         for (expression, expected) in [
             ("const CAP: u64 = 5_000;", "CAP"),
             ("pub const CAP: u64 = 5;", "CAP"),
-            ("pub const CAP_2: u64 = 5;", "CAP_2"),
+            ("pub(crate) const CAP_2: u64 = 5;", "CAP_2"),
             ("static LIMIT: u32 = 3;", "LIMIT"),
             ("pub static mut LIMIT: u32 = 3;", "LIMIT"),
         ] {
