@@ -307,7 +307,7 @@ fn parse_version(value: &str) -> Result<Vec<u64>, String> {
     for component in value.split('.') {
         let parsed = component
             .parse::<u64>()
-            .map_err(|_| format!("component `{component}` is not a numeric counter"))?;
+            .map_err(|_parse_error| format!("component `{component}` is not a numeric counter"))?;
         components.push(parsed);
     }
     Ok(components)
