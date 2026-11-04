@@ -1,0 +1,30 @@
+{
+  "schema_version": "mcp_stdio_investigation_disposition.v1",
+  "governing_issue": 4914,
+  "coordinate_with": 3922,
+  "exact_case": "unsupported_inline_version_is_rejected_and_next_request_recovers",
+  "historical_windows_12a": {
+    "commit": "12a110f4d60e512fc67046867b19355fd9bd7534",
+    "outcome": "owned_deadline_reached with empty stdout and stderr on the public stdio suite",
+    "first_discovery_reply": "UNOBSERVED",
+    "historical_cause": "NOT_ESTABLISHED"
+  },
+  "native_windows_historical_cause": {
+    "status": "NOT_ESTABLISHED",
+    "owner_disposition": "Retain the bounded stdio harness and historical 12a artifacts; coordinate any newly observed native Windows MCP stdio evidence with the #3922 Windows owner before treating it as a release prerequisite. A later Linux or diagnostic pass does not terminalize the historical empty first-reply timeout as fixed."
+  },
+  "stage_contract_v1": [
+    "child_spawn_returned",
+    "input_line_flushed",
+    "matching_reply_received",
+    "stdin_released",
+    "child_exit_observed",
+    "owned_deadline_started"
+  ],
+  "linux_bounded_attempt": {
+    "platform": "linux",
+    "stimulus": "three-line discover / unsupported-inline-version / recover script under the unchanged 10-second owned deadline",
+    "observation_env": "RIPR_3088_STDIO_OBSERVATIONS",
+    "verified_main": "aeac23594e"
+  }
+}

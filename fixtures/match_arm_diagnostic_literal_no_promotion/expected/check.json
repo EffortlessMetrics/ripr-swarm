@@ -46,7 +46,7 @@
         {"kind":"match_arm","text":"\"sensor\" =>","line":3}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: \"sensor\" =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No related test call selects arm `\"sensor\" =>`; observed `kind` values: `\"focused-test\"`", "Related tests appear to reach route: sibling_assertion_mentions_sensor_only_in_its_message"],
-      "missing": ["Missing discriminator value: \"sensor\"", "No strong discriminator was detected"],
+      "missing": ["Missing check value: \"sensor\"", "No strong discriminator was detected"],
       "assertion_texts": {
         "8": "assert_eq!(route(\"focused-test\"), \"proof\", \"sensor\");"
       },

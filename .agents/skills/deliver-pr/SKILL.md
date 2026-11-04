@@ -20,6 +20,12 @@ One coherent claim has one current candidate, current proof and review for the a
 - `pr_contract:ordinary_squash_merge`
 - `pr_contract:local_commit_not_delivery`
 
+# Incident route markers
+
+- `incident_route:currentness_before_class`
+- `incident_route:no_poll_child`
+- `incident_route:same_subject_retry_bounded`
+
 # Lifecycle orientation
 
 For work spanning product learning, ordinary delivery or release handoff, use

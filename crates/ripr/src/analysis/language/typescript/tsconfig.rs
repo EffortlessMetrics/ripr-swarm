@@ -6,7 +6,12 @@
 //! - Discovery reads ONLY `<workspace-root>/tsconfig.json` and
 //!   `<workspace-root>/jsconfig.json`; package-level tsconfigs are out of
 //!   scope, and the load-gap advice says so instead of implying the project
-//!   lacks config (#8715).
+//!   lacks config (#8715). The root map is additionally WITHHELD for an
+//!   importer whose nearest `tsconfig.json`/`jsconfig.json` (bounded upward
+//!   walk) declares its own `compilerOptions.paths` and is not the root
+//!   config: applying the root map there could credit the wrong owner
+//!   (#12754 slice). Root fallback is unchanged when no nearer config
+//!   declares `paths`.
 //! - `extends` chains are followed up to 8 hops when every target is a
 //!   relative path inside the directory of the extending config
 //!   (#11204); `references`, package-name `extends`, cross-directory
@@ -396,7 +401,10 @@ impl TsAliasMap {
     }
 
     /// Whether a `paths` key (exact or single-`*` pattern) owns `specifier`.
-    fn paths_key_matches(&self, specifier: &str) -> bool {
+    /// The wrong-owner safeguard (`normalized_relative_import_module`,
+    /// #12754 slice) consults this to withhold the root map when a nearer
+    /// config owns the specifier's compilation unit.
+    pub(crate) fn paths_key_matches(&self, specifier: &str) -> bool {
         self.literal_entries.contains_key(specifier)
             || self
                 .glob_entries
@@ -961,6 +969,34 @@ fn is_safe_relative(p: &Path) -> bool {
     use std::path::Component;
     p.components()
         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+}
+
+/// `true` when the config file at `path` declares its own
+/// `compilerOptions.paths` (presence of the key counts, even `{}` or without
+/// `baseUrl`: per TS 4.1+ paths-without-`baseUrl` resolve relative to the
+/// declaring config — #12760 — so no `baseUrl` requirement here).
+///
+/// Declaration probe for the wrong-owner safeguard (#12754 slice): the walk in
+/// `related_tests` withholds the workspace-root map for importers whose
+/// nearest declaring config is not the root one. Unreadable, unparseable, or
+/// non-object configs return `false` — this probe reports only an observed
+/// `paths` declaration; every other fail-closed shape stays owned by its own
+/// lane. `extends` is deliberately not followed and `references` not
+/// consulted: full per-config resolution remains out of scope.
+pub(crate) fn config_file_declares_paths(path: &Path) -> bool {
+    let Ok(text) = super::bounded_read::read_config_capped(path) else {
+        return false;
+    };
+    let Ok(normalized) = strip_jsonc(&text) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&normalized) else {
+        return false;
+    };
+    value
+        .get("compilerOptions")
+        .and_then(|options| options.get("paths"))
+        .is_some()
 }
 
 /// Strip the file extension from a path string, preserving the rest.

@@ -46,7 +46,7 @@
         {"kind":"struct_field","text":"name: render(retries)","line":10}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: name: render(retries)", "Discriminator unconfirmed: no field-value assertion observes the constructed field", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach build: builds_config"],
-      "missing": ["Missing discriminator value: name: render(retries)", "No strong discriminator was detected"],
+      "missing": ["Missing check value: name: render(retries)", "No strong discriminator was detected"],
       "assertion_texts": {
         "34": "assert_eq!(\n            build(3),\n            Config {\n                retries: 3,\n                name: String::from(\"3\")\n            }\n        );",
         "35": "build(3),"

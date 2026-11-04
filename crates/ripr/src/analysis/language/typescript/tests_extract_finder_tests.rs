@@ -102,3 +102,102 @@ fn shadowed_undefined_does_not_hide_a_genuinely_dropped_loop_registration() {
         "binding undefined must not suppress a dropped loop registration"
     );
 }
+
+#[test]
+fn vitest_test_for_registration_is_a_partial_extraction_gap() {
+    let file = Path::new("tests/tier.test.ts");
+    let source = "import { test, expect } from 'vitest';\nimport { tier } from '../src/tier';\ntest.for([\n  [49, 'basic'],\n  [50, 'basic'],\n])(\"tier row\", ([score, expected]) => {\n  expect(tier(score)).toBe(expected);\n});\n";
+    let tests = extract_tests(file, source);
+    assert!(
+        tests.is_empty(),
+        "test.for registrations are not indexed yet: {tests:?}"
+    );
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.as_ref()
+            .is_some_and(|gap| { gap.shape == "test.for registration" && gap.sample_line == 3 }),
+        "top-level Vitest test.for must be disclosed, got {gap:?}"
+    );
+}
+
+#[test]
+fn vitest_it_for_registration_is_a_partial_extraction_gap() {
+    let file = Path::new("tests/tier.test.ts");
+    let source = "import { it, expect } from 'vitest';\nit.for([[1, 2]])(\"row\", ([a, b]) => {\n  expect(a + b).toBe(3);\n});\n";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty(), "it.for is not indexed: {tests:?}");
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.as_ref()
+            .is_some_and(|gap| gap.shape == "test.for registration"),
+        "it.for disclosed, got {gap:?}"
+    );
+}
+
+#[test]
+fn vitest_test_for_empty_table_is_not_a_dropped_active_registration() {
+    let file = Path::new("tests/tier.test.ts");
+    let source = "import { test, expect } from 'vitest';\ntest.for([])(\"dead\", () => {\n  expect(1).toBe(1);\n});\n";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty());
+    assert!(
+        detect_partial_test_extraction(file, source, &tests).is_none(),
+        "a known-empty .for table registers no callbacks"
+    );
+}
+
+#[test]
+fn vitest_test_for_skip_option_is_not_a_dropped_active_registration() {
+    let file = Path::new("tests/tier.test.ts");
+    let source = "import { test, expect } from 'vitest';\ntest.for([[1]])(\"row\", { skip: true }, () => {\n  expect(1).toBe(1);\n});\n";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty());
+    assert!(
+        detect_partial_test_extraction(file, source, &tests).is_none(),
+        "skipped .for registration is inactive"
+    );
+}
+
+#[test]
+fn unrelated_for_method_is_not_a_partial_extraction_gap() {
+    let file = Path::new("tests/tier.test.ts");
+    let source = "import { expect } from 'vitest';\nconst chain = {\n  for: (rows: number[][]) => (title: string, fn: () => void) => fn(),\n};\nchain.for([[1]])(\"row\", () => {\n  expect(1).toBe(1);\n});\n";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty());
+    assert!(
+        detect_partial_test_extraction(file, source, &tests).is_none(),
+        "a local .for helper is not a runner registration"
+    );
+}
+
+#[test]
+fn vitest_test_only_for_registration_is_a_partial_extraction_gap() {
+    let file = Path::new("tests/tier.test.ts");
+    let source = "import { test, expect } from 'vitest';\ntest.only.for([[1]])(\"row\", () => {\n  expect(1).toBe(1);\n});\n";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty());
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.as_ref()
+            .is_some_and(|gap| gap.shape == "test.for registration"),
+        "active .for chain, got {gap:?}"
+    );
+}
+
+#[test]
+fn ordinary_test_each_and_direct_test_stay_fully_extracted() {
+    let file = Path::new("tests/tier.test.ts");
+    let direct = "import { test, expect } from 'vitest';\ntest('plain', () => {\n  expect(1).toBe(1);\n});\n";
+    let direct_tests = extract_tests(file, direct);
+    assert_eq!(direct_tests.len(), 1);
+    assert!(detect_partial_test_extraction(file, direct, &direct_tests).is_none());
+
+    let each = "import { test, expect } from 'vitest';\ntest.each([[1]])(\"row\", (n) => {\n  expect(n).toBe(1);\n});\n";
+    let each_tests = extract_tests(file, each);
+    assert_eq!(
+        each_tests.len(),
+        1,
+        "call-form .each stays indexed: {each_tests:?}"
+    );
+    assert!(detect_partial_test_extraction(file, each, &each_tests).is_none());
+}

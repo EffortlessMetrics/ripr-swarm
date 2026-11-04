@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn bulk_price(qty: f64) -> f64 {
+-    if qty >= 1.0 {
++    if qty > 1.0 {
+         qty * 0.9
+     } else {
+         qty
