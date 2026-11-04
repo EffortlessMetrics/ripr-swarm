@@ -986,6 +986,17 @@ impl Finding {
         self.source_currentness.permits_candidate_action()
     }
 
+    /// Whether the only thing between this finding and a test path is a proof
+    /// harness ripr does not evaluate (#12921, RIPR-SPEC-0367). The single
+    /// authority every count and surface reads: it separates "no guard found"
+    /// from "a verifier harness exists but is unevaluated". It is a
+    /// disclosure only: the class stays `no_static_path`, the harness earns no
+    /// test credit, and nothing here claims the change is guarded.
+    pub fn is_proof_harness_only(&self) -> bool {
+        self.class == ExposureClass::NoStaticPath
+            && self.static_limit_kind == Some(super::StaticLimitKind::ProofHarnessNotEvaluated)
+    }
+
     /// The one sentence every surface uses to say a finding is not a
     /// candidate edit target (#11905). `None` for a candidate-current finding.
     /// Human, hover and any later renderer take the wording from here so a
