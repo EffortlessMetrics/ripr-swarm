@@ -87,6 +87,9 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
 mod fact_store;
+mod fast_check;
+#[cfg(test)]
+mod fast_check_tests;
 pub(crate) use fact_store::TypeScriptFileFactStore;
 mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
