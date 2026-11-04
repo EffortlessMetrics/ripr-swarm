@@ -30,7 +30,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach is_big: small_is_not_big
-    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+    - infection weak: Related tests contain input values, but the equality-boundary check is missing
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:

@@ -36,16 +36,16 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach render_status: renders_error_status_snapshot"},
-        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary check is missing"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: \"ok\".to_string()"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Medium oracle found: snapshot assertion observes the changed behavior"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach render_status: renders_error_status_snapshot", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Changed behavior appears to influence returned value: \"ok\".to_string()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Medium oracle found: snapshot assertion observes the changed behavior", "local flow reaches returned value: \"ok\".to_string() (line 3)", "related test tests/rendering.rs:4 renders_error_status_snapshot uses medium snapshot oracle: insta::assert_snapshot!(rendered);", "source function argument value code = 404 at line 5", "missing discriminator code == 299: No related test call uses code equal to 299; observed code values: 404; target 299 value: 299"],
+      "evidence_path": ["reach yes: Related tests appear to reach render_status: renders_error_status_snapshot", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence returned value: \"ok\".to_string()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Medium oracle found: snapshot assertion observes the changed behavior", "local flow reaches returned value: \"ok\".to_string() (line 3)", "related test tests/rendering.rs:4 renders_error_status_snapshot uses medium snapshot oracle: insta::assert_snapshot!(rendered);", "source function argument value code = 404 at line 5", "missing discriminator code == 299: No related test call uses code equal to 299; observed code values: 404; target 299 value: 299"],
       "flow_sinks": [
         {"kind":"return_value","text":"\"ok\".to_string()","line":3}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"ok\".to_string()", "Medium oracle found: snapshot assertion observes the changed behavior", "Related tests appear to reach render_status: renders_error_status_snapshot", "Related tests contain input values, but the equality-boundary discriminator is missing"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: \"ok\".to_string()", "Medium oracle found: snapshot assertion observes the changed behavior", "Related tests appear to reach render_status: renders_error_status_snapshot", "Related tests contain input values, but the equality-boundary check is missing"],
       "missing": ["Missing discriminator value: code == 299", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "let rendered = render_status(404);"

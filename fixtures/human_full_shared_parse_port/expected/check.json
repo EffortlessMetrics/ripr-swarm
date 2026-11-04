@@ -224,16 +224,16 @@
        },
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach parse_port: parses_valid_port"},
-        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary check is missing"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence error variant: Result::Err(\"zero port\")"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach parse_port: parses_valid_port", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Changed behavior appears to influence error variant: Result::Err(\"zero port\")", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `p == 0`; related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches error variant: Result::Err(\"zero port\") (line 4)", "related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port(\"8080\").unwrap(), 8080);", "source assertion argument value 8080 at line 15", "source function argument value input = \"8080\" at line 15", "missing discriminator p == 0: No related test call uses p equal to 0; observed p values: \"8080\"; target 0 value: 0"],
+      "evidence_path": ["reach yes: Related tests appear to reach parse_port: parses_valid_port", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence error variant: Result::Err(\"zero port\")", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `p == 0`; related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches error variant: Result::Err(\"zero port\") (line 4)", "related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port(\"8080\").unwrap(), 8080);", "source assertion argument value 8080 at line 15", "source function argument value input = \"8080\" at line 15", "missing discriminator p == 0: No related test call uses p equal to 0; observed p values: \"8080\"; target 0 value: 0"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(\"zero port\")","line":4}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence error variant: Result::Err(\"zero port\")", "Related tests appear to reach parse_port: parses_valid_port", "Related tests contain input values, but the equality-boundary discriminator is missing", "Strong oracle found: exact value or pattern assertion"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence error variant: Result::Err(\"zero port\")", "Related tests appear to reach parse_port: parses_valid_port", "Related tests contain input values, but the equality-boundary check is missing", "Strong oracle found: exact value or pattern assertion"],
       "missing": ["Missing discriminator value: p == 0"],
       "assertion_texts": {
         "15": "assert_eq!(parse_port(\"8080\").unwrap(), 8080);"

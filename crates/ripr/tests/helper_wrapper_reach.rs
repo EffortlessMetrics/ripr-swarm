@@ -754,9 +754,9 @@ fn buried_scalar_in_a_wrapper_argument_does_not_pair() -> Result<(), String> {
                 "{pin}: {finding}"
             );
             assert!(
-                finding["ripr"]["infect"]["summary"].as_str().is_some_and(
-                    |summary| summary.contains("equality-boundary discriminator is missing")
-                ),
+                finding["ripr"]["infect"]["summary"]
+                    .as_str()
+                    .is_some_and(|summary| summary.contains("equality-boundary check is missing")),
                 "{pin}: {finding}"
             );
         }
