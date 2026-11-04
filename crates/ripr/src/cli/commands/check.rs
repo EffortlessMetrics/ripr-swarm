@@ -2039,6 +2039,16 @@ fn check_inner(
         explicit.mode,
         worktree_run,
     );
+    let navigation = if format == OutputFormat::Agent {
+        navigation.with_agent_report_root(
+            &limited_check_input,
+            reusable_artifact,
+            explicit.mode,
+            worktree_run,
+        )
+    } else {
+        navigation
+    };
     // #5471: only the default human render prints the `ripr agent stub`
     // route, and only as the stub resolver decides it for that finding. The
     // resolver reads the files on disk, so a check of other bytes (a

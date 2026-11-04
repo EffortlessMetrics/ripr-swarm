@@ -714,6 +714,10 @@ fn check_format_agent_prints_the_compact_report() -> Result<(), String> {
         .find(|line| line.starts_with("next=ripr explain "))
         .ok_or_else(|| format!("top gap must carry a drill-in command: {text}"))?;
     assert!(next.contains("--diff "), "scope-bound command: {next}");
+    assert!(
+        next.contains(&fixture.0.display().to_string()),
+        "file-backed command must keep its bound root: {next}"
+    );
     assert!(!text.contains("ripr progress:"), "{text}");
     let full = run_check_with_env(&fixture, &["--format", "human-full", "--quiet"], None)?;
     assert!(
@@ -725,6 +729,74 @@ fn check_format_agent_prints_the_compact_report() -> Result<(), String> {
     // Deterministic: a second run is byte-identical.
     let again = run_check_with_env(&fixture, &["--format", "agent", "--quiet"], None)?;
     assert_eq!(agent.stdout, again.stdout);
+    Ok(())
+}
+
+#[test]
+fn agent_report_base_command_replays_from_repository_root() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    fixture_git_ok(&fixture.0, &["init", "-q", "-b", "main"])?;
+    fixture_git_ok(&fixture.0, &["config", "user.name", "RIPR test"])?;
+    fixture_git_ok(
+        &fixture.0,
+        &["config", "user.email", "ripr@example.invalid"],
+    )?;
+    let source = fixture.0.join("src/lib.rs");
+    std::fs::write(
+        &source,
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    fixture_git_ok(&fixture.0, &["add", "Cargo.toml", "src/lib.rs", "tests"])?;
+    fixture_git_ok(&fixture.0, &["commit", "-q", "-m", "base"])?;
+    std::fs::write(&source, "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n")
+        .map_err(|e| e.to_string())?;
+    fixture_git_ok(&fixture.0, &["add", "src/lib.rs"])?;
+    fixture_git_ok(&fixture.0, &["commit", "-q", "-m", "change"])?;
+    let root = fixture.0.display().to_string();
+    let output = ripr_default()
+        .args([
+            "check",
+            "--root",
+            &root,
+            "--base",
+            "HEAD~1",
+            "--committed",
+            "--format",
+            "agent",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    assert!(output.status.success(), "{}", stderr_text(&output));
+    let text = String::from_utf8_lossy(&output.stdout);
+    let next = text
+        .lines()
+        .find_map(|line| line.strip_prefix("next=ripr explain "))
+        .ok_or_else(|| format!("missing finding command: {text}"))?;
+    assert!(
+        next.starts_with("--root . --base 'HEAD~1' --committed"),
+        "{next}"
+    );
+    assert!(!next.contains(&root), "{next}");
+    let selector = next.split_whitespace().last().ok_or("missing selector")?;
+    let replay = ripr_default()
+        .args([
+            "explain",
+            "--root",
+            ".",
+            "--base",
+            "HEAD~1",
+            "--committed",
+            selector,
+        ])
+        .current_dir(&fixture.0)
+        .output()
+        .map_err(|e| e.to_string())?;
+    assert!(
+        replay.status.success(),
+        "replay failed: {}",
+        stderr_text(&replay)
+    );
     Ok(())
 }
 

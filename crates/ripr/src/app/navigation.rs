@@ -431,6 +431,28 @@ impl FindingNavigation {
         format!("{} {}", self.explain_prefix, shell_arg(selector))
     }
 
+    /// Agent reports shared outside this checkout can be replayed from the
+    /// analyzed repository's root. Keep file-backed inputs bound to their
+    /// original location; those inputs cannot generally travel with a report.
+    pub(crate) fn with_agent_report_root(
+        mut self,
+        input: &CheckInput,
+        artifact_path: Option<&Path>,
+        mode_explicit: bool,
+        worktree: bool,
+    ) -> Self {
+        if artifact_path.is_none()
+            && input.diff_file.is_none()
+            && input.perl_facts_path.is_none()
+            && input.git_candidate.is_none()
+            && !worktree
+        {
+            let args = navigation_args(input, None, mode_explicit, worktree, true);
+            self.explain_prefix = format!("ripr explain {args}");
+        }
+        self
+    }
+
     pub(crate) fn context_command(&self, selector: &str) -> String {
         format!("{} --at {}", self.context_prefix, shell_arg(selector))
     }
@@ -491,10 +513,10 @@ pub(crate) fn finding_navigation_with_worktree(
     mode_explicit: bool,
     worktree: bool,
 ) -> FindingNavigation {
-    let args = navigation_args(input, artifact_path, mode_explicit, worktree);
+    let args = navigation_args(input, artifact_path, mode_explicit, worktree, false);
     // `ripr check` has no `--from`: the listing always re-runs the original
     // scope, even when the drill-in commands replay a written artifact.
-    let list_args = navigation_args(input, None, mode_explicit, worktree);
+    let list_args = navigation_args(input, None, mode_explicit, worktree, false);
     FindingNavigation {
         explain_prefix: format!("ripr explain {args}"),
         context_prefix: format!("ripr context {args}"),
@@ -531,13 +553,18 @@ fn navigation_args(
     artifact_path: Option<&Path>,
     mode_explicit: bool,
     worktree: bool,
+    agent_report_root: bool,
 ) -> String {
     // The drill-in is pasted after the listing, often from another directory,
     // so it names the repository the check resolved, not the typed relative
     // spelling (#3948).
     let mut args = vec![format!(
         "--root {}",
-        shell_arg(&bound_root(&input.root.display().to_string()))
+        shell_arg(&if agent_report_root {
+            ".".to_string()
+        } else {
+            bound_root(&input.root.display().to_string())
+        })
     )];
 
     if let Some(artifact_path) = artifact_path {
@@ -1231,6 +1258,42 @@ mod tests {
             command.contains("--diff -"),
             "stdin sentinel must stay `-`: {command}"
         );
+    }
+
+    #[test]
+    fn agent_report_root_does_not_unbind_nonportable_inputs_or_worktrees() {
+        let input = CheckInput {
+            root: PathBuf::from("external-repo"),
+            base: Some("base-ref".to_string()),
+            ..CheckInput::default()
+        };
+        let original = finding_navigation_with_worktree(&input, None, false, false);
+        let portable = original
+            .clone()
+            .with_agent_report_root(&input, None, false, false);
+        assert!(
+            portable
+                .explain_command("probe:id")
+                .contains("--root . --base base-ref --committed")
+        );
+        let mut with_diff = input.clone();
+        with_diff.diff_file = Some(PathBuf::from("change.diff"));
+        let mut with_facts = input.clone();
+        with_facts.perl_facts_path = Some(PathBuf::from("facts.json"));
+        for (case, artifact, worktree) in [
+            (&with_diff, None, false),
+            (&with_facts, None, false),
+            (&input, Some(Path::new("report.json")), false),
+            (&input, None, true),
+        ] {
+            let bound = finding_navigation_with_worktree(case, artifact, false, worktree);
+            let expected = bound.explain_command("probe:id");
+            let actual = bound
+                .with_agent_report_root(case, artifact, false, worktree)
+                .explain_command("probe:id");
+            assert_eq!(actual, expected);
+            assert!(!actual.contains("--root . "), "{actual}");
+        }
     }
 
     /// #7257: selecting provenance from `worktree_explicitly_provided` alone

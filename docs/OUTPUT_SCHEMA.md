@@ -913,7 +913,12 @@ complete branches, and an empty complete stream still prints its
 text report for coding agents. It is not JSON and carries no `schema_version`;
 its stability contract is the line grammar below. It is a pure projection of
 the same triage selector, candidate-actionable filter and scope-bound drill-in
-commands `--format human` uses, so it adds no verdict, class or ranking. It is
+commands `--format human` uses, so it adds no verdict, class or ranking. For
+committed-history reports without external input files, its explain command uses
+`--root .` and is intended to run from the matching repository root at the
+analyzed revision; the base and other selectors are preserved. Worktree and
+file-backed inputs keep their bound paths.
+It is
 diff-scoped, refuses `--suppression-policy` like SARIF and the badge formats,
 and has no legend or repeated disclaimers.
 
