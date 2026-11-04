@@ -334,9 +334,10 @@ fn gate_acknowledgeable_keeps_waived_candidate_visible() -> Result<(), String> {
 
 #[test]
 fn gate_structured_acknowledgement_scopes_to_matching_canonical_gap() -> Result<(), String> {
+    // Concurrent tests share one hermetic root, so each ledger file name is unique to its test.
     let (_fixture, mut input) = fixture_input(GateMode::Acknowledgeable)?;
     let root = input.root.clone();
-    let ledger_path = root.join("policy-acknowledgements.toml");
+    let ledger_path = root.join("scoped-match-acknowledgements.toml");
     if let Some(parent) = ledger_path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create policy dir: {err}"))?;
     }
@@ -353,7 +354,7 @@ created_at = "2026-01-01"
 "#,
     )
     .map_err(|err| format!("write acknowledgements ledger: {err}"))?;
-    input.acknowledgements = Some(PathBuf::from("policy-acknowledgements.toml"));
+    input.acknowledgements = Some(PathBuf::from("scoped-match-acknowledgements.toml"));
     let report = build_gate_decision_report(&input)?;
     assert_eq!(report.status, "acknowledged");
     assert_eq!(report.summary.acknowledged, 1);
@@ -373,7 +374,7 @@ created_at = "2026-01-01"
 fn gate_structured_acknowledgement_does_not_ack_unrelated_canonical_gap() -> Result<(), String> {
     let (_fixture, mut input) = fixture_input(GateMode::Acknowledgeable)?;
     let root = input.root.clone();
-    let ledger_path = root.join("policy-acknowledgements.toml");
+    let ledger_path = root.join("unrelated-gap-acknowledgements.toml");
     fs::write(
         &ledger_path,
         r#"
@@ -387,7 +388,7 @@ created_at = "2026-01-01"
 "#,
     )
     .map_err(|err| format!("write acknowledgements ledger: {err}"))?;
-    input.acknowledgements = Some(PathBuf::from("policy-acknowledgements.toml"));
+    input.acknowledgements = Some(PathBuf::from("unrelated-gap-acknowledgements.toml"));
     let report = build_gate_decision_report(&input)?;
     assert_eq!(report.status, "blocked");
     assert_eq!(report.summary.blocking, 1);

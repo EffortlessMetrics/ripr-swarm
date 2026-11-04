@@ -117,7 +117,7 @@ pub(crate) fn validate_ledger_root(
         && normalize_root_for_comparison(root) != normalize_root_for_comparison(gate_root)
     {
         return Err(format!(
-            "{LIMITATION_WRONG_ROOT}: structured acknowledgements `{display}` root `{root}` does not match gate root `{gate_root}`"
+            "{LIMITATION_WRONG_ROOT}: structured acknowledgements `{display}` root `{root}` does not match gate root `{gate_root}`; fix the ledger root or run the gate from the matching repository root"
         ));
     }
     Ok(())
@@ -134,7 +134,7 @@ pub(crate) fn load_structured_acknowledgements_from_text(
     })?;
     if raw.schema_version != SCHEMA_VERSION {
         return Err(format!(
-            "structured acknowledgements `{display}` has unsupported schema_version {}; expected {SCHEMA_VERSION}",
+            "structured acknowledgements `{display}` has unsupported schema_version {}; expected {SCHEMA_VERSION}; set schema_version to {SCHEMA_VERSION} in the ledger",
             raw.schema_version
         ));
     }
@@ -188,14 +188,18 @@ fn validate_record_fields(record: &RawRecord, display: &str, index: usize) -> Re
         validate_optional_date(review, &format!("{prefix} review_after"))?;
     }
     if record.max_matches == 0 {
-        return Err(format!("{prefix} max_matches must be at least 1 (got 0)"));
+        return Err(format!(
+            "{prefix} max_matches must be at least 1 (got 0); set max_matches to 1 or more"
+        ));
     }
     Ok(())
 }
 
 fn require_non_blank(value: &str, field: &str) -> Result<(), String> {
     if value.trim().is_empty() {
-        Err(format!("{field} must be non-empty"))
+        Err(format!(
+            "{field} must be non-empty; add a value for it in the acknowledgements ledger"
+        ))
     } else {
         Ok(())
     }
@@ -203,12 +207,14 @@ fn require_non_blank(value: &str, field: &str) -> Result<(), String> {
 
 fn validate_optional_date(value: &str, field: &str) -> Result<(), String> {
     if value.trim().is_empty() {
-        Err(format!("{field} must be non-empty"))
+        Err(format!(
+            "{field} must be non-empty; add a value for it in the acknowledgements ledger"
+        ))
     } else if is_iso_date(value) {
         Ok(())
     } else {
         Err(format!(
-            "{field} must be an ISO-8601 YYYY-MM-DD date (got `{value}`)"
+            "{field} must be an ISO-8601 YYYY-MM-DD date (got `{value}`); use a date such as 2026-12-31"
         ))
     }
 }
