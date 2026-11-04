@@ -642,3 +642,18 @@ fn owner_side_casts_and_decorators_record_no_entry() {
         "decorated getter"
     );
 }
+
+#[test]
+fn typed_array_declaration_preserves_factory_getter_and_index_write_refuses() -> Result<(), String>
+{
+    let typed = READ_TEST.replace(
+        "  let runs = 0;",
+        "  const notes: string[] = [];\n  let runs = 0;",
+    );
+    assert_related("factory-typed-array", CACHE, &typed)?;
+    let replaced = typed.replace(
+        "  expect(box.value).toBe(1);",
+        "  box['value'] = 42 as never;\n  expect(box.value).toBe(1);",
+    );
+    assert_no_static_path("factory-computed-replacement", CACHE, &replaced)
+}

@@ -46,7 +46,7 @@
         {"kind":"struct_field","text":"self.retries = n * 2","line":8}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: self.retries = n * 2", "Discriminator unconfirmed: no field-value assertion observes the constructed field", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach retries: builder_leaves_the_callers_copy_alone"],
-      "missing": ["Missing discriminator value: self.retries = n * 2", "No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
+      "missing": ["Missing check value: self.retries = n * 2", "No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
       "assertion_texts": {
         "6": "o.retries(5);",
         "7": "assert_eq!(o.retries, 3);"

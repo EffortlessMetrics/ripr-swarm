@@ -724,7 +724,14 @@ under `rust_indirect_owner_call_unresolved`:
 
 - **function value**: a non-ignored test with an assertion, in the owner's file
   or an integration test, names the owner without calling it: an argument
-  (`.map(inc)`) or an untyped binding (`let f = inc; f(2)`; a typed `fn` pointer binding is left to RIPR-SPEC-0115). A call
+  (`.map(inc)`) or an untyped binding (`let f = inc; f(2)`; a typed `fn` pointer binding is left to RIPR-SPEC-0115).
+  A bounded `.map(owner)` chain that the owner pin credits (RIPR-SPEC-0197,
+  #9478 slice A) is `exposed` before this limit is consulted; a refused chain
+  that still names the owner as a value (async or method owners, non-matching or
+  non-literal expectations, a change invisible at the first input) keeps this
+  limit. A chain whose path is unresolved, shadowed by a local binding, or
+  qualified to a different same-leaf function is not a value use of the owner and
+  is decided by the ordinary classification rules. A call
   `inc(..)`, a macro `inc!`, a method `.inc`, a `use` declaration, a field label
   `inc:`, a `fn inc` definition and a test that binds a local or parameter
   named `inc` are not value uses. A mention only in production code keeps the
@@ -741,7 +748,14 @@ under `rust_indirect_owner_call_unresolved`:
   different same-name definition; unresolved reexports and aliases retain the
   limit. A test body the shared parser refuses proves no declaration range, so
   a single-line `use` mention keeps its lexical exclusion there and the body's
-  remaining declarations stay unproven. This is not general name resolution or
+  remaining declarations stay unproven. The body of a `macro_rules!` definition
+  is token text, not a mention: it is inert only when the macro has no
+  `#[macro_export]` and its name occurs as no identifier token (comments and
+  strings counted) outside its own definition, so an unused macro cannot
+  withhold the gap (#12231). Any other occurrence, including a forwarded
+  `forward!(name)` that expands `$m!()` and a comment-separated `name/**/!()`,
+  keeps the limit, as does any scan containing `include!` or a `#[path]` module,
+  whose unseen text may invoke the macro. This is not general name resolution or
   macro expansion (#10162).
 - **generated owner**: the changed line lies in no function of its file and the
   changed expression is an item-position macro invocation
@@ -760,11 +774,14 @@ under `rust_indirect_owner_call_unresolved`:
   verifies as a poll-to-completion loop is followed to the future's output
   (#9478); every other helper leaves the finding limited rather than credited.
 
-These forms are limited, not credited: crediting needs the iterator chain or
-the executor's return evaluated, and a wrong credit is worse than an honest
-unknown. Both `credited` and `limited` satisfy the corpus rows
-`shape-hostile-owner-as-path-value`, `shape-hostile-owner-through-fn-pointer`,
-`shape-async-fn-block-on` and `shape-hostile-macro-defined-owner`.
+These forms are limited, not credited: crediting an unresolved iterator path,
+an executor's return evaluated without a verified poll loop, or a macro-generated
+owner still needs evidence ripr does not have, and a wrong credit is worse than
+an honest unknown. Both `credited` and `limited` satisfy the corpus rows
+`shape-hostile-owner-through-fn-pointer`,
+`shape-async-fn-block-on` and `shape-hostile-macro-defined-owner`; bounded
+`.map(owner)` with a resolved path and literal expectation satisfies
+`shape-hostile-owner-as-path-value` as `credited`.
 
 Two reading defects behind a neighbouring row are fixed instead of limited:
 
@@ -1279,8 +1296,8 @@ Integration: `crates/ripr/tests/owner_pin_execution.rs`
 `gap_admission.rs::tests::a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown`.
 
 `crates/ripr/tests/indirect_owner_limit.rs` (function value, pointer binding,
-local and known executors, item macro, `cfg_attr` and trailing-comment
-controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
+local and known executors, item macro, inert-macro, `cfg_attr` and
+trailing-comment controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 

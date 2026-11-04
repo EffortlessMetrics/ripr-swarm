@@ -1,0 +1,11 @@
+# Process integration of the existing Kani lane; synthetic child, no solver claim.
+[[extend]]
+id = "RIPR-SPEC-0371"
+code = ["xtask/src/kani_lane.rs"]
+tests = [
+  "xtask/tests/kani_lane_process.rs::kani_runner_retains_unique_success_and_explicit_failure",
+  "xtask/tests/kani_lane_process.rs::kani_runner_refuses_success_text_after_nonzero_or_signal",
+  "xtask/tests/kani_lane_process.rs::kani_runner_refuses_ambiguous_sources_in_either_native_order",
+  "xtask/tests/kani_lane_process.rs::kani_runner_refuses_repeated_blocks_and_absent_results",
+  "xtask/tests/kani_lane_process.rs::kani_runner_preserves_completed_rows_after_a_real_timeout",
+]

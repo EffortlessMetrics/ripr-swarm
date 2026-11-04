@@ -159,7 +159,7 @@ The artifact embeds an input identity computed at check time:
   input option fails compilation until it is explicitly classified;
 - `config_identity_version` and `config_identity_hash` — a closed,
   versioned allowlist contract over `ripr.toml`: the finding-affecting
-  fields (`oracles.*`, production-like targets and test harnesses,
+  fields (`oracles.*`, `overrides.oracles`, production-like targets and test harnesses,
   Rust generated patterns and `handwritten_files`,
   `typescript.resolve_tsconfig_paths`, `perl.*`),
   canonically serialized with defaults materialized, sorted, and hashed.
@@ -396,8 +396,9 @@ even though the `check --json` render caps related tests at 8.
   — the closed field-enumeration contract.
 - `crates/ripr/src/config/tests.rs::check_artifact_config_identity_hash_tracks_finding_affecting_fields_only`
   — finding-affecting changes invalidate; render-only changes do not.
-- `crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain_and_context_reuse_byte_identical`
-  — end-to-end three-step flow with byte-identical reuse.
+- `crates/ripr/tests/cli_smoke.rs::check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_source_navigation`
+  — end-to-end three-step flow: finding detail matches fresh runs while
+  navigation names the source identity used for each invocation (#2681).
 - `crates/ripr/tests/cli_smoke.rs::explain_from_fails_closed_on_tampered_identity`
   and `check_write_artifact_rejects_unsupported_run_shapes` — CLI-level
   fail-closed paths.

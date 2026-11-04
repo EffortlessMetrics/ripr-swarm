@@ -24,9 +24,9 @@ Start here:
     changed state update add the same amount; an exact assertion on those inputs passes on both
     versions. Add an input on which the two updates differ
   Related test: tests/cart.test.ts:4 adds nothing
-  Next step — TypeScript preview advisory: add a test that exercises the changed behavior with an
-    exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is
-    emitted until the target shape is explicit
+  Next step — TypeScript preview advisory: the related test's check is already strong, but ripr
+    cannot tie it to the changed line; exercise the changed branch with an input that flips it. No
+    actionable repair packet is emitted until the target shape is explicit
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -43,6 +43,7 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_coincident_state_update/input --diff <cwd>/fixtures/ts_coincident_state_update/diff.patch --mode fast probe:src_cart.ts:typescript_preview:2c9269a6
   ripr context --root <cwd>/fixtures/ts_coincident_state_update/input --diff <cwd>/fixtures/ts_coincident_state_update/diff.patch --mode fast --at probe:src_cart.ts:typescript_preview:2c9269a6
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above

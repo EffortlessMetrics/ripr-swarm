@@ -1108,6 +1108,7 @@ fn byte_offset_of_line(source: &str, line: usize) -> Option<usize> {
 /// build a stub for the return on that line instead of substituting the
 /// nearest gap (#8444 item 2).
 fn return_value_direct_at_probe_line(
+    root: &Path,
     candidates: &[AtCandidate<'_>],
     file: &str,
     line: usize,
@@ -1321,7 +1322,7 @@ fn resolve_at(
         let on_line_return_value = !candidates.is_empty();
         if !on_line_return_value
             && let Some(resolution) =
-                return_value_direct_at_probe_line(&in_file, file, line, &source, root)
+                return_value_direct_at_probe_line(root, &in_file, file, line, &source)
         {
             return Ok(resolution);
         }
@@ -1416,7 +1417,7 @@ fn next_repair_for(
     stub: &RustTestStub,
 ) -> Option<StubNextRepair> {
     if AgentBriefPolicy::from_config(config)
-        .omission_reason_for_class(entry.class)
+        .omission_reason_for_class(entry.class, Some(entry.seam.file()))
         .is_some()
     {
         return None;

@@ -57,27 +57,38 @@ pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandErr
 /// to what [`run_agent_card`] writes on success.
 pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, CommandError> {
     ensure_command_root(&options.root, "agent card")?;
+    // Any id `ripr check` or `ripr pilot` prints works here: a finding id, a
+    // gap id or a `file:line` goes through the same shared resolver `ripr
+    // agent repair` uses; an exact seam id passes through untouched. A refused
+    // mapping is a typed `seam_not_found` refusal that keeps the id the caller
+    // typed, and a resolved id replaces it so the card matches the exact-id run.
+    let options = match super::translate_seam_id_for(
+        super::SeamIdSurface::Card,
+        &options.root,
+        &options.seam_id,
+    ) {
+        Ok(resolved) => AgentCardOptions {
+            seam_id: resolved,
+            ..options
+        },
+        // The resolver could not run (broken config, truncated inventory,
+        // analysis error): that says nothing about the id, so it stays the
+        // operational failure (exit 2) the card always reported.
+        Err(super::SeamIdTranslateError::Operational(message)) => {
+            return Err(CommandError::Failure(message));
+        }
+        Err(error) => {
+            return Err(card_refusal_error(
+                &options,
+                AgentCardRefusalKind::SeamNotFound,
+                error.message(),
+            ));
+        }
+    };
     let (card, hold) = match render_agent_card(&options) {
         Ok(card) => card,
         Err(AgentCardError::Refusal { kind, message }) => {
-            // A deliberate named refusal maps to the decision exit code 3,
-            // as the verify/verify-execute/repair siblings do. Under
-            // `--json` the typed envelope is the machine answer and goes to
-            // stdout, like `check`/`agent packet`; the prose message still
-            // reaches stderr through `CommandError` as the human rendering.
-            if options.json {
-                match render_agent_card_refusal(&options, kind, &message) {
-                    // A JSON document, not report text: bidi characters become
-                    // JSON escapes so the envelope stays parseable (#6309).
-                    Ok(rendered) => {
-                        write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?
-                    }
-                    // No envelope could be produced, so no machine answer
-                    // exists: an operational failure (exit 2), not decision 3.
-                    Err(render_error) => return Err(CommandError::Failure(render_error)),
-                }
-            }
-            return Err(CommandError::Decision(message));
+            return Err(card_refusal_error(&options, kind, &message));
         }
         Err(AgentCardError::Operational(message)) => {
             return Err(CommandError::Failure(message));
@@ -110,6 +121,33 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
         rendered.push('\n');
     }
     Ok(rendered)
+}
+
+/// A deliberate named refusal maps to the decision exit code 3, as the
+/// verify/verify-execute/repair siblings do. Under `--json` the typed envelope
+/// is the machine answer and goes to stdout, like `check`/`agent packet`; the
+/// prose message still reaches stderr through `CommandError` as the human
+/// rendering.
+fn card_refusal_error(
+    options: &AgentCardOptions,
+    kind: AgentCardRefusalKind,
+    message: &str,
+) -> CommandError {
+    if options.json {
+        match render_agent_card_refusal(options, kind, message) {
+            // A JSON document, not report text: bidi characters become JSON
+            // escapes so the envelope stays parseable (#6309).
+            Ok(rendered) => {
+                if let Err(failure) = write_stdout_refusal_json(rendered) {
+                    return CommandError::Failure(failure);
+                }
+            }
+            // No envelope could be produced, so no machine answer exists: an
+            // operational failure (exit 2), not decision 3.
+            Err(render_error) => return CommandError::Failure(render_error),
+        }
+    }
+    CommandError::Decision(message.to_string())
 }
 
 /// Render the versioned typed-refusal document of an `agent card` refusal:
@@ -199,7 +237,7 @@ fn render_agent_card(
         })?;
 
     let policy = AgentBriefPolicy::from_config(&config);
-    if let Some(reason) = policy.omission_reason_for_class(entry.class) {
+    if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         // #5007 / #7736: a policy decision has its own recovery guidance;
         // re-listing seams cannot fix it.
         return Err(AgentCardError::refusal(
