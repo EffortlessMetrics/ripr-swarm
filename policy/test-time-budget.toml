@@ -57,10 +57,6 @@ test = "xtask::ripr_public_guide_contract packaged_help_target_runs_every_case_a
 recorded_seconds = 111.768
 
 [[baseline]]
-test = "xtask::bin/xtask policy::file_policy::tests::test_covered_by_production_wrapper_enumerates_through_cargo"
-recorded_seconds = 107.655
-
-[[baseline]]
 test = "xtask::support_tier_fast_route committed_spec_declarations_reach_actual_check_fast_dispatch"
 recorded_seconds = 93.984
 
