@@ -468,6 +468,7 @@ pub(crate) use test_styles::attributes_define_test;
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;
 pub use index::{FactSlice, FileData, FileFactsView};
+pub(crate) use local_test_alias::imported_test_alias_crate;
 #[cfg(test)]
 pub(crate) use model::OwnedRustIndex;
 pub use model::{
