@@ -4287,3 +4287,47 @@ fn loop_boundary_same_line_identity_keeps_prior_classification() -> Result<(), S
     }
     Ok(())
 }
+
+#[test]
+fn loop_boundary_replaced_qualified_owner_does_not_use_value_pin() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for statements in [
+        "subject.largest = lambda xs: 5\n    assert subject.largest([1, 5, 3]) == 5",
+        "subject = fake\n    assert subject.largest([1, 5, 3]) == 5",
+    ] {
+        let tests =
+            format!("import src.subject as subject\n\ndef test_largest():\n    {statements}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_rebound_import_alias_does_not_use_value_pin() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest as biggest\n\ndef test_largest():\n    biggest = fake\n    assert biggest([1, 5, 3]) == 5\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}

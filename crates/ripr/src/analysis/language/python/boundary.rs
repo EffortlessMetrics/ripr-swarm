@@ -2500,7 +2500,13 @@ fn is_direct_integer_sequence_assertion(
         let Some(callee) = callee_name(&call.func) else {
             return false;
         };
-        if !owner_call_names(owner, candidate.test, false).contains(&callee)
+        let bindings = &candidate.test.constant_rebinding;
+        let Some(root) = callee.split('.').next() else {
+            return false;
+        };
+        if !owner_module_callees(candidate.test, owner).contains(&callee)
+            || bindings.assigns_attribute(&owner.name)
+            || bindings.rebinds(root)
             || !call.keywords.is_empty()
         {
             return false;
