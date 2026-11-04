@@ -1,4 +1,4 @@
 <!-- section: Fixed -->
 - Python preview reports unknown infection for an unresolved comparison in a closed loop-selection shape
-  observed only by direct integer-sequence or integer-tuple value assertions, rather than crediting
+  observed only by direct integer-list or integer-tuple value assertions, rather than crediting
   an unestablished equality boundary (#12954).

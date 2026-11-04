@@ -4168,3 +4168,27 @@ fn loop_boundary_numeric_tuple_and_discarded_call() -> Result<(), String> {
     assert_eq!(finding.related_tests.len(), 2);
     Ok(())
 }
+
+#[test]
+fn loop_boundary_keeps_identity_assertion_alongside_numeric_pin() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let fixture = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n\n";
+    for tests in [
+        format!(
+            "{fixture}def test_numeric():\n    assert largest([1, 5, 3]) == 5\n\ndef test_identity():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n"
+        ),
+        format!(
+            "{fixture}def test_both():\n    first, second = Item(5), Item(5)\n    assert largest([1, 5, 3]) == 5\n    assert largest([first, second]) is first\n"
+        ),
+    ] {
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    }
+    Ok(())
+}

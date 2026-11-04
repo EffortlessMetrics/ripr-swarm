@@ -2418,26 +2418,27 @@ pub(super) fn unresolved_loop_list_boundary(
     }
     let constants = unrebound_constants(owner, candidates);
     let (rows, _) = strong_owner_call_rows_with_gaps(owner, &constants, candidates, focus);
-    let strong_candidates: Vec<_> = candidates
+    let oracle_candidates: Vec<_> = candidates
         .iter()
-        .filter(|candidate| {
-            candidate.relation.uses_oracle()
-                && select_relevant_assertion(&candidate.test.assertions, Some(focus))
-                    .assertion()
-                    .is_some_and(|assertion| {
-                        assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
-                    })
-        })
+        .filter(|candidate| candidate.relation.uses_oracle())
         .collect();
-    !strong_candidates.is_empty()
-        && strong_candidates.iter().all(|candidate| {
+    !oracle_candidates.is_empty()
+        && oracle_candidates.iter().all(|candidate| {
+            // A second assertion may observe object identity, even if it is weaker
+            // than the selected numeric pin. Do not discard it as irrelevant.
+            if candidate.test.assertions.len() != 1 {
+                return false;
+            }
             let Some(assertion) =
                 select_relevant_assertion(&candidate.test.assertions, Some(focus)).assertion()
             else {
                 return false;
             };
-            // Only the selected assertion supplies inputs. Other calls, including
-            // discarded calls, neither supply nor prevent a witness.
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
+                return false;
+            }
+            // Only the selected assertion supplies inputs. Discarded calls neither
+            // supply nor prevent a witness.
             rows.iter().any(|row| {
                 row.file == candidate.test.file
                     && row.line == assertion.line
