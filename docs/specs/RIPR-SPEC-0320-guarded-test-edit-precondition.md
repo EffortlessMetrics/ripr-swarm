@@ -68,8 +68,9 @@ or mutated value is held to the builder's rules:
   `failed` names `parse_validation_failed` / `format_validation_failed`;
   `not_run`, including an omitted field, is `source_precondition_missing`.
 - **Target.** `test_file` must be a contained, normalized Rust test source: a
-  `.rs` file under a `tests` directory segment or named `*_test.rs` /
-  `*_tests.rs`, with no absolute root, drive prefix, empty, `.` or `..` segment.
+  `.rs` file under a `tests` directory segment, with no absolute root, drive
+  prefix, empty, `.` or `..` segment. A naming convention (`*_test.rs`) cannot
+  establish a test role (RIPR-SPEC-0153), so such files are not recognized.
   The sole allowed edit surface must equal it.
 - **Source.** The original text and/or its `sha256:` digest (64 lowercase hex)
   must be retained, and agree when both are. `verify_source_text` compares the

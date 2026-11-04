@@ -319,8 +319,10 @@ fn contained_relative_path(path: &str) -> Option<String> {
 }
 
 /// A contained, normalized Rust test source path: a `.rs` file under a `tests`
-/// directory segment, or named `*_test.rs` / `*_tests.rs`. `tests/readme.md`,
-/// `tests/../src/lib.rs` and `../other/tests/demo.rs` are not recognized.
+/// directory segment (the integration-test layout). A naming convention such as
+/// `*_test.rs` cannot establish a test role (RIPR-SPEC-0153), so it is not
+/// recognized here; `tests/readme.md`, `tests/../src/lib.rs` and
+/// `../other/tests/demo.rs` are not recognized either.
 pub fn is_recognized_rust_test_source_file(path: &str) -> bool {
     let Some(normalized) = contained_relative_path(path) else {
         return false;
@@ -331,10 +333,9 @@ pub fn is_recognized_rust_test_source_file(path: &str) -> bool {
     if !file_name.ends_with(".rs") || file_name == ".rs" {
         return false;
     }
-    let under_tests_dir = normalized
+    normalized
         .rsplit_once('/')
-        .is_some_and(|(directory, _)| directory.split('/').any(|segment| segment == "tests"));
-    under_tests_dir || file_name.ends_with("_test.rs") || file_name.ends_with("_tests.rs")
+        .is_some_and(|(directory, _)| directory.split('/').any(|segment| segment == "tests"))
 }
 
 pub fn try_build_exact_test_edit_precondition(
@@ -1231,8 +1232,6 @@ mod tests {
             "tests/demo.rs",
             "crates/ripr/tests/demo.rs",
             "tests\\demo.rs",
-            "src/widget_test.rs",
-            "src/widget_tests.rs",
         ] {
             assert!(is_recognized_rust_test_source_file(accepted), "{accepted}");
         }
@@ -1251,6 +1250,8 @@ mod tests {
             "",
             "src/lib.rs",
             "mytests/demo.rs",
+            "src/widget_test.rs",
+            "src/widget_tests.rs",
             "tests/.rs",
         ] {
             assert!(!is_recognized_rust_test_source_file(rejected), "{rejected}");
