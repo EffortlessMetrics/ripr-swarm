@@ -14,6 +14,15 @@ that when producer evidence already owns one exact assertion site and one exact
 replacement, a bounded test-only `WorkspaceEdit` could reduce friction without
 opening production repair, imports, or multi-file patches.
 
+## Alternatives Considered
+
+- Keep every surface read-only (status quo). Safe, but leaves the copy/paste
+  step for producer-owned single-assertion replacements.
+- Allow multi-file or production edits behind the same opt-in. Rejected: the
+  evidence only owns one assertion site, so wider edits would exceed it.
+- Let the client re-derive the replacement. Rejected: it moves the decision out
+  of the producer-owned validator.
+
 ## Decision
 
 Propose one additional edit class, gated behind explicit client capability and a
