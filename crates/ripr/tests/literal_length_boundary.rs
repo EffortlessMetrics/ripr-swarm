@@ -129,6 +129,14 @@ fn plain_error_type_keeps_literal_reference_guard() -> Result<(), String> {
     let source = format!("{}\nenum InputError {{ Empty, TooLong }}\n", candidate());
     let positive = finding(&source)?;
     assert_eq!(positive.class, ExposureClass::Exposed, "{positive:#?}");
+    assert!(
+        positive
+            .activation
+            .observed_values
+            .iter()
+            .any(|fact| fact.text.contains("via as_bytes().len()")),
+        "{positive:#?}"
+    );
     for extra in [
         "const POINTER: fn(&str, usize) -> bool = fits;",
         "fn hidden() { let alias = fits; let _ = alias(\"abc\", 3); }",
