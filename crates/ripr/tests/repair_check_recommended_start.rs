@@ -419,6 +419,24 @@ fn a_refused_field_seam_names_the_stub_or_why_there_is_none() -> Result<(), Stri
     {
         return Err(format!("builder must say why there is no stub:\n{err}"));
     }
+    // Two field seams in one state with different next steps (a stub
+    // command for the constructor, the stub's refusal for the by-value
+    // setter) group, and the group line says the others may differ.
+    let both = changed.replace("timeout: 30,", "timeout: 31,");
+    let mixed = repo("buildermixed", BUILDER_BASE, &both, BUILDER_TEST, true)?;
+    let err = text(&ripr(&mixed.root, &["repair"])?.stderr);
+    let grouped = err.lines().any(|line| {
+        line.contains(
+            "other gaps in the same state; the next step may differ for them, see `ripr check`",
+        )
+    });
+    if !grouped {
+        return Err(format!("mixed hints must be flagged in the group:\n{err}"));
+    }
+    // Same hint kind: no flag.
+    if text(&ripr(&builder.root, &["repair"])?.stderr).contains("may differ for them") {
+        return Err("identical hints must not claim they differ".to_string());
+    }
     // Negative: a field seam with more missing than the field value (no
     // tests at all) keeps the bare label and names no field stub.
     let bare = repo("fieldbare", FIELD_BASE, FIELD_NEW, "", true)?;
