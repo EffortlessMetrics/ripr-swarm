@@ -13,7 +13,7 @@ const REPAIR_ATTEMPT: &str = "schemas/ripr/repair-attempt.schema.json";
 const REPAIR_ASSURANCE: &str = "schemas/ripr/repair-assurance.schema.json";
 const CHECK_SCHEMA: &str = "schemas/ripr/check.schema.json";
 const ACTION_CONTRACT: &str = "crates/ripr/src/lsp/action_contract.rs";
-const COMMAND_SPEC: &str = "crates/ripr/src/domain/command_spec.rs";
+const COMMAND_SPEC: &str = "crates/ripr-contract/src/domain/command_spec.rs";
 const FEEDBACK: &str = "crates/ripr/src/output/feedback.rs";
 const DIAGNOSTICS: &str = "crates/ripr/src/lsp/diagnostics.rs";
 
@@ -51,7 +51,7 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     IdentityRecord {
         kind: IdentityKind::CanonicalItemId,
         canonical_type: "domain::canonical_item::CanonicalItemId",
-        owner_path: "crates/ripr/src/domain/canonical_item.rs",
+        owner_path: "crates/ripr-contract/src/domain/canonical_item.rs",
         owner_issue: "#1932/#4804 (records PR-era Lane 1 gap identity; typed wrapper is #4805)",
         portability: PortabilityClass::Portable,
         semantic_inputs: &[
@@ -142,7 +142,7 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     IdentityRecord {
         kind: IdentityKind::FindingId,
         canonical_type: "domain::support::ProbeId",
-        owner_path: "crates/ripr/src/domain/support.rs",
+        owner_path: "crates/ripr-contract/src/domain/support.rs",
         owner_issue: "#1932 (producer finding/probe identity; typed CanonicalItemId family is #4805)",
         portability: PortabilityClass::Portable,
         semantic_inputs: &["owner", "probe_family", "changed_span"],
@@ -252,7 +252,7 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     IdentityRecord {
         kind: IdentityKind::AnalysisAttemptId,
         canonical_type: "domain::analysis_execution_identity::AnalysisAttemptId",
-        owner_path: "crates/ripr/src/domain/analysis_execution_identity.rs",
+        owner_path: "crates/ripr-contract/src/domain/analysis_execution_identity.rs",
         owner_issue: "#1603/#1765/#4807",
         portability: PortabilityClass::SessionBound,
         semantic_inputs: &["refresh_generation", "accepted_request_identity"],
@@ -318,7 +318,7 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     IdentityRecord {
         kind: IdentityKind::CompletedAnalysisSnapshotId,
         canonical_type: "domain::analysis_execution_identity::CompletedAnalysisSnapshotId",
-        owner_path: "crates/ripr/src/domain/analysis_execution_identity.rs",
+        owner_path: "crates/ripr-contract/src/domain/analysis_execution_identity.rs",
         owner_issue: "#1765/#1602/#4807",
         portability: PortabilityClass::SnapshotBound,
         semantic_inputs: &["completed_analysis_inputs", "result_commitment"],
@@ -454,7 +454,7 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     IdentityRecord {
         kind: IdentityKind::DiagnosticResultId,
         canonical_type: "domain::analysis_execution_identity::DiagnosticResultId",
-        owner_path: "crates/ripr/src/domain/analysis_execution_identity.rs",
+        owner_path: "crates/ripr-contract/src/domain/analysis_execution_identity.rs",
         owner_issue: "#1565/#1566/#4807",
         portability: PortabilityClass::TransportBound,
         semantic_inputs: &[
@@ -514,7 +514,7 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     IdentityRecord {
         kind: IdentityKind::ContinuationId,
         canonical_type: "domain::analysis_execution_identity::ContinuationId",
-        owner_path: "crates/ripr/src/domain/analysis_execution_identity.rs",
+        owner_path: "crates/ripr-contract/src/domain/analysis_execution_identity.rs",
         owner_issue: "#1603/#1899/#4807",
         portability: PortabilityClass::TransportBound,
         semantic_inputs: &["snapshot", "profile", "budget", "page_order"],
@@ -567,7 +567,7 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     IdentityRecord {
         kind: IdentityKind::CommandId,
         canonical_type: "domain::command_spec::CommandSpec.command_id",
-        owner_path: "crates/ripr/src/domain/command_spec.rs",
+        owner_path: "crates/ripr-contract/src/domain/command_spec.rs",
         owner_issue: "#1617/#1754/#4808",
         portability: PortabilityClass::Portable,
         semantic_inputs: &[
@@ -666,7 +666,7 @@ pub const PRODUCTION_RECORDS: &[IdentityRecord] = &[
     IdentityRecord {
         kind: IdentityKind::FeedbackReceiptId,
         canonical_type: "domain::feedback::FeedbackReceipt.feedback_id / identity.receipt_id",
-        owner_path: "crates/ripr/src/domain/feedback.rs",
+        owner_path: "crates/ripr-contract/src/domain/feedback.rs",
         owner_issue: "#4585/#4804 (same field name as repair ReceiptId; different authority)",
         portability: PortabilityClass::SnapshotBound,
         semantic_inputs: &["snapshot_id", "canonical_item", "route_digest", "judgment"],

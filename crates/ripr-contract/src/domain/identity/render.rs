@@ -14,7 +14,7 @@ pub fn render_markdown(records: &[IdentityRecord], adjacent: &[AdjacentField]) -
     sort_records(&mut ordered);
     let mut body = String::from(
         "# RIPR governed identity registry\n\n\
-Generated from `crates/ripr/src/domain/identity`. Do not edit by hand.\n\n\
+Generated from `crates/ripr-contract/src/domain/identity`. Do not edit by hand.\n\n\
 This table is the human projection of the machine-readable registry. It names\n\
 authorities and compatibility posture. It does not prove that consumers have\n\
 migrated, and it does not change actionability, currentness, transport\n\

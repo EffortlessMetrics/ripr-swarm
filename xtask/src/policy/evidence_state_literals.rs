@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 
 const BASELINE_PATH: &str = "policy/evidence-state-literals.txt";
-const OWNER_PATH: &str = "crates/ripr/src/domain/evidence_state.rs";
+const OWNER_PATH: &str = "crates/ripr-contract/src/domain/evidence_state.rs";
 const SOURCE_ROOT: &str = "crates/ripr/src/";
 const STATE_WORDS: [&str; 5] = [
     "actionable",
