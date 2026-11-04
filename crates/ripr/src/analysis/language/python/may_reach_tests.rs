@@ -573,6 +573,94 @@ fn a_union_wider_than_the_cap_is_dropped_whole() -> Check {
 }
 
 #[test]
+fn a_same_file_global_rebind_of_a_callee_is_not_an_edge() -> Check {
+    let positive = graph(&[(
+        "src/pkg/a.py",
+        "def helper():\n    return 1\n\n\ndef go():\n    return helper()\n",
+    )]);
+    has(&positive, "src/pkg/a.py::go", "src/pkg/a.py::helper")?;
+    let graph = graph(&[(
+        "src/pkg/a.py",
+        "def helper():\n    return 1\n\n\ndef patch(replacement):\n    global helper\n    helper = replacement\n\n\ndef go():\n    return helper()\n",
+    )]);
+    lacks(&graph, "src/pkg/a.py::go", "src/pkg/a.py::helper")?;
+    // The file-level dunder/namespace-write guard already refuses a `global`
+    // write; the in-file admit check is the second line behind it.
+    ensure(graph.edge_count() == 0, || dump(&graph))
+}
+
+#[test]
+fn a_same_file_method_replacement_is_not_an_edge() -> Check {
+    let positive = graph(&[(
+        "src/pkg/a.py",
+        "class Page:\n    def render(self):\n        return 1\n\n\ndef go(page: Page):\n    return page.render()\n",
+    )]);
+    has(&positive, "src/pkg/a.py::go", "src/pkg/a.py::Page.render")?;
+    let graph = graph(&[(
+        "src/pkg/a.py",
+        "class Page:\n    def render(self):\n        return 1\n\n\ndef other(self):\n    return 2\n\n\nPage.render = other\n\n\ndef go(page: Page):\n    return page.render()\n",
+    )]);
+    lacks(&graph, "src/pkg/a.py::go", "src/pkg/a.py::Page.render")?;
+    refused(&graph, "rebound_in_file")
+}
+
+#[test]
+fn a_receiver_attribute_written_by_any_target_form_stops_typing_it() -> Check {
+    let source = |write: &str| {
+        format!(
+            "class Engine:\n    def start(self):\n        return 1\n\n\nclass Car:\n    engine: Engine\n\n    def swap(self, items, source):\n        {write}\n\n    def drive(self):\n        return self.engine.start()\n"
+        )
+    };
+    let untouched = graph(&[("src/pkg/a.py", &source("pass"))]);
+    has(
+        &untouched,
+        "src/pkg/a.py::Car.drive",
+        "src/pkg/a.py::Engine.start",
+    )?;
+    for write in [
+        "self.engine, other = source",
+        "[self.engine, other] = source",
+        "*self.engine, other = source",
+        "other = self.engine = source",
+        "for self.engine in items:\\n            pass",
+        "with source as self.engine:\\n            pass",
+        "self.engine += source",
+    ] {
+        let write = write.replace("\\n", "\n");
+        let graph = graph(&[("src/pkg/a.py", &source(&write))]);
+        lacks(
+            &graph,
+            "src/pkg/a.py::Car.drive",
+            "src/pkg/a.py::Engine.start",
+        )
+        .map_err(|why| format!("`{write}`: {why}"))?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_duplicated_method_blocks_the_lookup_with_its_own_reason() -> Check {
+    let graph = graph(&[(
+        "src/pkg/a.py",
+        "class Page:\n    def run(self):\n        return 1\n\n    def run(self):\n        return 2\n\n\ndef go(page: Page):\n    return page.run()\n",
+    )]);
+    lacks(&graph, "src/pkg/a.py::go", "src/pkg/a.py::Page.run")?;
+    refused(&graph, "duplicate_method")
+}
+
+#[test]
+fn a_hierarchy_deeper_than_the_walk_blocks_the_lookup_with_its_own_reason() -> Check {
+    let mut source = String::from("class C0:\n    def run(self):\n        return 0\n");
+    for index in 1..=18 {
+        source.push_str(&format!("\n\nclass C{index}(C{}):\n    pass\n", index - 1));
+    }
+    source.push_str("\n\ndef go(item: C18):\n    return item.run()\n");
+    let graph = graph(&[("src/pkg/a.py", &source)]);
+    lacks(&graph, "src/pkg/a.py::go", "src/pkg/a.py::C0.run")?;
+    refused(&graph, "hierarchy_too_deep")
+}
+
+#[test]
 fn a_name_bound_twice_in_a_module_is_ambiguous() -> Check {
     let graph = graph(&[(
         "src/pkg/a.py",
@@ -700,7 +788,13 @@ fn python_files(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<Pat
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if path.is_dir() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
             if !matches!(
                 name.as_ref(),
                 ".git" | ".venv" | "venv" | "node_modules" | "build" | "dist"
@@ -708,7 +802,8 @@ fn python_files(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<Pat
             {
                 python_files(root, &path, out);
             }
-        } else if name.ends_with(".py")
+        } else if kind.is_file()
+            && name.ends_with(".py")
             && let Ok(relative) = path.strip_prefix(root)
         {
             out.push(relative.to_path_buf());

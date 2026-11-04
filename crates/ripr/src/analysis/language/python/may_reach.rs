@@ -230,6 +230,8 @@ struct Module<'a> {
     /// bindings): a name that may mean either of two things means neither.
     ambiguous: BTreeSet<String>,
     refusal: Option<&'static str>,
+    /// `global`/walrus rebinding and attribute replacement in this file.
+    facts: ModuleBindingFacts,
 }
 
 /// An import as written; resolved to a [`Import`] on use.
@@ -250,8 +252,8 @@ enum Sym {
 enum Lookup {
     Found(Vec<(ClassId, String)>),
     NotFound,
-    /// An external base could define the method before the in-package ones.
-    Blocked,
+    /// The nearest definition cannot be decided; the reason names why.
+    Blocked(&'static str),
 }
 
 struct Index<'a> {
@@ -272,8 +274,18 @@ struct Index<'a> {
 enum Ev<'a> {
     Expr(&'a Expr),
     Bind(String),
-    Assign { target: &'a Expr, value: &'a Expr },
-    Ann { target: &'a Expr, ann: &'a Expr },
+    Assign {
+        target: &'a Expr,
+        value: &'a Expr,
+    },
+    Ann {
+        target: &'a Expr,
+        ann: &'a Expr,
+    },
+    /// An attribute written by a target that is not a plain `x.attr = value`
+    /// (tuple/list/starred element, chained or augmented assignment, `for`
+    /// or `with` target): its value is not tracked.
+    AttrWrite(&'a Expr),
 }
 
 impl<'a> Index<'a> {
@@ -553,13 +565,13 @@ impl<'a> Index<'a> {
             return Lookup::NotFound;
         };
         if class.duplicated.contains(method) {
-            return Lookup::Blocked;
+            return Lookup::Blocked("duplicate_method");
         }
         if class.methods.contains_key(method) {
             return Lookup::Found(vec![(id.clone(), method.to_string())]);
         }
         if depth >= 16 {
-            return Lookup::Blocked;
+            return Lookup::Blocked("hierarchy_too_deep");
         }
         let mut found = Vec::new();
         for base in &class.bases {
@@ -567,12 +579,14 @@ impl<'a> Index<'a> {
                 continue;
             }
             let Some(base_id) = self.class_of_expr(id.0, base) else {
-                return Lookup::Blocked;
+                // An external base could define the method before the
+                // in-package ones.
+                return Lookup::Blocked("external_base");
             };
             match self.lookup_method(&base_id, method, depth + 1) {
                 Lookup::Found(more) => found.extend(more),
                 Lookup::NotFound => {}
-                Lookup::Blocked => return Lookup::Blocked,
+                Lookup::Blocked(reason) => return Lookup::Blocked(reason),
             }
         }
         if found.is_empty() {
@@ -757,7 +771,7 @@ impl<'a> Index<'a> {
                         *counts.entry(name.id.to_string()).or_default() += 1;
                     }
                 }
-                Ev::Expr(_) => {}
+                Ev::Expr(_) | Ev::AttrWrite(_) => {}
             }
         }
         let mut locals: BTreeMap<String, Option<ClassId>> = BTreeMap::new();
@@ -924,7 +938,7 @@ impl<'a> Index<'a> {
                 match self.lookup_method(&class, "__init__", 0) {
                     Lookup::Found(found) => self.admit_all(found),
                     Lookup::NotFound => Err("no_constructor_body"),
-                    Lookup::Blocked => Err("external_base"),
+                    Lookup::Blocked(reason) => Err(reason),
                 }
             }
             Sym::Ambiguous => Err("ambiguous_name"),
@@ -941,7 +955,7 @@ impl<'a> Index<'a> {
         let mut found = match self.lookup_method(receiver, method, 0) {
             Lookup::Found(found) => found,
             Lookup::NotFound => Vec::new(),
-            Lookup::Blocked => return Err("external_base"),
+            Lookup::Blocked(reason) => return Err(reason),
         };
         if with_overrides {
             for sub in self.all_subclasses(receiver) {
@@ -1006,6 +1020,15 @@ impl<'a> Index<'a> {
         if self.mode == GuardMode::Enforce {
             if info.refusal.is_some() {
                 return Err("guard_refused_file");
+            }
+            // Same-file rebinding the workspace-wide writes do not see:
+            // `global helper; helper = f` or `Page.render = other`.
+            let class = qualified.split('.').next().unwrap_or(qualified);
+            if info.facts.may_rebind(leaf)
+                || info.facts.may_rebind(class)
+                || info.facts.may_assign_attribute(leaf)
+            {
+                return Err("rebound_in_file");
             }
             if let Some(writes) = self.writes.get(&module) {
                 let file = info.file;
@@ -1143,6 +1166,7 @@ fn collect_module<'a>(at: usize, file: &'a Path, source: &str, body: &'a [Stmt])
         imports: BTreeMap::new(),
         ambiguous: BTreeSet::new(),
         refusal: None,
+        facts: ModuleBindingFacts::of(source, body),
     };
     let mut bound: BTreeMap<String, usize> = BTreeMap::new();
     count_module_bindings(body, &mut bound, &mut module.imports);
@@ -1262,7 +1286,7 @@ fn collect_class<'a>(at: usize, class: &'a ast::StmtClassDef) -> Class<'a> {
                         *counts.entry(name.id.as_str()).or_default() += 1;
                     }
                 }
-                Ev::Expr(_) => {}
+                Ev::Expr(_) | Ev::AttrWrite(_) => {}
             }
         }
         for event in &events {
@@ -1289,6 +1313,11 @@ fn collect_class<'a>(at: usize, class: &'a ast::StmtClassDef) -> Class<'a> {
                     } else {
                         // Assigned something that is not a typed parameter:
                         // the declared type no longer bounds the attribute.
+                        info.attrs.entry(attr).or_default().push((at, None));
+                    }
+                }
+                Ev::AttrWrite(target) => {
+                    if let Some(attr) = receiver_attribute(target, receiver) {
                         info.attrs.entry(attr).or_default().push((at, None));
                     }
                 }
@@ -1489,8 +1518,11 @@ fn walk_stmt<'a>(statement: &'a Stmt, out: &mut Vec<Ev<'a>>) {
                     target,
                     value: &assign.value,
                 });
-                if !matches!(target, Expr::Name(_)) {
-                    bind_event_targets(target, out);
+                match target {
+                    Expr::Name(_) => {}
+                    // The `Assign` event above already records this write.
+                    Expr::Attribute(attribute) => walk_expr(&attribute.value, out),
+                    _ => bind_event_targets(target, out),
                 }
             } else {
                 for target in &assign.targets {
@@ -1677,7 +1709,10 @@ fn bind_event_targets<'a>(target: &'a Expr, out: &mut Vec<Ev<'a>>) {
             .for_each(|elt| bind_event_targets(elt, out)),
         Expr::Starred(starred) => bind_event_targets(&starred.value, out),
         // `obj.attr = ...` and `obj[key] = ...` evaluate their receivers.
-        Expr::Attribute(attribute) => walk_expr(&attribute.value, out),
+        Expr::Attribute(attribute) => {
+            out.push(Ev::AttrWrite(target));
+            walk_expr(&attribute.value, out);
+        }
         Expr::Subscript(subscript) => {
             walk_expr(&subscript.value, out);
             walk_expr(&subscript.slice, out);
