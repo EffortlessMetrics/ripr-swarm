@@ -12,6 +12,8 @@ mod visibility;
 
 #[cfg(test)]
 mod direct_owner_prefilter_tests;
+#[cfg(test)]
+mod helper_owner_prefilter_tests;
 
 pub(crate) use context::CompactGripContext;
 pub(super) use context::{CompactTest, call_text_contains_named_call};
@@ -413,8 +415,19 @@ pub(super) fn match_helper_owner_call(
         return;
     };
     for test_index in indices {
+        let Some(indexed) = context.tests.get(*test_index) else {
+            continue;
+        };
+        // Apply the inserter's existing package scope before helper traversal.
+        if let Some(prefix) = prefix
+            && !indexed.path_normalized.starts_with(prefix)
+        {
+            continue;
+        }
         if owner.inherent_receiver
             && !owner.inherent_owner.is_some_and(|function| {
+                #[cfg(test)]
+                helper_owner_prefilter_tests::record_inherent_helper_check(*test_index);
                 context.inherent_helper_reaches_owner(*test_index, function)
             })
         {
