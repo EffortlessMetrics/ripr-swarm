@@ -4,20 +4,20 @@ use crate::analysis::classify::{
     ProbeContext, PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex,
     WrapperEntryPairing, activation_and_boundary_input, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
-    body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
-    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
-    confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
-    direct_call_name, direct_collection_mutation_receiver, error_path_arm_probe,
-    expected_operand_value, fallible_check_receipt, fallible_literal_witness,
-    function_returns_value, getter_plainly_reads, getter_plainly_reads_key,
-    has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
-    infection_evidence_for_owner, is_drop_destructor, local_flow_sinks, method_cannot_store,
-    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
-    outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
-    propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
-    reach_evidence, reveal_outcome, same_test_pairing_missing_summary, setter_plainly_writes,
-    signature_parameters, unconditional_owner_insert_field, unexercised_mask_bits,
-    wrapper_return_boundary_pinned,
+    assertion_pins_pushed_collection_count, body_contains_owner_call, call_parameter_names,
+    callee_is_unique, chain_entry_pin_admits, chain_forwards_to_observed_hops,
+    chain_passes_effect_target_to_observed_hops, classify, confidence_score,
+    constructor_starts_empty, contains_as_whole_word, current_path_witness_with, direct_call_name,
+    direct_collection_mutation_receiver, error_path_arm_probe, expected_operand_value,
+    fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
+    getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
+    helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
+    method_cannot_store, observes_returned_element_field, operand_only_pin,
+    oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
+    parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
+    pushed_literal_path, reach_evidence, returned_array_construction_plain, reveal_outcome,
+    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -1214,6 +1214,18 @@ impl ClassifiedProbeEvidence {
                                 assertion,
                                 pin_syntax,
                             )
+                            // #11402: a count read that pins the single push
+                            // into the passed local notices the deleted push,
+                            // by the rule the call-presence seam reads too.
+                            || (matches!(context.probe.family, ProbeFamily::CallDeletion)
+                                && assertion_pins_pushed_collection_count(
+                                    receiver,
+                                    owner,
+                                    context.index,
+                                    test,
+                                    assertion,
+                                    pin_syntax,
+                                ))
                         })
                 },
                 pushed_literal_observed: &|test, assertion| {
@@ -1277,6 +1289,34 @@ impl ClassifiedProbeEvidence {
                 },
                 call_cannot_store: &|impl_type, method, field, expected| {
                     method_cannot_store(context.index, impl_type, method, field, expected)
+                },
+                captured_log_exact_membership_confirms: &|test, assertion| {
+                    let Some(owner_id) = context.probe.owner.as_ref() else {
+                        return false;
+                    };
+                    let free_fn_owner = context.index.functions().iter().any(|function| {
+                        function.id == *owner_id
+                            && function.impl_context
+                                == crate::analysis::facts::FunctionImplContext::Free
+                    });
+                    if !free_fn_owner {
+                        return false;
+                    }
+                    let Some(owner) = owner_id
+                        .0
+                        .rsplit("::")
+                        .next()
+                        .filter(|name| !name.is_empty())
+                    else {
+                        return false;
+                    };
+                    crate::analysis::classify::assertion_confirms_captured_log_exact_membership(
+                        &context.probe.expression,
+                        test,
+                        assertion,
+                        owner,
+                        context.index,
+                    )
                 },
             },
             arm_selector.as_ref(),
@@ -1565,6 +1605,27 @@ impl ClassifiedProbeEvidence {
                 StageState::Weak,
                 Confidence::Medium,
                 "Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)",
+            )
+        } else {
+            discriminate
+        };
+        // #8084: the generic oracle path can credit an indexed field assertion
+        // as observing the whole returned array; when any element field or
+        // non-record element may exit during construction (blocks, calls, and
+        // similar), constructing the array may exit before the test reaches
+        // its assertion. Ordinary arithmetic on literals and paths does not
+        // demote, mirroring the indexed pin refusal scope in
+        // `element_field_pin`.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && discriminate.state == StageState::Yes
+            && context
+                .owner_fn
+                .is_some_and(|owner| !returned_array_construction_plain(owner))
+        {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                "Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion (observation_unverified)",
             )
         } else {
             discriminate
@@ -2626,6 +2687,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -2772,6 +2834,77 @@ mod tests {
             ExposureClass::WeaklyExposed
         );
         assert_eq!(class_for("")?, ExposureClass::Exposed);
+        Ok(())
+    }
+
+    /// #8084: a sibling element field built from a block may exit before the
+    /// test reaches its assertion, so `return_value` on the array must not
+    /// stay exposed through the generic oracle path.
+    #[test]
+    fn a_sibling_field_that_may_exit_keeps_return_value_weakly() -> Result<(), String> {
+        use crate::domain::ExposureClass;
+
+        let class_for = |array_tail: &str| -> Result<ExposureClass, String> {
+            let source = format!(
+                "pub struct Row {{\n    pub total: u32,\n}}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {{\n    {array_tail}\n}}\n\n#[test]\nfn pins_second_row() {{\n    let rows = rows(30, 3);\n    assert_eq!(rows[1].total, 33);\n}}\n"
+            );
+            let path = PathBuf::from("src/lib.rs");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: facts.functions.clone(),
+                tests: facts.tests.clone(),
+                files: [(path, facts)].into_iter().collect(),
+                ..Default::default()
+            });
+            crate::analysis::facts::compose_fixture_source_roles(
+                &mut index,
+                std::path::Path::new(""),
+            );
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.name == "rows")
+                .ok_or("missing owner")?;
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == "pins_second_row")
+                .ok_or("missing test")?;
+            let probe = Probe {
+                id: ProbeId("probe:returned-array-exit".to_string()),
+                location: SourceLocation::new("src/lib.rs", 6, 5),
+                owner: Some(owner.id.clone()),
+                family: ProbeFamily::ReturnValue,
+                delta: DeltaKind::Value,
+                before: Some("[Row { total: 0 }, Row { total: a - b }]".to_string()),
+                after: Some(array_tail.to_string()),
+                expression: array_tail.to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            };
+            let context = ProbeContext::new(
+                &probe,
+                Some(owner),
+                vec![(test, RelationReason::DirectOwnerCall)],
+                false,
+                &index,
+                true,
+            );
+            let evidence = ClassifiedProbeEvidence::gather(
+                &context,
+                array_tail,
+                &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+            );
+            Ok(evidence.classify(&probe))
+        };
+        assert_eq!(
+            class_for("[Row { total: { std::process::exit(0) } }, Row { total: a + b }]")?,
+            ExposureClass::WeaklyExposed
+        );
+        assert_eq!(
+            class_for("[Row { total: 0 }, Row { total: a + b }]")?,
+            ExposureClass::Exposed
+        );
         Ok(())
     }
 

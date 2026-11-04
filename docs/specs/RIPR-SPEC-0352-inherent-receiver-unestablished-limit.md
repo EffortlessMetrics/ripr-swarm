@@ -109,13 +109,30 @@ cause.
   the variant brings it in, the enum has one declaration, the spelling is not a
   prelude value and no macro or same-named item can rebind it (#8782); then
   only the placement input is missing and this rule withholds the gap.
-- Unexercised guards, not claimed proved here (the hardening follow-up, #10666
-  and PR3, adds their controls and mutation experiments): the own-scope
-  negatives for a `#[path]` mount, glob or explicit import of a dependency
-  macro and a renamed dependency behind a decoy directory; the `#[ignore]`
-  exclusion, the own-related-tests filter, each manifest rename/mismatch arm,
-  crate-local and scoped names under trust, the reach-every-package rules and
-  the `toml::Table` parse-failure arm.
+- Own-scope controls (PR3): a mounted file, a `#[macro_use]` module, a literal
+  `#[path]` into another package, a nested `src`, and files with no package
+  keep the bare-assertion gap; so do a glob or explicit import, `extern crate`,
+  a renamed dependency, a directory holding another crate, and a crate named
+  differently from its directory. An `#[ignore]` test, a same-named type in
+  another crate and a call outside the assertion do not trigger the withhold.
+  Mutation experiments (one guard disabled, a control must fail): mounted-file
+  scope, unnameable-package scope, import-root scan, manifest rename/mismatch
+  check and unmatched-name reach-every-package each fail a control, as does the
+  `#[ignore]` exclusion.
+- A bare `assert_matches!` (#10666) is no prelude macro, so only the
+  limit-naming pass reads its first operand, and only when no workspace file
+  declares a `macro_rules! assert_matches`. The credit path never admits it: a
+  placed workspace keeps the token-substring gap, and a qualified spelling, a
+  local macro, a wrong receiver and a broad `Err(_)` pattern keep theirs. A
+  placed workspace's gap for an inherent method behind a non-standard assertion
+  macro still reads no named limit; that is tracked separately.
+- Still unexercised: the duplicate-directory clause of the reach-every-package
+  rule, crate-local and scoped names under trust, the own-related-tests
+  filter (the same-named-type control pins the outcome, not the filter), the
+  seeding of the mounted set from the test file's declaring parents, and the
+  unreadable-manifest arms of the manifest check. The `toml::Table` parse-failure arm is equivalent to the name-mismatch
+  arm below it (an unparsable manifest declares no name), so no control can
+  tell them apart.
 - Known open: when the owner call sits outside the assertion the relation is
   already direct and only the oracle row is refused, so the finding stays a gap.
   The withhold checks relation and oracle strength, not that the trusted

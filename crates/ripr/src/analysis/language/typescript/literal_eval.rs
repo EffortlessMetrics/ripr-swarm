@@ -74,15 +74,26 @@ pub(crate) fn return_expressions_agree(
             .chain(new_numbers.iter().filter(|n| !old_numbers.contains(n)))
             .copied()
             .collect();
-        (separated_on_probe_grid(&old.expression, &new.expression, &params, &values, &[])
-            || (!constants.is_empty()
-                && separated_on_probe_grid(
-                    &old.expression,
-                    &new.expression,
-                    &params,
-                    &values,
-                    &constants,
-                )))
+        // A `typeof` kind test is separated by an input of another kind or a
+        // flipped flag, never by a shifted number (#12380), so those edits
+        // also probe the other kinds.
+        let kinds = old_text.contains("typeof") || new_text.contains("typeof");
+        (separated_on_probe_grid(
+            &old.expression,
+            &new.expression,
+            &params,
+            &values,
+            &[],
+            kinds,
+        ) || (!constants.is_empty()
+            && separated_on_probe_grid(
+                &old.expression,
+                &new.expression,
+                &params,
+                &values,
+                &constants,
+                kinds,
+            )))
         .then_some(true)
     })
     .ok()
@@ -136,6 +147,7 @@ fn separated_on_probe_grid(
     params: &[String],
     values: &[Val],
     constants: &[f64],
+    kinds: bool,
 ) -> bool {
     const MAX_COMBINATIONS: usize = 4096;
     let axes: Vec<Vec<Val>> = values
@@ -150,6 +162,23 @@ fn separated_on_probe_grid(
                 {
                     if !axis.contains(&Val::Num(candidate)) {
                         axis.push(Val::Num(candidate));
+                    }
+                }
+                if kinds {
+                    axis.extend([Val::Str(String::new()), Val::Bool(true), Val::Bool(false)]);
+                }
+                axis
+            }
+            other if kinds => {
+                let mut axis = vec![other.clone()];
+                for candidate in [
+                    Val::Num(0.0),
+                    Val::Str(String::new()),
+                    Val::Bool(true),
+                    Val::Bool(false),
+                ] {
+                    if !axis.contains(&candidate) {
+                        axis.push(candidate);
                     }
                 }
                 axis
@@ -277,6 +306,10 @@ fn evaluate(expression: &Expression<'_>, env: &Env, depth: usize) -> Option<Val>
                 (UnaryOperator::UnaryNegation, Val::Num(n)) => finite(-n),
                 (UnaryOperator::UnaryPlus, Val::Num(n)) => finite(n),
                 (UnaryOperator::LogicalNot, Val::Bool(b)) => Some(Val::Bool(!b)),
+                // `typeof` of a literal-bound value: the kind string (#12380).
+                (UnaryOperator::Typeof, Val::Num(_)) => Some(Val::Str("number".to_string())),
+                (UnaryOperator::Typeof, Val::Str(_)) => Some(Val::Str("string".to_string())),
+                (UnaryOperator::Typeof, Val::Bool(_)) => Some(Val::Str("boolean".to_string())),
                 _ => None,
             }
         }
@@ -484,6 +517,26 @@ mod tests {
     #[test]
     fn a_sign_only_zero_change_does_not_agree() {
         assert_eq!(agree("n * 0", "n * -0", &["n"], &["5"]), Some(false));
+    }
+
+    /// #12380: a `typeof` clause shielded by a flag is unexercised when the
+    /// asserted flag decides the value, and separated once the flag or the
+    /// kind changes.
+    #[test]
+    fn typeof_clause_agrees_when_the_asserted_flag_decides_the_value() {
+        let old = "flag && typeof input === \"function\"";
+        let new = "flag && typeof input !== \"function\"";
+        let params = ["input", "flag"];
+        assert_eq!(agree(old, new, &params, &["42", "false"]), Some(true));
+        assert_eq!(agree(old, new, &params, &["42", "true"]), Some(false));
+        assert_eq!(agree(old, new, &params, &["\"a\"", "true"]), Some(false));
+    }
+
+    #[test]
+    fn a_behavior_preserving_typeof_rewrite_is_not_unexercised() {
+        let old = "typeof n === \"number\"";
+        let new = "\"number\" === typeof n";
+        assert_eq!(agree(old, new, &["n"], &["1"]), None);
     }
 
     #[test]

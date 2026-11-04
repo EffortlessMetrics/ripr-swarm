@@ -1689,7 +1689,14 @@ fn seam_next_step_for(entry: &ClassifiedSeam) -> String {
             "Assert on the specific field or use whole-object equality.".to_string()
         }
         SeamKind::SideEffect => {
-            "Add a mock expectation, event observer, or persistence assertion.".to_string()
+            if crate::analysis::repair_route::seam_needs_collection_contents_guidance(
+                &entry.seam,
+                &entry.evidence,
+            ) {
+                crate::analysis::repair_route::COLLECTION_CONTENTS_CHECK_NEXT_STEP.to_string()
+            } else {
+                "Add a mock expectation, event observer, or persistence assertion.".to_string()
+            }
         }
         SeamKind::MatchArm => {
             "Drive an input that selects this arm and assert the result.".to_string()
@@ -1825,6 +1832,61 @@ mod seam_hover_tests {
         );
     }
 
+    #[test]
+    fn localized_collection_push_side_effect_hover_names_contents_check_not_mock() {
+        use crate::analysis::repair_route::COLLECTION_CONTENTS_CHECK_NEXT_STEP;
+
+        let seam = RepoSeam::new(
+            "src/lib.rs",
+            "log_line",
+            SeamKind::SideEffect,
+            5,
+            6,
+            "buf.push(msg.to_string())",
+            RequiredDiscriminator::Effect {
+                sink: "buf.push(msg.to_string())".to_string(),
+            },
+            ExpectedSink::SideEffect,
+        );
+        let evidence = TestGripEvidence {
+            seam_id: seam.id().clone(),
+            related_tests: Vec::new(),
+            reach: stage(StageState::Yes, "test reaches owner"),
+            activate: stage(StageState::Yes, "test activates change"),
+            propagate: stage(
+                StageState::Yes,
+                &format!(
+                    "Static propagation to `side_effect` sink is yes; {}",
+                    crate::analysis::test_grip_evidence::PUSHED_COLLECTION_COUNT_PINNED
+                ),
+            ),
+            observe: stage(StageState::Yes, "count read observes"),
+            discriminate: stage(StageState::Weak, "count read is weak"),
+            observed_values: Vec::new(),
+            missing_discriminators: Vec::new(),
+            new_test_target: None,
+            statically_contradicted_related_tests: 0,
+        };
+        let entry = ClassifiedSeam {
+            seam,
+            evidence,
+            class: SeamGripClass::WeaklyGripped,
+        };
+        let step = seam_next_step_for(&entry);
+        assert_eq!(step, COLLECTION_CONTENTS_CHECK_NEXT_STEP);
+        assert!(!step.contains("mock"), "{step}");
+
+        // Stage states and the push shape alone are not the repair route's
+        // precondition (#12456): without the count-pinned marker (aliased,
+        // conditional or unfollowed receiver) the mock wording stays.
+        let mut unmarked = entry;
+        unmarked.evidence.propagate = stage(StageState::Yes, "push follows to local");
+        assert_eq!(
+            seam_next_step_for(&unmarked),
+            "Add a mock expectation, event observer, or persistence assertion."
+        );
+    }
+
     fn sample_diagnostic() -> Diagnostic {
         Diagnostic {
             range: Range {
@@ -1928,7 +1990,7 @@ mod seam_hover_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri: BTreeMap::new(),
+            diagnostics_by_uri: BTreeMap::new().into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -3003,7 +3065,7 @@ mod plain_hover_summary_tests {
     #[test]
     fn rewrites_producer_prose_but_not_user_source_text() {
         assert_eq!(
-            plain_hover_summary("the equality-boundary discriminator is missing"),
+            plain_hover_summary("the equality-boundary check is missing"),
             "the equality-boundary check is missing"
         );
         // Known forms that append source text: the tail stays verbatim.

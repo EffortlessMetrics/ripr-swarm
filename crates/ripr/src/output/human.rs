@@ -421,13 +421,17 @@ pub(crate) fn render_full_with_config_and_navigation(
         ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
-            for command in [
-                navigation.explain_command(&finding.id),
-                navigation.context_command(&finding.id),
-            ] {
-                out.push_str(&format!("  {command}\n"));
-                push_powershell_variant(&mut out, "  ", &command);
-            }
+            // #12431: the same finding-id label the bounded digest prints,
+            // through the same shared helper so the two blocks cannot drift.
+            push_labeled_commands(
+                &mut out,
+                "  ",
+                FINDING_ID_COMMAND_LABEL,
+                &[
+                    navigation.explain_command(&finding.id),
+                    navigation.context_command(&finding.id),
+                ],
+            );
         }
         out.push('\n');
     }
@@ -1357,6 +1361,42 @@ pub(crate) fn render_finding_with_context_command_and_files(
 fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
     if let Some(line) = crate::output::markdown::powershell_text_variant(command) {
         out.push_str(&format!("{indent}(PowerShell) {line}\n"));
+    }
+}
+
+/// The consumer label for drill-in commands whose selector is the finding id
+/// (#12431): `ripr explain` and `ripr context` key on the content-addressed
+/// probe fingerprint, the same token the JSON `id` field carries.
+pub(crate) const FINDING_ID_COMMAND_LABEL: &str = "(finding id, for explain/context)";
+
+/// The consumer label for the drill-in repair start whose selector is the
+/// seam id (#12431): `ripr repair` keys on the stable spot identity the
+/// repair resolver accepts, not the finding id. Plain glossary words only —
+/// "probe" and "seam" are banned on default human output
+/// (docs/USER_TEXT_GLOSSARY.md); the pasted identifiers themselves stay
+/// exempt data.
+pub(crate) const SPOT_ID_COMMAND_LABEL: &str = "(spot id, for repair)";
+
+/// Print the consumer label naming the id domain of a drill-in command group
+/// (#12431), then each runnable command line byte-identical, then the
+/// PowerShell twin when it needs a different form. The label sits on its own
+/// line above the group — never inside a command — so copy-paste and
+/// downstream line parsing of the printed command (the pypi consumer captures
+/// the printed explain line and executes it verbatim, reading the last
+/// whitespace-separated token as the finding id) keep working, mirroring how
+/// `Gap ID (for scripts):` labels its own id domain. One shared owner keeps
+/// the bounded triage screen and the human-full per-finding block from
+/// drifting apart (ADR 0019).
+pub(crate) fn push_labeled_commands(
+    out: &mut String,
+    indent: &str,
+    label: &str,
+    commands: &[String],
+) {
+    out.push_str(&format!("{indent}{label}\n"));
+    for command in commands {
+        out.push_str(&format!("{indent}{command}\n"));
+        push_powershell_variant(out, indent, command);
     }
 }
 
@@ -2816,8 +2856,9 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains("Next: drill into the top finding:"));
-        assert!(rendered.contains(&format!("  ripr explain {finding_id}\n")));
-        assert!(rendered.contains(&format!("  ripr context --at {finding_id}\n")));
+        assert!(rendered.contains(&format!(
+            "  (finding id, for explain/context)\n  ripr explain {finding_id}\n  ripr context --at {finding_id}\n"
+        )));
         // #8166 Slice C: without a producer-established repair route, the
         // drill-down offers no repair line.
         assert!(!rendered.contains("ripr repair"), "{rendered}");
@@ -2875,16 +2916,51 @@ mod tests {
             Some(&routed),
             crate::app::CheckDiffProvenance::CommittedHistory,
         );
+        // #12431: each bare command line carries the consumer label naming its
+        // id domain, printed as a sub-header above the group so the runnable
+        // command bytes stay identical (line-copy and last-token parsing keep
+        // working) and the label never migrates onto another domain's line.
         assert!(
             rendered.contains(
-                "Next: drill into the top finding:\n  ripr explain probe:sample.rs:7:predicate\n  ripr context --at probe:sample.rs:7:predicate\n  ripr repair 67fc764ba37d77bd\n"
+                "Next: drill into the top finding:\n  (finding id, for explain/context)\n  ripr explain probe:sample.rs:7:predicate\n  ripr context --at probe:sample.rs:7:predicate\n  (spot id, for repair)\n  ripr repair 67fc764ba37d77bd\n"
             ),
-            "the eligible top finding must print its seam repair line:\n{rendered}"
+            "the eligible top finding must print labeled drill-in and repair lines:\n{rendered}"
         );
         assert!(
             !rendered.contains("ripr repair probe:"),
             "the repair line must never name the finding ID:\n{rendered}"
         );
+        // Negative control (#12431): the labels must not migrate lines. The
+        // repair line carries only the spot-id label; the explain/context
+        // lines carry only the finding-id label.
+        for repair_line in rendered
+            .lines()
+            .filter(|line| line.contains("ripr repair "))
+        {
+            assert!(
+                !repair_line.contains("finding id"),
+                "the repair line must not carry the finding-id label: {repair_line}"
+            );
+            assert!(
+                repair_line
+                    .trim_end()
+                    .ends_with("ripr repair 67fc764ba37d77bd"),
+                "the repair command bytes must stay bare line-final: {repair_line}"
+            );
+        }
+        for drill_line in rendered
+            .lines()
+            .filter(|line| line.contains("ripr explain ") || line.contains("ripr context --at "))
+        {
+            assert!(
+                !drill_line.contains("spot id"),
+                "an explain/context line must not carry the spot-id label: {drill_line}"
+            );
+            assert!(
+                drill_line.trim_end().ends_with("predicate"),
+                "drill-in command bytes must stay bare line-final: {drill_line}"
+            );
+        }
 
         let other = crate::app::FindingDrillIn::Commands(
             crate::app::FindingNavigation::legacy().with_repair_route_outcome(
@@ -4896,9 +4972,9 @@ mod tests {
 
     /// RIPR-SPEC-0122: the digest line carries the discriminator value alone.
     /// `decision.rs` builds value-shaped entries as
-    /// `Missing discriminator value: <value>`, which the renderer used to print
+    /// `Missing check value: <value>`, which the renderer used to print
     /// verbatim under its own label, producing
-    /// `Missing discriminator: Missing discriminator value: X`.
+    /// `Missing discriminator: Missing check value: X`.
     #[test]
     fn digest_missing_discriminator_line_does_not_restate_its_label() {
         let mut finding = sample_finding();
@@ -4955,8 +5031,8 @@ mod tests {
             "No strong assertion was detected"
         );
         assert_eq!(
-            super::evidence_lines::plain_default_missing("Missing discriminator value: 100"),
-            "Missing discriminator value: 100",
+            super::evidence_lines::plain_default_missing("Missing check value: 100"),
+            "Missing check value: 100",
             "other entries are not this fixed form"
         );
         assert_eq!(
@@ -5412,7 +5488,7 @@ mod tests {
                 "{rendered}"
             );
             assert!(!rendered.contains("test placement or related-test evidence is incomplete"));
-            assert!(!rendered.contains("names no concrete missing discriminator"));
+            assert!(!rendered.contains("names no concrete missing check"));
         }
         // Diff-mode placement text is unchanged.
         let mut placed = python_preview_finding(5, false);
@@ -5712,9 +5788,9 @@ mod tests {
         for id in ["first", "second"] {
             assert!(
                 navigated.contains(&format!(
-                    "Drill in:\n  ripr explain {id}\n  ripr context --at {id}\n"
+                    "Drill in:\n  (finding id, for explain/context)\n  ripr explain {id}\n  ripr context --at {id}\n"
                 )),
-                "human-full must carry the drill-in pair for {id}: {navigated}"
+                "human-full must carry the labeled drill-in pair for {id}: {navigated}"
             );
         }
     }
@@ -5894,9 +5970,9 @@ mod tests {
 
         assert!(
             rendered.contains(&format!(
-                "Next: drill into the top finding:\n  ripr explain --root repo --base HEAD --worktree {finding_id}\n  ripr context --root repo --base HEAD --worktree --at {finding_id}\n"
+                "Next: drill into the top finding:\n  (finding id, for explain/context)\n  ripr explain --root repo --base HEAD --worktree {finding_id}\n  ripr context --root repo --base HEAD --worktree --at {finding_id}\n"
             )),
-            "the digest must print worktree-scoped drill-in commands; got:\n{rendered}"
+            "the digest must print labeled worktree-scoped drill-in commands; got:\n{rendered}"
         );
         assert!(
             !rendered.contains("--write-artifact"),
@@ -5952,9 +6028,9 @@ mod tests {
             assert!(
                 rendered.contains(&format!("  id: {id}\n"))
                     && rendered.contains(&format!(
-                        "  ripr explain --root repo --base HEAD --worktree {id}\n"
+                        "  (finding id, for explain/context)\n  ripr explain --root repo --base HEAD --worktree {id}\n"
                     )),
-                "each finding block must carry its id and worktree drill-in; got:\n{rendered}"
+                "each finding block must carry its id and labeled worktree drill-in; got:\n{rendered}"
             );
         }
         assert_eq!(
@@ -6076,8 +6152,10 @@ mod tests {
         let rendered = worktree_full_with_suppressed(&["first"]);
         assert!(
             rendered.contains("  id: second\n")
-                && rendered.contains("  ripr explain --root repo --base HEAD --worktree second\n"),
-            "the unsuppressed finding keeps its drill-in; got:\n{rendered}"
+                && rendered.contains(
+                    "  (finding id, for explain/context)\n  ripr explain --root repo --base HEAD --worktree second\n",
+                ),
+            "the unsuppressed finding keeps its labeled drill-in; got:\n{rendered}"
         );
         assert_eq!(rendered.matches("Drill in:").count(), 1, "{rendered}");
         assert!(
@@ -7360,7 +7438,7 @@ mod tests {
     fn render_finding_deduplicates_missing_discriminator_value_line() {
         let mut finding = sample_finding();
         finding.missing = vec![
-            "Missing discriminator value: enabled == false".to_string(),
+            "Missing check value: enabled == false".to_string(),
             "another gap".to_string(),
         ];
 

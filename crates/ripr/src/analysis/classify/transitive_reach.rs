@@ -2250,22 +2250,171 @@ fn proc_macro_derive_entries(source: &str) -> Vec<(String, String, usize)> {
     entries
 }
 
-/// Derive names that `#[derive(..)]` attributes in `source` apply.
-/// `#[cfg_attr(.., derive(..))]` is conditional and is not read.
+/// Derive names that active `#[derive(..)]` attributes on real items in `source`
+/// apply. Each derive is bound to its attribute-bearing item: derives inside
+/// macro token trees (for example `stringify!(#[derive(Error)])`), on items
+/// `cfg_predicates` marks disabled in a test build, or under inactive
+/// enclosing `cfg`, are ignored. `#[cfg_attr(.., derive(..))]` is conditional
+/// and is not read.
 fn derive_names(source: &str) -> Vec<String> {
     let masked = crate::analysis::extract::mask_comments_and_strings(source);
-    let mut names: Vec<String> = crate::analysis::extract::attribute_ranges(&masked)
-        .into_iter()
-        .filter_map(|range| attribute_call_args(&masked[range], "derive"))
-        .flat_map(|args| {
-            args.split(',')
-                .filter_map(last_path_segment)
-                .collect::<Vec<_>>()
-        })
-        .collect();
+    let ranges = crate::analysis::extract::attribute_ranges(&masked);
+    let mut names = Vec::new();
+    for (index, range) in ranges.iter().enumerate() {
+        let Some(args) = attribute_call_args(&masked[range.clone()], "derive") else {
+            continue;
+        };
+        if crate::analysis::extract::offset_inside_macro_invocation_delimiters(&masked, range.start)
+        {
+            continue;
+        }
+        if !derive_attribute_binds_active_item(&masked, &ranges, index) {
+            continue;
+        }
+        names.extend(args.split(',').filter_map(last_path_segment));
+    }
     names.sort_unstable();
     names.dedup();
     names
+}
+
+/// Whether `ranges[index]` is a `#[derive(..)]` on an item that is active in a
+/// test build, including its enclosing module/item cfg headers.
+fn derive_attribute_binds_active_item(
+    masked: &str,
+    ranges: &[std::ops::Range<usize>],
+    index: usize,
+) -> bool {
+    let Some((header_start, header_end)) = derive_item_attribute_bounds(masked, ranges, index)
+    else {
+        return false;
+    };
+    if attribute_header_disabled_in_test_build(&masked[header_start..header_end]) {
+        return false;
+    }
+    for header in enclosing_item_headers_before(masked, header_start) {
+        if attribute_header_disabled_in_test_build(header) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Byte bounds of the contiguous `#[..]` chain ending at `ranges[index]` and
+/// the derive-bearing item keyword that follows it.
+fn derive_item_attribute_bounds(
+    masked: &str,
+    ranges: &[std::ops::Range<usize>],
+    index: usize,
+) -> Option<(usize, usize)> {
+    let derive_range = ranges.get(index)?;
+    let mut header_start = derive_range.start;
+    for prev in (0..index).rev() {
+        let gap = masked.get(ranges[prev].end..header_start)?.trim();
+        if gap.is_empty() {
+            header_start = ranges[prev].start;
+        } else {
+            break;
+        }
+    }
+    let mut header_end = derive_range.end;
+    let mut next = index + 1;
+    while next < ranges.len() {
+        let gap = masked.get(header_end..ranges[next].start)?.trim();
+        if gap.is_empty() {
+            header_end = ranges[next].end;
+            next += 1;
+        } else {
+            break;
+        }
+    }
+    derive_item_keyword_start(masked, header_end)?;
+    Some((header_start, header_end))
+}
+
+fn starts_with_item_keyword(source: &str, keyword: &str) -> bool {
+    source.starts_with(keyword)
+        && source
+            .as_bytes()
+            .get(keyword.len())
+            .is_none_or(|byte| !is_ascii_ident_byte(*byte))
+}
+
+/// Skip a leading `pub`, `pub(crate)`, `pub(super)`, or `pub(in path)` prefix.
+fn skip_item_visibility(source: &str, start: usize) -> usize {
+    let mut cursor = skip_ascii_whitespace(source, start);
+    while let Some(tail) = source.get(cursor..) {
+        if !starts_with_item_keyword(tail, "pub") {
+            break;
+        }
+        cursor = skip_ascii_whitespace(source, cursor + 3);
+        if source.as_bytes().get(cursor) == Some(&b'(') {
+            let bytes = source.as_bytes();
+            let mut depth = 0usize;
+            while cursor < bytes.len() {
+                match bytes[cursor] {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            cursor += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                cursor += 1;
+            }
+        }
+        cursor = skip_ascii_whitespace(source, cursor);
+    }
+    cursor
+}
+
+/// Start offset of a `struct`/`enum`/`union` item that follows `after_attrs`.
+fn derive_item_keyword_start(masked: &str, after_attrs: usize) -> Option<usize> {
+    let keyword_offset = skip_item_visibility(masked, after_attrs);
+    let tail = masked.get(keyword_offset..)?;
+    for keyword in ["struct", "enum", "union"] {
+        if starts_with_item_keyword(tail, keyword) {
+            return Some(keyword_offset);
+        }
+    }
+    None
+}
+
+/// Whether any attribute in `header` is known disabled in a test build.
+fn attribute_header_disabled_in_test_build(header: &str) -> bool {
+    attribute_groups(header).any(|attr| {
+        crate::analysis::facts::cfg_predicates::attribute_test_build_availability(attr)
+            == Some(false)
+    })
+}
+
+/// Header text of each still-open `{` block that encloses `offset`.
+fn enclosing_item_headers_before(masked: &str, offset: usize) -> Vec<&str> {
+    let mut open: Vec<(usize, usize)> = Vec::new();
+    let mut header_start = 0usize;
+    for (index, byte) in masked.bytes().enumerate() {
+        if index >= offset {
+            break;
+        }
+        match byte {
+            b'{' => {
+                open.push((header_start, index));
+                header_start = index + 1;
+            }
+            b'}' => {
+                open.pop();
+                header_start = index + 1;
+            }
+            b';' => header_start = index + 1,
+            _ => {}
+        }
+    }
+    open.into_iter()
+        .filter_map(|(start, end)| masked.get(start..end))
+        .collect()
 }
 
 /// The argument text of `#[name(args)]` or `#![name(args)]`, or None when the
@@ -3600,6 +3749,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -5559,6 +5709,63 @@ mod tests {
                 "{source}"
             );
         }
+    }
+
+    // #6932: a file-wide derive scan must bind each `#[derive(Name)]` to its
+    // item and ignore inactive shapes Devin's #6930 review named.
+    #[test]
+    fn derive_false_witness_shapes_give_no_witness() {
+        for source in [
+            "#[cfg(any())]\n#[derive(Error)]\nstruct Disabled;\n",
+            "#[derive(Error)]\n#[cfg(any())]\nstruct AlsoDisabled;\n",
+            "const INERT: &str = stringify!(#[derive(Error)]);\n",
+            "fn inert() {\n    let _ = stringify!(#[derive(Error)]);\n}\n",
+            "#[cfg(any())]\nmod disabled {\n    #[derive(Error)]\n    struct Inner;\n}\n",
+            "macro_rules! unused {\n    () => { #[derive(Error)] struct E; };\n}\n\
+             #[test]\nfn smoke() {}\n",
+        ] {
+            assert!(
+                find_transitive_witness("fmt_impl", &derive_index(source)).is_none(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn derive_names_ignore_inactive_items_but_keep_active_ones() {
+        let source = "#[derive(Error)]\nstruct Active;\n\
+                      #[cfg(any())]\n#[derive(Error)]\nstruct Disabled;\n\
+                      const INERT: &str = stringify!(#[derive(Error)]);\n";
+        assert_eq!(derive_names(source), vec!["Error".to_string()]);
+    }
+
+    #[test]
+    fn derive_on_pub_items_still_counts_for_the_file() {
+        for source in [
+            "#[derive(Error)]\npub struct E;\n",
+            "#[derive(Error)]\npub(crate) enum E { A }\n",
+            "#[derive(Error)]\npub(super) union E { f: u8 }\n",
+        ] {
+            assert_eq!(derive_names(source), vec!["Error".to_string()], "{source}");
+            assert_eq!(
+                find_transitive_witness("fmt_impl", &derive_index(source))
+                    .and_then(|w| w.via_derive),
+                Some("Error".to_string()),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn derive_inside_a_test_body_still_counts_for_the_file() {
+        let index = derive_index(
+            "#[test]\nfn test_display() {\n    #[cfg(any())]\n    #[derive(Error)]\n    struct Disabled;\n    \
+             #[derive(Error, Debug)]\n    #[error(\"x\")]\n    struct Active;\n}\n",
+        );
+        assert_eq!(
+            find_transitive_witness("fmt_impl", &index).and_then(|w| w.via_derive),
+            Some("Error".to_string())
+        );
     }
 
     // Negative: the derive's function must reach the owner; an unrelated

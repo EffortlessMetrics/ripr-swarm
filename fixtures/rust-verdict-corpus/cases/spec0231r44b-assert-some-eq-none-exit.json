@@ -1,0 +1,61 @@
+{
+  "case_id": "spec0231r44b-assert-some-eq-none-exit",
+  "subject_id": "authored-spec0231-44b",
+  "diff": "cases/spec0231r44b-assert-some-eq-none-exit.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "claims_assert_some_eq_none_exit",
+  "hard_case": "The edit is the `None` exit guard, which `assert_some_eq!(pick(5), 10)` does not pin: pick(3) and pick(2) are never asked, so the weaker comparisons survive. The oracle stays unknown / none beside a `None` exit change.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if 3 == n {",
+        "mutated_line": "if 3 == n {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the changed value is not observed by any test that runs"
+      },
+      {
+        "replacement": "if 3 < n {",
+        "mutated_line": "if 3 < n {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::pick_doubles",
+        "equivalence_review": "not equivalent: the test fails on the changed value"
+      },
+      {
+        "replacement": "if 3 >= n {",
+        "mutated_line": "if 3 >= n {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the changed value is not observed by any test that runs"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "pick(5) is Some(10) under `3 == n` and `3 >= n` as well, so those comparison mutants survive; only `3 < n` fails the test. Spec cells: RIPR-SPEC-0231 example 44 (beside a `None` exit change `assert_some_eq!` stays unknown / none).",
+  "labeling_observation": {
+    "ripr_commit": "99b377f5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#44"
+  ]
+}

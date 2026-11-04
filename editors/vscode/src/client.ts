@@ -91,6 +91,12 @@ import {
 } from './agentHandoff';
 export { validatedAgentLoopCommand };
 export { uriFromTarget, lineFromTarget };
+import {
+  buildAgentRepairAfterArgs,
+  liveRepairAttemptRows,
+  parseAfterPhaseRepairFinish,
+  resolveLiveAttemptForFinish,
+} from './repairFinish';
 
 // Re-export for backward compatibility: the picker test imports these symbols
 // from '../../src/client'. They now live in workspaceHelpers.ts (#2553).
@@ -279,7 +285,8 @@ const RIPR_CLIENT_COMMANDS: readonly string[] = [
   'ripr.showRouteQuality',
   'ripr.showStatus',
   'ripr.showTopLimitation',
-  'ripr.startCurrentRepair'
+  'ripr.startCurrentRepair',
+  'ripr.startOrContinueRepair'
 ];
 
 // The RIPR experimental capability block advertised in initialize params
@@ -468,6 +475,11 @@ export interface RiprClientRuntime {
   createFileSystemWatcher(pattern: vscode.GlobPattern): vscode.FileSystemWatcher;
   readFile(filePath: string): Promise<string | undefined>;
   runRipr(command: string, args: string[], cwd: string): Promise<string>;
+  runRiprProcess?(
+    command: string,
+    args: string[],
+    cwd: string
+  ): Promise<{ exitCode: number; stdout: string; stderr: string }>;
   writeClipboard(text: string): Promise<void>;
   isWorkspaceTrusted(): boolean;
   showInformationMessage(message: string): Thenable<string | undefined>;
@@ -1691,6 +1703,147 @@ export class RiprClientController {
       }
     }
     return undefined;
+  }
+
+  /**
+   * Primary repair shell (#2928 / #4647): finish a live shared attempt when one
+   * is selected, otherwise delegate to the existing start path.
+   */
+  async startOrContinueRepair(): Promise<void> {
+    if (!this.runtime.isWorkspaceTrusted()) {
+      this.runtime.showInformationMessage(
+        'ripr repair is unavailable in an untrusted workspace; trust the workspace to use the shared repair attempt authority.'
+      );
+      return;
+    }
+    const root = this.workspaceRoot ?? this.runtime.workspaceRootState().root;
+    if (!root) {
+      this.runtime.showInformationMessage(
+        'Open a workspace folder (or run ripr: Select Workspace Root) before starting or continuing a repair.'
+      );
+      return;
+    }
+    const config = this.runtime.getConfig();
+    const server = this.server ?? await this.resolveServerForCommand(config);
+    if (!server) {
+      return;
+    }
+    const generation = this.startGeneration;
+    const rows = await this.readAttemptInventory(server.command, root);
+    if (generation !== this.startGeneration) {
+      return;
+    }
+    if (rows === undefined) {
+      this.runtime.showInformationMessage(
+        'ripr could not read shared repair attempts; refresh analysis or run ripr: Diagnose Setup.'
+      );
+      return;
+    }
+    const liveRows = liveRepairAttemptRows(rows);
+    const remembered = this.readRememberedAttempt(root);
+    const rememberedStillValid =
+      remembered !== undefined && rows.some((row) => row.attemptId === remembered);
+    let resolution = resolveLiveAttemptForFinish(rows, {
+      rememberedAttemptId:
+        liveRows.length === 1 && rememberedStillValid ? remembered : undefined,
+    });
+    if (resolution.kind === 'selection_required') {
+      const rowById = new Map(rows.map((row) => [row.attemptId, row]));
+      const pick = await this.runtime.showQuickPick(
+        resolution.attemptIds.map((attemptId) => {
+          const row = rowById.get(attemptId);
+          return {
+            label: row?.seamId ? `${attemptId} — spot ${row.seamId}` : attemptId,
+            description: row?.state ?? undefined,
+            attemptId,
+          };
+        }),
+        {
+          placeHolder:
+            'Several live repair attempts exist — select the exact one to finish (ripr never picks for you).',
+        }
+      );
+      if (!pick) {
+        return;
+      }
+      resolution = resolveLiveAttemptForFinish(rows, { explicitAttemptId: pick.attemptId });
+    }
+    if (resolution.kind === 'selected') {
+      await this.finishSharedRepair(server.command, root, resolution.attemptId, generation);
+      return;
+    }
+    await this.startCurrentRepair();
+  }
+
+  /**
+   * Run the shared after phase for one attempt id and project movement/status
+   * from CLI JSON only (#4647).
+   */
+  async finishSharedRepair(
+    riprCommand: string,
+    root: string,
+    attemptId: string,
+    generation: number = this.startGeneration
+  ): Promise<void> {
+    let result: { exitCode: number; stdout: string; stderr: string };
+    try {
+      result = await this.execRiprProcess(
+        riprCommand,
+        buildAgentRepairAfterArgs(root, attemptId),
+        root
+      );
+    } catch (error) {
+      const message = errorMessage(error);
+      this.output.appendLine(`ripr finish repair after phase failed: ${message}`);
+      this.runtime.showInformationMessage(
+        message.split('\n').find((line) => line.trim() !== '') ??
+          'ripr could not finish the shared repair attempt.'
+      );
+      return;
+    }
+    if (generation !== this.startGeneration) {
+      return;
+    }
+    const parsed = parseAfterPhaseRepairFinish(result.stdout);
+    if (!parsed) {
+      const fallback = result.stderr.trim() || result.stdout.trim();
+      this.output.appendLine(
+        `ripr finish repair returned unrecognized output (exit ${result.exitCode}).`
+      );
+      this.runtime.showInformationMessage(
+        fallback.split('\n').find((line) => line.trim() !== '') ??
+          'ripr could not parse the shared repair after-phase result.'
+      );
+      return;
+    }
+    if (parsed.refusalError) {
+      for (const line of parsed.summaryLines) {
+        this.output.appendLine(line);
+      }
+      this.runtime.showInformationMessage(parsed.refusalError);
+      await this.showAttemptStatus(attemptId);
+      return;
+    }
+    for (const line of parsed.summaryLines) {
+      this.output.appendLine(line);
+    }
+    const headline =
+      parsed.summaryLines[0] ??
+      `ripr repair attempt ${parsed.attemptId} finished through the shared after phase.`;
+    this.runtime.showInformationMessage(headline);
+    this.rememberAttempt(root, attemptId);
+    await this.showAttemptStatus(attemptId);
+  }
+
+  private async execRiprProcess(
+    command: string,
+    args: string[],
+    cwd: string
+  ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    if (this.runtime.runRiprProcess) {
+      return this.runtime.runRiprProcess(command, args, cwd);
+    }
+    return execRiprProcess(command, args, cwd);
   }
 
   async copySuggestedAssertion(target?: RiprSuggestedAssertionTarget): Promise<void> {
@@ -3180,7 +3333,17 @@ function statusContextLines(status: RiprStatusState, context: RiprStatusContext)
   } else {
     lines.push('Enabled languages: not reported yet; read from ripr.toml by the server refresh.');
   }
-  lines.push('Available languages: not reported by server; editor selectors can route enabled stable and preview languages.');
+  if (status.unavailableLanguages && status.unavailableLanguages.length > 0) {
+    for (const row of status.unavailableLanguages) {
+      const state = row.availability_state ?? 'unknown';
+      const steps = row.remediation && row.remediation.length > 0
+        ? row.remediation.join('; ')
+        : (row.recovery ?? 'see server recovery');
+      lines.push(`Language availability (${row.language}): ${state}; ${steps}`);
+    }
+  } else {
+    lines.push('Available languages: not reported by server; editor selectors can route enabled stable and preview languages.');
+  }
   lines.push(`Editor selectors: ${context.documentLanguages.join(', ')}`);
   lines.push(`Evidence freshness: ${evidenceFreshnessSummary(status.kind)}`);
   for (const artifact of context.setupStatus.artifacts) {
@@ -3994,6 +4157,7 @@ interface RiprAnalysisStatusPayload {
   root_state?: string;
   effective_root?: string | null;
   candidate_roots?: string[];
+  candidate_roots_omitted_count?: number;
   root_input_identity?: string | null;
   root_detail?: string | null;
   root_recovery_route?: string;
@@ -4003,11 +4167,13 @@ interface RiprAnalysisStatusPayload {
   unavailable_languages?: AnalysisStatusUnavailableLanguage[];
 }
 
-/** One typed `unavailable_languages` row from `ripr/analysisStatus` (#8585). */
+/** One typed `unavailable_languages` row from `ripr/analysisStatus` (#8585, #2962). */
 export interface AnalysisStatusUnavailableLanguage {
   language: string;
   file_count?: number;
   recovery?: string | null;
+  availability_state?: string | null;
+  remediation?: string[];
 }
 
 function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | undefined {
@@ -4201,6 +4367,31 @@ export function statusForRunStatus(
     unavailableLanguages?: readonly AnalysisStatusUnavailableLanguage[];
   } = {}
 ): RiprStatusState {
+  const status = presentRunStatus(runStatus, input);
+  // #2962: the validated unavailable-language rows ride on every status, not
+  // only the `languageNotEnabled` presentation, so Diagnose Setup still prints
+  // their availability state and remediation when a stale, deferred, cache,
+  // limited or partition state keeps the primary presentation and next step.
+  if (status.unavailableLanguages) {
+    return status;
+  }
+  const rows = validUnavailableLanguages(input.unavailableLanguages);
+  return rows.length > 0
+    ? { ...status, unavailableLanguages: rows.map((row) => ({ ...row })) }
+    : status;
+}
+
+function presentRunStatus(
+  runStatus: string | undefined,
+  input: {
+    detail?: string;
+    retryCommand?: string;
+    retryRecovery?: string;
+    dirtyRoutedDocuments?: readonly string[];
+    components?: readonly AnalysisStatusComponent[];
+    unavailableLanguages?: readonly AnalysisStatusUnavailableLanguage[];
+  }
+): RiprStatusState {
   const dirty = input.dirtyRoutedDocuments ?? [];
   if (dirty.length > 0) {
     return {
@@ -4246,7 +4437,7 @@ export function statusForRunStatus(
   ) {
     // Compose with the presentation the run would otherwise get, so degraded
     // component recoveries and the untrustworthy-findings warning survive.
-    const base = statusForRunStatus(runStatus, { ...input, unavailableLanguages: undefined });
+    const base = presentRunStatus(runStatus, { ...input, unavailableLanguages: undefined });
     return statusForUnavailableLanguages(unavailable, base);
   }
   const limited = LIMITED_RUN_STATUS_PRESENTATIONS[runStatus ?? ''];
@@ -4306,7 +4497,15 @@ function validUnavailableLanguages(
   }
   return rows.filter(
     (row) => typeof row?.language === 'string' && row.language.trim().length > 0
-  );
+  ).map((row) => ({
+    language: row.language,
+    file_count: row.file_count,
+    recovery: row.recovery,
+    availability_state: typeof row.availability_state === 'string' ? row.availability_state : null,
+    remediation: Array.isArray(row.remediation)
+      ? row.remediation.filter((step: unknown): step is string => typeof step === 'string' && step.trim().length > 0)
+      : undefined
+  }));
 }
 
 function statusForUnavailableLanguages(
@@ -4319,9 +4518,15 @@ function statusForUnavailableLanguages(
       : row.language
   );
   const recoveries = uniqueStrings(
-    rows
-      .map((row) => row.recovery)
-      .filter((recovery): recovery is string => typeof recovery === 'string' && recovery.trim().length > 0)
+    rows.flatMap((row) => {
+      const fromRecovery = typeof row.recovery === 'string' && row.recovery.trim().length > 0
+        ? [row.recovery]
+        : [];
+      if (fromRecovery.length > 0) {
+        return fromRecovery;
+      }
+      return Array.isArray(row.remediation) ? row.remediation : [];
+    })
   );
   const languageStep = recoveries.length > 0
     ? recoveries.map(capitalizeFirst).join('; ')
@@ -4332,6 +4537,7 @@ function statusForUnavailableLanguages(
   return {
     kind: 'languageNotEnabled',
     summary: `ripr did not analyze changed ${described.join(', ')}: the language adapter is not enabled.`,
+    unavailableLanguages: rows.map((row) => ({ ...row })),
     detail: [
       base.detail,
       'Changed files of these languages produce no diagnostics, so a quiet editor is not an all-clear for them.'
@@ -4374,10 +4580,14 @@ function composeLimitedNextStep(
 
 function analysisRootStatusDetail(status: RiprAnalysisStatusPayload): string {
   const candidates = status.candidate_roots?.filter((root) => root.length > 0) ?? [];
+  const omitted = status.candidate_roots_omitted_count ?? 0;
+  const candidateField = candidates.length > 0 || omitted > 0
+    ? `candidate_roots=${candidates.join('|')}${omitted > 0 ? ` (+${omitted} more omitted)` : ''}`
+    : undefined;
   return [
     `root_state=${status.root_state ?? 'unknown'}`,
     status.effective_root ? `effective_root=${status.effective_root}` : undefined,
-    candidates.length > 0 ? `candidate_roots=${candidates.join('|')}` : undefined,
+    candidateField,
     status.root_detail ?? undefined,
     status.root_recovery_route ? `recovery=${status.root_recovery_route}` : undefined
   ].filter((field): field is string => Boolean(field)).join(', ');
@@ -5458,14 +5668,44 @@ async function writeTestClipboardCapture(text: string): Promise<void> {
   }
 }
 
-function runRipr(command: string, args: string[], cwd: string): Promise<string> {
+function execRiprProcess(
+  command: string,
+  args: string[],
+  cwd: string
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     cp.execFile(command, args, { cwd, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error(stderr.trim() || error.message));
-      } else {
-        resolve(stdout);
+      if (error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+        reject(error);
+        return;
       }
+      if (error) {
+        const code = (error as cp.ExecFileException).code;
+        if (typeof code !== 'number') {
+          reject(error);
+          return;
+        }
+        resolve({
+          exitCode: code,
+          stdout: typeof stdout === 'string' ? stdout : String(stdout),
+          stderr: typeof stderr === 'string' ? stderr : String(stderr),
+        });
+        return;
+      }
+      resolve({
+        exitCode: 0,
+        stdout: typeof stdout === 'string' ? stdout : String(stdout),
+        stderr: typeof stderr === 'string' ? stderr : String(stderr),
+      });
     });
+  });
+}
+
+function runRipr(command: string, args: string[], cwd: string): Promise<string> {
+  return execRiprProcess(command, args, cwd).then(({ exitCode, stdout, stderr }) => {
+    if (exitCode !== 0) {
+      throw new Error(stderr.trim() || `ripr exited ${exitCode}`);
+    }
+    return stdout;
   });
 }
