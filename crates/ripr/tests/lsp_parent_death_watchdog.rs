@@ -106,7 +106,7 @@ fn server_exits_when_launcher_dies_without_closing_stdio() -> Result<(), String>
         .stdin
         .take()
         .ok_or_else(|| "launcher missing stdin".to_string())?;
-    let mut stdout = launcher
+    let stdout = launcher
         .stdout
         .take()
         .ok_or_else(|| "launcher missing stdout".to_string())?;
