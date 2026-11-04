@@ -68,7 +68,8 @@ required result.
 - Before opening a Draft, inspect current workflow triggers: `ub-review.yml`
   currently runs on PR opening, including Drafts, and the Python wheel workflow
   runs for matching paths. Preserve the no-Draft-CI instruction; coordinate
-  the existing repair (#12116) before publication if opening would trigger work.
+  trigger-perimeter work under #4987 before publication if opening would trigger
+  work. #12116 is retained for delta recovery, not the selected cutover candidate.
   When publication is safe, use the shared
   [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff).
 - Apply lane-selecting labels such as `full-ci` before `merge-ready`.

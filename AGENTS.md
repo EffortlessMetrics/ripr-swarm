@@ -198,8 +198,8 @@ may still violate that target: inspect their actual event triggers before openin
 a PR or changing its state. In particular, `ub-review.yml` currently starts on
 PR opening, including Drafts, and the Python wheel workflow starts for matching
 PR paths. Do not trigger those runs merely to publish a candidate. Coordinate
-their existing repair (#12116), retain local evidence, and continue independent
-work until publication can respect the user's no-Draft-CI instruction.
+the trigger-perimeter work under #4987, retain local evidence, and continue
+independent work until publication can respect the user's no-Draft-CI instruction.
 
 Use the actual installed request interface described in
 [merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
