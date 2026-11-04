@@ -48,6 +48,11 @@ jobs:
           PROPTEST_CASES: ${{ inputs.cases || '400' }}
         run: cargo test --locked -p ripr --test fuzz_panic_freedom --test fuzz_protocol_frames --test stage_metamorphic
 
+      - name: Fuzz the unified-diff parser against git diff output (differential and byte-level)
+        env:
+          PROPTEST_CASES: ${{ inputs.cases || '400' }}
+        run: cargo test --locked -p ripr --lib differential_tests
+
       - name: Collect leftover case workspaces
         if: failure()
         run: mkdir -p target/ripr/fuzz-findings; cp -r /tmp/ripr-fuzz-* target/ripr/fuzz-findings/ || true
