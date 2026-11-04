@@ -4202,7 +4202,8 @@ pub(crate) fn encode_integrity_body<T: serde::Serialize>(
 }
 /// [`encode_integrity_body`] without pretty-printing, for envelopes large
 /// enough that indentation would dominate their size (the Python per-file
-/// fact store, #10914). Decoding and the digest are unchanged.
+/// fact store, #10914, and Rust file facts, #9216). Decoding and the digest
+/// are unchanged.
 pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -4352,13 +4353,13 @@ mod codec {
 
     #[cfg(test)]
     pub(super) fn encode_file_facts(envelope: &FileFactCacheEnvelope) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
     }
 
     pub(super) fn encode_file_facts_ref(
         envelope: &FileFactCacheEnvelopeRef<'_>,
     ) -> Result<Vec<u8>, String> {
-        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+        super::encode_integrity_body_compact(envelope, envelope.expected_digest()?)
     }
 
     pub(super) fn decode_file_facts(bytes: &[u8]) -> Result<FileFactCacheEnvelope, String> {
@@ -6164,6 +6165,106 @@ mod tests {
             CacheLoad::Hit(facts) => assert_eq!(facts, current_facts),
             other => return Err(format!("quarantined facts did not round trip: {other:?}")),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn file_fact_store_compacts_bytes_without_changing_legacy_admission() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let scratch = integrity_scratch("compact-file-facts")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let samples = [
+            ("src/empty.rs", ""),
+            (
+                "src/unicode.rs",
+                "pub fn café() -> &'static str { \"line\\n\\\"quoted\\\"\" }\n#[test] fn check() { assert_eq!(café(), \"line\\n\\\"quoted\\\"\"); }\n",
+            ),
+            (
+                "src/macros.rs",
+                include_str!("classify/macro_item_names.rs"),
+            ),
+        ];
+        let mut stored_bytes = 0;
+        let mut legacy_bytes = 0;
+        for (file, source) in samples {
+            let file = Path::new(file);
+            let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+            if !source.is_empty() {
+                assert!(
+                    !facts.functions.is_empty(),
+                    "fixture must contain functions"
+                );
+                assert!(!facts.tests.is_empty(), "fixture must contain tests");
+            }
+            let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+            let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
+            let legacy = encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+            cache.store_file_facts(&key, &facts)?;
+            let entry = cache.entry_path(&key);
+            let stored = std::fs::read(&entry).map_err(|err| err.to_string())?;
+            let stored_value: serde_json::Value =
+                serde_json::from_slice(&stored).map_err(|err| err.to_string())?;
+            let legacy_value: serde_json::Value =
+                serde_json::from_slice(&legacy).map_err(|err| err.to_string())?;
+            assert_eq!(
+                stored_value, legacy_value,
+                "all fields and digest stay equal"
+            );
+            for bytes in [&stored, &legacy] {
+                std::fs::write(&entry, bytes).map_err(|err| err.to_string())?;
+                match cache.load_file_facts(&key) {
+                    CacheLoad::Hit(loaded) => assert_eq!(loaded, facts),
+                    other => return Err(format!("old/new encoding failed admission: {other:?}")),
+                }
+                assert!(cache.known_file_paths().contains(file));
+                let header = read_file_fact_header(&entry).ok_or("missing header")?;
+                assert_eq!(header.file_path, file);
+                assert_eq!(header.analyzer_version, key.analyzer_version);
+            }
+            // Corruption must still be rejected after reformatting. Do not
+            // recompute the digest when changing a served fact.
+            let mut corrupt = stored_value;
+            corrupt["file_facts"]["source"] = serde_json::json!("tampered");
+            std::fs::write(
+                &entry,
+                serde_json::to_vec(&corrupt).map_err(|err| err.to_string())?,
+            )
+            .map_err(|err| err.to_string())?;
+            assert!(matches!(
+                cache.load_file_facts(&key),
+                CacheLoad::CorruptIgnored { .. }
+            ));
+            println!(
+                "file-fact-storage {file:?}: source={} legacy={} stored={}",
+                source.len(),
+                legacy.len(),
+                stored.len()
+            );
+            let mut timings = Vec::new();
+            for compact in [false, true] {
+                let start = std::time::Instant::now();
+                for _ in 0..10 {
+                    let digest = envelope.expected_digest()?;
+                    let bytes = if compact {
+                        encode_integrity_body_compact(&envelope, digest)?
+                    } else {
+                        encode_integrity_body(&envelope, digest)?
+                    };
+                    std::hint::black_box(bytes);
+                }
+                timings.push(start.elapsed().as_micros());
+            }
+            println!(
+                "file-fact-encode {file:?}: rounds=10 pretty_us={} compact_us={} (debug profile; includes digest; excludes parse/IO)",
+                timings[0], timings[1]
+            );
+            stored_bytes += stored.len();
+            legacy_bytes += legacy.len();
+        }
+        assert!(
+            stored_bytes < legacy_bytes,
+            "production store must remove formatting bytes: stored={stored_bytes}, legacy={legacy_bytes}"
+        );
         Ok(())
     }
 
