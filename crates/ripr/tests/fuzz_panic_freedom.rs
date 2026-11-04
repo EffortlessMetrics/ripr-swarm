@@ -306,6 +306,9 @@ fn replace_diff(path: &str, old: &str, new: &[u8]) -> Vec<u8> {
 struct Workspace {
     root: PathBuf,
     out: PathBuf,
+    /// Whether this case reruns for determinism; decided once from the case
+    /// input so a shrink attempt on the same input decides the same way.
+    rerun: bool,
 }
 
 impl Workspace {
@@ -328,7 +331,8 @@ impl Workspace {
         let out = root.with_extension("out");
         std::fs::create_dir_all(&out)
             .map_err(|error| format!("create {} failed: {error}", out.display()))?;
-        Ok(Self { root, out })
+        let rerun = rerun_for_determinism(files);
+        Ok(Self { root, out, rerun })
     }
 
     fn command(&self) -> std::process::Command {
@@ -384,7 +388,7 @@ impl Workspace {
         let (status, stdout) = self.run_once(0)?;
         judge(status)?;
         judge_output(status.code(), &stdout)?;
-        if rerun_for_determinism(&self.root) {
+        if self.rerun {
             let (second_status, second_stdout) = self.run_once(1)?;
             judge_repeat(
                 (status.code(), &stdout),
@@ -543,15 +547,23 @@ fn judge_repeat(first: (Option<i32>, &[u8]), second: (Option<i32>, &[u8])) -> Re
 
 /// The determinism rerun doubles a case's child time. The weekly lane
 /// (`PROPTEST_CASES` set) reruns every case; the default lane reruns one case
-/// in eight, chosen from the workspace path hash so it stays cheap (#12924
-/// asks for at most +20% default-lane runtime).
-fn rerun_for_determinism(root: &std::path::Path) -> bool {
+/// in eight, chosen from a hash of the case input (file names and contents)
+/// so the choice is stable across processes and shrink attempts and stays
+/// cheap (#12924 asks for at most +20% default-lane runtime).
+fn rerun_for_determinism(files: &[(&str, &[u8])]) -> bool {
     if std::env::var_os("PROPTEST_CASES").is_some() {
         return true;
     }
     let mut hash: u32 = 2_166_136_261;
-    for byte in root.to_string_lossy().bytes() {
-        hash = (hash ^ u32::from(byte)).wrapping_mul(16_777_619);
+    for (name, bytes) in files {
+        for byte in name
+            .bytes()
+            .chain([0])
+            .chain(bytes.iter().copied())
+            .chain([0])
+        {
+            hash = (hash ^ u32::from(byte)).wrapping_mul(16_777_619);
+        }
     }
     hash.is_multiple_of(8)
 }
@@ -799,34 +811,62 @@ fn good_report() -> String {
 fn output_oracle_rejects_planted_faults() {
     assert_eq!(judge_output(Some(0), good_report().as_bytes()), Ok(()));
     let good = good_report();
-    let bad_cases: Vec<(&str, Option<i32>, String)> = vec![
-        ("invalid json", Some(0), "{\"findings\": [".to_string()),
-        ("missing key", Some(0), good.replace("\"summary\":{},", "")),
+    // (name, exit code, stdout, substring the rejection must contain)
+    let bad_cases: Vec<(&str, Option<i32>, Vec<u8>, &str)> = vec![
+        (
+            "invalid json",
+            Some(0),
+            b"{\"findings\": [".to_vec(),
+            "not JSON",
+        ),
+        ("not utf-8", Some(0), b"\xff\xfe".to_vec(), "not UTF-8"),
+        (
+            "missing key",
+            Some(0),
+            good.replace("\"summary\":{},", "").into_bytes(),
+            "missing required key `summary`",
+        ),
         (
             "unknown class",
             Some(0),
-            good.replace("weakly_exposed", "mostly_exposed"),
+            good.replace("weakly_exposed", "mostly_exposed")
+                .into_bytes(),
+            "not in the exposure vocabulary",
         ),
         (
             "unknown class without stop reason",
             Some(0),
-            good.replace("[\"opaque\"]", "[]"),
+            good.replace("[\"opaque\"]", "[]").into_bytes(),
+            "carries no stop reason",
         ),
         (
             "runtime mutation word",
             Some(0),
-            good.replace("add an assertion", "the mutant was killed"), // ripr-allow: static-language: planted fault
+            good.replace("add an assertion", "the mutant was killed") // ripr-allow: static-language: planted fault
+                .into_bytes(),
+            "runtime-mutation term",
         ),
-        ("undocumented exit code", Some(1), good.clone()),
-        ("no exit code", None, good.clone()),
+        (
+            "undocumented exit code",
+            Some(1),
+            good.clone().into_bytes(),
+            "not in docs/EXIT_CODES.md",
+        ),
+        (
+            "no exit code",
+            None,
+            good.clone().into_bytes(),
+            "without an exit code",
+        ),
     ];
-    for (name, code, body) in bad_cases {
+    for (name, code, body, expected) in bad_cases {
+        let error =
+            judge_output(code, &body).expect_err(&format!("oracle accepted planted fault: {name}"));
         assert!(
-            judge_output(code, body.as_bytes()).is_err(),
-            "oracle accepted planted fault: {name}"
+            error.contains(expected),
+            "{name}: rejected for the wrong reason: {error}"
         );
     }
-    assert!(judge_output(Some(0), b"\xff\xfe").is_err());
     assert_eq!(judge_output(Some(2), b"not json at all"), Ok(()));
 }
 

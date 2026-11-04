@@ -294,7 +294,8 @@ mod tests {
     }
 
     /// Declaration index of each variant. The exhaustive match makes a new
-    /// variant a compile error here; the new arm takes the next index.
+    /// variant a compile error here; the new arm takes the next index. The
+    /// compiler does not check `LAST_DECLARED` or the count it implies.
     fn declaration_index(class: &ExposureClass) -> usize {
         match class {
             ExposureClass::Exposed => 0,
@@ -307,9 +308,10 @@ mod tests {
         }
     }
 
-    /// The last declared variant. A new variant is appended here together
-    /// with its `declaration_index` arm, which makes the expected count grow
-    /// and fails this test until `ALL` lists the new entry.
+    /// The last declared variant. The compiler does NOT check this: whoever
+    /// adds a variant must move it to the new variant by hand, together with
+    /// the new `declaration_index` arm, which grows the expected count and
+    /// fails this test until `ALL` lists the new entry.
     const LAST_DECLARED: ExposureClass = ExposureClass::StaticUnknown;
 
     #[test]
