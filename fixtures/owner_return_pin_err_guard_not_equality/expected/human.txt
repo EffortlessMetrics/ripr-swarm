@@ -34,8 +34,10 @@ Start here:
     - 10 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/owner_return_pin_err_guard_not_equality/input --diff <cwd>/fixtures/owner_return_pin_err_guard_not_equality/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root <cwd>/fixtures/owner_return_pin_err_guard_not_equality/input --diff <cwd>/fixtures/owner_return_pin_err_guard_not_equality/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
+  (spot id, for repair)
   ripr repair 6356f1ae930c0a09 --root <cwd>/fixtures/owner_return_pin_err_guard_not_equality/input
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/owner_return_pin_err_guard_not_equality/input --at src/lib.rs:2 --kind return_value

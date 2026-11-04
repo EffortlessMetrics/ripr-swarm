@@ -82,6 +82,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: no statically linked test calls `computeTotal(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_adversarial_hoc_wrapped_owner/input --diff <cwd>/fixtures/typescript_adversarial_hoc_wrapped_owner/diff.patch --mode fast probe:src_audit.ts:typescript_preview:cef0d72c
   ripr context --root <cwd>/fixtures/typescript_adversarial_hoc_wrapped_owner/input --diff <cwd>/fixtures/typescript_adversarial_hoc_wrapped_owner/diff.patch --mode fast --at probe:src_audit.ts:typescript_preview:cef0d72c
 
