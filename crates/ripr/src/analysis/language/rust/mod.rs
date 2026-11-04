@@ -2562,8 +2562,8 @@ impl RustAdapter {
         // emit definite `no_static_path` without searching omitted test files.
         // #5320 name-admitted dependent scope also leaves files unindexed on
         // purpose; withholding there would break narrowed/full parity.
-        let partial_index_from_selection = matches!(options.mode, AnalysisMode::Instant)
-            || !options.include_unchanged_tests;
+        let partial_index_from_selection =
+            matches!(options.mode, AnalysisMode::Instant) || !options.include_unchanged_tests;
         let unindexed_test_reach_abstains = dependent_scope.is_none()
             && partial_index_from_selection
             && !workspace_index_complete
