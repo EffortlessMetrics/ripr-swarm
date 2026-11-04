@@ -523,8 +523,8 @@ fn unresolved_trait_helper_terminals_do_not_borrow_namesake_credit() -> Result<(
             "trait Real { fn leaf_value() -> Option<u32> { Some(7) } }\ntrait Decoy { fn leaf_value() -> Option<u32> { Some(7) } }\nstruct Value; impl Real for Value {} impl Decoy for Value {}",
             "<Value as Real>::leaf_value()",
             [
-                "src/lib.rs::trait Real::leaf_value",
-                "src/lib.rs::trait Decoy::leaf_value",
+                "src/lib.rs::leaf_value#L1",
+                "src/lib.rs::leaf_value#L2",
             ],
         ),
     ] {

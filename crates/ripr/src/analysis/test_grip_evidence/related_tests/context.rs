@@ -188,6 +188,7 @@ pub(in crate::analysis::test_grip_evidence) struct CompactTest<'a> {
     pub(in crate::analysis::test_grip_evidence) name_lower: String,
     pub(in crate::analysis::test_grip_evidence) call_names: BTreeSet<String>,
     pub(in crate::analysis::test_grip_evidence) assertion_tokens: BTreeSet<String>,
+    #[cfg(test)]
     pub(in crate::analysis::test_grip_evidence) helper_owner_call_names: BTreeSet<String>,
     /// The subset of `helper_owner_call_names` whose helper-body call
     /// spells a bare or module-qualified free-function call; a free owner
@@ -641,6 +642,7 @@ impl<'a> CompactGripContext<'a> {
                     name_lower: test.name.to_ascii_lowercase(),
                     call_names,
                     assertion_tokens,
+                    #[cfg(test)]
                     helper_owner_call_names,
                     #[cfg(test)]
                     free_spelling_helper_owner_call_names,
