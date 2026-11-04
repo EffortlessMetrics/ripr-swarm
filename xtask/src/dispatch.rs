@@ -96,6 +96,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::TestOracleReport => super::reports::test_oracle_report(),
         XtaskCommand::TestEfficiencyReport => super::reports::test_efficiency_report(),
+        XtaskCommand::SlowTestReport(args) => super::reports::slow_test_report(&args),
         XtaskCommand::BadgeArtifacts => super::reports::badge_artifacts(),
         XtaskCommand::RepoBadgeArtifacts(args) => super::reports::repo_badge_artifacts(&args),
         XtaskCommand::BadgeBasis(args) => super::reports::badge_basis(&args),
