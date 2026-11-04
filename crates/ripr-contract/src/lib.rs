@@ -6,5 +6,7 @@
 //! package published in lockstep with `ripr`; its types are re-exported at
 //! their established `ripr::domain` paths and are not a separate public API.
 
+pub mod analysis;
+pub mod core_error;
 pub mod domain;
 pub mod value_origins;

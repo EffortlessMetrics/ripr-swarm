@@ -2049,7 +2049,7 @@ pub(crate) mod tests {
         // every grip class, and an empty seams array, never zero bytes.
         let notice =
             crate::core_error::CoreError::seam_id_unknown("agent packet seam_id s was not found")
-                .refusal_notice();
+                .refusal_notice(&crate::config::config_error_summary);
         let rendered = render_refusal_json(&notice);
         let value: serde_json::Value =
             serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;

@@ -63,7 +63,7 @@ mod atomic_file;
 pub(crate) use ripr_contract::value_origins;
 // Crate-internal typed error authority (#4859). Git invocation timeout is
 // the first migrated family; later slices extend this enum.
-mod core_error;
+pub(crate) use ripr_contract::core_error;
 // Bounded reads for user-named CLI file and stdin inputs (#4480).
 mod bounded_input;
 // Public application error boundary (#1986).
