@@ -66,9 +66,18 @@ impl Repo {
             &root.join("src").join(SENTINEL_NAME),
             b"\xff\xfe pub fn x() {}\n",
         )?;
+        // Only list languages this binary was built with; ripr refuses a
+        // config naming a language whose Cargo feature is off.
+        let mut languages = vec!["\"rust\""];
+        if cfg!(feature = "lang-python") {
+            languages.push("\"python\"");
+        }
+        if cfg!(feature = "lang-typescript") {
+            languages.push("\"typescript\"");
+        }
         write(
             &root.join("ripr.toml"),
-            b"[languages]\nenabled = [\"rust\", \"python\", \"typescript\"]\n",
+            format!("[languages]\nenabled = [{}]\n", languages.join(", ")).as_bytes(),
         )?;
         write(&root.join("tools.py"), PYTHON_SRC.as_bytes())?;
         write(&root.join("tools.ts"), TYPESCRIPT_SRC.as_bytes())?;
