@@ -7,6 +7,11 @@ on:
         type: string
         required: false
         default: legacy
+      execution-profile:
+        description: legacy preserves existing runners; owned-jit consumes the qualified em-ci rust-heavy.v1 container contract.
+        type: string
+        required: false
+        default: legacy
       head-sha:
         type: string
         required: false
@@ -189,30 +194,76 @@ jobs:
           constituent-pr-node-id: ${{ inputs.constituent-pr-node-id }}
           constituent-head-sha: ${{ inputs.constituent-head-sha }}
 
+      - name: Validate execution profile
+        env:
+          EXECUTION_PROFILE: ${{ inputs.execution-profile }}
+          PROOF_PROFILE: ${{ inputs.proof-profile }}
+          USE_SCRATCH: ${{ inputs.use-scratch }}
+          TEST_SHARDS: ${{ inputs.test-shards }}
+          RUNNER_CONFIG: ${{ inputs.runner-config }}
+        run: |
+          set -euo pipefail
+          case "$EXECUTION_PROFILE" in
+            legacy) ;;
+            owned-jit)
+              [[ "$PROOF_PROFILE" == merge-group && "$USE_SCRATCH" == false && "$TEST_SHARDS" == 1 ]]
+              jq -e '. == {"group":"em-ci-build","labels":["self-hosted","linux","x64","rust-heavy"]}' <<< "$RUNNER_CONFIG" >/dev/null ;;
+            *) echo 'Unknown execution profile' >&2; exit 1 ;;
+          esac
+
+      - name: Configure owned JIT environment
+        id: owned
+        if: inputs.execution-profile == 'owned-jit'
+        run: |
+          set -euo pipefail
+          [[ "$RUNNER_ENVIRONMENT" == self-hosted && "$RUNNER_OS" == Linux && "$RUNNER_ARCH" == X64 ]]
+          [[ "$CARGO_HOME" == /cache/cargo && "$SCCACHE_DIR" == /cache/sccache && "$RUSTC_WRAPPER" == sccache && "$CARGO_INCREMENTAL" == 0 ]]
+          [[ "$CARGO_BUILD_JOBS" == 8 && "$NEXTEST_TEST_THREADS" == 8 && "$RUST_TEST_THREADS" == 8 ]]
+          [[ "$SCCACHE_CACHE_SIZE" =~ ^[1-9][0-9]*[KMGT]?$ ]]
+          [[ "$GITHUB_WORKSPACE" == /home/runner/_work/* && "$(realpath "$GITHUB_WORKSPACE")" == "$GITHUB_WORKSPACE" ]]
+          for path in /cache/cargo /cache/cargo/registry /cache/cargo/git /cache/sccache; do
+            [[ -d "$path" && -w "$path" && ! -L "$path" ]]
+          done
+          [[ -f /cache/cargo/.global-cache && -w /cache/cargo/.global-cache && ! -L /cache/cargo/.global-cache ]]
+          for path in "$GITHUB_WORKSPACE/target" "$GITHUB_WORKSPACE/target/tmp"; do
+            [[ ! -L "$path" ]] && { [[ ! -e "$path" ]] || [[ -d "$path" ]]; }
+            mkdir -p "$path"
+          done
+          {
+            echo 'RUSTUP_TOOLCHAIN=1.95.0'
+            echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target"
+            echo "TMPDIR=$GITHUB_WORKSPACE/target/tmp"
+            echo "TMP=$GITHUB_WORKSPACE/target/tmp"
+            echo "TEMP=$GITHUB_WORKSPACE/target/tmp"
+          } >> "$GITHUB_ENV"
+          printf 'status=success\nmessage=owned_jit_contract_observed\n' >> "$GITHUB_OUTPUT"
+          # The host owns bounded cycle cleanup; never delete its shared caches.
+          # Two-subject reuse/invalidation and actual image/capacity are activation gates.
+
       # #3841: ownership and liveness of this job's per-run scratch trees come
       # from a kernel flock lease taken before any tree exists, never from a
       # directory age. The same action is the scheduled scratch-gc.yml authority.
       - name: Acquire scratch lease
-        if: inputs.use-scratch
+        if: inputs.execution-profile == 'legacy' && inputs.use-scratch
         uses: ./.github/actions/ci-scratch-lease
         with:
           mode: acquire
           job-timeout-minutes: ${{ inputs.job-timeout-minutes }}
 
       - name: Reclaim terminal scratch
-        if: inputs.use-scratch
+        if: inputs.execution-profile == 'legacy' && inputs.use-scratch
         uses: ./.github/actions/ci-scratch-lease
         with:
           mode: reclaim
 
       - name: Prepare toolchain temp
-        if: inputs.use-scratch
+        if: inputs.execution-profile == 'legacy' && inputs.use-scratch
         env:
           TMPDIR: /mnt/ci-scratch/tmp/${{ github.run_id }}-${{ github.run_attempt }}
         run: mkdir -p "$TMPDIR"
 
       - name: Configure scratch environment
-        if: inputs.use-scratch
+        if: inputs.execution-profile == 'legacy' && inputs.use-scratch
         env:
           CARGO_HOME: /mnt/ci-scratch/cargo-home/${{ github.run_id }}-${{ github.run_attempt }}
           RUSTC_WRAPPER: sccache
@@ -232,7 +283,7 @@ jobs:
 
       - name: Prepare scratch
         id: scratch
-        if: inputs.use-scratch
+        if: inputs.execution-profile == 'legacy' && inputs.use-scratch
         run: |
           find /mnt/ci-cache/sccache -type f -mmin +1440 -delete 2>/dev/null || true
           du -sh /mnt/ci-scratch/* /mnt/ci-cache/* /mnt/actions/_work/* /var/log /var/lib/docker /home/* 2>/dev/null | sort -rh | head -20 || true
@@ -275,19 +326,28 @@ jobs:
         run: cargo fmt --check
 
       - name: Install CI tools
+        if: inputs.execution-profile == 'legacy'
         uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}
 
+      - name: Verify owned image tools
+        if: inputs.execution-profile == 'owned-jit'
+        run: |
+          set -euo pipefail
+          rustc --version | grep -F 'rustc 1.95.0 '
+          cargo nextest --version
+          sccache --version
+
       - name: Restore hosted Rust cache
-        if: ${{ !inputs.use-scratch }}
+        if: ${{ inputs.execution-profile == 'legacy' && !inputs.use-scratch }}
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ripr-swarm-rust-small-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Start sccache server
-        if: inputs.use-scratch
+        if: inputs.execution-profile == 'owned-jit' || inputs.use-scratch
         run: |
           mkdir -p "$CARGO_TARGET_DIR" "$SCCACHE_DIR"
           sccache --start-server || true
@@ -629,7 +689,7 @@ jobs:
           cargo xtask reports index || true
 
       - name: Show sccache stats
-        if: always() && inputs.use-scratch && steps.scratch.outputs.status != 'tempfail'
+        if: always() && (steps.owned.outcome == 'success' || (inputs.use-scratch && steps.scratch.outputs.status != 'tempfail'))
         run: sccache --show-stats || true
 
       - name: Write gate summary
@@ -710,14 +770,14 @@ jobs:
           retention-days: 5
 
       - name: Clean scratch
-        if: always() && inputs.use-scratch
+        if: always() && inputs.execution-profile == 'legacy' && inputs.use-scratch
         run: |
           cargo clean || true
           rm -rf "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"
           df -h /mnt/ci-scratch /mnt/ci-cache || true
 
       - name: Release scratch lease
-        if: always() && inputs.use-scratch
+        if: always() && inputs.execution-profile == 'legacy' && inputs.use-scratch
         uses: ./.github/actions/ci-scratch-lease
         with:
           mode: release

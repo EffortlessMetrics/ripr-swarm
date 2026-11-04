@@ -222,13 +222,63 @@ unadmitted composition fails before product setup. Existing qualification and
 diagnostic behavior and mandatory payloads remain available; no filtered
 nextest denominator or proof-result reuse is introduced.
 
-This is backwards-compatible source preparation. The caller has not selected
-the profile or connected #8082's complete leaf portfolio by this change.
+The #8082 caller continuation selects this profile for native queue runs and
+binds the complete Windows subset, Python wheel, feature/release/MSRV/VS Code
+and printed-command portfolio to the same G receipt. All four reusable results
+and the selected Rust result are mandatory. Missing, skipped, cancelled and
+failed required leaves refuse the aggregate; docs-only classification cannot
+prune a queue qualification. The existing label/main route remains available
+under its legacy profile until protected activation.
+
+The admission job retains `ripr-queue-subject-<run_id>-<run_attempt>` with the
+canonical subject, its digest, observed native queue-entry id and complete
+mandatory portfolio. The Result verifies the frozen subject/run tuple and
+retains current-head, review, cut and succession checks. This observation does
+not itself authorize H: the existing protected publisher must join it to the
+acknowledged enqueue receipt binding exact H, admission id and native entry id.
+A later same-tree H2 cannot inherit H's intake authority. The shared source
+verifier is part of the transitive reviewed workflow closure.
+
 Native G execution, Windows runner behavior, H/App admission, cache continuity,
 required-context migration and protected M remain separate acceptance work.
 The initial singleton is a measured canary contract; multi-constituent support
 requires a reviewed constituent/composition model. Parent-shape acceptance in
 the verifier does not grant a per-PR native queue merge-method override.
+
+### Owned runner preparation and final activation
+
+The Rust leaf has an optional `execution-profile: owned-jit`; the preparation
+caller still uses its default `legacy` profile. Owned JIT is admitted only for
+the native-G proof profile, unsharded full nextest, and the exact capability
+projection `{"group":"em-ci-build","labels":["self-hosted","linux","x64","rust-heavy"]}`.
+The em-ci source authority is `config/capability-contracts.json` and
+`host/em-ci-slot`, not the legacy `/mnt/ci-*` mounts or scratch helpers.
+
+The profile consumes `/cache/cargo` and `/cache/sccache`, validates admitted
+build/test parallelism of eight and disabled incremental compilation, and
+keeps `target` and temporary files inside this job's disposable workspace.
+Only the governed registry/git/global Cargo cache and compiler cache are shared.
+It never runs the legacy scratch lease, cache deletion or hosted cache writer.
+The host owns bounded cycle disposal. Rust 1.95.0 is selected process-locally;
+the pinned per-job toolchain action retains matching LLVM-component setup until
+a qualified image demonstrably supplies it. Existing image nextest/sccache
+executables are checked before proof. No new cache service is introduced.
+
+The current main-scope writer stays intact in this preparation. Removing it is
+a source/settings activation, gated by actual installed heavy and separate
+control capacity, image identity, two distinct compatible G subjects showing
+cache reuse, meaningful toolchain/lock/feature/target/profile invalidation,
+cold/corrupt/unavailable cache behavior and cleanup isolation. Queue-ref caches
+are not claimed reusable across unrelated refs. Explicit hosted recovery may
+be cold or restore-only; it is not an ordinary fallback and must not write a
+normal protected success under a different resource/trust contract.
+
+The final activation must also remove label subscriptions, ordinary main push,
+the label-conflict observer and the every-main hard-cut observer after protected
+G/cut enforcement replaces it. The H publisher and required-check App binding
+must be satisfiable first; no unrestricted publisher binding or unqualified
+merge is part of this migration. A native G and resulting M readback close the
+loop. Source preparation alone establishes none of these runtime observations.
 
 ## Verification Economics Policy
 

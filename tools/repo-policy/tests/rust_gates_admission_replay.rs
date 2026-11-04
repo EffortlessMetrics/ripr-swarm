@@ -26,7 +26,7 @@ fn step_text() -> TestResult<&'static str> {
     let (_, tail) = WORKFLOW
         .split_once(STEP)
         .ok_or("verification step exists")?;
-    Ok(tail.split_once("\n      # #3841").map_or(tail, |(s, _)| s))
+    Ok(tail.split_once("\n      - ").map_or(tail, |(s, _)| s))
 }
 
 fn script() -> TestResult<String> {

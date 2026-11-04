@@ -213,6 +213,12 @@ jobs:
       head: ${{ steps.entry.outputs.head }}
       queue_entry: ${{ steps.entry.outputs.queue_entry }}
       request: ${{ steps.entry.outputs.request }}
+      pr_id: ${{ steps.entry.outputs.pr_id }}
+      base: ${{ steps.group.outputs.base }}
+      merge: ${{ steps.group.outputs.merge }}
+      tree: ${{ steps.group.outputs.tree }}
+      subject_json: ${{ steps.group.outputs.subject-json }}
+      subject_identity: ${{ steps.group.outputs.subject-identity }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Select trusted admission source
@@ -275,13 +281,14 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || '' }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          PR_NODE_ID: ${{ github.event.pull_request.node_id || '' }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
           GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS" queue_entry=""
+          pr="$PR_NUMBER" head="$PR_HEAD_SHA" pr_id="$PR_NODE_ID" labels="$PR_LABELS" queue_entry="" tree=""
           if [ "$EVENT_NAME" = "merge_group" ]; then
             # The queue branch is named .../pr-<number>-<sha>. The PR comes from
             # the name; the exact head is the PR's live head, which must match
@@ -295,6 +302,7 @@ jobs:
             pr="${BASH_REMATCH[1]}" ref_sha="${BASH_REMATCH[2]}"
             current="$(gh api "repos/${REPOSITORY}/pulls/${pr}")"
             head="$(jq -r '.head.sha' <<<"$current")"
+            pr_id="$(jq -er '.node_id | select(type == "string" and length > 0)' <<<"$current")"
             { [ "$ref_sha" = "$head" ] || [ "$ref_sha" = "$GROUP_BASE_SHA" ]; } || { echo "::error::queue ref sha $ref_sha is neither the live head $head of PR #${pr} (pushed after enqueue) nor the group base $GROUP_BASE_SHA"; exit 1; }
             commit="$(gh api "repos/${REPOSITORY}/commits/${GROUP_HEAD_SHA}")"
             parents="$(jq -r '.parents | length' <<<"$commit")"
@@ -313,9 +321,46 @@ jobs:
             merged="$(git merge-tree --write-tree "$GROUP_BASE_SHA" "$head")" && [ "${merged%%$'\n'*}" = "$(git rev-parse "${GROUP_HEAD_SHA}^{tree}")" ] || { echo "::error::queued commit ${GROUP_HEAD_SHA} is not PR #${pr} head $head merged onto base $GROUP_BASE_SHA"; exit 1; }
             queue=$(gh api graphql -f query='query($number:Int!){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid mergeQueueEntry{id}}}}' -F number="$pr")
             queue_entry=$(jq -er --arg head "$head" 'select(.errors == null) | .data.repository.pullRequest | select(.headRefOid == $head) | .mergeQueueEntry.id | select(type == "string" and length > 0)' <<<"$queue")
+            tree="$(git rev-parse "${GROUP_HEAD_SHA}^{tree}")"
             labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
           fi
-          { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; } >> "$GITHUB_OUTPUT"
+          { echo "pr=$pr"; echo "pr_id=$pr_id"; echo "head=$head"; echo "tree=$tree"; echo "labels=$labels"; echo "queue_entry=$queue_entry"; echo "request=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"; } >> "$GITHUB_OUTPUT"
+      # This observes the live candidate's composition. Protected H authority
+      # comes from the existing publisher's acknowledged exact-head enqueue
+      # receipt; a later same-tree H2 cannot inherit the earlier admission.
+      - name: Freeze actual native group subject
+        id: group
+        if: github.event_name == 'merge_group'
+        uses: ./.github/actions/verify-merge-group-subject
+        with:
+          head-sha: ${{ steps.entry.outputs.head }}
+          base-sha: ${{ github.event.merge_group.base_sha }}
+          subject-sha: ${{ github.event.merge_group.head_sha }}
+          subject-tree: ${{ steps.entry.outputs.tree }}
+          workflow-generation: ${{ github.workflow_sha }}
+          request-id: ${{ steps.entry.outputs.request }}
+          constituent-pr-number: ${{ steps.entry.outputs.pr }}
+          constituent-pr-node-id: ${{ steps.entry.outputs.pr_id }}
+          constituent-head-sha: ${{ steps.entry.outputs.head }}
+      - name: Write native group observation
+        if: github.event_name == 'merge_group'
+        env:
+          SUBJECT: ${{ steps.group.outputs.subject-json }}
+          IDENTITY: ${{ steps.group.outputs.subject-identity }}
+          QUEUE_ENTRY: ${{ steps.entry.outputs.queue_entry }}
+        run: |
+          set -euo pipefail
+          jq -cnS --argjson subject "$SUBJECT" --arg identity "$IDENTITY" --arg entry "$QUEUE_ENTRY" \
+            '{version:1,subject:$subject,subject_identity:$identity,queue_entry:$entry,mandatory_portfolio:["rust","windows-subset","python-wheel","ci-feature","printed-command"]}' \
+            > "$RUNNER_TEMP/ripr-queue-subject.json"
+      - name: Retain native group observation
+        if: github.event_name == 'merge_group'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ripr-queue-subject-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ripr-queue-subject.json
+          if-no-files-found: error
+          retention-days: 5
       - name: Admit exact candidate
         id: candidate
         uses: ./.admission-trusted/.github/actions/pr-candidate-admission
@@ -382,9 +427,20 @@ jobs:
   rust-cx43:
     name: Ripr Rust Small on CX43
     needs: [admission, route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cx43' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: needs.route.outputs.router_target == 'cx43' && needs.admission.result == 'success' && (github.event_name == 'merge_group' || needs.detect-docs-only.outputs.docs_only != 'true')
     uses: ./.github/workflows/rust-gates.yml
     with:
+      proof-profile: ${{ github.event_name == 'merge_group' && 'merge-group' || 'legacy' }}
+      head-sha: ${{ github.event_name == 'merge_group' && needs.admission.outputs.head || '' }}
+      base-sha: ${{ needs.admission.outputs.base }}
+      subject-sha: ${{ needs.admission.outputs.merge }}
+      subject-tree: ${{ needs.admission.outputs.tree }}
+      workflow-generation: ${{ github.event_name == 'merge_group' && github.workflow_sha || '' }}
+      subject-json: ${{ needs.admission.outputs.subject_json }}
+      subject-identity: ${{ needs.admission.outputs.subject_identity }}
+      constituent-pr-number: ${{ github.event_name == 'merge_group' && needs.admission.outputs.pr || '' }}
+      constituent-pr-node-id: ${{ github.event_name == 'merge_group' && needs.admission.outputs.pr_id || '' }}
+      constituent-head-sha: ${{ github.event_name == 'merge_group' && needs.admission.outputs.head || '' }}
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx43","rust-medium","trusted-pr"]}'
       cargo-build-jobs: "12"
       disk-guard-threshold: 35
@@ -400,9 +456,20 @@ jobs:
   rust-cpx42:
     name: Ripr Rust Small on CPX42
     needs: [admission, route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cpx42' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: needs.route.outputs.router_target == 'cpx42' && needs.admission.result == 'success' && (github.event_name == 'merge_group' || needs.detect-docs-only.outputs.docs_only != 'true')
     uses: ./.github/workflows/rust-gates.yml
     with:
+      proof-profile: ${{ github.event_name == 'merge_group' && 'merge-group' || 'legacy' }}
+      head-sha: ${{ github.event_name == 'merge_group' && needs.admission.outputs.head || '' }}
+      base-sha: ${{ needs.admission.outputs.base }}
+      subject-sha: ${{ needs.admission.outputs.merge }}
+      subject-tree: ${{ needs.admission.outputs.tree }}
+      workflow-generation: ${{ github.event_name == 'merge_group' && github.workflow_sha || '' }}
+      subject-json: ${{ needs.admission.outputs.subject_json }}
+      subject-identity: ${{ needs.admission.outputs.subject_identity }}
+      constituent-pr-number: ${{ github.event_name == 'merge_group' && needs.admission.outputs.pr || '' }}
+      constituent-pr-node-id: ${{ github.event_name == 'merge_group' && needs.admission.outputs.pr_id || '' }}
+      constituent-head-sha: ${{ github.event_name == 'merge_group' && needs.admission.outputs.head || '' }}
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cpx42","rust-medium","rust-16gb","trusted-pr"]}'
       cargo-build-jobs: "8"
       disk-guard-threshold: 35
@@ -418,9 +485,20 @@ jobs:
   rust-cx53:
     name: Ripr Rust Small on CX53
     needs: [admission, route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cx53' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: needs.route.outputs.router_target == 'cx53' && needs.admission.result == 'success' && (github.event_name == 'merge_group' || needs.detect-docs-only.outputs.docs_only != 'true')
     uses: ./.github/workflows/rust-gates.yml
     with:
+      proof-profile: ${{ github.event_name == 'merge_group' && 'merge-group' || 'legacy' }}
+      head-sha: ${{ github.event_name == 'merge_group' && needs.admission.outputs.head || '' }}
+      base-sha: ${{ needs.admission.outputs.base }}
+      subject-sha: ${{ needs.admission.outputs.merge }}
+      subject-tree: ${{ needs.admission.outputs.tree }}
+      workflow-generation: ${{ github.event_name == 'merge_group' && github.workflow_sha || '' }}
+      subject-json: ${{ needs.admission.outputs.subject_json }}
+      subject-identity: ${{ needs.admission.outputs.subject_identity }}
+      constituent-pr-number: ${{ github.event_name == 'merge_group' && needs.admission.outputs.pr || '' }}
+      constituent-pr-node-id: ${{ github.event_name == 'merge_group' && needs.admission.outputs.pr_id || '' }}
+      constituent-head-sha: ${{ github.event_name == 'merge_group' && needs.admission.outputs.head || '' }}
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx53","rust-large","trusted-pr"]}'
       cargo-build-jobs: "12"
       disk-guard-threshold: 50
@@ -445,13 +523,24 @@ jobs:
       !cancelled() &&
       needs.admission.result == 'success' &&
       needs.detect-docs-only.result == 'success' &&
-      needs.detect-docs-only.outputs.docs_only != 'true' &&
+      (github.event_name == 'merge_group' || needs.detect-docs-only.outputs.docs_only != 'true') &&
       (needs.route.outputs.router_target == 'github' ||
       (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') ||
       (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') ||
       (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))
     uses: ./.github/workflows/rust-gates.yml
     with:
+      proof-profile: ${{ github.event_name == 'merge_group' && 'merge-group' || 'legacy' }}
+      head-sha: ${{ github.event_name == 'merge_group' && needs.admission.outputs.head || '' }}
+      base-sha: ${{ needs.admission.outputs.base }}
+      subject-sha: ${{ needs.admission.outputs.merge }}
+      subject-tree: ${{ needs.admission.outputs.tree }}
+      workflow-generation: ${{ github.event_name == 'merge_group' && github.workflow_sha || '' }}
+      subject-json: ${{ needs.admission.outputs.subject_json }}
+      subject-identity: ${{ needs.admission.outputs.subject_identity }}
+      constituent-pr-number: ${{ github.event_name == 'merge_group' && needs.admission.outputs.pr || '' }}
+      constituent-pr-node-id: ${{ github.event_name == 'merge_group' && needs.admission.outputs.pr_id || '' }}
+      constituent-head-sha: ${{ github.event_name == 'merge_group' && needs.admission.outputs.head || '' }}
       runner-config: '"ubuntu-latest"'
       cargo-build-jobs: "8"
       disk-guard-threshold: 0
@@ -552,7 +641,7 @@ jobs:
   docs-gate:
     name: Ripr Docs Gate
     needs: [admission, detect-docs-only]
-    if: needs.admission.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.detect-docs-only.outputs.docs_only == 'true'
+    if: needs.admission.result == 'success' && github.event_name == 'pull_request' && needs.detect-docs-only.outputs.docs_only == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -611,12 +700,69 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
+  windows-subset:
+    needs: [admission]
+    if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/windows-subset-qualification.yml
+    with:
+      proof_profile: merge-group
+      request_id: ${{ needs.admission.outputs.request }}
+      head_sha: ${{ needs.admission.outputs.head }}
+      base_sha: ${{ needs.admission.outputs.base }}
+      subject_sha: ${{ needs.admission.outputs.merge }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
+  python-wheel:
+    needs: [admission]
+    if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/python-wheel-qualification.yml
+    with:
+      proof_profile: merge-group
+      request_id: ${{ needs.admission.outputs.request }}
+      head_sha: ${{ needs.admission.outputs.head }}
+      base_sha: ${{ needs.admission.outputs.base }}
+      subject_sha: ${{ needs.admission.outputs.merge }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
+  ci-feature:
+    needs: [admission]
+    if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/ci.yml
+    with:
+      proof_profile: merge-group
+      request_id: ${{ needs.admission.outputs.request }}
+      head_sha: ${{ needs.admission.outputs.head }}
+      base_sha: ${{ needs.admission.outputs.base }}
+      subject_sha: ${{ needs.admission.outputs.merge }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+      # Full frozen #8082 portfolio; no applicability narrowing in this stage.
+      run_rust_only: true
+      run_release_proof: true
+      run_msrv: true
+      run_vscode: true
+
+  printed-command:
+    needs: [admission]
+    if: github.event_name == 'merge_group' && needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted'
+    uses: ./.github/workflows/printed-command-paste.yml
+    with:
+      proof_profile: merge-group
+      request_id: ${{ needs.admission.outputs.request }}
+      head_sha: ${{ needs.admission.outputs.head }}
+      base_sha: ${{ needs.admission.outputs.base }}
+      subject_sha: ${{ needs.admission.outputs.merge }}
+      subject_tree: ${{ needs.admission.outputs.tree }}
+      workflow_generation: ${{ github.workflow_sha }}
+
   result:
     # Static `Ripr Rust Small Result` only for main/manual runs and an explicit
     # merge-ready request. Any other pull_request label event is a nonrequest
     # under a different name so the required context is never satisfied by it.
     name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
-    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate, vscode-select, vscode-e2e]
+    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, windows-subset, python-wheel, ci-feature, printed-command, docs-gate, vscode-select, vscode-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -769,6 +915,31 @@ jobs:
             false:skipped) echo "The extension e2e was not selected for the admitted head." ;;
             *) echo "::error::extension e2e selected=$SELECTED result=$E2E_RESULT for the admitted head"; exit 1 ;;
           esac
+      - name: Require complete native group portfolio
+        id: group_proof
+        if: always() && github.event_name == 'merge_group'
+        env:
+          ADMISSION_RESULT: ${{ needs.admission.result }}
+          SUBJECT: ${{ needs.admission.outputs.subject_json }}
+          IDENTITY: ${{ needs.admission.outputs.subject_identity }}
+          HEAD: ${{ needs.admission.outputs.head }}
+          BASE: ${{ github.event.merge_group.base_sha }}
+          GROUP: ${{ github.event.merge_group.head_sha }}
+          GENERATION: ${{ github.workflow_sha }}
+          WINDOWS_RESULT: ${{ needs.windows-subset.result }}
+          WHEEL_RESULT: ${{ needs.python-wheel.result }}
+          CI_RESULT: ${{ needs.ci-feature.result }}
+          PRINTED_RESULT: ${{ needs.printed-command.result }}
+        run: |
+          set -euo pipefail
+          [ "$ADMISSION_RESULT" = success ]
+          canonical=$(jq -cS . <<< "$SUBJECT")
+          [[ "$IDENTITY" =~ ^[0-9a-f]{64}$ && "$(printf '%s' "$canonical" | sha256sum | cut -d ' ' -f1)" == "$IDENTITY" ]]
+          jq -e --arg head "$HEAD" --arg base "$BASE" --arg group "$GROUP" --arg generation "$GENERATION" --arg request "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            '.version == 3 and .kind == "merge-group" and .head == $head and .base == $base and .merge == $group and .workflow_generation == $generation and .request_id == $request' <<< "$canonical" >/dev/null
+          for result in "$WINDOWS_RESULT" "$WHEEL_RESULT" "$CI_RESULT" "$PRINTED_RESULT"; do
+            [ "$result" = success ] || { echo "::error::mandatory native-G leaf concluded ${result:-missing}"; exit 1; }
+          done
       - name: Summarize routed result
         if: always()
         env:
@@ -818,6 +989,7 @@ jobs:
           WORKFLOW_REF: ${{ github.ref }}
           ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
           VSCODE_CHECK_RESULT: ${{ steps.vscode.outcome }}
+          GROUP_PROOF_RESULT: ${{ steps.group_proof.outcome }}
         run: |
           status=pass message="selected implementation job succeeded"
           if [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"
@@ -829,10 +1001,11 @@ jobs:
           elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then status=fail; message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$ELIGIBILITY_RESULT" != success ]; then status=fail; message="live eligibility no longer established for the initially admitted head/request"
           elif [ "$EVENT_NAME" = pull_request ] && [ "$VSCODE_CHECK_RESULT" != success ]; then status=fail; message="the selected VS Code extension e2e did not succeed for the admitted head (see the vscode check step)"
+          elif [ "$EVENT_NAME" = merge_group ] && [ "$GROUP_PROOF_RESULT" != success ]; then status=fail; message="mandatory native-G portfolio or subject receipt did not pass"
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"
-          elif [ "$DOCS_ONLY" = "true" ] && { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; }; then
+          elif [ "$DOCS_ONLY" = "true" ] && [ "$EVENT_NAME" = "pull_request" ]; then
             if [ "$DOCS_GATE_RESULT" = "success" ]; then
               message="docs-only surface; heavy lanes skipped; docs-gate passed"
             else

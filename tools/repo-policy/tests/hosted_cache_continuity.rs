@@ -54,10 +54,19 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
     });
     if guard.as_deref()
         != Some(
-            "!cancelled() && needs.admission.result == 'success' && needs.detect-docs-only.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))",
+            "!cancelled() && needs.admission.result == 'success' && needs.detect-docs-only.result == 'success' && (github.event_name == 'merge_group' || needs.detect-docs-only.outputs.docs_only != 'true') && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))",
         )
     {
         findings.push("hosted job eligibility changed; requalify the main writer opportunity");
+    }
+    if !producer.contains("      execution-profile:\n")
+        || !producer.contains("        default: legacy\n      head-sha:")
+        || hosted.lines().any(|line| {
+            line.starts_with("      execution-profile:")
+                && line != "      execution-profile: legacy"
+        })
+    {
+        findings.push("hosted main writer must retain the legacy execution profile until selected-route activation");
     }
     let producer_job = block(producer, "jobs", 0)
         .and_then(|jobs| block(jobs, "rust-gates", 2))
@@ -85,7 +94,7 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
         findings.push("declared hosted producer is missing from its job");
     }
     for required in [
-        "        if: ${{ !inputs.use-scratch }}\n",
+        "        if: ${{ inputs.execution-profile == 'legacy' && !inputs.use-scratch }}\n",
         "        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2\n",
         "          save-if: ${{ github.ref == 'refs/heads/main' }}\n",
     ] {
@@ -205,4 +214,24 @@ fn disabled_producer_or_additional_cache_is_not_writer_continuity() {
         assert_ne!(changed, PRODUCER);
         assert!(!continuity_findings(CALLER, &changed).is_empty());
     }
+}
+
+#[test]
+fn selecting_owned_profile_cannot_silently_retire_the_main_writer() {
+    let hosted = block(CALLER, "jobs", 0)
+        .and_then(|jobs| block(jobs, "rust-github", 2))
+        .unwrap_or("");
+    let wrong = CALLER.replace(
+        hosted,
+        &hosted.replace(
+            "    with:\n",
+            "    with:\n      execution-profile: owned-jit\n",
+        ),
+    );
+    assert_ne!(wrong, CALLER);
+    assert!(
+        continuity_findings(&wrong, PRODUCER)
+            .iter()
+            .any(|f| f.contains("legacy execution profile"))
+    );
 }
