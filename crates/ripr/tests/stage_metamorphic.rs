@@ -145,8 +145,8 @@ impl Subject {
             match pick % 4 {
                 0 => lines.push("// unrelated note".to_string()),
                 1 => lines.push(String::new()),
-                2 => lines.push("pub const UNRELATED_LIMIT: u8 = 3;".to_string()),
-                _ => lines.push("pub fn untouched(n: u8) -> u8 { n }".to_string()),
+                2 => lines.push("pub const UNRELATED_LIMIT: u32 = 7777;".to_string()),
+                _ => lines.push("pub fn untouched(n: u32) -> u32 { n }".to_string()),
             }
         }
         lines.push("pub fn gate(amount: u64) -> bool {".to_string());
@@ -155,7 +155,7 @@ impl Subject {
         lines.push("}".to_string());
         if unrelated_tail {
             lines.push(String::new());
-            lines.push("pub fn spare(n: u8) -> u8 {".to_string());
+            lines.push("pub fn spare(n: u32) -> u32 {".to_string());
             lines.push("    n + 1".to_string());
             lines.push("}".to_string());
         }
@@ -205,7 +205,7 @@ fn render_test(asserts: &[String], noisy: bool) -> String {
     let body: String = asserts.iter().map(|line| format!("    {line}\n")).collect();
     if noisy {
         format!(
-            "// Reformatted and padded with unrelated items.\nuse {CRATE}::*;\n\nfn unrelated_helper() -> u8 {{\n    3\n}}\n\n\n#[test]\nfn renamed_case() {{\n\n{body}\n}}\n"
+            "// Reformatted and padded with unrelated items.\nuse {CRATE}::*;\n\nfn unrelated_helper() -> u32 {{\n    7777\n}}\n\n\n#[test]\nfn renamed_case() {{\n\n{body}\n}}\n"
         )
     } else {
         format!("use {CRATE}::*;\n\n#[test]\nfn case() {{\n{body}}}\n")
@@ -220,7 +220,7 @@ impl TempRepo {
     fn create(source: &str, test_source: &str, diff: &str) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "ripr-stage-metamorphic-{}-{}",
+            "ripr-fuzz-stage-metamorphic-{}-{}",
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
@@ -449,4 +449,33 @@ proptest! {
         let unseen = observe(&subject, &test, false)?;
         prop_assert_ne!(&unseen.return_value.class, &ExposureClass::Exposed, "{:?}", subject);
     }
+}
+
+/// Unrelated literals use the sentinel 7777, which no generated threshold
+/// (2..500) or asserted value (0..1000) can equal. This pins the smallest
+/// thresholds deterministically so a literal collision cannot hide or fake a
+/// relation 3 failure.
+#[test]
+fn unrelated_edits_are_invariant_at_small_thresholds() -> Result<(), TestCaseError> {
+    for threshold in [2, 3, 7] {
+        for with_discriminator in [false, true] {
+            let subject = Subject {
+                threshold,
+                flipped: false,
+                others: vec![(threshold + 1, 0)],
+                disc_style: 0,
+                disc_at: 0,
+                prelude: vec![0, 1, 2, 3],
+            };
+            let plain = observe(
+                &subject,
+                &subject.test_file(with_discriminator, false),
+                false,
+            )?;
+            let noisy = observe(&subject, &subject.test_file(with_discriminator, true), true)?;
+            prop_assert_eq!(&plain.predicate, &noisy.predicate);
+            prop_assert_eq!(&plain.return_value, &noisy.return_value);
+        }
+    }
+    Ok(())
 }
