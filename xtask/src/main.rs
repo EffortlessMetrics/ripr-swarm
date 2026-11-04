@@ -104,6 +104,7 @@ mod schema_cut_replay;
 mod schema_producer_sweep;
 mod verification_allocation_adapter;
 mod verification_allocation_policy;
+mod verification_allocation_shadow;
 mod verification_contracts;
 mod verify_test_shards;
 mod version;
