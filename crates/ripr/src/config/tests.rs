@@ -2185,6 +2185,15 @@ fn an_unknown_language_error_names_only_the_repair() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn go_identity_does_not_enable_go_in_config() -> Result<(), String> {
+    let Err(error) = parse_config("[languages]\nenabled = [\"go\"]\n") else {
+        return Err("Go configuration must remain unavailable".to_string());
+    };
+    assert!(error.contains("unknown language `go`"), "{error}");
+    Ok(())
+}
+
 #[cfg(feature = "lang-typescript")]
 #[test]
 fn javascript_in_languages_enabled_enables_the_typescript_adapter() -> Result<(), String> {

@@ -145,6 +145,7 @@ impl LanguageId {
     /// analysis-outcome detail limit.
     pub(crate) fn unavailable_adapter_recovery(self) -> String {
         match self {
+            LanguageId::Go => "Go analysis is not available yet; the `lang-go` feature reserves an identity and does not contain an adapter".to_string(),
             LanguageId::Perl => format!(
                 "Perl analysis is not available from this ripr binary. It needs both a ripr build with Cargo feature `lang-perl` (`cargo install ripr --features lang-perl`) and a compatible Perl fact exporter (`{PERL_FACT_EXPORTER}`), which is not yet published; no released ripr setup analyzes Perl yet, and adding `perl` to ripr.toml [languages] alone does not enable it"
             ),

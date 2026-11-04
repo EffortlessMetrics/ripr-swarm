@@ -152,7 +152,7 @@ const TS_REPAIR_LIMIT: &str = "advisory preview actionability only; repair_packe
 const PERL_LIMIT: &str = "requires a ripr build with Cargo feature lang-perl plus a compatible fact exporter; default builds report changed Perl files as not analyzed and no released ripr plus exporter combination analyzes Perl yet";
 const PERL_REPAIR_LIMIT: &str =
     "blocked on real-repository producer proof and real Perl repository receipts";
-const GO_LIMIT: &str = "Go analysis is not available from this ripr binary; it needs a ripr build with Cargo feature `lang-go`, and no released ripr setup analyzes Go yet";
+const GO_LIMIT: &str = "Go analysis is not available yet; the `lang-go` feature reserves an identity and does not contain an adapter";
 const GO_REPAIR_LIMIT: &str = "blocked until a Go adapter and producer proof exist";
 
 const SPEC_RUST: &[&str] = &["RIPR-SPEC-0001", "RIPR-SPEC-0117", "RIPR-SPEC-0197"];

@@ -109,7 +109,7 @@ fn plain_summary(language: LanguageId) -> &'static str {
             "not supported yet: it needs a special ripr build and a Perl facts exporter, and default builds only report that Perl files changed."
         }
         LanguageId::Go => {
-            "not supported yet: Go has a closed identity token only; default builds do not analyze `.go` files."
+            "not supported yet: Go has a closed identity token only; ripr does not analyze `.go` files."
         }
     }
 }
@@ -120,7 +120,9 @@ pub(crate) fn render_human(language: Option<LanguageId>) -> String {
         if language.is_some_and(|wanted| wanted != candidate) {
             continue;
         }
-        let build_note = if candidate.is_available() {
+        let build_note = if candidate == LanguageId::Go {
+            "; no adapter available"
+        } else if candidate.is_available() {
             ""
         } else {
             "; not in this build"
@@ -215,6 +217,13 @@ mod tests {
         assert_eq!(json, "\"go\"");
         let round_trip: LanguageId = serde_json::from_str(&json).unwrap_or(LanguageId::Rust);
         assert_eq!(round_trip, LanguageId::Go);
+        for invalid in ["golang", "Golang", "GO", "Go", ""] {
+            let json = serde_json::to_string(invalid).unwrap_or_default();
+            assert!(
+                serde_json::from_str::<LanguageId>(&json).is_err(),
+                "{invalid:?}"
+            );
+        }
     }
 
     #[test]

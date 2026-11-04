@@ -3001,7 +3001,7 @@ fn preview_skip_configured_pattern(
                 path,
             )
         }
-        LanguageId::Rust | LanguageId::Perl => false,
+        LanguageId::Rust | LanguageId::Perl | LanguageId::Go => false,
     }
 }
 
