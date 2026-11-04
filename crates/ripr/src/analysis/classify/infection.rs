@@ -10,6 +10,7 @@ use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 #[cfg(test)]
 use crate::value_origins::LocatedValueFact as ValueFact;
+use ra_ap_syntax::{AstNode, ast};
 use std::collections::BTreeMap;
 
 /// #7970: whether ripr can show that no related test input evaluates the
@@ -1050,14 +1051,63 @@ fn local_initializer_boundary_literals(
     for operand in [left, right] {
         if let Some(initializer) =
             super::activation::live_local_initializer(owner, operand.trim(), probe.location.line)
-            && !is_computed_value_expression(&initializer)
         {
-            literals.extend(boundary_literals(&initializer));
+            if is_computed_value_expression(&initializer) {
+                literals.extend(conditional_literal_results(&initializer));
+            } else {
+                literals.extend(boundary_literals(&initializer));
+            }
         }
     }
     literals.sort();
     literals.dedup();
     (!literals.is_empty()).then_some(literals)
+}
+
+// Retain literal result branches when arithmetic appears in a condition or a
+// different branch. The condition's literals and computed tails are not values
+// returned by the conditional. Unreadable or statement-bearing branches abstain.
+fn conditional_literal_results(initializer: &str) -> Vec<String> {
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&format!(
+        "fn __ripr_boundary() {{ let _ = {initializer}; }}"
+    )) else {
+        return Vec::new();
+    };
+    let Some(ast::Expr::IfExpr(mut branch)) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .and_then(|binding| binding.initializer())
+    else {
+        return Vec::new();
+    };
+    fn add_block(block: ast::BlockExpr, literals: &mut Vec<String>) {
+        let Some(list) = block.stmt_list() else {
+            return;
+        };
+        if list.statements().next().is_some() {
+            return;
+        }
+        if let Some(ast::Expr::Literal(literal)) = list.tail_expr() {
+            literals.extend(extract_literals(&literal.syntax().text().to_string()));
+        }
+    }
+    let mut literals = Vec::new();
+    loop {
+        if let Some(block) = branch.then_branch() {
+            add_block(block, &mut literals);
+        }
+        match branch.else_branch() {
+            Some(ast::ElseBranch::Block(block)) => {
+                add_block(block, &mut literals);
+                break;
+            }
+            Some(ast::ElseBranch::IfExpr(next)) => branch = next,
+            None => break,
+        }
+    }
+    literals
 }
 
 /// The literals that can be the changed predicate's boundary value. A
@@ -1628,6 +1678,18 @@ mod tests {
             "fn pick(low: u32) -> bool {\n    let val = low + 1;\n    val > other\n}\n";
         let unknown = local_predicate_evidence(only_computed, "val > other", 3, "1");
         assert_eq!(unknown.state, StageState::Unknown, "{}", unknown.summary);
+    }
+
+    #[test]
+    fn conditional_initializer_retains_literal_result_not_computed_parts() {
+        let owner = "fn pick(val: u32, si: bool, qty: u32) -> bool {\n    let unit = if si && qty + 1 > 3 { 1000 + 1 } else { 1024 };\n    val < unit\n}\n";
+        let literal = local_predicate_evidence(owner, "val < unit", 3, "1024");
+        assert_eq!(literal.state, StageState::Yes, "{}", literal.summary);
+        for operand in ["1", "3", "1000"] {
+            let evidence = local_predicate_evidence(owner, "val < unit", 3, operand);
+            assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
+            assert!(evidence.summary.contains("1024"), "{}", evidence.summary);
+        }
     }
 
     #[test]
