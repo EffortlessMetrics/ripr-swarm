@@ -78,6 +78,24 @@ Judgment classes are `useful`, `incorrect`, `unclear`, `expensive`, and
 requires `--note` and `--judgment`. A useful limitation or intentional
 no-action may omit a gap id and attempt. File/line is rejected as identity.
 
+The retained closed reason contract is explicit below. These values classify
+feedback about the result, rather than the underlying code: an already-covered
+item or stale result is incorrect feedback output, and a failed command or
+unsupported workflow is workflow cost (`expensive`).
+
+| Default judgment | Reason codes |
+| --- | --- |
+| `useful` | `useful_actionable`, `useful_limitation`, `correct_target`, `correct_discriminator`, `clear_explanation` |
+| `incorrect` | `wrong_target`, `wrong_discriminator`, `false_actionable`, `duplicate_item`, `already_covered`, `incorrect_causal_attribution`, `stale_result` |
+| `unclear` | `missing_context`, `ambiguous_target`, `unclear_explanation`, `other` |
+| `expensive` | `verify_command_failed`, `receipt_command_failed`, `route_too_broad`, `too_slow`, `too_noisy`, `unsupported_workflow` |
+| `intentional_no_action` | `intentional_defensive_code`, `intentional_low_grip`, `manual_review_preferred` |
+
+The `other` default is not a valid receipt on its own: the caller must supply
+the explicit judgment and note. Other closed reasons accept only their mapped
+judgment. The per-reason ordinary and Kani tests pin these values independently
+of the production decision function (#12109).
+
 Idempotency: the same key and payload produce one record (`already_recorded`
 on repeat). A different payload with the same key is a conflict. Notes are
 bounded (1024 bytes) and fail closed on known secret patterns; those checks

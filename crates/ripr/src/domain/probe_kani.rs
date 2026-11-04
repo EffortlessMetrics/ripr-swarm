@@ -4,53 +4,15 @@
 
 use super::*;
 
-const CURRENTNESS: [SourceCurrentness; 4] = [
-    SourceCurrentness::CandidateCurrent,
-    SourceCurrentness::BaseDeleted,
-    SourceCurrentness::MovedOrRenamed,
-    SourceCurrentness::UnresolvedSubject,
-];
-
-const FAMILIES: [ProbeFamily; 8] = [
-    ProbeFamily::Predicate,
-    ProbeFamily::ReturnValue,
-    ProbeFamily::ErrorPath,
-    ProbeFamily::CallDeletion,
-    ProbeFamily::FieldConstruction,
-    ProbeFamily::SideEffect,
-    ProbeFamily::MatchArm,
-    ProbeFamily::StaticUnknown,
-];
-
-// Wildcard-free matches: a new variant fails to compile under `cfg(kani)` until
-// the symbolic domains above are extended.
-fn currentness_domain_is_exhaustive(value: SourceCurrentness) {
-    match value {
-        SourceCurrentness::CandidateCurrent
-        | SourceCurrentness::BaseDeleted
-        | SourceCurrentness::MovedOrRenamed
-        | SourceCurrentness::UnresolvedSubject => {}
-    }
-}
-
-fn family_domain_is_exhaustive(family: &ProbeFamily) {
-    match family {
-        ProbeFamily::Predicate
-        | ProbeFamily::ReturnValue
-        | ProbeFamily::ErrorPath
-        | ProbeFamily::CallDeletion
-        | ProbeFamily::FieldConstruction
-        | ProbeFamily::SideEffect
-        | ProbeFamily::MatchArm
-        | ProbeFamily::StaticUnknown => {}
-    }
-}
+use crate::domain::proof_domains::{
+    CLASSES, CURRENTNESS, FAMILIES, cover_classes, cover_currentness, cover_families,
+};
 
 fn any_currentness() -> SourceCurrentness {
     let index: usize = kani::any();
     kani::assume(index < CURRENTNESS.len());
     let value = CURRENTNESS[index];
-    currentness_domain_is_exhaustive(value);
+    cover_currentness(&value);
     value
 }
 
@@ -58,7 +20,7 @@ fn any_family() -> ProbeFamily {
     let index: usize = kani::any();
     kani::assume(index < FAMILIES.len());
     let value = FAMILIES[index].clone();
-    family_domain_is_exhaustive(&value);
+    cover_families(&value);
     value
 }
 
@@ -103,8 +65,9 @@ fn from_probe_delta_never_upgrades_without_after() {
 #[kani::proof]
 fn stop_reason_for_unknown_class_is_exactly_the_unknown_classes() {
     let index: usize = kani::any();
-    kani::assume(index < ExposureClass::ALL.len());
-    let class = ExposureClass::ALL[index].clone();
+    kani::assume(index < CLASSES.len());
+    let class = CLASSES[index].clone();
+    cover_classes(&class);
     let reason = StopReason::for_unknown_class(&class);
     let is_unknown = matches!(
         class,

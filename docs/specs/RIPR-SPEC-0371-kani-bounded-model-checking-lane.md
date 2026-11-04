@@ -65,6 +65,47 @@ unreachable would read as a pass.
   filesystem effects) is not forced through a harness. A smaller pure core is
   proved, or the limit is recorded; a pass is never fabricated.
 
+### Domain decision obligations (#12109 / #11912)
+
+The feedback, executed-control, causal-delta and probe harness input domains
+use constructor lists whose wildcard-free matches are generated from the same
+declaration. Adding a variant or omitting a listed constructor must fail to
+compile in both ordinary tests and Kani builds; duplicate constructors are
+rejected. This guard does not fabricate enum values or depend on numeric
+discriminants, variant counts, or a separately maintained match.
+
+Feedback judgment expectations are explicit per reason, preserving the five
+meanings in SPEC-0179. Useful actions, limitations, correct targets and
+discriminators, and clear explanations are useful. Wrong targets/discriminators,
+false actionability, duplicates, already-covered items, incorrect causal
+attribution and stale results are incorrect. Missing context, ambiguity and
+unclear explanations are unclear. Command failures, overly broad routes,
+slowness, noise and unsupported workflows are expensive. Intentional defensive
+code, intentional low grip and preferred manual review mean intentional
+no-action. `Other` has an unclear default and requires a note; receipt validation
+still requires an explicit judgment override.
+
+The SPEC-0183 scalar `claims_satisfaction` predicate accepts both `Passed` and
+`Substituted`, and rejects each other state. Both directions are checked, with
+separate reachable witnesses for both positive states and every refusal state.
+This is a claim-state predicate, not evidence admission: the surrounding packet
+validator still decides whether an actual pass or substitute is acceptable.
+The outcome partition also checks both directions: ordinary positive tests,
+review prose, structural discrimination, a command that never exercised its
+subject, and `NotExecuted` are unexecuted substitutes. Failed-before/passed-after
+and rejected-wrong-implementation observations are not. `InstrumentUnavailable`
+is separately represented and also is not classified as an unexecuted
+substitute; this distinction does not make unavailable evidence admissible.
+
+Ordinary tests call the same production predicates over the complete guarded
+domains. Literal expected behavior is independent of the production predicates.
+Each symbolic constructor gets a reachability witness. Native verification,
+ordinary execution, and wrong-implementation/compile-refusal controls must be
+reported separately, bound to their actual source and tool configuration.
+Fixed identity strings and other bounds of existing harnesses remain unchanged;
+this does not establish packet validation, full-program behavior, or a full-lane
+qualification.
+
 ### The command
 
 `cargo xtask kani [--allow-empty] [--harness <name>] [--default-unwind <n>]

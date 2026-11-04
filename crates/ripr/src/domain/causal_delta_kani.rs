@@ -6,50 +6,13 @@
 
 use super::*;
 
-const GAP_STATES: [GapState; 4] = [
-    GapState::Actionable,
-    GapState::AlreadyObserved,
-    GapState::Resolved,
-    GapState::Unknown,
-];
-
-const ORACLES: [OracleStrength; 6] = [
-    OracleStrength::Strong,
-    OracleStrength::Medium,
-    OracleStrength::Weak,
-    OracleStrength::Smoke,
-    OracleStrength::None,
-    OracleStrength::Unknown,
-];
-
-// Wildcard-free matches: adding a variant to either enum fails to compile under
-// `cfg(kani)` until the symbolic domain above is extended, so the harnesses
-// cannot silently stop covering a new variant.
-fn gap_state_domain_is_exhaustive(state: GapState) {
-    match state {
-        GapState::Actionable
-        | GapState::AlreadyObserved
-        | GapState::Resolved
-        | GapState::Unknown => {}
-    }
-}
-
-fn oracle_domain_is_exhaustive(oracle: &OracleStrength) {
-    match oracle {
-        OracleStrength::Strong
-        | OracleStrength::Medium
-        | OracleStrength::Weak
-        | OracleStrength::Smoke
-        | OracleStrength::None
-        | OracleStrength::Unknown => {}
-    }
-}
+use crate::domain::proof_domains::{GAP_STATES, ORACLES, cover_gap_states, cover_oracles};
 
 fn any_gap_state() -> GapState {
     let index: usize = kani::any();
     kani::assume(index < GAP_STATES.len());
     let value = GAP_STATES[index];
-    gap_state_domain_is_exhaustive(value);
+    cover_gap_states(&value);
     value
 }
 
@@ -57,7 +20,7 @@ fn any_oracle() -> OracleStrength {
     let index: usize = kani::any();
     kani::assume(index < ORACLES.len());
     let value = ORACLES[index].clone();
-    oracle_domain_is_exhaustive(&value);
+    cover_oracles(&value);
     value
 }
 

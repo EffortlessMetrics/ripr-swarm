@@ -1080,6 +1080,18 @@ mod kani_proofs;
 pub(crate) mod tests {
     use super::*;
 
+    #[test]
+    fn every_substitute_outcome_has_its_contract_execution_partition() {
+        use crate::domain::proof_domains::{OUTCOMES, expected_unexecuted};
+        for &outcome in OUTCOMES {
+            assert_eq!(
+                substitute_outcome_is_unexecuted(outcome),
+                expected_unexecuted(outcome),
+                "{outcome:?}"
+            );
+        }
+    }
+
     pub(crate) const HEAD_AFTER: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     pub(crate) const HEAD_BEFORE: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     pub(crate) const HEAD_OTHER: &str = "cccccccccccccccccccccccccccccccccccccccc";

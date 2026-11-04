@@ -3,57 +3,16 @@
 
 use super::*;
 
-const RESULT_STATES: [ResultState; 6] = [
-    ResultState::Passed,
-    ResultState::Failed,
-    ResultState::NotRun,
-    ResultState::NotProven,
-    ResultState::Substituted,
-    ResultState::InstrumentFailure,
-];
-
-const OUTCOMES: [ObservedOutcome; 8] = [
-    ObservedOutcome::FailedBeforePassedAfter,
-    ObservedOutcome::RejectedWrongImplementation,
-    ObservedOutcome::CommandSucceededWithoutExercisingSubject,
-    ObservedOutcome::OrdinaryPositiveTestsPassed,
-    ObservedOutcome::ReviewArgumentOnly,
-    ObservedOutcome::StructuralDiscriminationOnly,
-    ObservedOutcome::InstrumentUnavailable,
-    ObservedOutcome::NotExecuted,
-];
-
-// Wildcard-free matches: a new variant fails to compile under `cfg(kani)` until
-// the symbolic domains above are extended.
-fn result_state_domain_is_exhaustive(state: ResultState) {
-    match state {
-        ResultState::Passed
-        | ResultState::Failed
-        | ResultState::NotRun
-        | ResultState::NotProven
-        | ResultState::Substituted
-        | ResultState::InstrumentFailure => {}
-    }
-}
-
-fn outcome_domain_is_exhaustive(outcome: ObservedOutcome) {
-    match outcome {
-        ObservedOutcome::FailedBeforePassedAfter
-        | ObservedOutcome::RejectedWrongImplementation
-        | ObservedOutcome::CommandSucceededWithoutExercisingSubject
-        | ObservedOutcome::OrdinaryPositiveTestsPassed
-        | ObservedOutcome::ReviewArgumentOnly
-        | ObservedOutcome::StructuralDiscriminationOnly
-        | ObservedOutcome::InstrumentUnavailable
-        | ObservedOutcome::NotExecuted => {}
-    }
-}
+use crate::domain::proof_domains::{
+    OUTCOMES, RESULT_STATES, cover_outcomes, cover_result_states, expected_satisfaction,
+    expected_unexecuted,
+};
 
 fn any_result_state() -> ResultState {
     let index: usize = kani::any();
     kani::assume(index < RESULT_STATES.len());
     let value = RESULT_STATES[index];
-    result_state_domain_is_exhaustive(value);
+    cover_result_states(&value);
     value
 }
 
@@ -61,57 +20,25 @@ fn any_outcome() -> ObservedOutcome {
     let index: usize = kani::any();
     kani::assume(index < OUTCOMES.len());
     let value = OUTCOMES[index];
-    outcome_domain_is_exhaustive(value);
+    cover_outcomes(&value);
     value
 }
 
-/// Satisfaction is never claimed by a failure-like state. The exact
-/// membership table is deliberately not restated here: a harness that rebuilds
-/// the production `match` only checks a copy, so the table stays covered by
-/// unit tests and this harness verifies the safety direction only.
+/// Every state agrees with the SPEC-0183 claim table in both directions.
+/// Each state has its own reachability witness, including both positive states.
 #[kani::proof]
-fn failure_like_states_never_claim_satisfaction() {
+fn result_state_satisfaction_matches_contract() {
     let state = any_result_state();
-    if matches!(
-        state,
-        ResultState::Failed
-            | ResultState::NotRun
-            | ResultState::NotProven
-            | ResultState::InstrumentFailure
-    ) {
-        kani::assert(
-            !state.claims_satisfaction(),
-            "a failure-like state claims satisfaction",
-        );
-    }
-    kani::cover!(state.claims_satisfaction());
-    kani::cover!(!state.claims_satisfaction());
+    assert_eq!(state.claims_satisfaction(), expected_satisfaction(state));
 }
 
-/// An outcome that records a real discriminating observation (failed-before /
-/// rejected-wrong-implementation) or an explicit instrument gap is never
-/// classified as an unexecuted substitute, and an outcome that never executed
-/// the subject always is. The full partition table is not restated (see above).
+/// SPEC-0183's complete executed/unexecuted partition, with a witness for
+/// every outcome. Instrument unavailability remains distinct from execution.
 #[kani::proof]
-fn real_observations_are_never_unexecuted() {
+fn substitute_outcome_execution_partition_matches_contract() {
     let outcome = any_outcome();
-    if matches!(
-        outcome,
-        ObservedOutcome::FailedBeforePassedAfter
-            | ObservedOutcome::RejectedWrongImplementation
-            | ObservedOutcome::InstrumentUnavailable
-    ) {
-        kani::assert(
-            !substitute_outcome_is_unexecuted(outcome),
-            "a real observation is classified as unexecuted",
-        );
-    }
-    if outcome == ObservedOutcome::NotExecuted {
-        kani::assert(
-            substitute_outcome_is_unexecuted(outcome),
-            "a never-executed outcome is not classified as unexecuted",
-        );
-    }
-    kani::cover!(substitute_outcome_is_unexecuted(outcome));
-    kani::cover!(!substitute_outcome_is_unexecuted(outcome));
+    assert_eq!(
+        substitute_outcome_is_unexecuted(outcome),
+        expected_unexecuted(outcome)
+    );
 }

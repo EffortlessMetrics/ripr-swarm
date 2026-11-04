@@ -30,6 +30,8 @@ mod limit_guidance;
 mod next_action;
 mod probe;
 mod project_facts;
+#[cfg(any(test, kani))]
+mod proof_domains;
 mod refusal_remedy;
 mod repair_card;
 mod summary;
