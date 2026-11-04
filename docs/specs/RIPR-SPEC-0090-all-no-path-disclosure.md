@@ -188,7 +188,7 @@ This human-only value is not a stored baseline identity (#9791).
 - `CheckOutput.summary` fields: `findings`, `exposed`, `weakly_exposed`,
   `reachable_unrevealed`, `no_static_path`, `infection_unknown`,
   `propagation_unknown`, `static_unknown`, and `changed_rust_files`. These
-  fields already exist in `crates/ripr/src/domain/summary.rs` - no new fields
+  fields already exist in `crates/ripr-contract/src/domain/summary.rs` - no new fields
   needed.
 
 - `CheckOutput.findings[].related_tests` for the linked related-test count.

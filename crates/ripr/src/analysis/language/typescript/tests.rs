@@ -20854,6 +20854,7 @@ mod out_dir_specifier_tests;
 mod playwright_fixture_tests;
 mod playwright_unit_tests;
 mod private_method_owner_tests;
+mod push_length_tests;
 mod reexport_chain_tests;
 mod registration_binding_tests;
 mod require_member_import_tests;

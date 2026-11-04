@@ -770,15 +770,27 @@ pub(super) fn sort_related_tests_for_seam<'a>(
         related.iter().map(|(_, reason)| *reason),
         owner_fn.is_some(),
     );
+    let claims_pin = super::claims_payload_pin::ClaimsPayloadPin::establish(
+        seam,
+        owner_fn,
+        context.index,
+        related.iter().map(|(indexed, _)| indexed.test),
+    );
     // #12478: one reverse owner-reach walk for the whole related set. A
     // one-element slice per test rebuilt the walk (and its unbounded
     // OnceLock closure) on every related test of the seam.
-    let credited_views = (refuse && !related.is_empty()).then(|| {
+    let credited_views = ((refuse || claims_pin.is_some()) && !related.is_empty()).then(|| {
         let related_pairs: Vec<_> = related
             .iter()
             .map(|&(indexed, reason)| (indexed.test, reason))
             .collect();
-        super::credited_related_tests(context, owner_fn, &related_pairs, refuse)
+        super::credited_related_tests(
+            context,
+            owner_fn,
+            &related_pairs,
+            refuse,
+            claims_pin.as_ref(),
+        )
     });
     debug_assert!(
         credited_views

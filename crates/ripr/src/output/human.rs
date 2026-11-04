@@ -3186,7 +3186,7 @@ mod tests {
         let mut legacy = carded.clone();
         legacy
             .evidence
-            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            .push(ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
         assert!(crate::output::python_repair_card::python_repair_card(&legacy).is_none());
         assert!(crate::output::python_repair_card::python_repair_card(&carded).is_some());
     }
@@ -4972,9 +4972,9 @@ mod tests {
 
     /// RIPR-SPEC-0122: the digest line carries the discriminator value alone.
     /// `decision.rs` builds value-shaped entries as
-    /// `Missing discriminator value: <value>`, which the renderer used to print
+    /// `Missing check value: <value>`, which the renderer used to print
     /// verbatim under its own label, producing
-    /// `Missing discriminator: Missing discriminator value: X`.
+    /// `Missing discriminator: Missing check value: X`.
     #[test]
     fn digest_missing_discriminator_line_does_not_restate_its_label() {
         let mut finding = sample_finding();
@@ -5031,8 +5031,8 @@ mod tests {
             "No strong assertion was detected"
         );
         assert_eq!(
-            super::evidence_lines::plain_default_missing("Missing discriminator value: 100"),
-            "Missing discriminator value: 100",
+            super::evidence_lines::plain_default_missing("Missing check value: 100"),
+            "Missing check value: 100",
             "other entries are not this fixed form"
         );
         assert_eq!(
@@ -5488,7 +5488,7 @@ mod tests {
                 "{rendered}"
             );
             assert!(!rendered.contains("test placement or related-test evidence is incomplete"));
-            assert!(!rendered.contains("names no concrete missing discriminator"));
+            assert!(!rendered.contains("names no concrete missing check"));
         }
         // Diff-mode placement text is unchanged.
         let mut placed = python_preview_finding(5, false);
@@ -5510,7 +5510,7 @@ mod tests {
         let mut finding = python_preview_finding(5, false);
         finding
             .evidence
-            .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            .push(ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
         assert_eq!(finding.analysis_mode(), None);
         let rendered = render(&single_finding_output(finding));
         assert!(!rendered.contains("repo-mode findings"), "{rendered}");
@@ -5573,9 +5573,9 @@ mod tests {
             assert!(!render_finding(&diff).contains("repo-mode findings"));
 
             let mut legacy = diff;
-            legacy
-                .evidence
-                .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            legacy.evidence.push(
+                ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string(),
+            );
             let why = crate::output::preview_actionability::preview_actionability_for(&legacy)
                 .map(|a| a.why_not_actionable);
             assert!(
@@ -7438,7 +7438,7 @@ mod tests {
     fn render_finding_deduplicates_missing_discriminator_value_line() {
         let mut finding = sample_finding();
         finding.missing = vec![
-            "Missing discriminator value: enabled == false".to_string(),
+            "Missing check value: enabled == false".to_string(),
             "another gap".to_string(),
         ];
 
