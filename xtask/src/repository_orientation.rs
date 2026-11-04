@@ -143,16 +143,23 @@ pub(crate) fn load_repository_orientation_corpus(
         return Err("repository orientation corpus must anchor issue 2331".to_string());
     }
     const REQUIRED_IDS: [&str; 9] = [
-        "open-issue-no-overlap", "partially-landed-umbrella",
-        "closed-premise-historical-doc", "historical-campaign-no-authority",
-        "source-release-owned-by-ripr", "support-tier-backed-by-proof",
-        "support-tier-inconsistency-rejected", "generated-inventory-stale",
+        "open-issue-no-overlap",
+        "partially-landed-umbrella",
+        "closed-premise-historical-doc",
+        "historical-campaign-no-authority",
+        "source-release-owned-by-ripr",
+        "support-tier-backed-by-proof",
+        "support-tier-inconsistency-rejected",
+        "generated-inventory-stale",
         "live-github-unavailable",
     ];
     let actual: BTreeSet<&str> = corpus.scenarios.iter().map(|s| s.id.as_str()).collect();
     let required: BTreeSet<&str> = REQUIRED_IDS.into_iter().collect();
     if actual.len() != corpus.scenarios.len() || actual != required {
-        return Err("repository orientation corpus must contain each required scenario id exactly once".to_string());
+        return Err(
+            "repository orientation corpus must contain each required scenario id exactly once"
+                .to_string(),
+        );
     }
     Ok(corpus)
 }
@@ -288,8 +295,16 @@ fn disposition_for_candidate(
     }
     if scenario.source_release_issue.is_some() {
         return (
-            if scenario.source_release_issue == release_issue { OrientationDispositionV1::SourceReleaseRoute } else { OrientationDispositionV1::NoSafeWork },
-            if scenario.source_release_issue == release_issue { release_issue } else { None },
+            if scenario.source_release_issue == release_issue {
+                OrientationDispositionV1::SourceReleaseRoute
+            } else {
+                OrientationDispositionV1::NoSafeWork
+            },
+            if scenario.source_release_issue == release_issue {
+                release_issue
+            } else {
+                None
+            },
             overlap_checks.into_iter().collect(),
             conflict_resources,
         );
@@ -325,7 +340,9 @@ pub(crate) fn run_repository_orientation_scenario(
     limitations.dedup();
 
     let current_state = produce_current_state(root)?;
-    let release_issue = current_state.release_authority.rsplit_once('#')
+    let release_issue = current_state
+        .release_authority
+        .rsplit_once('#')
         .and_then(|(_, issue)| issue.parse::<u64>().ok());
     let mut authority_map = BTreeMap::from([
         (
@@ -363,20 +380,48 @@ pub(crate) fn run_repository_orientation_scenario(
         if let Some(historical) = &scenario.historical_campaign_ref
             && classify_historical_campaign(historical)
         {
-            (OrientationDispositionV1::HistoricalOnly, None, Vec::new(), Vec::new())
-        } else if limitations.iter().any(|item| item == "live_state_unavailable") {
-            (OrientationDispositionV1::NoSafeWork, None, Vec::new(), Vec::new())
+            (
+                OrientationDispositionV1::HistoricalOnly,
+                None,
+                Vec::new(),
+                Vec::new(),
+            )
+        } else if limitations
+            .iter()
+            .any(|item| item == "live_state_unavailable")
+        {
+            (
+                OrientationDispositionV1::NoSafeWork,
+                None,
+                Vec::new(),
+                Vec::new(),
+            )
         } else if let Some(issue) = scenario.issue_number {
             let candidate = candidate_for_issue(&snapshot, issue)?;
             disposition_for_candidate(scenario, candidate, &limitations, release_issue)
         } else if let Some(issue) = scenario.source_release_issue {
             if Some(issue) == release_issue {
-                (OrientationDispositionV1::SourceReleaseRoute, Some(issue), Vec::new(), Vec::new())
+                (
+                    OrientationDispositionV1::SourceReleaseRoute,
+                    Some(issue),
+                    Vec::new(),
+                    Vec::new(),
+                )
             } else {
-                (OrientationDispositionV1::NoSafeWork, None, Vec::new(), Vec::new())
+                (
+                    OrientationDispositionV1::NoSafeWork,
+                    None,
+                    Vec::new(),
+                    Vec::new(),
+                )
             }
         } else {
-            (OrientationDispositionV1::NoSafeWork, None, Vec::new(), Vec::new())
+            (
+                OrientationDispositionV1::NoSafeWork,
+                None,
+                Vec::new(),
+                Vec::new(),
+            )
         };
 
     let mut retained = BTreeMap::from([
@@ -722,23 +767,42 @@ mod tests {
     }
 
     #[test]
-    fn repository_orientation_authority_and_release_conflicts_are_not_echoed() -> Result<(), String> {
+    fn repository_orientation_authority_and_release_conflicts_are_not_echoed() -> Result<(), String>
+    {
         let corpus = committed_corpus()?;
-        let mut scenario = corpus.scenarios.iter().find(|s| s.id == "source-release-owned-by-ripr")
-            .ok_or_else(|| "missing release scenario".to_string())?.clone();
+        let mut scenario = corpus
+            .scenarios
+            .iter()
+            .find(|s| s.id == "source-release-owned-by-ripr")
+            .ok_or_else(|| "missing release scenario".to_string())?
+            .clone();
         scenario.expected.release_authority = "wrong/repository#9999".to_string();
         scenario.expected.development_authority = "wrong/development".to_string();
         scenario.source_release_issue = Some(9999);
         let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
-        assert_eq!(receipt.authority_map.get("release").map(String::as_str), Some("EffortlessMetrics/ripr#1463"));
-        assert_eq!(receipt.authority_map.get("development").map(String::as_str), Some("EffortlessMetrics/ripr-swarm"));
+        assert_eq!(
+            receipt.authority_map.get("release").map(String::as_str),
+            Some("EffortlessMetrics/ripr#1463")
+        );
+        assert_eq!(
+            receipt.authority_map.get("development").map(String::as_str),
+            Some("EffortlessMetrics/ripr-swarm")
+        );
         assert_eq!(receipt.disposition, OrientationDispositionV1::NoSafeWork);
         assert_eq!(receipt.selected_issue, None);
         assert!(validate_receipt_against_expect(&receipt, &scenario.expected).is_err());
         scenario.source_release_issue = Some(1463);
+        scenario.live_github = LiveGithubAvailabilityV1::Unavailable;
+        let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
+        assert_eq!(receipt.disposition, OrientationDispositionV1::NoSafeWork);
+        assert_eq!(receipt.selected_issue, None);
+        scenario.live_github = LiveGithubAvailabilityV1::Available;
         scenario.issue_number = Some(9101);
         let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
-        assert_eq!(receipt.disposition, OrientationDispositionV1::DuplicateBlocked);
+        assert_eq!(
+            receipt.disposition,
+            OrientationDispositionV1::DuplicateBlocked
+        );
         assert_eq!(receipt.selected_issue, None);
         Ok(())
     }
