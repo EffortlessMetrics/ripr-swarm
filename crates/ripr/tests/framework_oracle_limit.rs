@@ -3,8 +3,7 @@
 //!
 //! A related test that checks the owner through an environment variable it
 //! sets, a mockall closure that reads its arguments, an expect-test debug
-//! literal, or an insta whole-object file snapshot (no redaction map) on a
-//! changed struct field reads as `static_unknown` under
+//! literal, or an insta snapshot of a field no redaction names reads as
 //! `static_unknown` under `rust_framework_oracle_unresolved`. Each control
 //! below changes one thing about the shape and keeps the gap.
 
@@ -424,24 +423,12 @@ fn an_unredacted_insta_field_is_withheld() -> Result<(), String> {
         "        items: items.len(),",
         "        items: items.iter().count(),",
     );
-    withheld(
-        &insta_source("insta::assert_debug_snapshot!(record);"),
-        &edit,
-        9,
-        "whole-object file snapshot without a redaction map",
-    )?;
-    keeps_gap(
-        &insta_source("insta::assert_json_snapshot!(record, { \".id\" => \"[id]\" });"),
-        &edit,
-        9,
-        "unredacted sibling beside a redacted path",
-    )?;
-    keeps_gap(
-        &insta_source("insta::assert_json_snapshot!(record, { r#\".id\"# => \"[id]\" });"),
-        &edit,
-        9,
-        "unredacted sibling beside a raw-string redaction key",
-    )?;
+    for assertion in [
+        "insta::assert_json_snapshot!(record, { \".id\" => \"[id]\" });",
+        "insta::assert_debug_snapshot!(record);",
+    ] {
+        withheld(&insta_source(assertion), &edit, 9, assertion)?;
+    }
     Ok(())
 }
 
@@ -470,6 +457,13 @@ fn an_insta_shape_that_differs_keeps_the_gap() -> Result<(), String> {
         &id,
         8,
         "redacted id",
+    )?;
+    // A raw-string selector names the changed id the same way.
+    keeps_gap(
+        &insta_source("insta::assert_json_snapshot!(record, { r#\".id\"# => \"[id]\" });"),
+        &id,
+        8,
+        "redacted id, raw-string key",
     )?;
     // An inline snapshot is the other insta rules' case.
     keeps_gap(

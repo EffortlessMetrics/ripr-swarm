@@ -11,9 +11,8 @@
 //! - **expect-test**: `expect![[".."]].assert_debug_eq(&value)` compares the
 //!   whole debug text of the owner's result;
 //! - **insta**: `assert_json_snapshot!(value)` compares a snapshot kept in a
-//!   committed file ripr does not read; when the macro carries a redaction map,
-//!   a changed struct field that map does not replace is not withheld here
-//!   (#6642);
+//!   committed file ripr does not read, and no redaction names the changed
+//!   field;
 //! - **fixture receiver**: the changed tail is a closure over a field of
 //!   `self`, and the test pins `helper().owner(..)` or `let x = helper();
 //!   x.owner(..)` to a literal, so the closure runs over data ripr does not
@@ -75,7 +74,7 @@ impl Idiom {
                 "compares the owner's result with an expect-test debug literal, and ripr does not compare that literal with the changed value"
             }
             Idiom::InstaSnapshot => {
-                "compares the owner's result with an insta snapshot kept outside the source, and ripr does not read that committed expectation"
+                "compares the owner's result with an insta snapshot kept outside the source, and no redaction names the changed field"
             }
             Idiom::FixtureReceiver => {
                 "pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over"
@@ -728,11 +727,11 @@ fn expect_debug_literal(test: &TestFact, owner: &str) -> bool {
 }
 
 /// An insta snapshot macro with no inline `@` literal, on a changed struct
-/// field initializer, whose committed expectation ripr still does not read.
-/// Withhold only when the macro names no redaction map (whole-object file
-/// snapshot). If the macro carries a redaction map, any changed field—even an
-/// unredacted sibling—is kept as a gap instead of being withheld (#6642). Any
-/// other changed line keeps the gap without this idiom.
+/// field initializer that no redaction names. The unredacted field is
+/// serialized into a committed file ripr does not read, so it is withheld,
+/// including a sibling beside a redaction map. A field the map's selector
+/// names, and any other changed line, keep the gap. Selectors are read from
+/// the top-level braced map only, with ordinary and raw string keys (#6642).
 fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &str) -> bool {
     let raw: &str = &test.body;
     let code = masked(raw);
@@ -777,13 +776,17 @@ fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &st
             // Only a struct field the snapshot serializes: a changed
             // predicate or arm shapes the whole rendering, which the
             // snapshot weakly checks as before.
-            if field_name(changed_text).is_none() {
+            let Some(field) = field_name(changed_text) else {
                 continue;
-            }
-            if insta_redaction_map(arguments).is_some() {
-                // A top-level redaction map names which serialized paths are
-                // replaced; changed fields stay gaps until snapshot identity
-                // lands (#8121), whether the map touches that field or not.
+            };
+            // A redaction map that names the field replaces it in the
+            // snapshot, so the gap stays; an unredacted sibling beside a map,
+            // or no map at all, is serialized into a committed file ripr does
+            // not read, so it is withheld (#6642).
+            if redaction_selectors(&raw[from..to])
+                .iter()
+                .any(|selector| selector.split(boundary).any(|s| s == field))
+            {
                 continue;
             }
             found = true;
@@ -832,7 +835,6 @@ fn insta_redaction_map(arguments: &str) -> Option<&str> {
 }
 
 /// Path literals in the macro's redaction map (`".id" => ..`), if present.
-#[cfg(test)]
 fn redaction_selectors(arguments: &str) -> Vec<&str> {
     let Some(map) = insta_redaction_map(arguments) else {
         return Vec::new();
@@ -841,7 +843,6 @@ fn redaction_selectors(arguments: &str) -> Vec<&str> {
 }
 
 /// Selector path literals inside a braced insta redaction map.
-#[cfg(test)]
 fn redaction_map_selectors(map: &str) -> Vec<&str> {
     let mut selectors = Vec::new();
     let mut offset = 0usize;
@@ -869,7 +870,6 @@ fn redaction_map_selectors(map: &str) -> Vec<&str> {
 }
 
 /// A redaction-map key and the offset after its `=>` value.
-#[cfg(test)]
 fn redaction_map_key(map: &str, start: usize) -> Option<(&str, usize)> {
     let (path, after_key) = string_literal_in_redaction_map(map, start)?;
     let rest = map[after_key..].trim_start();
@@ -880,7 +880,6 @@ fn redaction_map_key(map: &str, start: usize) -> Option<(&str, usize)> {
     Some((path, skip_redaction_value(map, after_arrow)))
 }
 
-#[cfg(test)]
 fn string_literal_in_redaction_map(map: &str, start: usize) -> Option<(&str, usize)> {
     let tail = &map[start..];
     if tail.starts_with('"') {
@@ -892,7 +891,6 @@ fn string_literal_in_redaction_map(map: &str, start: usize) -> Option<(&str, usi
     None
 }
 
-#[cfg(test)]
 fn normal_string_literal(text: &str) -> Option<(&str, usize)> {
     let mut escaped = false;
     for (offset, ch) in text.char_indices().skip(1) {
@@ -909,7 +907,6 @@ fn normal_string_literal(text: &str) -> Option<(&str, usize)> {
     None
 }
 
-#[cfg(test)]
 fn raw_string_literal(text: &str) -> Option<(&str, usize)> {
     let rest = text.strip_prefix('r')?;
     let hash_count = rest.chars().take_while(|&ch| ch == '#').count();
@@ -921,7 +918,6 @@ fn raw_string_literal(text: &str) -> Option<(&str, usize)> {
     Some((&open[..content_end], end))
 }
 
-#[cfg(test)]
 fn skip_redaction_value(map: &str, start: usize) -> usize {
     let tail = map[start..].trim_start();
     let value_start = start + (map[start..].len() - tail.len());
@@ -1011,40 +1007,33 @@ mod tests {
     }
 
     #[test]
-    fn insta_withholds_only_whole_object_file_snapshots_without_redaction_maps()
-    -> Result<(), String> {
+    fn insta_withholds_an_unredacted_field_and_keeps_the_gap_for_a_redacted_one() -> Result<(), String> {
         let owner = "make_record";
+        let id_change = "        id: next_id(),";
         let items_change = "        items: items.len(),";
-        let json_redacted = "#[cfg(test)]
-mod tests {
-    #[test]
-    fn snap() {
-        let record = make_record(2);
-        insta::assert_json_snapshot!(record, { \".id\" => \"[id]\" });
-    }
-}
-";
-        let whole_object = "#[cfg(test)]
-mod tests {
-    #[test]
-    fn snap() {
-        let record = make_record(2);
-        insta::assert_debug_snapshot!(record);
-    }
-}
-";
-        assert!(
-            !insta_leaves_field_unredacted(
-                &test_named(json_redacted, "snap")?,
-                items_change,
-                owner
-            ),
-            "sibling redaction must not trigger whole-file insta withhold"
-        );
-        assert!(
-            insta_leaves_field_unredacted(&test_named(whole_object, "snap")?, items_change, owner),
-            "unread whole-object snapshot still withholds"
-        );
+        let snapshot = |args: &str| {
+            format!(
+                "#[cfg(test)]\nmod tests {{\n    #[test]\n    fn snap() {{\n        let record = make_record(2);\n        insta::assert_json_snapshot!({args});\n    }}\n}}\n"
+            )
+        };
+        let ordinary = snapshot("record, { \".id\" => \"[id]\" }");
+        let raw_key = snapshot("record, { r#\".id\"# => \"[id]\" }");
+        let whole_object = snapshot("record");
+        // The field the map names is replaced in the snapshot: the gap stays.
+        for source in [&ordinary, &raw_key] {
+            assert!(
+                !insta_leaves_field_unredacted(&test_named(source, "snap")?, id_change, owner),
+                "a redacted field keeps its gap"
+            );
+        }
+        // An unredacted sibling beside a map, and a whole-object snapshot, are
+        // serialized into a committed file ripr does not read: withheld.
+        for source in [&ordinary, &raw_key, &whole_object] {
+            assert!(
+                insta_leaves_field_unredacted(&test_named(source, "snap")?, items_change, owner),
+                "an unredacted field is withheld"
+            );
+        }
         Ok(())
     }
 

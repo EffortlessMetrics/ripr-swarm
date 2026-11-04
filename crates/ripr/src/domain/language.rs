@@ -450,8 +450,8 @@ pub enum StaticLimitKind {
     /// A related test checks the changed code through a test-framework idiom
     /// ripr does not evaluate: an environment-activated branch asserted after
     /// `set_var`/`remove_var`, a mockall `returning` closure that reads its
-    /// arguments, an expect-test `assert_debug_eq` literal, or an insta whole-object
-    /// file snapshot (no redaction map) on a changed struct field. The gap is withheld and the
+    /// arguments, an expect-test `assert_debug_eq` literal, or an insta
+    /// snapshot of a field no redaction names. The gap is withheld and the
     /// class is `static_unknown`. See RIPR-SPEC-0240.
     RustFrameworkOracleUnresolved,
     /// A related direct-call test pins the owner's whole result with an exact
