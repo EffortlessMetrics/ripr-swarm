@@ -121,6 +121,14 @@ fn same_index_prefill_is_complete_or_absent_and_matches_compact_cold() -> Result
     let (baseline, fallback) =
         inventory_compact_classified_seams_from_state_with_config(&state, &config)?;
     assert!(!baseline.is_empty());
+    let payload_bytes = baseline.iter().try_fold(0usize, |total, record| {
+        let bytes = serde_json::to_vec(record).map_err(|error| error.to_string())?;
+        total
+            .checked_add(bytes.len())
+            .ok_or("payload size overflow".to_string())
+    })?;
+    assert!(complete_compact_with_budget(&files, &cached.index, 100, payload_bytes - 1)?.is_none());
+    assert!(complete_compact_with_budget(&files, &cached.index, 100, payload_bytes)?.is_some());
     assert_eq!(
         serde_json::to_value(&prefilling).map_err(|e| e.to_string())?,
         serde_json::to_value(&baseline).map_err(|e| e.to_string())?
