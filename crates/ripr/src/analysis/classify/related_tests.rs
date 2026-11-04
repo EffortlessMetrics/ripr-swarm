@@ -6402,6 +6402,42 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_if_macros_trusted(
         && relation(true) == RelationReason::DirectOwnerCall
 }
 
+/// Whether `test` fails the inherent receiver check for `owner` only because
+/// the assertion macro around the call is one ripr does not read, with
+/// placement available (#12829). `assert_matches!` is no prelude macro, so the
+/// credit path never reads its operand; the trusted pass reads the first
+/// operand only to name the limit. Binding, shadow and receiver rules are the
+/// ones the credit path applies, and placement is available, so no input is
+/// lifted except the operand read. It never grants the relation.
+pub(in crate::analysis) fn inherent_owner_call_resolves_inside_unreadable_macro(
+    caller: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let relation = |trust| {
+        owner_call_relation_reason_gated(
+            caller,
+            Some(owner),
+            &owner.name,
+            &[],
+            index
+                .files()
+                .get(&caller.file)
+                .map(|facts| facts.data().source.as_ref()),
+            index,
+            false,
+            trust,
+        )
+    };
+    requires_inherent_receiver_identity(owner)
+        && !index
+            .call_identity_memos
+            .receiver_pin_syntax
+            .target_placement_unavailable(index)
+        && relation(false) != RelationReason::DirectOwnerCall
+        && relation(true) == RelationReason::DirectOwnerCall
+}
+
 /// Whether the last call of `method` in `prefix` (masked test source cut at
 /// the end of one statement, with earlier calls of the same name blanked by
 /// the caller) has a receiver bound to `impl_type`, under the same receiver

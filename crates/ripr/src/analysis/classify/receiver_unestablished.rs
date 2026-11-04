@@ -18,7 +18,8 @@
 
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
-    inherent_owner_call_resolves_if_macros_trusted, requires_inherent_receiver_identity,
+    inherent_owner_call_resolves_if_macros_trusted,
+    inherent_owner_call_resolves_inside_unreadable_macro, requires_inherent_receiver_identity,
 };
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::*;
@@ -27,6 +28,13 @@ const LIMIT: StaticLimitKind = StaticLimitKind::RustInherentReceiverUnestablishe
 const FIRST_UNRESOLVED_EDGE: &str = "whether the standard assertion macro around the owner call is the one the test's target compiles";
 const JUDGED_TEST_LIMIT: usize = 3;
 
+/// Placed variant (#12829): placement is available, and the assertion macro
+/// around the owner call is one ripr does not read. The marker names the
+/// judged tests.
+pub(in crate::analysis) const RECEIVER_UNREADABLE_MACRO_PREFIX: &str = "receiver_unestablished: the owner call resolves inside an assertion macro ripr does not read: ";
+const UNREADABLE_MACRO_EDGE: &str =
+    "whether the assertion macro around the owner call discriminates the owner's result";
+
 /// Classifier-to-post-pass marker prefix: a related test's owner call resolves
 /// if the standard assertion macro were trusted, and placement is unavailable.
 /// The rest of the line names the judged tests.
@@ -34,7 +42,12 @@ pub(in crate::analysis) const RECEIVER_UNVERIFIABLE_MACRO_PREFIX: &str = "receiv
 
 /// Tests whose owner call is blocked only by the unverifiable macro binding,
 /// formatted for the next step. Empty when the rule does not apply.
-fn blocked_tests(finding: &Finding, owner: &FunctionSummary, index: &RustIndex) -> Vec<String> {
+fn blocked_tests(
+    finding: &Finding,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    resolves: fn(&TestSummary, &FunctionSummary, &RustIndex) -> bool,
+) -> Vec<String> {
     if !matches!(
         finding.class,
         ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
@@ -55,7 +68,7 @@ fn blocked_tests(finding: &Finding, owner: &FunctionSummary, index: &RustIndex) 
                 .any(|row| is_test(&row.name, &row.file, row.line, test))
                 && !is_ignored(test)
                 && assertions_over_owner_are_strong(test, owner)
-                && inherent_owner_call_resolves_if_macros_trusted(test, owner, index)
+                && resolves(test, owner, index)
         })
         .take(JUDGED_TEST_LIMIT)
         .map(|test| {
@@ -103,12 +116,30 @@ pub(in crate::analysis) fn mark_receiver_unestablished(
     let Some(owner) = owner else {
         return false;
     };
-    let judged = blocked_tests(finding, owner, index);
+    let judged = blocked_tests(
+        finding,
+        owner,
+        index,
+        inherent_owner_call_resolves_if_macros_trusted,
+    );
+    if !judged.is_empty() {
+        finding.evidence.push(format!(
+            "{RECEIVER_UNVERIFIABLE_MACRO_PREFIX}{}",
+            judged.join(", ")
+        ));
+        return true;
+    }
+    let judged = blocked_tests(
+        finding,
+        owner,
+        index,
+        inherent_owner_call_resolves_inside_unreadable_macro,
+    );
     if judged.is_empty() {
         return false;
     }
     finding.evidence.push(format!(
-        "{RECEIVER_UNVERIFIABLE_MACRO_PREFIX}{}",
+        "{RECEIVER_UNREADABLE_MACRO_PREFIX}{}",
         judged.join(", ")
     ));
     true
@@ -125,10 +156,16 @@ pub(in crate::analysis) fn withhold_receiver_unestablished_gap(
         .iter()
         .find_map(|line| line.strip_prefix(RECEIVER_UNVERIFIABLE_MACRO_PREFIX))
         .map(str::to_string);
-    finding
+    let unreadable = finding
         .evidence
-        .retain(|line| !line.starts_with(RECEIVER_UNVERIFIABLE_MACRO_PREFIX));
-    let Some(judged) = marker else {
+        .iter()
+        .find_map(|line| line.strip_prefix(RECEIVER_UNREADABLE_MACRO_PREFIX))
+        .map(str::to_string);
+    finding.evidence.retain(|line| {
+        !line.starts_with(RECEIVER_UNVERIFIABLE_MACRO_PREFIX)
+            && !line.starts_with(RECEIVER_UNREADABLE_MACRO_PREFIX)
+    });
+    let Some(judged) = marker.clone().or(unreadable) else {
         return false;
     };
     if finding.static_limit_kind.is_some()
@@ -150,6 +187,20 @@ pub(in crate::analysis) fn withhold_receiver_unestablished_gap(
     }) else {
         return false;
     };
+    if marker.is_none() {
+        let next_step = format!(
+            "{judged} calls `{name}` on a receiver that resolves inside an assertion macro ripr does not read, so it does not report a gap. Inspect the macro's definition and check that the assertion would fail if `{name}` returned the wrong value; add a test only if none does.",
+            name = owner.name,
+        );
+        withhold_gap(
+            finding,
+            StaticLimitKind::RustMacroWrappedAssertionUnresolved,
+            UNREADABLE_MACRO_EDGE,
+            next_step,
+            &[judged],
+        );
+        return true;
+    }
     let next_step = format!(
         "{} calls `{}` on a receiver that would resolve if the standard assertion macro is the one its target compiles, and ripr cannot place the test in a Cargo target here (an unresolved `include!` or `#[path]`), so it does not report a gap. Check that the assertion would fail if `{}` returned the wrong value; add a test only if none does.",
         judged, owner.name, owner.name,
