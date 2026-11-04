@@ -2198,6 +2198,16 @@ pub(crate) fn build_report(
         && metrics
             .iter()
             .all(|row| row["baseline"]["comparable"] != true && row["value"].is_null());
+    // The field names the boards the gate failed for, so it is populated
+    // only in that case. A mixed run that passes keeps it empty rather than
+    // printing a no-evidence board beside a passing gate; per-board failure
+    // would also fail the nightly, which selects every board without the
+    // ingest receipts several boards need.
+    let zero_evidence_boards = if no_comparable_evidence {
+        zero_evidence_boards
+    } else {
+        Vec::new()
+    };
     let gate_status = if !gate {
         "not_run"
     } else if !ceiling_breaches.is_empty() {

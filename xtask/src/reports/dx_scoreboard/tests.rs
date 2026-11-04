@@ -550,6 +550,36 @@ fn gate_fails_when_no_selected_metric_is_comparable() -> Result<(), String> {
         true,
     );
     assert_eq!(measured["gate"]["status"].as_str(), Some("pass"));
+    // A mixed run passes when another selected board was measured, and the
+    // zero-evidence field stays empty: it names only boards the gate
+    // failed for, never a board beside a passing gate.
+    let mixed_boards = vec!["first_run".to_string(), "ci".to_string()];
+    let mixed_baseline = build_report(
+        &config,
+        &mixed_boards,
+        &[sample(
+            "ci.workflow_lines",
+            None,
+            SampleOutcome::Value(100.0),
+        )],
+        &context("r"),
+        None,
+        false,
+    );
+    let mixed = build_report(
+        &config,
+        &mixed_boards,
+        &[sample(
+            "ci.workflow_lines",
+            None,
+            SampleOutcome::Value(100.0),
+        )],
+        &context("r"),
+        Some(&mixed_baseline),
+        true,
+    );
+    assert_eq!(mixed["gate"]["status"].as_str(), Some("pass"));
+    assert_eq!(mixed["gate"]["zero_evidence_boards"], json!([]));
     Ok(())
 }
 
