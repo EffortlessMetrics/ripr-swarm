@@ -5,8 +5,8 @@ name: Windows Gate
 # surfaces. Branch-protection promotion to required is a separate owner step.
 
 on:
-  pull_request:
-    types: [labeled]
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main, master]
   workflow_dispatch:
@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-gate-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.event_name == 'pull_request' && (github.event.pull_request.draft || github.event.label.name != 'merge-ready') && github.run_id || 'request' }}
+  group: windows-gate-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 env:
@@ -24,7 +24,6 @@ env:
 jobs:
   detect:
     name: windows-gate-detect
-    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.label.name == 'merge-ready')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -38,8 +37,8 @@ jobs:
         id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
         run: |
           windows_relevant=false
           reason=not_applicable
@@ -54,7 +53,7 @@ jobs:
                 reason=workflow_dispatch
                 return 0
                 ;;
-              pull_request|push) ;;
+              merge_group|push) ;;
               *)
                 reason=unsupported_event
                 return 0
@@ -138,7 +137,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.merge_group.head_sha || github.sha }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
@@ -240,7 +239,7 @@ jobs:
   result:
     name: Ripr Windows Gate Result
     needs: [detect, run]
-    if: always() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.label.name == 'merge-ready'))
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

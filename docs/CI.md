@@ -147,8 +147,7 @@ superseded.
   only when `merge-ready` is re-applied.
 - Gated: `ci.yml` jobs, `coverage`, `test-analytics`, `future-clippy`,
   `windows-advisory` (both jobs), `macos-advisory`, `security`, `printed-command-paste`,
-  `npm-launcher`, `zed-extension`, `pilot-ranking`, `public-proof`, `windows-gate`
-  and `source-of-truth`. Push,
+  `npm-launcher`, `zed-extension`, `pilot-ranking` and `public-proof`. Push,
   schedule and manual runs are unchanged.
 - Not changed here: `ub-review` (its triggers are pinned by
   `pr_readiness_workflow_contract`) and the Python wheel workflow. Their cutover
@@ -591,8 +590,8 @@ and single-platform CI was the root cause enabling both.
   product behavior remains an author and audit responsibility.
 
 - **Diff-scoped gate (#5088).** `.github/workflows/windows-gate.yml` posts
-  `Ripr Windows Gate Result` on a non-draft pull request `merge-ready` label
-  request, on `main`/`master` pushes, and on `workflow_dispatch`. An ubuntu
+  `Ripr Windows Gate Result` on a merge-group checks request, on `main`/`master`
+  pushes, and on `workflow_dispatch`. An ubuntu
   detection job conservatively marks a diff `windows_relevant` when it touches
   `cfg(windows)` in changed Rust, contains `cfg(windows)` anywhere in a changed
   `*.rs` file, or edits the Windows advisory/gate workflow definitions; detection
@@ -783,11 +782,8 @@ The Source of Truth workflow owns the advisory spec maintenance digest
 retained as the `ripr-spec-maintenance` artifact.
 
 - **Triggers.** A weekly schedule (no more frequent than weekly), explicit
-  `workflow_dispatch`, and non-draft pull requests with an explicit `merge-ready`
-  label request that touch spec governance paths
-  (`docs/specs/**`, `docs/templates/**`, `.ripr/traceability.toml`,
-  `.allow/spec-system/**`, `docs/status/SUPPORT_TIERS.md`, or the workflow
-  itself). Source-only PRs do not start it.
+  `workflow_dispatch`, and merge-group checks requests. Queue events run the
+  digest for the combined subject without PR path filtering.
 - **Three states.** Candidates found (`maintenance_status:
   attention_required`) and no candidates (`clean`) are both successful
   observations; neither count changes the exit status. A structurally blind

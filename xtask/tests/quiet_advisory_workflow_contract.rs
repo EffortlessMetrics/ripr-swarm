@@ -1,5 +1,4 @@
-//! Verify the explicit PR request boundary for advisory workflows.
-
+//! Queue-only trigger boundary for the staged advisory workflows.
 use std::{fs, path::Path};
 
 fn repo_file(path: &str) -> Result<String, String> {
@@ -9,59 +8,36 @@ fn repo_file(path: &str) -> Result<String, String> {
     fs::read_to_string(root.join(path)).map_err(|error| error.to_string())
 }
 
-// These advisory workflows keep their manual/push/scheduled paths, but PR
-// activity must allocate work only for an explicit non-draft request.
-fn quiet_advisory_contract(source: &str, jobs: &[&str]) -> bool {
-    let Some((events, job_source)) = source.split_once("\njobs:\n") else {
+fn queue_only_events(source: &str) -> bool {
+    let Some((events, _)) = source.split_once("\npermissions:\n") else {
         return false;
     };
-    if !events.contains("  pull_request:\n    types: [labeled]\n") {
-        return false;
-    }
-    jobs.iter().all(|job| {
-        let marker = format!("  {job}:\n");
-        let Some((_, tail)) = job_source.split_once(&marker) else {
-            return false;
-        };
-        tail.lines()
-            .take_while(|line| !line.starts_with("  ") || line.starts_with("   "))
-            .any(|line| {
-                line.starts_with("    if: ")
-                    && line.contains("github.event_name != 'pull_request'")
-                    && line.contains("!github.event.pull_request.draft")
-                    && line.contains("github.event.label.name == 'merge-ready'")
-            })
-    })
+    events.contains("  merge_group:\n    types: [checks_requested]\n")
+        && !events.contains("pull_request")
+        && events.contains("  push:\n")
+        && events.contains("  workflow_dispatch:")
 }
 
 #[test]
-fn windows_and_spec_advisories_require_explicit_non_draft_pr_request() -> Result<(), String> {
-    for (path, jobs) in [
-        (
-            ".github/workflows/windows-gate.yml",
-            &["detect", "result"][..],
-        ),
-        (
-            ".github/workflows/source-of-truth.yml",
-            &["source-of-truth", "spec-maintenance-digest"][..],
-        ),
+fn advisories_start_on_queue_and_not_pr_events() -> Result<(), String> {
+    for path in [
+        ".github/workflows/windows-gate.yml",
+        ".github/workflows/source-of-truth.yml",
     ] {
         let source = repo_file(path)?;
-        assert!(quiet_advisory_contract(&source, jobs), "{path}");
-        assert!(!quiet_advisory_contract(
-            &source.replace("types: [labeled]", "types: [opened, synchronize, labeled]"),
-            jobs
+        assert!(queue_only_events(&source), "{path}");
+        assert!(!queue_only_events(
+            &source.replace("  merge_group:", "  pull_request:")
         ));
-        assert!(!quiet_advisory_contract(
-            &source.replace("!github.event.pull_request.draft", "true"),
-            jobs
+        assert!(!queue_only_events(
+            &source.replace("[checks_requested]", "[destroyed]")
         ));
-        assert!(!quiet_advisory_contract(
-            &source.replace("github.event.label.name == 'merge-ready'", "true"),
-            jobs
-        ));
+        assert!(!queue_only_events(&source.replace("  push:\n", "")));
     }
     let windows = repo_file(".github/workflows/windows-gate.yml")?;
-    assert!(windows.contains("github.event.pull_request.draft || github.event.label.name != 'merge-ready') && github.run_id"));
+    assert!(windows.contains("github.event.merge_group.base_sha || github.event.before"));
+    assert!(windows.contains("github.event.merge_group.head_sha || github.sha"));
+    assert!(windows.contains("merge_group|push) ;;"));
+    assert!(windows.contains("ref: ${{ github.event.merge_group.head_sha || github.sha }}"));
     Ok(())
 }
