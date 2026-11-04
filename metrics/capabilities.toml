@@ -1189,7 +1189,7 @@ evidence = [
   "docs/FIRST_USEFUL_ACTION_WORKFLOW.md documents GitHub and editor entry points, status meanings, developer/reviewer/agent actions, verification, receipts, fallback interpretation, and the advisory gate boundary",
   "fixtures/boundary_gap/expected/first-useful-action pins actionable, stale, missing-required-artifact, baseline-only, acknowledged, waived, suppressed, no-actionable-seam, already-improved, unchanged-after-attempt, and explicit gap-record routing cases",
   "crates/ripr/src/output/first_useful_action.rs::first_useful_action_matches_actionable_fixture, ::first_useful_action_matches_unchanged_after_attempt_fixture, and ::first_useful_action_routes_gap_record_without_assistant_proof validate producer output against pinned and inline gap-record routes",
-  "crates/ripr/tests/cli_smoke.rs::first_action_cli_writes_actionable_report and crates/ripr/src/cli/commands.rs::first_action_cli_writes_gap_record_report validate public CLI output for assistant-proof and gap-record paths",
+  "crates/ripr/tests/cli_smoke.rs::first_action_cli_writes_actionable_report and crates/ripr/src/cli/commands/first_action.rs::first_action_cli_writes_gap_record_report validate public CLI output for assistant-proof and gap-record paths",
   "crates/ripr/src/cli/commands.rs::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional and crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow validate generated CI projection",
   "editors/vscode/src/client.ts projects an existing workspace-matched target/ripr/reports/first-useful-action.json report through status and Show Status without invoking ripr first-action or adding diagnostics",
   "editors/vscode/test/suite/extension.test.ts::status bar projects existing first useful action report validates the editor projection and asserts it does not shell out to ripr",
@@ -1711,6 +1711,21 @@ next = "maintenance"
 metric = "language_adapter_python_findings_preview, language_adapter_python_canonical_gap_identity, language_adapter_python_ripr_evidence_model, language_adapter_python_repair_class_predicate_boundary, language_adapter_python_repair_class_return_value, language_adapter_python_repair_class_exception_path, language_adapter_python_repair_class_field_value, language_adapter_python_repair_class_output_or_call_effect, language_adapter_python_repair_guidance_suppressed_non_actionable, language_adapter_python_repair_ranking_noise_control, language_adapter_python_test_placement_verify, language_adapter_python_repair_card_v1, language_adapter_python_existing_test_strengthening, language_adapter_python_route_decorator_repair_card, language_adapter_python_agent_packet_v1, language_adapter_python_swarm_queue_stale_packets, language_adapter_python_gap_receipt_from_check_output, language_adapter_python_real_repair_attempt_receipt, language_adapter_python_real_repo_eval_receipt, language_adapter_python_repair_routing_quality_metrics, language_adapter_python_pilot_first_use_path, language_adapter_python_pr_summary_repair_card_projection, language_adapter_python_lsp_agent_packet_action, language_adapter_python_lsp_repair_card_action, language_adapter_python_lsp_pytest_skeleton_action, language_adapter_python_first_pr_start_here_path, language_adapter_python_first_pr_check_output_bridge, language_adapter_python_swarm_ingest, language_adapter_python_swarm_ingest_result_states, language_adapter_python_generated_file_exclusion, language_adapter_python_static_limit_stop_reasons, language_adapter_python_static_limit_mocked_module, language_adapter_python_static_limit_opaque_custom_assertion_helper, language_adapter_python_static_limit_property_based_test, language_adapter_python_static_limit_unresolved_pytest_fixture, language_adapter_python_static_limit_*"
 
 [[capability]]
+id = "php_preview_evidence_contract"
+cells = []
+name = "PHP preview evidence contract"
+status = "planned"
+spec = "RIPR-SPEC-0392"
+evidence = [
+  "RIPR-SPEC-0392 defines wire language php, lang-php feature gating, Composer project context, exact-span probes, PHPUnit/Pest activation shared with #5542, oracle and relation law, typed dynamic limits, and preview-only authority boundary (#5620).",
+  "Acceptance examples in the spec cover owners, trait/data-provider provenance, activation refusals, oracle strength, relations, and fail-closed limits; implementation fixtures and lang-php adapter remain future slices.",
+  "Spec index, doc-artifacts, traceability, and capability rows register the contract; gates/badges/RIPR Zero/stable PHP claims stay false until later promotion evidence exists."
+]
+fixtures = []
+next = "php-preview-adapter-and-corpus"
+metric = "language_adapter_php_findings_preview, language_adapter_php_owner_trait_provenance, language_adapter_php_static_limit_magic_method_dispatch, language_adapter_php_static_limit_dynamic_dispatch, language_adapter_php_static_limit_unresolved_composer_autoload, language_adapter_php_test_activation_unresolved"
+
+[[capability]]
 id = "python_repair_routing_loop"
 cells = [
   "python/pytest/diff/repair_routing",
@@ -1772,6 +1787,18 @@ fixtures = [
 ]
 next = "dogfood/perl-real-repo-evals-v2"
 metric = "language_adapter_perl_facts_packet_v1, language_adapter_perl_gap_record_projection, language_adapter_perl_doctor_preview, language_adapter_perl_bespoke_card_advisory_only_invariant, language_adapter_perl_real_repo_eval_launchpoints"
+
+[[capability]]
+id = "r_preview_static_facts_contract"
+name = "R preview static facts contract"
+status = "planned"
+spec = "RIPR-SPEC-0401"
+evidence = [
+  "docs/specs/RIPR-SPEC-0401-r-preview-package-testthat-numerical-data-boundaries.md defines wire identity r, package/script/testthat/numerical/data/condition/snapshot/side-effect boundaries, typed NSE/dispatch/native limits, #5542 activation projection, #5559 native provenance, and contractual capability cell ids before any R adapter or parser lands (#5850, #5592).",
+]
+fixtures = []
+next = "epic/r/parser-and-routing"
+metric = "r_preview_contract_registered"
 
 [[capability]]
 id = "typescript_preview_static_facts"
@@ -2157,6 +2184,22 @@ next = "agent/typed-command-spec-projections"
 metric = "command_spec_projection_accepted_routes, command_spec_projection_omitted_fail_closed, command_spec_projection_multi_route_arrays"
 
 [[capability]]
+id = "julia_preview_static_facts"
+name = "Julia preview static facts"
+status = "planned"
+spec = "RIPR-SPEC-0405"
+evidence = [
+  "docs/specs/RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md defines wire language julia, lang-julia feature gate, Project.toml/Manifest bounded project facts, source roles, method-signature owner identity, standard Test activation mapping through shared #5542 vocabulary, separate exact and approximate numerical and array shape/value/order/eltype/mutation facts, bounded oracle law through #5546, native ccall and GPU edges only through #5559, Julia-specific static_limit_kind tokens, and the soundness invariant that generic names, imports, deps, and native spellings cannot establish reach",
+  "docs/spec-index.d/RIPR-SPEC-0405.md registers the spec in the doc index",
+  ".ripr/traceability.d/5862-julia-preview-package-dispatch-test-boundaries.toml registers RIPR-SPEC-0405",
+  "docs/CAPABILITY_MATRIX.md lists julia_preview_static_facts as planned with no gate, badge, baseline, RIPR Zero, or repair-loop authority",
+  "Parent epic #5593 and issue #5862 acceptance: contract-only slice with positive and negative acceptance examples; implementation and judged corpora land in follow-on PRs",
+]
+fixtures = []
+next = "adr/julia-parser-substrate"
+metric = "language_adapter_julia_spec_registered"
+
+[[capability]]
 id = "source_role_authority"
 name = "Rust producer-owned source role"
 status = "alpha"
@@ -2171,3 +2214,19 @@ evidence = [
 fixtures = ["crates/ripr/tests/data/source-role-corpus"]
 next = "analysis/source-role-authority"
 metric = "source_role_layout_classification, source_role_declared_targets, source_role_production_like_opt_in, source_role_harness_registry, source_role_cfg_composition, source_role_naming_lookalike_rejected"
+
+[[capability]]
+id = "ruby_preview_static_facts"
+name = "Ruby preview static facts"
+status = "planned"
+spec = "RIPR-SPEC-0391"
+evidence = [
+  "docs/specs/RIPR-SPEC-0391-ruby-preview-static-facts.md defines wire language ruby, lang-ruby feature gate, project/source roles, owner and exact-span probe families, separate RSpec and Minitest activation mapping through shared #5542 vocabulary, bounded oracle and reach law through #5546, Ruby-specific static_limit_kind tokens, and the soundness invariant that unresolved Ruby dynamism cannot become no_static_path",
+  "docs/spec-index.d/RIPR-SPEC-0391.md registers the spec in the doc index",
+  ".ripr/traceability.toml registers RIPR-SPEC-0391",
+  "docs/CAPABILITY_MATRIX.md lists ruby_preview_static_facts as planned with no gate, badge, baseline, RIPR Zero, or repair-loop authority",
+  "Parent epic #5583 and issue #5606 acceptance: contract-only slice with positive and negative acceptance examples; implementation, parser selection (#5607), and framework cells in the runtime registry land in follow-on PRs",
+]
+fixtures = []
+next = "adr/ruby-parser-substrate"
+metric = "language_adapter_ruby_spec_registered"

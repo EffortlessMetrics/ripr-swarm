@@ -828,6 +828,7 @@ pub(super) mod tests {
                 attrs: vec![],
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -881,6 +882,7 @@ pub(super) mod tests {
             attrs: vec![],
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -1743,6 +1745,7 @@ pub(super) mod tests {
                 attrs: vec![],
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -4407,6 +4410,7 @@ fn far_above_threshold_discounts() {
             attrs: vec![],
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

@@ -1770,6 +1770,7 @@ mod direct {
                 literal_pair: None,
                 focus: &focus,
                 boundary_fact: None,
+                exact_discriminator_fact: None,
             },
             &AlignmentPrep::new(&case.owner, &case.tests),
         );
@@ -2511,6 +2512,7 @@ mod direct {
                 guard_entered: false,
                 literal_pair: None,
                 boundary_fact: Some(&fact),
+                exact_discriminator_fact: None,
             },
             &AlignmentPrep::new(&case.owner, &case.tests),
         );
@@ -2565,6 +2567,7 @@ mod direct {
                     literal_pair: None,
                     focus: &focus,
                     boundary_fact: None,
+                    exact_discriminator_fact: None,
                 },
                 &AlignmentPrep::new(&case.owner, &case.tests),
             );
@@ -2618,6 +2621,7 @@ mod direct {
                 literal_pair: None,
                 focus: &focus,
                 boundary_fact: None,
+                exact_discriminator_fact: None,
             },
             &AlignmentPrep::new(&case.owner, &case.tests),
         );

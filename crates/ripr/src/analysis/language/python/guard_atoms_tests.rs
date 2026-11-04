@@ -361,6 +361,50 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "__builtins__['isinstance'] = checker\n\n\n",
         "import builtins\nbuiltins . isinstance = checker\n\n\n",
         "import builtins\nsetattr(\n    builtins,\n    'isinstance',\n    checker,\n)\n\n\n",
+        // #12222: annotated, tuple, list and chained targets rebind it too.
+        "import builtins as b\nb.isinstance: object = checker\n\n\n",
+        "import builtins as b\nb.isinstance, other = checker, None\n\n\n",
+        "import builtins as b\nother, b.isinstance = None, checker\n\n\n",
+        "import builtins as b\n(other, b.isinstance) = (None, checker)\n\n\n",
+        "import builtins as b\n[b.isinstance, other] = [checker, None]\n\n\n",
+        "import builtins as b\nother = b.isinstance = checker\n\n\n",
+        // Review of #12452: a later chained tuple, a subscripted annotation or
+        // sibling target, a starred slot and a statement after a `;`.
+        "import builtins as b\nother = (b.isinstance, slot) = checker, None\n\n\n",
+        "import builtins as b\nb.isinstance: list[int] = checker\n\n\n",
+        "import builtins as b\nb.isinstance, slot[0] = checker, None\n\n\n",
+        "import builtins as b\n*b.isinstance, other = [checker, None]\n\n\n",
+        "import builtins as b\nvalue = 1; b.isinstance, other = checker, None\n\n\n",
+        "import builtins as b\nb['isinstance'], other = checker, None\n\n\n",
+        // An escaped quote inside a string must not hide a later statement.
+        "import builtins as b\nlabel = \"say \\\"hi\\\"\"; b.isinstance = checker\n\n\n",
+        "import builtins as b\nlabel = 'it\\'s'; b.isinstance, other = checker, None\n\n\n",
+        // #12592: augmented assignment to a builtins-module attribute rebinds too.
+        "import builtins as b\nb.isinstance += 1\n\n\n",
+        "import builtins as b\nb.isinstance |= checker\n\n\n",
+        "import builtins\nbuiltins['isinstance'] += 1\n\n\n",
+        "import builtins as b\nb.isinstance **= 2\n\n\n",
+        "import builtins as b\nvalue = 1; b.isinstance += 1\n\n\n",
+        // #12593: assignment targets split across lines or continued with `\`.
+        "import builtins as b\n(other,\n b.isinstance) = (None, checker)\n\n\n",
+        "import builtins as b\n[other,\n b.isinstance] = [None, checker]\n\n\n",
+        "import builtins as b\nb.isinstance = \\\n    checker\n\n\n",
+        "import builtins as b\n(\n    b.isinstance,\n    other,\n) = (checker, None)\n\n\n",
+        // #12591: `for`, `with ... as` and comprehension targets store too.
+        "import builtins as b\nfor b.isinstance in items:\n    pass\n\n\n",
+        "import builtins as b\nfor other, b.isinstance in pairs:\n    pass\n\n\n",
+        "import builtins as b\nfor (other, b.isinstance) in pairs:\n    pass\n\n\n",
+        "import builtins as b\nasync for b.isinstance in items:\n    pass\n\n\n",
+        "import builtins as b\nwith ctx() as b.isinstance:\n    pass\n\n\n",
+        "import builtins as b\nwith open(path) as handle, ctx() as b.isinstance:\n    pass\n\n\n",
+        "import builtins as b\nwith (ctx() as b.isinstance, other() as handle):\n    pass\n\n\n",
+        "import builtins as b\nwith ctx() as (other, b.isinstance):\n    pass\n\n\n",
+        "import builtins as b\nchecks = [0 for b.isinstance in items]\n\n\n",
+        "import builtins as b\nchecks = {k: 0 for k, b.isinstance in pairs}\n\n\n",
+        "import builtins as b\nchecks = list(1 for other in rows for b.isinstance in other)\n\n\n",
+        "import builtins as b\nfor b . isinstance in items:\n    pass\n\n\n",
+        "import builtins as b\nfor b['isinstance'] in items:\n    pass\n\n\n",
+        "import builtins as b\nchecks = [0 for other in rows\n          for b.isinstance in other]\n\n\n",
     ];
     for patch in patches {
         let owner = format!("{patch}{arm}");
@@ -376,6 +420,42 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins as b\nlimit = b.len(CHECKS)\n\n\n",
         "import builtins as b\nsame = b.isinstance == checker\n\n\n",
         "values = vars(CONFIG)\n\n\n",
+        // #12222 controls: a bare annotation, a read in a tuple on the right,
+        // a keyword argument and a comparison inside a tuple bind nothing.
+        "import builtins as b\nb.isinstance: object\n\n\n",
+        "import builtins as b\nchecks = (b.isinstance, b.len)\n\n\n",
+        "import builtins as b\nchecks = dict(first=b.isinstance, second=b.len)\n\n\n",
+        "import builtins as b\nsame, other = b.isinstance == checker, 1\n\n\n",
+        // A subscript key, a call, a string or a comment before a later `=`.
+        "import builtins as b\nregistry = {}\nregistry[b.isinstance] = 1\n\n\n",
+        "import builtins as b\nassert check(b.isinstance, 3), \"mode=strict\"\n\n\n",
+        "import builtins as b\ncheck(b.isinstance, 3)  # n=1\n\n\n",
+        "import builtins as b\nb.isinstance: object  # a=b\n\n\n",
+        "import builtins as b\nb.isinstance, other; value = 1\n\n\n",
+        "import builtins as b\nlabel = \"say \\\"b.isinstance = 1\\\"\"\n\n\n",
+        "import builtins as b\nlabel = \"b.isinstance += 1\"\n\n\n",
+        "import builtins as b\nfor name in [b.isinstance, b.len]: count = 1\n\n\n",
+        // #12592 controls: augmented ops on the right or unrelated targets bind nothing.
+        "import builtins as b\nlimit = b.isinstance + 1\n\n\n",
+        "import builtins as b\nother += b.isinstance\n\n\n",
+        // #12593 controls: multiline reads and continued expressions bind nothing.
+        "import builtins as b\nchecks = (b.isinstance,\n b.len)\n\n\n",
+        "import builtins as b\nsame = b.isinstance == \\\n    checker\n\n\n",
+        // #12591 controls: plain targets, and the attribute only read in the
+        // iterable, context expression, a string or a comprehension condition.
+        "import builtins as b\nfor item in items:\n    pass\n\n\n",
+        "import builtins as b\nwith ctx() as handle:\n    pass\n\n\n",
+        "import builtins as b\nfor item in [b.isinstance, b.len]:\n    pass\n\n\n",
+        "import builtins as b\nwith b.isinstance as handle:\n    pass\n\n\n",
+        "import builtins as b\nwith open(b.isinstance) as handle, ctx() as other:\n    pass\n\n\n",
+        "import builtins as b\nchecks = [b.isinstance for item in items]\n\n\n",
+        "import builtins as b\nchecks = [item for item in items if item is b.isinstance]\n\n\n",
+        "import builtins as b\nlabel = \"for b.isinstance in items\"\n\n\n",
+        "import builtins as b\nimport os as handle\nuse(b.isinstance)\n\n\n",
+        // #12728: the attribute inside a target but not as a store slot.
+        "import builtins as b\nfor items[b.isinstance] in rows:\n    pass\n\n\n",
+        "import builtins as b\nwith ctx() as items[b.isinstance]:\n    pass\n\n\n",
+        "import builtins as b\nfor item in rows: use(b.isinstance)\n\n\n",
     ] {
         let owner = format!("{harmless}{arm}");
         assert_eq!(
@@ -384,6 +464,41 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
             "a harmless mention must not suppress the guard: {harmless:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn augmented_builtins_module_patch_on_fixture_shape_fails_open() -> Result<(), String> {
+    use super::classify::{PythonNoBehaviorContext, classify_change_with_context};
+    use super::owners_tests::{extract_owners, extract_tests};
+    const LABEL_FILE: &str = "src/label.py";
+    const LABEL_TEST: &str = "tests/test_label.py";
+    let owner = "import builtins as b\n\nb.isinstance += 1\n\n\ndef label(x):\n    if isinstance(x, str):\n        return \"TEXT\"\n    return None\n";
+    let line = 8;
+    let new_line = owner
+        .lines()
+        .nth(line - 1)
+        .ok_or_else(|| format!("owner has no line {line}"))?;
+    let owners = extract_owners(Path::new(LABEL_FILE), owner);
+    let tests = extract_tests(
+        Path::new(LABEL_TEST),
+        "from src.label import label\n\n\ndef test_int_fallthrough():\n    assert label(3) == None\n",
+    );
+    assert_eq!(
+        classify_change_with_context(
+            Path::new(LABEL_FILE),
+            line,
+            new_line,
+            Some("        return \"text\""),
+            &owners,
+            &tests,
+            PythonNoBehaviorContext::default(),
+            Some(owner),
+        )
+        .ok_or_else(|| "changed line should classify".to_string())?
+        .class,
+        ExposureClass::Exposed,
+    );
     Ok(())
 }
 

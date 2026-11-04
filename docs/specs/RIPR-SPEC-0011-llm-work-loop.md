@@ -750,9 +750,61 @@ extra shell tokens, and ambiguous quoting fail closed. The separate gap command
 labels retain their own bounded legacy contract. Copying a command is advisory;
 it does not execute the command or grant edit authority.
 
+## Amendment (#12831): bare repair takes the start check recommends
+
+When bare `ripr repair` finds more than one eligible seam on the changed lines
+and the default `ripr check` for the same change prints a repair start whose
+seam is one of them (and needs no commit first), bare repair starts that seam.
+`ripr check` stays the single authority on which start is recommended; repair
+never picks by position or recency. When check prints no start, prints one for
+a seam that is not eligible, cannot run, or the change cannot be scoped to
+changed lines, the selection prompt (`several_eligible_seams`) is unchanged.
+
+## Amendment (#12849): bare repair drops starts check cannot offer
+
+When several seams are eligible on the changed lines and `ripr check` names no
+single start, a seam whose bound check finding (the shared `finding_for_seam`
+join) is exposed or static-limited (`finding_is_static_limited`) is not offered: check reads it as noticed or
+cannot judge it, and offers no start for it. The refusal says so in plain words
+for each such spot; if none remain, bare repair refuses (`no_eligible_seam`)
+instead of listing starts. When exactly one seam survives and check recommended none, it is not started on its own; the refusal gives its `ripr repair <id>` command. A single eligible seam and an unscoped change keep
+their earlier behavior.
+
+## Amendment (#12861): refusal closing step for open spots on the change
+
+A bare-repair refusal for a scoped change that still has open spots which
+cannot start a repair (or whose candidates check closed) ends its lead with
+"each changed spot below says what it still needs; write that test by hand",
+naming `ripr check` for detail, instead of the repository-wide `ripr pilot`
+route. When every candidate was dropped as already noticed, the outcome is the nothing-to-do one instead. Without a diff scope the repository route is kept. Eligibility and the
+`no_eligible_seam` code are unchanged.
+
+## Amendment (#12867): no start whose handoff card cannot be produced
+
+A start publishes an attempt and then renders the handoff card, which names the
+workspace only through an admitted test target. A seam whose repair would begin
+in a proposed new test file has none, so the shared repair-admission gate
+refuses it up front ("found no existing test to extend ... write the test by
+hand") for bare repair (`no_eligible_seam`) and an explicit id
+(`seam_not_repair_eligible`), and no attempt is created. `ripr agent start` and
+the MCP admission use the same gate and refuse these seams too. The check
+screen reads the same gate as a not-ready route and keeps its own wording
+("not complete enough to name a safe test target"); it does not print this
+reason.
+
 ## Test Mapping
 
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
+- `crates/ripr/tests/repair_check_recommended_start.rs::boundary_change_starts_the_seam_check_recommends` (#12831)
+- `crates/ripr/tests/repair_check_recommended_start.rs::error_variant_change_starts_the_changed_branch_check_recommends` (#12831)
+- `crates/ripr/tests/repair_check_recommended_start.rs::a_change_check_reads_as_noticed_and_unknown_lists_no_start` (#12831)
+- `crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection` (#12831)
+- `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
+- `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
+- `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
+- `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)
+- `crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run` (#12831)
+- `crates/ripr/src/app/task_first.rs::tests::check_pick_narrows_only_when_eligible_and_committed` (#12831)
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::repair_completes_despite_user_orderfile`
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::dirty_production_requires_recovery_despite_user_orderfile`
 
@@ -872,17 +924,33 @@ it does not execute the command or grant edit authority.
 
 ### Legacy repo-exposure refusal (#5115)
 
-If canonical artifact parsing fails, a JSON document with string schema_version,
-scope `repo`, an array of seams and no artifact envelope receives an explicit
-legacy/unknown-producer refusal. The diagnostic names the current RIPR contract
-and a selected-root regeneration command, writing `recovered.repo-exposure.json`
+Producer identity is read from the JSON object (`schema_version` and
+`artifact.producer.version`) before the full typed repo-exposure shape is
+deserialized. The document is parsed to `Value` once; typed admission uses
+that value. Byte-bounded and seam-limited pilot files are classified from
+`run_status` / `limitations` before producer-stamp substitution, so a cut
+file without an envelope keeps the control-specific recovery rather than a
+legacy-binary diagnosis. A missing producer envelope (released 0.10: string
+`schema_version`, scope `repo`, seams array, no `artifact` object) or an
+older/foreign `artifact.producer.version` on a document with those markers
+and `artifact.producer.tool = "ripr"` fails closed with an actionable
+substitution diagnostic: it names the producer and schema the artifact
+carries, the consuming RIPR version and expected schema, that a different
+`ripr` binary likely won `PATH` resolution, and `ripr --version` / use the
+same binary. That diagnosis is the first useful failure; it is not a serde
+`missing field` error. The diagnostic does not embed an absolute executable
+path. A matching current `producer.version` is unchanged: present-but-invalid
+envelopes, missing `producer.tool`, malformed JSON, and unrelated documents
+keep canonical parsing errors, and current artifacts continue through
+existing commitment and root/currentness validation.
+
+The missing-envelope refusal still names the current RIPR contract and a
+selected-root regeneration command, writing `recovered.repo-exposure.json`
 directly within that root so no workflow directory must already exist. It names
 the affected input for replacement without treating a shared-consumer label as
 a CLI option. The selected root is bound at production for foreign-CWD replay.
 This diagnosis never accepts
-legacy evidence or authenticates an executable. Malformed/unrelated JSON and
-present-but-invalid envelopes retain canonical parsing errors. Existing current
-artifact commitment and root/currentness validation still govern acceptance.
+legacy evidence or authenticates an executable.
 Recovery labels the Bash/Git Bash form and the PowerShell form translated by
 the existing Markdown command helper. If that helper refuses translation, the
 diagnostic labels the command Bash/Git Bash only and names PowerShell recovery
@@ -898,12 +966,12 @@ unqualified.
 
 An envelope whose `artifact.producer.version` is not exactly the consuming
 executable's version is refused at the same validation site (#9500) with a
-"produced by X, consumer is Y, regenerate" diagnostic and the same recovery
-command. This is fail-closed version equality, not producer authentication: a
-document can still declare the current version, and artifacts from another RIPR
-build, including a patch release, must be regenerated. `reports gap-ledger
---repo-exposure` is a separate route governed by RIPR-SPEC-0046 (a missing
-envelope is disclosed as a warning there, #9570).
+"produced by X, consumer is Y" diagnostic, the substitution clause above, and
+the same recovery command. This is fail-closed version equality, not producer
+authentication: a document can still declare the current version, and artifacts
+from another RIPR build, including a patch release, must be regenerated.
+`reports gap-ledger --repo-exposure` is a separate route governed by
+RIPR-SPEC-0046 (a missing envelope is disclosed as a warning there, #9570).
 
 - `agent_loop_status_available`
 - `agent_workflow_manifest_available`

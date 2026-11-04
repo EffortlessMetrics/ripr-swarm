@@ -1224,6 +1224,31 @@ pub struct TestFact {
     /// Body-relative `let` binding facts, mirroring
     /// `FunctionFact.let_bindings` (#3727 Slice A).
     pub let_bindings: Vec<LetBindingFact>,
+    /// `Some` only for a test produced by a `macro_rules!` expansion and
+    /// pinned to its invocation line (#12320). Authored tests are `None`, so
+    /// a consumer can tell the two apart even when they share a name and line.
+    pub generated: Option<MacroGeneratedOrigin>,
+}
+
+/// Provenance of a macro-generated test (#12320).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub struct MacroGeneratedOrigin {
+    /// The expanded test body declares its own `use` or item, which can
+    /// rebind a callee the invocation-site scopes would resolve differently.
+    /// Such a test borrows no invocation-site scopes: wrong credit is worse
+    /// than abstaining.
+    pub body_declares_items: bool,
 }
 
 impl TestFact {
@@ -1601,6 +1626,8 @@ pub(crate) struct TestFactWire {
     pub nested_fn_names: Vec<String>,
     #[serde(default)]
     pub let_bindings: Vec<LetBindingFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated: Option<MacroGeneratedOrigin>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1703,6 +1730,7 @@ impl TestFactWire {
             attrs: fact.attrs.clone(),
             nested_fn_names: fact.nested_fn_names.clone(),
             let_bindings: fact.let_bindings.clone(),
+            generated: fact.generated,
         }
     }
 
@@ -1723,6 +1751,7 @@ impl TestFactWire {
             attrs: fact.attrs.clone(),
             nested_fn_names: fact.nested_fn_names.clone(),
             let_bindings: fact.let_bindings.clone(),
+            generated: fact.generated,
         }
     }
 }
@@ -1831,6 +1860,7 @@ impl TestFactWire {
             attrs: self.attrs,
             nested_fn_names: self.nested_fn_names,
             let_bindings: self.let_bindings,
+            generated: self.generated,
         })
     }
 }
@@ -1954,6 +1984,7 @@ impl<'de> serde::Deserialize<'de> for TestFact {
             attrs: wire.attrs,
             nested_fn_names: wire.nested_fn_names,
             let_bindings: wire.let_bindings,
+            generated: wire.generated,
         })
     }
 }
@@ -2033,6 +2064,8 @@ struct TestFactWireRef<'a> {
     attrs: &'a [String],
     nested_fn_names: &'a [String],
     let_bindings: &'a [LetBindingFact],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generated: Option<MacroGeneratedOrigin>,
 }
 
 #[derive(serde::Serialize)]
@@ -2106,6 +2139,7 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
                     attrs: &fact.attrs,
                     nested_fn_names: &fact.nested_fn_names,
                     let_bindings: &fact.let_bindings,
+                    generated: fact.generated,
                 })
                 .collect(),
             returns: &facts.returns,

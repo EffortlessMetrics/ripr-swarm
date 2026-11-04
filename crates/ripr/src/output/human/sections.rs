@@ -1,7 +1,7 @@
 use crate::config::RiprConfig;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, ExposureClass, Finding, LanguageId, LanguageStatus,
-    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RiprEvidence, StageState,
+    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RelatedTestMiss, RiprEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
@@ -155,6 +155,7 @@ pub(crate) fn render_finding_digest_with_config(
     // WHY the finding is at this class without reading the full form.
     let refused_macro = refused_assertion_macro(finding);
     if let Some(hint) = unresolved_fixture_hint(finding)
+        .or_else(|| crate::domain::guard_refusal_digest_classification_hint(finding))
         .or_else(|| classification_hint(&finding.class, &finding.ripr, refused_macro))
     {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
@@ -264,10 +265,8 @@ pub(crate) fn render_finding_digest_with_config(
             out.push('\n');
         }
     }
-    if let Some(test) = crate::output::related_test_miss::headline_related_test(
-        finding.language,
-        &finding.related_tests,
-    ) {
+    if let Some(test) = crate::output::related_test_miss::headline_related_test_for_finding(finding)
+    {
         // #4320: the digest shows only the first related-test row; carry the
         // total so the reader knows how much reaching-test evidence exists
         // (the evidence window in the full form discloses the same bound).
@@ -281,11 +280,25 @@ pub(crate) fn render_finding_digest_with_config(
             "Related test".to_string()
         };
         // #5344: say why the named test misses, so the reader can open it
-        // and disagree without re-deriving the analysis.
-        let why =
+        // and disagree without re-deriving the analysis. Borrow the typed
+        // refusal only when it names this headline row (#6541).
+        let why = (matches!(test.miss, Some(RelatedTestMiss::AssertionNotCredited))
+            .then(|| {
+                let entry = crate::domain::assertion_not_credited_entry_for_test(
+                    &finding.evidence,
+                    &test.name,
+                )?;
+                let body = entry.strip_prefix(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
+                let reason = body.rsplit_once(": ").map(|(_, reason)| reason.trim())?;
+                crate::domain::guard_refusal_kind(reason)?;
+                Some(format!(" ({entry})"))
+            })
+            .flatten())
+        .or_else(|| {
             crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family)
                 .map(|why| format!(" ({why})"))
-                .unwrap_or_default();
+        })
+        .unwrap_or_default();
         out.push_str(&format!(
             "  {label}: {}:{} {}{why}\n",
             display_path(&test.file),

@@ -200,6 +200,7 @@ fn test_fact_from_function(function: &FunctionFact) -> TestFact {
         // facts — same body, same decisions.
         nested_fn_names: function.nested_fn_names.clone(),
         let_bindings: function.let_bindings.clone(),
+        generated: None,
     }
 }
 

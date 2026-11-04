@@ -21,6 +21,7 @@ use ripr::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED,
 };
 
+mod admission_incident_route;
 mod agent_skills;
 use repo_policy::*;
 mod blind_journey;
@@ -30,6 +31,7 @@ mod cache;
 mod cache_payload_tamper_recovery;
 mod check_fast_cli;
 mod check_fast_selector;
+mod cli_exit_contract;
 mod command;
 pub mod convergence;
 mod dispatch;
@@ -40,22 +42,27 @@ mod evidence_promotion;
 mod evidence_quality;
 mod first_run;
 mod fixture_contracts;
+mod generation_pins;
 mod kani_lane;
 mod public_proof;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
+mod exact_candidate_harness;
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
 mod gh_pr_status_snapshot;
 mod identity_registry;
+mod issue_4678_acceptance;
 mod issue_lifecycle_attempt;
 mod issue_lifecycle_contract_plan;
 mod issue_lifecycle_intake;
 mod issue_lifecycle_real_rows;
+mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;
 mod package_qualification;
+mod packaged_repair_receipt;
 mod policy;
 #[cfg(test)]
 mod portable_consumer;
@@ -66,10 +73,13 @@ mod python_judged_panel;
 mod python_judged_panel_feedback;
 mod python_judged_panel_replay;
 mod python_judged_panel_report;
+mod readiness_snapshot;
 mod repo_readiness;
+mod ripr_agent_disposition;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
+mod tool_capabilities;
 mod types;
 mod warm_ab;
 mod work_adapter_identity;
@@ -295,12 +305,12 @@ use no_panic::{
     strip_toml_value_comment,
 };
 use policy::{
-    check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist, check_covered_by,
-    check_doc_roles, check_droid_review_config, check_executable_files, check_file_policy,
-    check_local_context, check_network_policy, check_no_panic_family, check_packaged_readme,
-    check_positioning_language, check_process_policy, check_product_copy, check_proof_packs,
-    check_release_targets, check_static_language, check_text_encoding, check_user_text,
-    check_workflows, qualify_python_wheelhouse,
+    check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist,
+    check_cli_exit_contract, check_covered_by, check_doc_roles, check_droid_review_config,
+    check_executable_files, check_file_policy, check_local_context, check_network_policy,
+    check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
+    check_product_copy, check_proof_packs, check_release_targets, check_static_language,
+    check_text_encoding, check_user_text, check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -596,6 +606,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-droid-review-config",
     "check-spec-format",
     "check-spec-numbering",
+    "check-generation-pins",
     "check-fixture-contracts",
     "check-rust-judged-panel",
     "check-release-challenge-selection",
@@ -620,6 +631,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-generated",
     "check-badge-diff-policy",
     "check-generated-clean",
+    "check-ripr-agent-disposition",
     "check-proof-packs",
     "check-release-targets",
     "check-dependencies",
@@ -628,6 +640,10 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-lint-policy",
     "check-user-text",
 ];
+
+fn check_ripr_agent_disposition() -> Result<(), String> {
+    ripr_agent_disposition::check()
+}
 
 fn check_identity_registry() -> Result<(), String> {
     identity_registry::check_identity_registry()
@@ -720,6 +736,7 @@ fn precommit_policy_remaining(
     check_droid_review_config()?;
     check_spec_format()?;
     check_spec_numbering()?;
+    check_generation_pins()?;
     check_fixture_contracts()?;
     check_rust_judged_panel()?;
     check_release_challenge_selection()?;
@@ -747,6 +764,7 @@ fn precommit_policy_remaining(
     check_generated()?;
     check_badge_diff_policy()?;
     check_generated_clean()?;
+    check_ripr_agent_disposition()?;
     check_proof_packs()?;
     check_release_targets()?;
     check_dependencies()?;
@@ -1743,6 +1761,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_droid_review_config()?;
     check_spec_format()?;
     check_spec_numbering()?;
+    check_generation_pins()?;
     check_fixture_contracts()?;
     check_traceability()?;
     check_capabilities()?;
@@ -5795,7 +5814,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n- `cargo xtask check-user-text`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-generation-pins`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-ripr-agent-disposition`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n- `cargo xtask check-user-text`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -6540,6 +6559,26 @@ fn check_spec_numbering() -> Result<(), String> {
     finish_spec_numbering_report(&violations)
 }
 
+fn check_generation_pins() -> Result<(), String> {
+    generation_pins::check_generation_pins()
+}
+
+/// `cargo xtask generations` — the generation-allocation front door mirroring
+/// `specs` (#11736 Proposal C).
+fn generations(args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("next") => generation_pins::generations_next(&args[1..]),
+        Some(other) => Err(format!(
+            "unknown generations command `{other}`\n{}",
+            generation_pins::GENERATIONS_USAGE
+        )),
+        None => Err(format!(
+            "missing generations command\n{}",
+            generation_pins::GENERATIONS_USAGE
+        )),
+    }
+}
+
 fn finish_spec_numbering_report(violations: &[String]) -> Result<(), String> {
     finish_policy_report(
         PolicyReportSpec {
@@ -6907,7 +6946,9 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
          and the file paths named by registered references. It does not enumerate Rust tests. \
          It does not require every newly added test to appear in `.ripr/traceability.toml`. \
          A `::symbol` suffix remains advisory and is not proof that the symbol exists, has \
-         a test role, ran, or establishes the behavior (see #2345).\n\n",
+         a test role, ran, or establishes the behavior (see #2345). \
+         An explicit planned test mapping may satisfy an accepted contract's mapping obligation; \
+         it is not an existing evidence reference, implementation, executed proof, or support promotion.\n\n",
     );
 
     if violations.is_empty() {
@@ -6940,8 +6981,9 @@ fn finish_traceability_report(violations: &[String], advisories: &[String]) -> R
     if !advisories.is_empty() {
         body.push_str("## Advisories (non-blocking)\n\n");
         body.push_str(
-            "These references point to existing files but carry a `::symbol` suffix that the \
-             structural checker cannot verify yet. They do not fail the gate.\n\n",
+            "Symbol advisories describe existing-file references whose symbols are not verified. \
+             Planned-mapping advisories describe future test obligations, not existing or executed evidence. \
+             Neither advisory promotes implementation or support.\n\n",
         );
         for advisory in advisories {
             body.push_str("```text\n");
@@ -6971,7 +7013,8 @@ fn traceability_recommended_fixes() -> &'static [&'static str] {
         "Known spec IDs are listed in docs/specs/README.md and docs/spec-index.d/.",
         "Keep every docs/specs/RIPR-SPEC-*.md file represented in the manifest.",
         "Use valid RIPR-SPEC-NNNN IDs (exactly 4 digits) in specs, fixtures, and manifest entries.",
-        "List only paths that exist, or leave planned fields empty until the artifact exists.",
+        "List only existing paths in current reference arrays; leave those arrays empty until artifacts exist.",
+        "For an accepted contract without current tests or fixtures, declare named obligations under `Planned tests:` in its Test Mapping section.",
     ]
 }
 
@@ -7031,12 +7074,148 @@ fn validate_trace_behavior(
         && behavior.tests.is_empty()
         && behavior.fixtures.is_empty()
     {
-        violations.push(format!(
-            "{id} is accepted but has no current test or fixture mapping"
-        ));
+        let planned = match behavior.spec.as_deref() {
+            Some(spec) => has_explicit_planned_test_mapping(&read_text_lossy(Path::new(spec))?),
+            None => false,
+        };
+        if planned {
+            advisories.push(format!(
+                "{id} is accepted with an explicit planned test mapping and no current test or fixture references; \
+                 this is an obligation, not implemented behavior or executed/sufficient evidence"
+            ));
+        } else {
+            violations.push(format!(
+                "{id} is accepted but has no current test or fixture mapping or explicit planned test mapping"
+            ));
+        }
     }
 
     Ok(())
+}
+
+fn has_explicit_planned_test_mapping(text: &str) -> bool {
+    let mut in_mapping = false;
+    let mut planned_list = false;
+    let mut fence: Option<(char, usize)> = None;
+    let mut comment = false;
+    for line in text.lines() {
+        let fence_text = line.trim_start_matches(' ');
+        let fence_indent = line.len() - fence_text.len();
+        if let Some((delimiter, length)) = fence {
+            let count = fence_text.chars().take_while(|ch| *ch == delimiter).count();
+            if fence_indent <= 3
+                && count >= length
+                && fence_text[count..]
+                    .bytes()
+                    .all(|byte| byte == b' ' || byte == b'\t')
+            {
+                fence = None;
+            }
+            continue;
+        }
+        if !comment
+            && fence_indent <= 3
+            && (fence_text.starts_with("```") || fence_text.starts_with("~~~"))
+        {
+            let delimiter = if fence_text.starts_with('`') {
+                '`'
+            } else {
+                '~'
+            };
+            fence = Some((
+                delimiter,
+                fence_text.chars().take_while(|ch| *ch == delimiter).count(),
+            ));
+            continue;
+        }
+        let mut visible = String::new();
+        let mut remainder = line;
+        loop {
+            if comment {
+                let Some(end) = remainder.find("-->") else {
+                    break;
+                };
+                comment = false;
+                remainder = &remainder[end + 3..];
+            } else if let Some(start) = remainder.find("<!--") {
+                visible.push_str(&remainder[..start]);
+                comment = true;
+                remainder = &remainder[start + 4..];
+            } else {
+                visible.push_str(remainder);
+                break;
+            }
+        }
+        let trimmed = visible.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "## Test Mapping" {
+            in_mapping = true;
+            planned_list = false;
+            continue;
+        }
+        if !in_mapping {
+            continue;
+        }
+        if trimmed.starts_with("## ") || trimmed.starts_with("# ") {
+            break;
+        }
+        // The qualified native form is unindented, excluding Markdown code blocks.
+        if visible.starts_with(char::is_whitespace) && !trimmed.is_empty() {
+            planned_list = false;
+            continue;
+        }
+        if trimmed.eq_ignore_ascii_case("Planned tests:") {
+            planned_list = true;
+            continue;
+        }
+        let item = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "));
+        if let Some(item) = item {
+            let mut name = item.trim();
+            loop {
+                let previous_length = name.len();
+                name = name.trim_matches(['`', '*', '_', '~']).trim();
+                name = name
+                    .strip_prefix("[ ]")
+                    .or_else(|| name.strip_prefix("[x]"))
+                    .or_else(|| name.strip_prefix("[X]"))
+                    .unwrap_or(name)
+                    .trim();
+                if name.len() == previous_length {
+                    break;
+                }
+            }
+            let item = name.to_ascii_lowercase();
+            let sentinel = item.trim_end_matches(['.', '!', '?', ';', ':', ',']);
+            let placeholder = !sentinel.chars().any(char::is_alphanumeric)
+                || matches!(
+                    sentinel,
+                    "..."
+                        | "-"
+                        | "none"
+                        | "n/a"
+                        | "tbd"
+                        | "todo"
+                        | "planned"
+                        | "add test"
+                        | "add tests"
+                        | "write test"
+                        | "write tests"
+                )
+                || ["none ", "todo:", "todo ", "tbd:", "tbd ", "<!--", "<"]
+                    .iter()
+                    .any(|prefix| item.starts_with(prefix));
+            if planned_list && !placeholder {
+                return true;
+            }
+        } else {
+            planned_list = false;
+        }
+    }
+    false
 }
 
 fn validate_behavior_spec_path(
@@ -19611,6 +19790,9 @@ fn proof_pack_command_is_known(command: &str) -> bool {
 
 fn check_dependencies() -> Result<(), String> {
     policy::check_dependency_suppression_expiry(Path::new("deny.toml"))?;
+    policy::check_post_0_11_dependency_defer_tracking(Path::new(
+        "docs/releases/0.11.0-dependency-graphs.md",
+    ))?;
     let allowlist = read_glob_allowlist("policy/dependency_allowlist.txt")?;
     let mut violations = Vec::new();
 
@@ -23625,6 +23807,16 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with(".github/actions/pr-candidate-admission/") && path.ends_with(".py") {
         return Some(
             "Pre-allocation admission runs before any Rust build exists, so its pure decision logic is stdlib Python on the hosted runner, kept out of embedded YAML shell (#5391, #2022).",
+        );
+    }
+
+    if path.starts_with(".agents/skills/finish-pr/")
+        && (path.starts_with(".agents/skills/finish-pr/scripts/")
+            || path.starts_with(".agents/skills/finish-pr/tests/"))
+        && path.ends_with(".py")
+    {
+        return Some(
+            "Exact-head merge guard runs from an agent session at merge time with only gh and stdlib Python; its fake-API tests are executed by the Rust-owned guarded_merge_selftest (#11781).",
         );
     }
 
