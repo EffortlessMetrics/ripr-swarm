@@ -4799,6 +4799,24 @@ fn flatten_use_items(prefix: &str, items: &str, out: &mut Vec<UsePath>) {
 /// Bounded lexical scan over the masked file source covering ALL `use`
 /// declarations (#3731 review F22): file-level items, module-nested `use`s
 /// (`mod tests { use other::expect_response; .. }` — the historical
+// #12109: literal contract rows distinguish over-demotion, missed capping,
+// accidental promotion, and collapsing Unknown into None.
+#[test]
+fn self_computed_cap_exact_mapping() {
+    use crate::domain::OracleStrength::{Medium, None, Smoke, Strong, Unknown, Weak};
+    for (input, expected) in [
+        (Strong, Weak),
+        (Medium, Weak),
+        (Weak, Weak),
+        (Smoke, Smoke),
+        (None, None),
+        (Unknown, Unknown),
+    ] {
+        assert_eq!(super::self_computed_cap(input.clone(), false), input);
+        assert_eq!(super::self_computed_cap(input, true), expected);
+    }
+}
+
 /// harness shape), and function-local imports. A binding is the terminal
 /// `::` segment of an import item — a simple path or a (nested) brace-list
 /// item; a `callee as alias` rename binds the alias, not the name. Glob

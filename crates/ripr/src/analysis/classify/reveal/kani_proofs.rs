@@ -49,3 +49,34 @@ fn self_computed_cap_is_monotone() {
     let cb = self_computed_cap(b, sc);
     assert!(ca.rank() <= cb.rank());
 }
+
+/// #12109: equality of variants, independently of the production rank table.
+/// All six strengths and both self-computed states are symbolic. There are
+/// no loops; each input variant has a reachable cover in each branch.
+#[kani::proof]
+fn self_computed_cap_has_exact_mapping() {
+    let strength = any_strength();
+    let self_computed: bool = kani::any();
+    let expected = match strength {
+        OracleStrength::Strong | OracleStrength::Medium if self_computed => OracleStrength::Weak,
+        OracleStrength::Strong => OracleStrength::Strong,
+        OracleStrength::Medium => OracleStrength::Medium,
+        OracleStrength::Weak => OracleStrength::Weak,
+        OracleStrength::Smoke => OracleStrength::Smoke,
+        OracleStrength::None => OracleStrength::None,
+        OracleStrength::Unknown => OracleStrength::Unknown,
+    };
+    macro_rules! witness {
+        ($variant:ident) => {
+            kani::cover!(self_computed && strength == OracleStrength::$variant);
+            kani::cover!(!self_computed && strength == OracleStrength::$variant);
+        };
+    }
+    witness!(Strong);
+    witness!(Medium);
+    witness!(Weak);
+    witness!(Smoke);
+    witness!(None);
+    witness!(Unknown);
+    assert!(self_computed_cap(strength, self_computed) == expected);
+}
