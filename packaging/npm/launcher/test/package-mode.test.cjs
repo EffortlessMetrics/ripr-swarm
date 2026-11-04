@@ -30,23 +30,23 @@ test("installed npm launcher preserves a real MCP exchange and EOF", (t) => {
   }
   assert.ok(path.isAbsolute(binary), "binary must be an absolute path");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ripr-installed-mcp-"));
-  const launcherRoot = path.join(__dirname, "..");
-  const version = JSON.parse(fs.readFileSync(path.join(launcherRoot, "package.json"), "utf8")).version;
-  const native = path.join(root, "native");
-  const project = path.join(root, "project");
-  const foreign = path.join(root, "foreign");
-  const cache = path.join(root, "npm-cache");
-  const npm = process.env.npm_execpath ? process.execPath : "npm";
-  const npmPrefix = process.env.npm_execpath ? [process.env.npm_execpath] : [];
-  const runNpm = (args, cwd) => {
-    const result = spawnSync(npm, [...npmPrefix, ...args], {
-      cwd, encoding: "utf8", timeout: 60000,
-      env: { ...process.env, npm_config_cache: cache, npm_config_offline: "true" },
-    });
-    assert.equal(result.status, 0, result.stderr || String(result.error));
-    return result.stdout;
-  };
   try {
+    const launcherRoot = path.join(__dirname, "..");
+    const version = JSON.parse(fs.readFileSync(path.join(launcherRoot, "package.json"), "utf8")).version;
+    const native = path.join(root, "native");
+    const project = path.join(root, "project");
+    const foreign = path.join(root, "foreign");
+    const cache = path.join(root, "npm-cache");
+    const npm = process.env.npm_execpath ? process.execPath : "npm";
+    const npmPrefix = process.env.npm_execpath ? [process.env.npm_execpath] : [];
+    const runNpm = (args, cwd) => {
+      const result = spawnSync(npm, [...npmPrefix, ...args], {
+        cwd, encoding: "utf8", timeout: 60000,
+        env: { ...process.env, npm_config_cache: cache, npm_config_offline: "true" },
+      });
+      assert.equal(result.status, 0, result.stderr || String(result.error));
+      return result.stdout;
+    };
     fs.mkdirSync(path.join(native, "bin"), { recursive: true });
     fs.mkdirSync(project);
     fs.mkdirSync(foreign);
