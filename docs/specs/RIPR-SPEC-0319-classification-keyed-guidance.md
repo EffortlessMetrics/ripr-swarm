@@ -76,7 +76,7 @@ the job of the evidence-specific producers.
 
 ## Implementation Mapping
 
-- `crates/ripr/src/domain/limit_guidance.rs` owns the mappings.
+- `crates/ripr-contract/src/domain/limit_guidance.rs` owns the mappings.
 - `crates/ripr/src/output/human/sections.rs` and
   `crates/ripr/src/output/human/explain.rs` render the `Next:` lines.
 

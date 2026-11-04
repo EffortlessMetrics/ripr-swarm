@@ -122,7 +122,7 @@ slice does not remove tokens.
 
 ## Implementation Mapping
 
-- `crates/ripr/src/domain/probe.rs` — wire enum and glosses
+- `crates/ripr-contract/src/domain/probe.rs` — wire enum and glosses
 - `crates/ripr/src/analysis/classify/decision.rs` — heuristics and backfill
 - `crates/ripr/src/analysis/classify/stop_reason_contract.rs` — registry (#5514)
 - Reach and gap producers named in the table above
