@@ -29,7 +29,12 @@ fn git_object(rev: &str, object_kind: &str) -> Result<String, String> {
 pub(crate) fn git_worktree_clean() -> Result<bool, String> {
     let output = Command::new("git")
         .env("GIT_OPTIONAL_LOCKS", "0")
-        .args(["status", "--porcelain"])
+        .args([
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ])
         .output()
         .map_err(|err| format!("failed to run git status: {err}"))?;
     if !output.status.success() {
