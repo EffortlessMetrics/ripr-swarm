@@ -20821,6 +20821,7 @@ mod dropped_term_tests;
 mod enum_member_tests;
 mod error_payload_tests;
 mod floating_promise_tests;
+mod unemitted_stage_unknown_tests;
 mod function_reference_callback_tests;
 mod gap_reach_config_tests;
 mod guard_entry_tests;
