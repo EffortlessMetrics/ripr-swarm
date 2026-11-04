@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0413"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0413-go-preview-static-facts.md"
+status = "proposed"
+owner = "ripr-maintainers"
+standalone_reason = "Issue #5533 defines the normative Go preview static-facts contract before parser or adapter work; documentation-only slice for parent #5520."

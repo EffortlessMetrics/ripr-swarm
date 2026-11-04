@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0413](../specs/RIPR-SPEC-0413-go-preview-static-facts.md) | proposed | Go preview static facts: wire identity, build and module law, control-flow oracle model, focused `go test -count=1` routes, and fail-closed Go limitations (#5533, #5520) |

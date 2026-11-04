@@ -24,6 +24,7 @@ specs:
 - [RIPR-SPEC-0027: TypeScript preview static facts](RIPR-SPEC-0027-typescript-preview-static-facts.md)
 - [RIPR-SPEC-0028: Python preview static facts](RIPR-SPEC-0028-python-preview-static-facts.md)
 - [RIPR-SPEC-0391: Ruby preview static facts](RIPR-SPEC-0391-ruby-preview-static-facts.md) (proposed contract; no adapter yet)
+- [RIPR-SPEC-0413: Go preview static facts](RIPR-SPEC-0413-go-preview-static-facts.md) (proposed contract; no adapter yet)
 - [RIPR-SPEC-0405: Julia preview package, dispatch, Test, numerical, array, and native boundaries](RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md) (proposed contract; no adapter yet)
 
 The proposal context is in
