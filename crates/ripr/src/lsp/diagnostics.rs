@@ -7998,7 +7998,8 @@ mod lsp_next_step_parity_tests {
             changed_sink: None,
             observed_sink: None,
             oracle_alignment: None,
-            alignment_reason: None,        superseded_alignment_reason: None,
+            alignment_reason: None,
+            superseded_alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }

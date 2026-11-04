@@ -214,7 +214,8 @@ pub(crate) fn unsupported_syntax_finding(
         changed_sink: None,
         observed_sink: None,
         oracle_alignment: None,
-        alignment_reason: None,        superseded_alignment_reason: None,
+        alignment_reason: None,
+        superseded_alignment_reason: None,
         source_currentness,
     }
 }
@@ -314,7 +315,8 @@ pub(crate) fn enum_member_finding(
         changed_sink: None,
         observed_sink: None,
         oracle_alignment: None,
-        alignment_reason: None,        superseded_alignment_reason: None,
+        alignment_reason: None,
+        superseded_alignment_reason: None,
         source_currentness,
     }
 }
