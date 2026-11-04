@@ -20223,10 +20223,10 @@ fn alias_load_gap_types_distinguish_flag_on_failures() -> Result<(), String> {
         })
     );
 
-    // Parsed config but no baseUrl is incomplete, not unparseable.
+    // Parsed config with neither paths nor baseUrl is incomplete, not unparseable.
     ts_write_file(
         &root.join("tsconfig.json"),
-        "{ \"compilerOptions\": { \"paths\": { \"@/*\": [\"./src/*\"] } } }\n",
+        "{ \"compilerOptions\": { \"strict\": true } }\n",
     )?;
     let (map, err, gap) = load_alias_map_with_read_error(&root);
     assert!(map.is_none() && err.is_none());

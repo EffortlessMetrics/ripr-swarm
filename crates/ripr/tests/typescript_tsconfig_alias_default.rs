@@ -102,3 +102,32 @@ fn explicit_false_leaves_aliased_test_unresolved() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn config_relative_paths_without_base_url_are_credited() -> Result<(), String> {
+    for config in ["tsconfig.json", "jsconfig.json", "inherited"] {
+        let subject = Subject::create("[languages]\nenabled = [\"rust\", \"typescript\"]\n")?;
+        let paths = r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#;
+        if config == "jsconfig.json" {
+            std::fs::remove_file(subject.0.join("tsconfig.json")).map_err(|e| e.to_string())?;
+            std::fs::write(subject.0.join(config), paths).map_err(|e| e.to_string())?;
+        } else if config == "inherited" {
+            std::fs::write(
+                subject.0.join("tsconfig.json"),
+                r#"{"extends":"./tsconfig.base.json","compilerOptions":{"target":"ES2020"}}"#,
+            )
+            .map_err(|e| e.to_string())?;
+            std::fs::write(subject.0.join("tsconfig.base.json"), paths)
+                .map_err(|e| e.to_string())?;
+        } else {
+            std::fs::write(subject.0.join(config), paths).map_err(|e| e.to_string())?;
+        }
+        let json = subject.json()?;
+        if !json.contains("\"classification\": \"exposed\"")
+            || !json.contains("test/pricing.test.ts")
+        {
+            return Err(format!("{config}: expected aliased test credit: {json}"));
+        }
+    }
+    Ok(())
+}

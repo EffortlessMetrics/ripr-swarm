@@ -333,6 +333,9 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
         "_moduleAliases",
         "tsconfig-paths",
     ];
+    if alias_map.is_some_and(|map| map.has_tsconfig() && !map.config_is_current(root)) {
+        return ConfigHiding::everywhere();
+    }
     let mut pending = vec![(root.to_path_buf(), 0usize)];
     let mut visited = 0usize;
     let mut hiding = ConfigHiding::default();
@@ -410,7 +413,10 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
                     || references_leave_the_scan(&config, &dir, root);
                 // Only the root config feeds the alias map, and only when it
                 // loaded. Anything else that remaps resolution is invisible.
-                let loaded_root = depth == 0 && alias_map.is_some_and(TsAliasMap::has_tsconfig);
+                let loaded_root = depth == 0
+                    && alias_map.is_some_and(|map| {
+                        map.selected_config_is(&path) || map.equivalent_inherited_config(&path)
+                    });
                 if resolves && !loaded_root {
                     if depth == 0 {
                         return ConfigHiding::everywhere();
@@ -1047,6 +1053,47 @@ mod tests {
             );
             let _ = std::fs::remove_dir_all(&root);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn only_selected_current_root_config_is_exempt() -> Result<(), String> {
+        let root = temp_root("selected-config")?;
+        let selected = r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#;
+        std::fs::write(root.join("tsconfig.json"), selected).map_err(|e| e.to_string())?;
+        let map = super::super::tsconfig::load_alias_map(&root).ok_or("load map")?;
+        assert!(!resolution_config_hides_imports(&root, Some(&map)).everywhere);
+        for other in ["tsconfig.spec.json", "jsconfig.json"] {
+            std::fs::write(root.join(other), selected).map_err(|e| e.to_string())?;
+            assert!(
+                resolution_config_hides_imports(&root, Some(&map)).everywhere,
+                "{other}"
+            );
+            std::fs::remove_file(root.join(other)).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(root.join("tsconfig.json"), "{}").map_err(|e| e.to_string())?;
+        assert!(resolution_config_hides_imports(&root, Some(&map)).everywhere);
+        Ok(())
+    }
+
+    #[test]
+    fn selected_inherited_alias_config_is_current_but_conflicting_one_hides() -> Result<(), String>
+    {
+        let root = temp_root("inherited-config")?;
+        let paths = r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#;
+        std::fs::write(
+            root.join("tsconfig.json"),
+            r#"{"extends":"./tsconfig.base.json"}"#,
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(root.join("tsconfig.base.json"), paths).map_err(|e| e.to_string())?;
+        let map = super::super::tsconfig::load_alias_map(&root).ok_or("load map")?;
+        assert!(!resolution_config_hides_imports(&root, Some(&map)).everywhere);
+        std::fs::write(root.join("tsconfig.spec.json"), paths).map_err(|e| e.to_string())?;
+        assert!(resolution_config_hides_imports(&root, Some(&map)).everywhere);
+        std::fs::remove_file(root.join("tsconfig.spec.json")).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("tsconfig.base.json"), "{}").map_err(|e| e.to_string())?;
+        assert!(resolution_config_hides_imports(&root, Some(&map)).everywhere);
         Ok(())
     }
 

@@ -73,8 +73,8 @@ OFF preserved the existing conservative behavior; the amendment above flips it t
 `root/tsconfig.json` then `root/jsconfig.json`. It is **fail-closed** on
 every ambiguity:
 
-- Missing file, JSONC parse error, or missing `compilerOptions.baseUrl` â†’ `None`.
-- `references` present fails closed. `extends` chains are followed up to 8 hops only when every target is a relative path in the same directory as the extending config (#11204): bases merge first, a declared `paths` object replaces the inherited one whole (as `tsc` treats it, even when empty), and `baseUrl` is the nearest declaration. Package-name or cross-directory bases, cycles, and missing targets fail closed.
+- Missing file, JSONC parse error, or absence of both `baseUrl` and `paths` fails closed. Without `baseUrl`, only explicitly relative templates are supported; unsupported winning keys remain blockers.
+- `references` present fails closed. `extends` chains are followed up to 8 hops and 256 total config visits only when every target is a relative path in the same directory as the extending config (#11204): bases merge first, a declared `paths` object replaces the inherited one whole (as `tsc` treats it, even when empty), and `baseUrl` is the nearest declaration. Package-name or cross-directory bases, cycles, and missing targets fail closed.
 - Empty or multi-entry `paths` value array, or a template with more than one
   `*` â†’ retain the literal/single-wildcard key as an unresolved blocker. A
   broader alias must not take over the blocked key's imports.
@@ -116,16 +116,16 @@ endings preserves supported alias and `tsconfig.json` build-output mappings.
 - Alias map is built once at the `analyze_diff` call site and passed as
   `Option<&TsAliasMap>` (None when flag OFF).
 
-Amendment (#12754 slice): the loader still reads only the workspace-root
-configs, but `normalized_relative_import_module` withholds that root map for
-an importer whose nearest `tsconfig.json` / `jsconfig.json` (bounded upward
-walk from the importing file, cached per run) declares its own
-`compilerOptions.paths` — with or without `baseUrl` (TS 4.1+, #12760) — and
-is not the root config. A specifier the root map would otherwise claim then
-stays unresolved and the existing `typescript_path_alias_unresolved`
-disclosure fires. Root fallback is unchanged when no nearer config declares
-`paths`, and a specifier no root key owns still falls through to workspace
-packages. Full per-package resolution remains a Non-Goal.
+Amendment (#12754, #12760): the loader still selects only the workspace-root
+config. Before crediting an alias, the resolver checks bounded ancestor configs
+and withholds the root map when an alternate config may redirect the import,
+including inherited or unreadable configurations. A selected inherited input is
+exempt only when its effective alias map agrees with the selected config. A
+baseUrl-only alternate retains root fallback when the bounded probe finds no
+competing target and no unmodeled lookup options. Uncertainty remains unresolved;
+no different project is selected. A specifier not owned by a root alias can
+still fall through to workspace packages. Full per-package resolution remains a
+Non-Goal.
 
 ### 4. Always-on honesty disclosure
 
