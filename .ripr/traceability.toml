@@ -19544,6 +19544,9 @@ id = "RIPR-SPEC-0237"
 name = "Pilot seam ranking"
 spec = "docs/specs/RIPR-SPEC-0237-pilot-seam-ranking.md"
 tests = [
+  "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_prioritizes_absent_test_evidence_over_partial_grip",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_headline_prefers_a_gap_that_has_a_repair_route",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_ranking_puts_seams_in_the_current_change_first",
   "crates/ripr/src/output/pilot/tests.rs::pilot_terminal_discloses_actionable_total_and_max_seams_escape",
 ]
 fixtures = []

@@ -172,10 +172,10 @@ fn ranked_section(md: &str) -> &str {
 }
 
 const EXAMPLE_13: [&str; 4] = [
-    "W src/a.rs f 1",
-    "U src/a.rs f 2",
-    "U src/b.rs g 1",
-    "U src/b.rs g 2",
+    "U src/a.rs f 1",
+    "W src/a.rs f 2",
+    "W src/b.rs g 1",
+    "W src/b.rs g 2",
 ];
 
 #[test]
@@ -191,7 +191,7 @@ fn spec_0237_example_04_full_class_order() -> Result<(), String> {
     // The gap classes keep their order; `O`, `PU` and `AU` are withheld.
     assert_eq!(
         ranked(&input, 6)?,
-        ["src/f.rs:1", "src/e.rs:1", "src/d.rs:1"]
+        ["src/e.rs:1", "src/d.rs:1", "src/f.rs:1"]
     );
     assert_eq!(withheld_static_limitations(&spec_seams(&input)?), 3);
     Ok(())
@@ -318,7 +318,7 @@ fn spec_0237_example_09_kind_tie_break() -> Result<(), String> {
 #[test]
 fn spec_0237_example_13_rounds_cross_classes() -> Result<(), String> {
     // Per-class rounds would give a:1, a:2, b:1, b:2: `f` would get a fresh
-    // first pick among the ungripped seams.
+    // first pick among the weak seams.
     assert_eq!(
         ranked(&EXAMPLE_13, 4)?,
         ["src/a.rs:1", "src/b.rs:1", "src/a.rs:2", "src/b.rs:2"]
@@ -373,7 +373,7 @@ fn spec_0237_example_17_top_pick_never_moves() -> Result<(), String> {
         "W src/c.rs fmt 1",
     ];
     assert_eq!(ranked(&example_14, 1)?, ["src/a.rs:1"]);
-    assert_eq!(ranked(&example_12, 1)?, ["src/a.rs:1"]);
+    assert_eq!(ranked(&example_12, 1)?, ["src/b.rs:1"]);
 
     // The terminal names that seam whatever `--max-seams` is, and no other.
     let entries = spec_seams(&example_14)?;
@@ -392,7 +392,7 @@ fn spec_0237_example_17_top_pick_never_moves() -> Result<(), String> {
 #[test]
 fn spec_0237_example_18_fewer_ranked_than_n() -> Result<(), String> {
     let input = ["W src/a.rs f 1", "SG src/a.rs f 2", "U src/b.rs g 1"];
-    assert_eq!(ranked(&input, 10)?, ["src/a.rs:1", "src/b.rs:1"]);
+    assert_eq!(ranked(&input, 10)?, ["src/b.rs:1", "src/a.rs:1"]);
     Ok(())
 }
 

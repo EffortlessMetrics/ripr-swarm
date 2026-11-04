@@ -66,11 +66,11 @@ pub(super) fn actionable_in_change(
 /// tests, so when those tests are good every one of them is wrong together;
 /// ranked by location alone they filled the top ten (8 of semver's 10 sat in
 /// two `Identifier` methods). Within a (change, route) bucket the class still
-/// leads, so a weak seam is never pushed below an unrevealed one of the same
+/// leads, so an unrevealed seam is never pushed below a weak one of the same
 /// bucket, and `RankKey` order holds inside each round.
 ///
 /// Rounds count across classes on purpose: a function already listed for a
-/// weak seam does not get a fresh first pick among the unrevealed ones, so
+/// ungripped seam does not get a fresh first pick among the unrevealed ones, so
 /// one function cannot claim a slot per class.
 ///
 /// The current-change bucket still leads (#5480) and the repair-route bucket
@@ -193,6 +193,13 @@ pub(super) fn counts_as_withheld_static_limitation(entry: &ClassifiedSeam) -> bo
         || (class_rank(entry.class).is_some() && is_static_limited(entry))
 }
 
+/// Prefer an absent static test chain to a partial one: no identified reach,
+/// then reach without discrimination, then weak grip (#12894). Repair-route
+/// feasibility and current-change relevance already lead this order. Weak
+/// grip alone can be an unmatched owner-level assertion, so giving it priority
+/// hid gaps with no identified test reach behind partially checked owners.
+/// This is static prioritization, not a prediction of runtime mutation yield.
+///
 /// Pilot ranks gap classes only. A class that names a static limitation
 /// (`SeamGripClass::is_static_limitation`: `opaque` and the `*_unknown`
 /// classes) is withheld from the ranking and counted by
@@ -205,9 +212,9 @@ fn class_rank(class: SeamGripClass) -> Option<u8> {
         return None;
     }
     Some(match class {
-        SeamGripClass::WeaklyGripped => 0,
-        SeamGripClass::Ungripped => 1,
-        SeamGripClass::ReachableUnrevealed => 2,
+        SeamGripClass::Ungripped => 0,
+        SeamGripClass::ReachableUnrevealed => 1,
+        SeamGripClass::WeaklyGripped => 2,
         SeamGripClass::ActivationUnknown
         | SeamGripClass::PropagationUnknown
         | SeamGripClass::ObservationUnknown

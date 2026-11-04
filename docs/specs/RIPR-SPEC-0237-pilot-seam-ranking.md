@@ -20,6 +20,8 @@ Linked plan:
 
 Linked issues:
 
+- #12894 (prioritize absent static test evidence before partial grip)
+
 - #5770 (pilot top recommendations cluster on one function)
 - #5411 (pilot ranked unresolved reach as the top gap; closed)
 - #5497 (rank canonical actionability, withhold unresolved-reach
@@ -102,7 +104,7 @@ The ranking runs over the classified seams pilot analyzed, after the
 ranked and is not counted anywhere below.
 
 Which classes enter the ranked set is RIPR-SPEC-0236's decision. The set
-is every class with a rank in the class order below, `opaque` included.
+is every admitted gap class with a rank in the class order below; static limitations are withheld.
 `strongly_gripped`, `intentional` and `suppressed` are never ranked.
 Ranking does not read `[severity.seams]`: `SeverityConfig::for_seam` is
 called only by the LSP diagnostics, SARIF, the badge summary, the agent
@@ -111,21 +113,27 @@ ranked.
 
 ### Class order
 
-1. Rank 0: `weakly_gripped`.
-2. Rank 1: `ungripped`.
-3. Rank 2: `reachable_unrevealed`.
-4. Rank 3: `activation_unknown`, `propagation_unknown`,
-   `observation_unknown` and `discrimination_unknown`, tied. No unknown
-   class outranks another; the keys below separate them.
-5. Rank 4: `opaque`, after every other ranked class (RIPR-SPEC-0236
-   keeps it ranked).
+1. Rank 0: `ungripped`: no identified static test reach.
+2. Rank 1: `reachable_unrevealed`: identified reach without discrimination.
+3. Rank 2: `weakly_gripped`: partial or weak grip.
+
+Since #12894, an absent static test chain leads a partial one. Repair-route
+feasibility already has its own earlier bucket; class order must not reward
+available owner-level assertions over an absent test path merely because the
+former yields a weak classification. This rule uses producer classifications,
+not mutation labels, repository names, seam kinds or diagnostic text. It does
+not claim that absent static reach proves runtime absence.
+
+Static limitations are withheld by the existing admission rule (#5497), not
+ranked after the gap classes. Classification and the ranked population do not
+change with this ordering amendment.
 
 Within a (current change, repair route) bucket, class order always leads:
 no evidence key, location or owner round moves a seam above a seam of a
 lower rank in the same bucket. The two buckets that precede it are the
 change-first bucket (#5480) and the repair-route bucket (#11292, below), so
-a routable `ungripped` seam deliberately outranks an unroutable
-`weakly_gripped` one.
+a routable `weakly_gripped` seam deliberately outranks an unroutable
+`ungripped` one.
 
 ### Rank key
 
@@ -169,7 +177,7 @@ So within each class, round 0 of every owner comes before round 1 of any
 owner, and seams that share a class and round keep rank-key order.
 
 Rounds count across classes. A function already listed for a
-`weakly_gripped` seam enters the `ungripped` or unknown classes at round 1
+`ungripped` seam enters the `reachable_unrevealed` or weak classes at round 1
 or later, so other functions' first seams in those classes come first. An
 owner whose seams all sit in one class sees the same order as per-class
 rounds.
@@ -313,6 +321,11 @@ spec. Real mutation testing remains the independent authority.
 
 ### Decisions
 
+These record the original design. The current class-order section supersedes
+the original priority; #5497 supersedes the original unknown/opaque admission.
+Historical examples about those withheld classes remain historical, as the
+executable examples in `output/pilot/tests/spec_0237.rs` disclose.
+
 The owner delegated these choices on 2026-10-04 ("make reasonable documented
 decisions and proceed"). Each records the adopted option, why, and the
 rejected alternative. Any can be reversed later without touching the rest.
@@ -398,7 +411,7 @@ unless stated. Output lists `file:line` in final order. "today" is main
 `bcb0be576`.
 
 1. Class beats evidence. `U src/a.rs f 10 [m,r]`, `W src/z.rs g 99`;
-   N = 5: `src/z.rs:99`, `src/a.rs:10` (unchanged).
+   N = 5: `src/a.rs:10`, `src/z.rs:99` (#12894).
 2. Evidence order. `W src/d.rs f 10`, `W src/c.rs f 10`,
    `W src/a.rs f 10 [r]`, `W src/b.rs f 10 [m]`; N = 5: `b`, `a`, `c`,
    `d` (unchanged; the four seams have four owners because the files
@@ -407,8 +420,7 @@ unless stated. Output lists `file:line` in final order. "today" is main
    `X src/c.rs h 1`, `O src/d.rs k 1`; N = 5: `src/d.rs:1` (unchanged).
 4. Full class order. `O src/a.rs f 1`, `PU src/b.rs g 1`,
    `AU src/c.rs h 1`, `R src/d.rs k 1`, `U src/e.rs p 1`,
-   `W src/f.rs q 1`; N = 6: `f`, `e`, `d`, `b`, `c`, `a` (unchanged; `PU`
-   before `AU` by path, not by class name).
+   `W src/f.rs q 1`; N = 6: `e`, `d`, `f` (#12894); static limitations are withheld.
 5. Unknown tie by evidence. `AU src/c.rs f 1 [m]`, `PU src/b.rs g 1`;
    N = 2: `src/c.rs:1`, `src/b.rs:1` (unchanged).
 6. Evidence is a boolean. `W src/b.rs f 5 [m]` with three missing
@@ -435,11 +447,11 @@ unless stated. Output lists `file:line` in final order. "today" is main
     `src/a.rs:40`, `src/b.rs:5`, `src/a.rs:11`, `src/a.rs:12` (today
     `10`, `11`, `12`, `40`, `src/b.rs:5`).
 12. Same name, other file. `W src/a.rs fmt 1`, `W src/a.rs fmt 2`,
-    `U src/b.rs parse 1`, `W src/c.rs fmt 1`; N = 4: `src/a.rs:1`,
-    `src/c.rs:1`, `src/a.rs:2`, `src/b.rs:1` (today `a:1`, `a:2`, `c:1`,
+    `U src/b.rs parse 1`, `W src/c.rs fmt 1`; N = 4: `src/b.rs:1`,
+    `src/a.rs:1`, `src/c.rs:1`, `src/a.rs:2` (today `a:1`, `a:2`, `c:1`,
     `b:1`).
-13. Rounds cross classes. `W src/a.rs f 1`, `U src/a.rs f 2`,
-    `U src/b.rs g 1`, `U src/b.rs g 2`; N = 4: `src/a.rs:1`, `src/b.rs:1`,
+13. Rounds cross classes. `U src/a.rs f 1`, `W src/a.rs f 2`,
+    `W src/b.rs g 1`, `W src/b.rs g 2`; N = 4: `src/a.rs:1`, `src/b.rs:1`,
     `src/a.rs:2`, `src/b.rs:2` (today `a:1`, `a:2`, `b:1`, `b:2`, which is
     also what per-class rounds would give); N = 2: `src/a.rs:1`,
     `src/b.rs:1`.
@@ -455,11 +467,11 @@ unless stated. Output lists `file:line` in final order. "today" is main
     `10`).
 17. Top pick is the first of the order. Any input above with N = 1 gives the first seam
     of the (change, route, rank-key) order: example 14 gives `src/a.rs:1`,
-    example 12 gives `src/a.rs:1` (unchanged; none of these inputs has a
+    example 12 gives `src/b.rs:1` (#12894; none of these inputs has a
     repair route). The terminal shows that seam whatever
     `--max-seams` is.
 18. Fewer ranked than N. `W src/a.rs f 1`, `SG src/a.rs f 2`,
-    `U src/b.rs g 1`; N = 10: `src/a.rs:1`, `src/b.rs:1` (unchanged).
+    `U src/b.rs g 1`; N = 10: `src/b.rs:1`, `src/a.rs:1` (#12894).
 19. Also line, plural, first pick only. `W src/a.rs a::clone 10`, `11`,
     `12`, `13`, `W src/b.rs b::parse 5`; N = 3: listed `src/a.rs:10`,
     `src/b.rs:5`, `src/a.rs:11`. Markdown has exactly one

@@ -211,6 +211,52 @@ fn classified_with(
 }
 
 #[test]
+fn pilot_ranking_prioritizes_absent_test_evidence_over_partial_grip() {
+    // Unrelated synthetic owners and adverse paths: neither mutation labels,
+    // seam kind, nor file order may decide which gap leads (#12894).
+    let mut weak = classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "partial", 1);
+    let mut unrevealed = classified_in_owner(
+        SeamGripClass::ReachableUnrevealed,
+        "src/m.rs",
+        "unobserved",
+        2,
+    );
+    unrevealed.evidence.discriminate = stage(StageState::No);
+    let mut unreached = classified_in_owner(SeamGripClass::Ungripped, "src/z.rs", "unreached", 3);
+    unreached.evidence.reach = stage(StageState::No);
+    unreached.evidence.discriminate = stage(StageState::No);
+    // A real missing fact does not disappear just because a more incomplete
+    // static chain leads it; route feasibility remains an earlier bucket.
+    weak.evidence.missing_discriminators.push(missing());
+    let entries = [weak, unrevealed, unreached];
+    for entry in &entries {
+        assert_eq!(
+            crate::analysis::classify_seam(&entry.seam, &entry.evidence),
+            entry.class
+        );
+        assert!(!super::commands::has_repair_route(entry));
+    }
+    let expected = [
+        ("unreached".to_string(), 3),
+        ("unobserved".to_string(), 2),
+        ("partial".to_string(), 1),
+    ];
+    for input in [entries.to_vec(), entries.iter().rev().cloned().collect()] {
+        let ranked = top_actionable_seams(&input, input.len(), None);
+        assert_eq!(ranked_places(&ranked), expected);
+        assert_eq!(ranked.len(), entries.len());
+        assert_eq!(
+            ranked[2].evidence.missing_discriminators,
+            entries[0].evidence.missing_discriminators
+        );
+        assert_eq!(
+            ranked_places(&top_actionable_seams(&input, 1, None)),
+            expected[..1]
+        );
+    }
+}
+
+#[test]
 fn pilot_ranking_prefers_actionable_class_order_before_tie_breakers() {
     let ungripped = classified_with(
         SeamGripClass::Ungripped,
@@ -229,8 +275,8 @@ fn pilot_ranking_prefers_actionable_class_order_before_tie_breakers() {
 
     let entries = [ungripped, weak];
     let ranked = top_actionable_seams(&entries, 5, None);
-    assert_eq!(ranked[0].class, SeamGripClass::WeaklyGripped);
-    assert_eq!(ranked[1].class, SeamGripClass::Ungripped);
+    assert_eq!(ranked[0].class, SeamGripClass::Ungripped);
+    assert_eq!(ranked[1].class, SeamGripClass::WeaklyGripped);
 }
 
 #[test]
@@ -347,20 +393,20 @@ fn pilot_ranking_spreads_owners_without_crossing_class_order() {
             .map(|entry| (display_path(entry.seam.file()), entry.seam.display_line()))
             .collect::<Vec<_>>(),
         [
+            ("src/b.rs".to_string(), 1),
             ("src/a.rs".to_string(), 1),
             ("src/c.rs".to_string(), 1),
             ("src/a.rs".to_string(), 2),
-            ("src/b.rs".to_string(), 1),
         ]
     );
 }
 
 #[test]
 fn pilot_ranking_counts_owner_rounds_across_classes() {
-    // A function already listed for a weak seam does not get a fresh first
+    // A function already listed for an ungripped seam does not get a fresh first
     // pick among the unrevealed ones: the other function's two lead.
     let entries = [
-        classified_in_owner(SeamGripClass::WeaklyGripped, "src/z.rs", "z::fmt", 1),
+        classified_in_owner(SeamGripClass::Ungripped, "src/z.rs", "z::fmt", 1),
         classified_in_owner(SeamGripClass::ReachableUnrevealed, "src/z.rs", "z::fmt", 9),
         classified_in_owner(
             SeamGripClass::ReachableUnrevealed,
@@ -391,10 +437,10 @@ fn pilot_ranking_counts_owner_rounds_across_classes() {
 fn pilot_ranking_counts_owner_rounds_inside_the_in_change_bucket() {
     // #6851: the class-crossing test above has no current change. When every
     // seam is on a changed line, rounds still count across classes inside
-    // that bucket: z already listed for a weak seam does not get a fresh
+    // that bucket: z already listed for an ungripped seam does not get a fresh
     // first pick among the unrevealed ones. Per-class rounds would list
     // z.rs:9 before b.rs:2.
-    let z_weak = classified_in_owner(SeamGripClass::WeaklyGripped, "src/z.rs", "z::fmt", 1);
+    let z_ungripped = classified_in_owner(SeamGripClass::Ungripped, "src/z.rs", "z::fmt", 1);
     let z_unrevealed =
         classified_in_owner(SeamGripClass::ReachableUnrevealed, "src/z.rs", "z::fmt", 9);
     let b_first = classified_in_owner(
@@ -415,7 +461,11 @@ fn pilot_ranking_counts_owner_rounds_inside_the_in_change_bucket() {
         ("src/b.rs", 1),
         ("src/b.rs", 2),
     ]);
-    assert_change_membership(&change, &[&z_weak, &z_unrevealed, &b_first, &b_second], &[]);
+    assert_change_membership(
+        &change,
+        &[&z_ungripped, &z_unrevealed, &b_first, &b_second],
+        &[],
+    );
 
     let expected = [
         ("z::fmt".to_string(), 1),
@@ -423,7 +473,7 @@ fn pilot_ranking_counts_owner_rounds_inside_the_in_change_bucket() {
         ("b::parse".to_string(), 2),
         ("z::fmt".to_string(), 9),
     ];
-    let forward = [z_weak, z_unrevealed, b_first, b_second];
+    let forward = [z_ungripped, z_unrevealed, b_first, b_second];
     assert_eq!(
         ranked_places(&top_actionable_seams(&forward, 4, Some(&change))),
         expected
@@ -870,9 +920,9 @@ fn pilot_ranking_admits_gap_classes_only() {
     assert_eq!(
         ranked,
         [
-            SeamGripClass::WeaklyGripped,
             SeamGripClass::Ungripped,
             SeamGripClass::ReachableUnrevealed,
+            SeamGripClass::WeaklyGripped,
         ]
     );
     assert_eq!(withheld_static_limitations(&entries), 5);
@@ -1313,11 +1363,11 @@ fn pilot_human_output_labels_seams_exploratory_not_ranked_by_mutant_yield() {
         assert!(!terminal.contains(jargon), "{jargon}: {terminal}");
     }
 
-    // Ordering is unchanged (label-only): the existing static-evidence
-    // order still puts the weakly gripped seam first, in every surface.
+    // The exploratory label does not override the static-evidence order:
+    // absent reach leads partial grip in every surface (#12894).
     let ranked = top_actionable_seams(&entries, 5, None);
-    assert_eq!(ranked[0].class, SeamGripClass::WeaklyGripped);
-    assert_eq!(ranked[1].class, SeamGripClass::Ungripped);
+    assert_eq!(ranked[0].class, SeamGripClass::Ungripped);
+    assert_eq!(ranked[1].class, SeamGripClass::WeaklyGripped);
 
     // Control: JSON carries no exploratory label and keeps the same seam
     // order as the human list, so structured consumers are byte-stable
@@ -1329,7 +1379,7 @@ fn pilot_human_output_labels_seams_exploratory_not_ranked_by_mutant_yield() {
     assert!(!json.contains("mutant yield"), "{json}");
     let weak_at = json.find("src/pricing.rs").unwrap_or(usize::MAX);
     let ungripped_at = json.find("src/other.rs").unwrap_or(usize::MAX);
-    assert!(weak_at < ungripped_at, "{json}");
+    assert!(ungripped_at < weak_at, "{json}");
     let md_weak_at = md.find("src/pricing.rs").unwrap_or(usize::MAX);
     let md_ungripped_at = md.rfind("src/other.rs").unwrap_or(usize::MAX);
     assert!(
@@ -2469,19 +2519,22 @@ fn has_repair_route_agrees_with_repair_start_command_for() -> Result<(), String>
 
 /// #11292: a gap with a repair route outranks one without, even at a weaker
 /// class, because a headline the repair loop cannot start from reads as a
-/// broken loop. The unroutable seam is `weakly_gripped` (the better class) and
+/// broken loop. The unroutable seam is `ungripped` (the earlier class) and
 /// route-ready, but its recommended test is an inline module in a production
 /// file the cage will not edit (the shape `src/tests.rs` and doctest targets
 /// share: ready readiness, no edit target). Class order alone puts it first, so
-/// only the route preference can put the `ungripped` routable seam on top.
+/// only the route preference can put the `weakly_gripped` routable seam on top.
 #[test]
 fn pilot_headline_prefers_a_gap_that_has_a_repair_route() -> Result<(), String> {
     use super::commands::has_repair_route;
     use crate::analysis::repair_route::repair_packet_eligibility;
 
-    let unroutable = route_ready_entry(&["src/pricing.rs"]);
-    let mut routable = route_ready_entry_at(&["tests/pricing.rs"], "src/zeta.rs", 5);
-    routable.class = SeamGripClass::Ungripped;
+    let mut unroutable = route_ready_entry(&["src/pricing.rs"]);
+    unroutable.evidence.reach = stage(StageState::No);
+    unroutable.class = crate::analysis::classify_seam(&unroutable.seam, &unroutable.evidence);
+    assert_eq!(unroutable.class, SeamGripClass::Ungripped);
+    let routable = route_ready_entry_at(&["tests/pricing.rs"], "src/zeta.rs", 5);
+    assert_eq!(routable.class, SeamGripClass::WeaklyGripped);
     if !repair_packet_eligibility(&unroutable).eligible() || has_repair_route(&unroutable) {
         return Err("fixture: pricing seam must be eligible but have no edit target".to_string());
     }
@@ -4427,24 +4480,24 @@ fn pilot_renderers_disclose_absent_changed_files_independently_of_top_recommenda
 
 #[test]
 fn pilot_ranking_puts_seams_in_the_current_change_first() {
-    // The untouched seam is the better class (weak beats ungripped), so the
+    // The untouched seam is the better class (ungripped beats unrevealed), so the
     // repo-wide order puts it first.
     let untouched = classified_with(
-        SeamGripClass::WeaklyGripped,
+        SeamGripClass::Ungripped,
         "src/a.rs",
         10,
         vec![missing()],
         vec![related_test()],
     );
     let touched = classified_with(
-        SeamGripClass::Ungripped,
+        SeamGripClass::ReachableUnrevealed,
         "src/b.rs",
         20,
         Vec::new(),
         Vec::new(),
     );
     let touched_weaker = classified_with(
-        SeamGripClass::ReachableUnrevealed,
+        SeamGripClass::WeaklyGripped,
         "src/b.rs",
         21,
         Vec::new(),
