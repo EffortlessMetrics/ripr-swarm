@@ -2360,60 +2360,80 @@ pub(super) fn unresolved_loop_list_boundary(
     let [parameter] = owner.parameters.as_slice() else {
         return false;
     };
-    if owner.owner_kind != Some(OwnerKind::Function)
-        || left == right
-        || owner.end_line != owner.start_line + 9
-        || line != owner.start_line + 7
-    {
+    if owner.owner_kind != Some(OwnerKind::Function) || left == right {
         return false;
     }
-    let lines: Vec<_> = source.lines().skip(owner.start_line - 1).take(10).collect();
-    let [
-        definition,
-        iterator,
-        try_line,
-        initial,
-        handler,
-        empty,
-        loop_line,
-        condition,
-        update,
-        result,
-    ] = lines.as_slice()
+    let Some(start) = owner.start_line.checked_sub(1) else {
+        return false;
+    };
+    let Some(length) = owner
+        .end_line
+        .checked_sub(owner.start_line)
+        .and_then(|n| n.checked_add(1))
     else {
         return false;
     };
-    let Some(iterator_name) = iterator
-        .trim()
-        .strip_suffix(&format!(" = iter({})", parameter.name))
-    else {
-        return false;
+    let lines: Vec<_> = source.lines().skip(start).take(length).collect();
+    let indentation = |text: &str| super::guard_activation::leading_whitespace(text);
+    let valid_shape = match lines.as_slice() {
+        [
+            definition,
+            iterator,
+            try_line,
+            initial,
+            handler,
+            empty,
+            loop_line,
+            condition,
+            update,
+            result,
+        ] if line == owner.start_line + 7 => {
+            let Some(iterator_name) = iterator
+                .trim()
+                .strip_suffix(&format!(" = iter({})", parameter.name))
+            else {
+                return false;
+            };
+            let indent = indentation(definition);
+            !iterator_name.is_empty()
+                && iterator_name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && iterator.trim() == format!("{iterator_name} = iter({})", parameter.name)
+                && try_line.trim() == "try:"
+                && initial.trim() == format!("{right} = next({iterator_name})")
+                && handler.trim() == "except StopIteration:"
+                && empty.trim() == "return None"
+                && loop_line.trim() == format!("for {left} in {iterator_name}:")
+                && condition.trim() == line_text.trim()
+                && update.trim() == format!("{right} = {left}")
+                && result.trim() == format!("return {right}")
+                && [iterator, try_line, handler, loop_line, result]
+                    .iter()
+                    .all(|line| indentation(line) == indent + 4)
+                && [initial, empty, condition]
+                    .iter()
+                    .all(|line| indentation(line) == indent + 8)
+                && indentation(update) == indent + 12
+        }
+        [definition, initial, loop_line, condition, update, result]
+            if line == owner.start_line + 3 =>
+        {
+            let indent = indentation(definition);
+            initial.trim() == format!("{right} = {}[0]", parameter.name)
+                && loop_line.trim() == format!("for {left} in {}[1:]:", parameter.name)
+                && condition.trim() == line_text.trim()
+                && update.trim() == format!("{right} = {left}")
+                && result.trim() == format!("return {right}")
+                && [initial, loop_line, result]
+                    .iter()
+                    .all(|line| indentation(line) == indent + 4)
+                && indentation(condition) == indent + 8
+                && indentation(update) == indent + 12
+        }
+        _ => false,
     };
-    if iterator_name.is_empty()
-        || !iterator_name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        || iterator.trim() != format!("{iterator_name} = iter({})", parameter.name)
-        || try_line.trim() != "try:"
-        || initial.trim() != format!("{right} = next({iterator_name})")
-        || handler.trim() != "except StopIteration:"
-        || empty.trim() != "return None"
-        || loop_line.trim() != format!("for {left} in {iterator_name}:")
-        || condition.trim() != line_text.trim()
-        || update.trim() != format!("{right} = {left}")
-        || result.trim() != format!("return {right}")
-    {
-        return false;
-    }
-    let indent = super::guard_activation::leading_whitespace(definition);
-    if [iterator, try_line, handler, loop_line, result]
-        .iter()
-        .any(|line| super::guard_activation::leading_whitespace(line) != indent + 4)
-        || [initial, empty, condition]
-            .iter()
-            .any(|line| super::guard_activation::leading_whitespace(line) != indent + 8)
-        || super::guard_activation::leading_whitespace(update) != indent + 12
-    {
+    if !valid_shape {
         return false;
     }
     let constants = unrebound_constants(owner, candidates);

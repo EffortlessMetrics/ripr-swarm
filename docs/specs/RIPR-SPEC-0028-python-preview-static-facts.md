@@ -1713,8 +1713,9 @@ adapter contributes:
 ### Unresolved loop-comparison boundary (#12954)
 
 For a changed adjacent relational comparison in the closed iterator and
-accumulator selection shape (`best = next(it)` followed by `for x in it`,
-conditional `best = x`, and `return best`), an unresolved boundary is
+accumulator selection shape (either `best = next(it)` followed by `for x in it`,
+or `best = xs[0]` followed by `for x in xs[1:]`, both with conditional
+`best = x` and `return best`), an unresolved boundary is
 `infection_unknown` when each oracle-eligible test has one or more assertions
 and each has a strong direct comparison of the owner call on an integer list
 or tuple with an integer. A single line with multiple assertions or `and`

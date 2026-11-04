@@ -4331,3 +4331,64 @@ fn loop_boundary_rebound_import_alias_does_not_use_value_pin() -> Result<(), Str
     );
     Ok(())
 }
+
+#[test]
+fn indexed_loop_boundary_numeric_inputs_are_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs[1:]:\n        if x >= best:\n            best = x\n    return best\n";
+    for (imports, call) in [
+        ("from src.subject import largest", "largest([1, 5, 3])"),
+        ("from src.subject import largest", "largest([5, 5])"),
+        (
+            "import src.subject as subject",
+            "subject.largest([1, 5, 3])",
+        ),
+    ] {
+        let tests = format!("{imports}\n\ndef test_largest():\n    assert {call} == 5\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            4,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn indexed_loop_mixed_identity_retains_prior_classification() -> Result<(), String> {
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs[1:]:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key): self.key = key\n    def __gt__(self, other): return self.key > other.key\n    def __ge__(self, other): return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([1, 5, 3]) == 5\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn indexed_loop_refuses_changed_loop_body_and_equality_witness() -> Result<(), String> {
+    let source = "def select(xs):\n    best = 0\n    for x in xs:\n        if x >= best:\n            return 1\n    return 0\n";
+    let tests =
+        "from src.subject import select\n\ndef test_select():\n    assert select([0]) == 1\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
