@@ -5241,6 +5241,21 @@ impl OwnerReturnPin {
         self.admits_spelled(test, assertion, index, imports_foreign, syntax, "assert_eq")
     }
 
+    /// #12394 item 3: the repo-wide audit has no diff, so the one owner version
+    /// it can read is the current one. A literal that version provably does not
+    /// return fails at baseline and is withheld, as `ripr check` withholds a
+    /// literal neither version returns (#12716). Anything the closed subset
+    /// cannot evaluate keeps the reading.
+    pub(in crate::analysis) fn with_current_owner_literal_check(
+        mut self,
+        owner: &FunctionSummary,
+    ) -> Self {
+        if self.closed_owner.is_none() && matches!(self.call, PinCall::Bare) {
+            self.closed_owner = super::owner_value::ClosedChange::current(&owner.body, &self.name);
+        }
+        self
+    }
+
     /// RIPR-SPEC-0197 claims payload equality: whether `assert_ok_eq!(call,
     /// literal)` or `assert_some_eq!(call, literal)` pins the owner under every
     /// gate [`Self::admits`] applies to the unwrapped `assert_eq!` pin, on a
