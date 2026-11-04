@@ -95,7 +95,8 @@ review prose, structural discrimination, a command that never exercised its
 subject, and `NotExecuted` are unexecuted substitutes. Failed-before/passed-after
 and rejected-wrong-implementation observations are not. `InstrumentUnavailable`
 is separately represented and also is not classified as an unexecuted
-substitute; this distinction does not make unavailable evidence admissible.
+substitute. This distinction does not by itself establish admissibility; a
+declared, artifact-backed substitute remains separately validated.
 
 Ordinary tests call the same production predicates over the complete guarded
 domains. Literal expected behavior is independent of the production predicates.

@@ -80,7 +80,7 @@ no-action may omit a gap id and attempt. File/line is rejected as identity.
 
 The retained closed reason contract is explicit below. These values classify
 feedback about the result, rather than the underlying code: an already-covered
-item or stale result is incorrect feedback output, and a failed command or
+item or stale result is judged an incorrect recommendation, and a failed command or
 unsupported workflow is workflow cost (`expensive`).
 
 | Default judgment | Reason codes |
