@@ -770,6 +770,12 @@ pub(super) fn sort_related_tests_for_seam<'a>(
         related.iter().map(|(_, reason)| *reason),
         owner_fn.is_some(),
     );
+    let claims_pin = super::claims_payload_pin::ClaimsPayloadPin::establish(
+        seam,
+        owner_fn,
+        context.index,
+        related.iter().map(|(indexed, _)| indexed.test),
+    );
     let mut ranked: Vec<_> = related
         .iter()
         .map(|&entry| {
@@ -778,8 +784,14 @@ pub(super) fn sort_related_tests_for_seam<'a>(
             // proximity test whose assertion pins another function keeps its
             // identity but offers no oracle for this match arm or predicate
             // boundary (#12434).
-            let credited = refuse.then(|| {
-                super::credited_related_tests(context, owner_fn, &[(indexed.test, reason)], refuse)
+            let credited = (refuse || claims_pin.is_some()).then(|| {
+                super::credited_related_tests(
+                    context,
+                    owner_fn,
+                    &[(indexed.test, reason)],
+                    refuse,
+                    claims_pin.as_ref(),
+                )
             });
             let credited_test = credited
                 .as_ref()

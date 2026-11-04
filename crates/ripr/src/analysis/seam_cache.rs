@@ -670,7 +670,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// matching literal `Vec` expectation credits through the owner-return pin (#9478).
 /// `1.154`: a bare `assert_matches!` around an inherent owner call reads the
 /// unplaced receiver withhold (#10666). Old entries keep the unnamed gap.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.154";
+/// `1.155`: the repo-wide audit credits a claims `assert_ok_eq!` / `assert_some_eq!`
+/// statement through the same owner-pin decision as `ripr check` (#12394).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.155";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -866,7 +868,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.154";
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
 /// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
 /// `0.156`: same unplaced `assert_matches!` withhold as full `1.154` (#10666).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.156";
+/// `0.157`: same audit claims-payload crediting as full `1.155` (#12394).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.157";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1064,7 +1067,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.156";
 /// `0.154`: same tuple-projection pin as full `1.152` (#12796).
 /// `0.155`: same path-value `.map(owner)` crediting as full `1.153` (#9478).
 /// `0.156`: same unplaced `assert_matches!` withhold as full `1.154` (#10666).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.156";
+/// `0.157`: same audit claims-payload crediting as full `1.155` (#12394).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.157";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5976,7 +5980,8 @@ mod tests {
         // 1.151 -> 1.152: a tuple `.0` pin credits the changed `T(e)` tail (#12796).
         // 1.152 -> 1.153: bounded `.map(owner)` chains credit via the owner pin (#9478).
         // 1.153 -> 1.154: a bare `assert_matches!` around an inherent owner call reads the unplaced receiver withhold (#10666).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.154");
+        // 1.154 -> 1.155: the audit credits claims payload equality via the owner pin (#12394).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.155");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -6112,8 +6117,9 @@ mod tests {
         // 0.153 -> 0.154: same tuple-projection pin as full 1.152 (#12796).
         // 0.154 -> 0.155: same path-value crediting as full 1.153 (#9478).
         // 0.155 -> 0.156: same unplaced `assert_matches!` withhold as full 1.154 (#10666).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.156");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.156");
+        // 0.156 -> 0.157: same audit claims-payload crediting as full 1.155 (#12394).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.157");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.157");
     }
 
     #[test]

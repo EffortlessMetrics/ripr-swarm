@@ -13,6 +13,7 @@
 
 mod boolean_boundary_pin;
 mod call_budget;
+mod claims_payload_pin;
 mod owner_result_binding;
 mod panic_outcome;
 mod reach_limit;
@@ -632,6 +633,7 @@ fn credited_related_tests<'a>(
     owner_fn: Option<&FunctionSummary>,
     related: &[(&'a TestSummary, RelationReason)],
     refuse_other_function_oracle: bool,
+    claims_pin: Option<&claims_payload_pin::ClaimsPayloadPin<'_>>,
 ) -> Vec<std::borrow::Cow<'a, TestSummary>> {
     let owner_reach = refuse_other_function_oracle
         .then(|| owner_fn.map(|owner| context.transitive_reach.owner_reach(&owner.name)))
@@ -639,22 +641,28 @@ fn credited_related_tests<'a>(
     related
         .iter()
         .map(|(test, reason)| {
-            let Some(owner_reach) = owner_reach.as_ref() else {
-                return std::borrow::Cow::Borrowed(*test);
-            };
-            if !(reason.is_proximity_only() || *reason == RelationReason::AssertionTargetAffinity)
-                || !test
+            let mut view = std::borrow::Cow::Borrowed(*test);
+            if let Some(owner_reach) = owner_reach.as_ref()
+                && (reason.is_proximity_only()
+                    || *reason == RelationReason::AssertionTargetAffinity)
+                && test
                     .assertions
                     .iter()
                     .any(|oracle| owner_reach.assertion_pins_other_function(&oracle.text))
             {
-                return std::borrow::Cow::Borrowed(*test);
+                view.to_mut()
+                    .assertions
+                    .retain(|oracle| !owner_reach.assertion_pins_other_function(&oracle.text));
             }
-            let mut credited = (*test).clone();
-            credited
-                .assertions
-                .retain(|oracle| !owner_reach.assertion_pins_other_function(&oracle.text));
-            std::borrow::Cow::Owned(credited)
+            // #12394 item 3: the claims statements `ripr check` credits
+            // through the owner pin join the view the stages read.
+            if let Some(pin) = claims_pin {
+                let admitted = pin.admitted_oracles(&view, context.index, context.pin_syntax());
+                if !admitted.is_empty() {
+                    view.to_mut().assertions.extend(admitted);
+                }
+            }
+            view
         })
         .collect()
 }
@@ -687,7 +695,19 @@ fn evidence_for_seam_with_context(
         related_reasons.iter().map(|(_, reason)| *reason),
         owner_fn.is_some(),
     );
-    let credited_views = credited_related_tests(context, owner_fn, &related_reasons, refuse);
+    let claims_pin = claims_payload_pin::ClaimsPayloadPin::establish(
+        seam,
+        owner_fn,
+        context.index,
+        related_reasons.iter().map(|(test, _)| *test),
+    );
+    let credited_views = credited_related_tests(
+        context,
+        owner_fn,
+        &related_reasons,
+        refuse,
+        claims_pin.as_ref(),
+    );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
@@ -2493,7 +2513,19 @@ pub(crate) fn compact_evidence_for_seam(
         related_reasons.iter().map(|(_, reason)| *reason),
         owner_fn.is_some(),
     );
-    let credited_views = credited_related_tests(context, owner_fn, &limited_reasons, refuse);
+    let claims_pin = claims_payload_pin::ClaimsPayloadPin::establish(
+        seam,
+        owner_fn,
+        context.index,
+        limited_reasons.iter().map(|(test, _)| *test),
+    );
+    let credited_views = credited_related_tests(
+        context,
+        owner_fn,
+        &limited_reasons,
+        refuse,
+        claims_pin.as_ref(),
+    );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
