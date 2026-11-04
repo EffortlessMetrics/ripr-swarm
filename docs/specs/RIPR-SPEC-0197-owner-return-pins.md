@@ -1656,7 +1656,10 @@ payload with `expected`, so each reads as the unwrapped pin above
    import evidence the macro earns no credit and no grade.
 2. Shape. One plain invocation whose first operand is exactly the owner call
    and whose second operand is a literal (`4`, `-1.5`, `'x'`, `true`,
-   `"text"`, `String::from("text")`). Further arguments are the panic
+   `"text"`, `String::from("text")`), or, for a whole-value field pin
+   (RIPR-SPEC-0225), the struct literal of the owner's type that gate reads
+   (`assert_ok_eq!(config(2), Config { retries: 3 })` beside an
+   `Ok(Config { .. })` tail). Further arguments are the panic
    message and decide nothing. An owner call in the second operand, a
    non-literal expected operand (a binding, a constant, a call, a value
    computed from the owner) and an owner call wrapped in anything refuse.
@@ -1669,8 +1672,9 @@ payload with `expected`, so each reads as the unwrapped pin above
    or `None` as a value refuses, as for the unwrapped pin.
 5. Grade. The oracle extractor stays text-only and reads the line
    `unknown` / none (RIPR-SPEC-0120). Reveal grades it `exact_value` /
-   strong for one probe, and only for the `return_value` family, when this
-   pin admits the assertion (RIPR-SPEC-0231 rule 10). The grade lives in the
+   strong for one probe, and only for the `return_value` family and the
+   whole-value field pin of the `field_construction` family (#12394 item 5),
+   when this pin admits the assertion (RIPR-SPEC-0231 rule 10). The grade lives in the
    finding's related test. Analyses that read the extracted oracle list
    directly (test-grip evidence, the refusal notes) still see no oracle on
    that line.
@@ -1702,7 +1706,16 @@ change.
    another integer, or take an `Err(..)` or `None` exit that the pin names as
    `Ok(..)` or `Some(..)`, the pin does not credit. This applies to `assert_eq!`, `matches!` and the
    claims `assert_ok_eq!` / `assert_some_eq!` alike.
-4. Fail open to today's reading. A call or owner outside the subset, an
+4. Whole-value field pins (#12394 item 5). For a RIPR-SPEC-0225 whole-value
+   field pin the same question is asked of the changed field alone: the text
+   after `field:` on the changed line (the diff's old text for the old
+   version) is read as an integer expression over the owner's parameters, in
+   the field's declared integer type, which must match the parameters' type.
+   When the pinned struct literal gives the field a decimal integer that
+   neither version computes for the call's literal arguments, the pin does not
+   credit; the other fields of the literal are not read. This applies to
+   `assert_eq!` and the claims `assert_ok_eq!` / `assert_some_eq!` alike.
+5. Fail open to today's reading. A call or owner outside the subset, an
    `Err(..)` payload, a wrapper mismatch the compiler would reject and every
    pin either version agrees with keep their current result.
 

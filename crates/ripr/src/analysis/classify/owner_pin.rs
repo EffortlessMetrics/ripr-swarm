@@ -4289,6 +4289,10 @@ struct WholeValueField {
     /// non-std `use` of it), so an expected `String::from(..)` is not the
     /// standard conversion and gives no credit (#7066 review).
     string_from_may_be_rebound: bool,
+    /// #12394 item 5: the changed field's initializer before and after the
+    /// diff, when both read as the closed integer subset. A pinned field value
+    /// that neither computes for the call fails on both versions.
+    closed: Option<Box<super::owner_value::ClosedChange>>,
 }
 
 /// #8480: records constructed in exit positions of `body`: the block
@@ -4947,6 +4951,29 @@ impl OwnerReturnPin {
                 candidate.name.as_deref() == Some(field) && candidate.ty == "String"
             })
         });
+        let field_ty = derived_equality(&type_name, index).and_then(|(facts, _)| {
+            facts
+                .fields
+                .iter()
+                .find(|candidate| candidate.name.as_deref() == Some(field))
+                .map(|candidate| candidate.ty.clone())
+        });
+        let closed =
+            probe
+                .before
+                .as_deref()
+                .zip(field_ty.as_deref())
+                .and_then(|(before, field_ty)| {
+                    super::owner_value::ClosedChange::read_field(
+                        &owner.body,
+                        &owner.name,
+                        changed_line,
+                        before,
+                        field,
+                        field_ty,
+                    )
+                    .map(Box::new)
+                });
         let call = pin_call(owner, index)?;
         // #6617 keeps the associated-function pin to a return value: a
         // `T::new()` whole-value field pin is a separate claim.
@@ -4966,6 +4993,7 @@ impl OwnerReturnPin {
                 computed_names: camel_case_value_items(index),
                 constructor_names: declared_constructor_names(index),
                 string_from_may_be_rebound: wrapper_may_be_rebound("String", index),
+                closed,
             }),
             walked_positions: Vec::new(),
             returns_bool: false,
@@ -5469,10 +5497,15 @@ impl OwnerReturnPin {
             // only a pin on the macro's own variant reads.
             let direction = claims_payload_variant(spelling)
                 .is_some_and(|variant| unwrap_wrapper == Some(variant));
-            // Only a literal expected operand is a discriminator. The cheap
+            // Only a literal expected operand is a discriminator. A whole-value
+            // field gate reads the struct literal itself (`Config { .. }`
+            // beside an `Ok(..)` tail), so it judges that operand below;
+            // every other gate needs a scalar literal here. The cheap
             // refusals come first: the import check parses the whole file.
+            let literal_expected = matches!(self.path, ReturnPathGate::WholeValueField(_))
+                || helper_arguments::expected_literal(second, index).is_some();
             if !direction
-                || helper_arguments::expected_literal(second, index).is_none()
+                || !literal_expected
                 || doctest.is_some()
                 || !index.files().get(&test.file).is_some_and(|facts| {
                     source_imported_claims_macros(&facts.source, (test.start_line, test.end_line))
@@ -5962,6 +5995,22 @@ impl OwnerReturnPin {
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
             && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), expected)
+        {
+            return false;
+        }
+        // #12394 item 5: the same for a whole-value field pin. The field's
+        // pinned value is read against both versions of the changed field's
+        // initializer; a value neither computes for the call's literal
+        // arguments fails the test on both versions.
+        if helper.is_none()
+            && substituted.is_none()
+            && let ReturnPathGate::WholeValueField(gate) = &self.path
+            && let Some(closed) = &gate.closed
+            && let Some(call) = call_text
+                .map(str::to_string)
+                .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
+            && let Some(pinned) = gate.pinned_field_text(expected)
+            && closed.provably_unpinned(&self.name, call.trim_end_matches(".unwrap()"), &pinned)
         {
             return false;
         }
@@ -9129,6 +9178,37 @@ fn returns_other_variant(exit: &ast::ReturnExpr, wrapper: &str) -> bool {
 }
 
 impl WholeValueField {
+    /// The source text a literal `expected` gives the field (`3` for
+    /// `Ok(Config { retries: 3 })`), when [`Self::admits`] reads it.
+    fn pinned_field_text(&self, expected: &str) -> Option<String> {
+        let parse = parse_clean_source_file(&format!("fn ripr_expected() {{ ({expected}); }}"))?;
+        let mut value = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::ParenExpr::cast)?
+            .expr()?;
+        if self.wrapper.is_some() {
+            let ast::Expr::CallExpr(call) = value else {
+                return None;
+            };
+            value = call.arg_list()?.args().next()?;
+        }
+        let ast::Expr::RecordExpr(literal) = value else {
+            return None;
+        };
+        literal
+            .record_expr_field_list()?
+            .fields()
+            .find(|candidate| {
+                candidate
+                    .field_name()
+                    .is_some_and(|name| name.text().trim_start_matches("r#") == self.field)
+            })?
+            .expr()
+            .map(|pinned| pinned.syntax().text().to_string())
+    }
+
     /// RIPR-SPEC-0225 rule 2: `expected` is a literal of the owner's type,
     /// in the owner's wrapper, that names the field once, explicitly, with an
     /// independent value ([`independent_value`]), and no functional-update

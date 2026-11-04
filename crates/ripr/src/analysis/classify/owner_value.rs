@@ -513,12 +513,107 @@ impl ClosedChange {
         })
     }
 
+    /// #12394 item 5: the two versions of one struct field's initializer,
+    /// each read as a scalar owner over the same integer parameters, so a
+    /// pinned value for `field` that neither version computes for `call` is
+    /// provably unpinned. `field_ty` is the field's declared integer type; the
+    /// parameters must have the same range, since the subset checks arithmetic
+    /// in one type. The initializer is the text after `field:` on the changed
+    /// line (`before` for the old version); anything outside the closed subset
+    /// answers `None` and keeps today's reading.
+    pub(super) fn read_field(
+        definition: &str,
+        name: &str,
+        changed_line: usize,
+        before: &str,
+        field: &str,
+        field_ty: &str,
+    ) -> Option<Self> {
+        if before.trim().is_empty() || before.contains('\n') {
+            return None;
+        }
+        let after_line = definition.lines().nth(changed_line)?;
+        Some(Self {
+            after: scalar_field_owner(definition, name, after_line, field, field_ty)?,
+            before: scalar_field_owner(definition, name, before, field, field_ty)?,
+        })
+    }
+
     /// Whether `expected` is a value neither version provably returns for
     /// `call`. `false` is "no evidence", or a version agrees with the pin.
     pub(super) fn provably_unpinned(&self, name: &str, call: &str, expected: &str) -> bool {
         self.after.provably_differs(name, call, expected)
             && self.before.provably_differs(name, call, expected)
     }
+}
+
+/// The owner `fn name(<its parameters>) -> field_ty { <initializer of field on
+/// line> }`: the struct field read as the scalar the subset evaluates.
+fn scalar_field_owner(
+    definition: &str,
+    name: &str,
+    line: &str,
+    field: &str,
+    field_ty: &str,
+) -> Option<ClosedOwner> {
+    let range = range_of(field_ty)?;
+    let initializer = field_initializer(line, field)?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(definition);
+    let item = masked.find(&format!("fn {name}"))?;
+    let signature_end = masked[item..].find(')')? + item;
+    let source = format!(
+        "{} ) -> {field_ty} {{ {initializer} }}",
+        masked[item..signature_end].trim_end()
+    );
+    let owner = ClosedOwner::read(&source, name)?;
+    (owner.range == range && owner.guards.is_empty() && matches!(owner.tail, Ret::Plain(_)))
+        .then_some(owner)
+}
+
+/// The text of `field`'s initializer on `line`: after `field:` up to the
+/// top-level `,` or the bracket that closes the literal. A line with a string,
+/// a char, a comment or a second mention of the field is not read.
+fn field_initializer(line: &str, field: &str) -> Option<String> {
+    if line.contains(['"', '\'']) || line.contains("//") || line.contains("/*") {
+        return None;
+    }
+    let bytes = line.as_bytes();
+    let mut found = None;
+    let mut from = 0;
+    while let Some(offset) = line[from..].find(field) {
+        let start = from + offset;
+        let end = start + field.len();
+        from = end;
+        let before_ok =
+            start == 0 || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
+        let rest = line[end..].trim_start();
+        if before_ok && rest.starts_with(':') && !rest.starts_with("::") {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(&rest[1..]);
+        }
+    }
+    let rest = found?;
+    let mut depth = 0usize;
+    let mut stop = rest.len();
+    for (at, byte) in rest.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => {
+                stop = at;
+                break;
+            }
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                stop = at;
+                break;
+            }
+            _ => {}
+        }
+    }
+    let text = rest[..stop].trim();
+    (!text.is_empty()).then(|| text.to_string())
 }
 
 /// `name(17, 5)` (optionally with a trailing comma and line breaks) as
@@ -587,6 +682,60 @@ mod tests {
     fn differs(definition: &str, name: &str, call: &str, expected: &str) -> bool {
         ClosedOwner::read(definition, name)
             .is_some_and(|owner| owner.provably_differs(name, call, expected))
+    }
+
+    const CONFIG: &str =
+        "pub fn config(n: u32) -> Result<Config, ()> {\n    Ok(Config { retries: n + 1 })\n}\n";
+
+    fn field_change(before: &str, ty: &str) -> Option<ClosedChange> {
+        ClosedChange::read_field(CONFIG, "config", 1, before, "retries", ty)
+    }
+
+    /// #12394 item 5: a struct field's initializer is read as a scalar owner.
+    #[test]
+    fn a_field_initializer_is_unpinned_only_when_neither_version_computes_it() {
+        let change = field_change("    Ok(Config { retries: n + 2 })", "u32");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        assert!(change.provably_unpinned("config", "config(2)", "9"));
+        // The new value (3) and the old value (4) each tell the versions apart.
+        assert!(!change.provably_unpinned("config", "config(2)", "3"));
+        assert!(!change.provably_unpinned("config", "config(2)", "4"));
+        // A call outside the subset, or a non-decimal pin, is no evidence.
+        assert!(!change.provably_unpinned("config", "config(n)", "9"));
+        assert!(!change.provably_unpinned("config", "config(2)", "limit"));
+    }
+
+    #[test]
+    fn a_field_initializer_outside_the_subset_is_not_read() {
+        // A different integer type for the field than for the parameters.
+        assert!(field_change("    Ok(Config { retries: n + 2 })", "u8").is_none());
+        // A non-integer field type, a string, a call, a second mention.
+        assert!(field_change("    Ok(Config { retries: n + 2 })", "String").is_none());
+        assert!(field_change("    Ok(Config { retries: \"a\" })", "u32").is_none());
+        assert!(field_change("    Ok(Config { retries: f(n) })", "u32").is_none());
+        assert!(field_change("    Ok(Config { retries: n, retries: 1 })", "u32").is_none());
+        // A multi-line old text, or none.
+        assert!(field_change("", "u32").is_none());
+        assert!(field_change("a\nb", "u32").is_none());
+    }
+
+    #[test]
+    fn the_initializer_stops_at_the_literal_s_closing_bracket_or_comma() {
+        let read = |line, field| field_initializer(line, field);
+        assert_eq!(
+            read("Ok(Config { retries: n + 1 })", "retries").as_deref(),
+            Some("n + 1")
+        );
+        assert_eq!(
+            read("    retries: (n + 1) * 2,", "retries").as_deref(),
+            Some("(n + 1) * 2")
+        );
+        // A longer field name is another field.
+        assert_eq!(read("Ok(Config { max_retries: 4 })", "retries"), None);
+        assert_eq!(read("retries::new(1)", "retries"), None);
     }
 
     #[test]
