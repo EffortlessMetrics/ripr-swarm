@@ -2778,6 +2778,13 @@ pub(crate) fn check_repair_route(
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
     if let Some((kind, reason)) = repair_refusal(entry, policy, RefusalRoot::named(root)) {
+        // #12867: a static-limited finding never offered a start, so the new
+        // no-card refusal adds nothing to its screen (its limitation
+        // guidance is the whole story); only a finding that would otherwise
+        // have been offered a start names it.
+        if static_limited && reason == NO_TEST_TARGET_REASON {
+            return CheckRepairRoute::Silent;
+        }
         // A bound seam carries a canonical gap id, which a strongly gripped
         // seam never does, so `AlreadyGripped` cannot reach here: that case is
         // named by the location fallback above (#10702).
