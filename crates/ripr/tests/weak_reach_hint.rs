@@ -107,3 +107,42 @@ fn unestablished_reach_never_takes_the_weak_discriminator_shortcut() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn guard_refusal_does_not_override_unestablished_reach() -> Result<(), String> {
+    let original = check_fixture("rust_trait_impl_shadow")?;
+    assert_eq!(original.findings.len(), 1);
+    for state in [
+        StageState::Weak,
+        StageState::No,
+        StageState::Unknown,
+        StageState::Opaque,
+        StageState::NotApplicable,
+    ] {
+        let mut output = original.clone();
+        let finding = &mut output.findings[0];
+        finding.ripr.reach = StageEvidence::new(
+            state.clone(),
+            Confidence::Low,
+            "owner reach not established",
+        );
+        finding.ripr.reveal.observe.summary = "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)".into();
+        finding.evidence.push("assertion not credited: `assert_eq!` in render_is_empty at src/lib.rs:29: an earlier guard spares the value the assertion expects".into());
+        let human = render_check(&output, &OutputFormat::Human)?;
+        assert!(
+            human.contains("Why unrevealed: test reach to this change is not established"),
+            "{state:?}: {human}"
+        );
+    }
+    let mut reaching = original.clone();
+    let finding = &mut reaching.findings[0];
+    finding.ripr.reach = StageEvidence::new(StageState::Yes, Confidence::Medium, "owner reached");
+    finding.ripr.reveal.observe.summary = "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)".into();
+    finding.evidence.push("assertion not credited: `assert_eq!` in render_is_empty at src/lib.rs:29: an earlier guard spares the value the assertion expects".into());
+    let human = render_check(&reaching, &OutputFormat::Human)?;
+    assert!(
+        human.contains("Why unrevealed: a related test asserts here"),
+        "{human}"
+    );
+    Ok(())
+}
