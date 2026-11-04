@@ -2818,8 +2818,8 @@ mod tests {
         Ok(())
     }
 
-    /// A verdict corpus under `root` holding only what the receipt derives
-    /// from: the header's spec and non-claims, and one row file per row.
+    /// A verdict corpus with case and subject definitions copied independently
+    /// of its rows: a corrupted row must not define its own truth or origin.
     fn write_verdict_corpus(root: &Path, rows: &[Value]) -> Result<(), String> {
         write_verdict_corpus_with(root, "RIPR-SPEC-0219", &[], rows)
     }
@@ -2833,7 +2833,10 @@ mod tests {
         let corpus = root.join(VERDICT_CORPUS);
         let rows_dir = corpus.join("expected/rows");
         fs::create_dir_all(&rows_dir).map_err(|e| e.to_string())?;
-        let header = serde_json::json!({"spec": spec, "non_claims": non_claims});
+        let source = workspace_root().join(VERDICT_CORPUS);
+        let mut header = read_json(&source.join("corpus.json"))?;
+        header["spec"] = Value::from(spec);
+        header["non_claims"] = Value::from(non_claims);
         fs::write(
             corpus.join("corpus.json"),
             serde_json::to_vec_pretty(&header).map_err(|e| e.to_string())?,
@@ -2841,6 +2844,8 @@ mod tests {
         .map_err(|e| e.to_string())?;
         let cases_dir = corpus.join("cases");
         fs::create_dir_all(&cases_dir).map_err(|e| e.to_string())?;
+        let subjects_dir = corpus.join("subjects");
+        fs::create_dir_all(&subjects_dir).map_err(|e| e.to_string())?;
         for row in rows {
             let id = text(row, "case_id");
             fs::write(
@@ -2848,10 +2853,14 @@ mod tests {
                 serde_json::to_vec_pretty(row).map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
-            // The receipt checks rows against the case ids, so each row needs its case.
-            fs::write(
-                cases_dir.join(format!("{id}.json")),
-                serde_json::json!({ "case_id": id }).to_string(),
+            let case_path = source.join("cases").join(format!("{id}.json"));
+            let case = read_json(&case_path)?;
+            fs::copy(&case_path, cases_dir.join(format!("{id}.json")))
+                .map_err(|e| e.to_string())?;
+            let subject = text(&case, "subject_id");
+            fs::copy(
+                source.join("subjects").join(format!("{subject}.json")),
+                subjects_dir.join(format!("{subject}.json")),
             )
             .map_err(|e| e.to_string())?;
         }
@@ -2876,6 +2885,38 @@ mod tests {
             report["non_claims"].as_array().map_or(&[], Vec::as_slice),
             report["rows"].as_array().map_or(&[], Vec::as_slice),
         )
+    }
+
+    #[test]
+    fn verdict_receipt_rejects_a_row_that_hides_a_false_verdict() -> Result<(), String> {
+        let source = workspace_root().join(VERDICT_CORPUS);
+        // Retained runtime-labeled case truth stays discriminated. This
+        // injected observation tests reporting, not a fresh analyzer result.
+        let id = "accounts-balance-add";
+        let case = read_json(&source.join("cases").join(format!("{id}.json")))?;
+        assert_eq!(case["truth"]["state"], "discriminated");
+        let mut row = read_json(&source.join("expected/rows").join(format!("{id}.json")))?;
+        row["observed_verdict"] = Value::from("gap");
+        row["outcome"] = Value::from("false_actionable");
+        row["observed_classifications"] = serde_json::json!(["weakly_exposed"]);
+        let dir = crate::tests::temp_dir("public-proof-verdict-integrity");
+        write_verdict_corpus(&dir, &[row.clone()])?;
+        let report: Value = serde_json::from_slice(&canonical_bytes(&dir, VERDICT_CORPUS)?)
+            .map_err(|e| e.to_string())?;
+        assert_eq!(report["false_verdict_rate"]["numerator"], 1);
+        assert_eq!(report["false_verdict_rate"]["denominator"], 1);
+        row["outcome"] = Value::from("ideal");
+        write_verdict_corpus(&dir, &[row])?;
+        let result = canonical_bytes(&dir, VERDICT_CORPUS);
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        let err = result
+            .err()
+            .ok_or("public proof accepted a hidden false verdict")?;
+        assert!(
+            err.contains(id) && err.contains("scoring definition"),
+            "{err}"
+        );
+        Ok(())
     }
 
     #[test]

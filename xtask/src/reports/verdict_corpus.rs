@@ -1038,15 +1038,10 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
 /// file-name order. Scoreboards and the public proof read the corpus rates
 /// through this instead of a committed summary file.
 pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
-    // Only the fields the report repeats; `validate` owns the full header.
-    #[derive(Deserialize)]
-    struct Header {
-        spec: String,
-        non_claims: Vec<String>,
-    }
-    let header_path = dir.join("corpus.json");
-    let header: Header = serde_json::from_value(parse_json(&header_path)?)
-        .map_err(|err| format!("parse {}: {err}", normalize_path(&header_path)))?;
+    // Definitions establish truth and origin; row copies cannot establish
+    // their own eligibility or scoring. This is record consistency, not a
+    // fresh analyzer run or the retained-byte validation owned by `validate`.
+    let corpus = load_corpus(dir)?;
     let rows_dir = dir.join("expected").join(ROWS_DIR);
     let rows = record_files(&rows_dir, "case_id")?
         .into_iter()
@@ -1057,21 +1052,49 @@ pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
         .collect::<Result<Vec<_>, _>>()?;
     // The rows must cover exactly the corpus's cases: a missing row would
     // otherwise shrink every denominator into a plausible, wrong rate.
-    let case_ids: BTreeSet<String> = record_files(&dir.join("cases"), "case_id")?
+    let cases: BTreeMap<_, _> = corpus
+        .cases
         .iter()
-        .filter_map(|case| case.get("case_id").and_then(Value::as_str))
-        .map(str::to_string)
+        .map(|case| (case.case_id.as_str(), case))
         .collect();
-    let row_ids: BTreeSet<String> = rows.iter().map(|row| row.case_id.clone()).collect();
-    let missing: Vec<&String> = case_ids.difference(&row_ids).collect();
-    let extra: Vec<&String> = row_ids.difference(&case_ids).collect();
+    let case_ids: BTreeSet<_> = cases.keys().copied().collect();
+    let row_ids: BTreeSet<_> = rows.iter().map(|row| row.case_id.as_str()).collect();
+    let missing: Vec<_> = case_ids.difference(&row_ids).collect();
+    let extra: Vec<_> = row_ids.difference(&case_ids).collect();
     if !missing.is_empty() || !extra.is_empty() {
         return Err(format!(
             "{} does not match the corpus cases (missing rows: {missing:?}; rows without a case: {extra:?}); run `cargo xtask verdict-corpus check`",
             normalize_path(&rows_dir)
         ));
     }
-    Ok(summarize(header.spec, header.non_claims, rows))
+    let subjects: BTreeMap<_, _> = corpus
+        .subjects
+        .iter()
+        .map(|subject| (subject.subject_id.as_str(), subject))
+        .collect();
+    for row in &rows {
+        let case = cases
+            .get(row.case_id.as_str())
+            .ok_or_else(|| format!("row {} has no case", row.case_id))?;
+        let subject = subjects
+            .get(case.subject_id.as_str())
+            .ok_or_else(|| format!("case {} has no subject `{}`", case.case_id, case.subject_id))?;
+        if row.subject_id != case.subject_id
+            || row.truth != case.truth.state
+            || row.origin != subject.origin
+            || row.anchor != format!("{}:{}", case.anchor.file, case.anchor.line)
+            || row.ideal_verdict != case.expected.ideal_verdict
+            || row.ideal_verdict != case.truth.state.ideal()
+            || row.packet_provenance != case.perl_facts.as_ref().map(|facts| facts.provenance)
+            || row.outcome != score(case.truth.state, row.observed_verdict)
+        {
+            return Err(format!(
+                "row {} disagrees with its scoring definition",
+                row.case_id
+            ));
+        }
+    }
+    Ok(summarize(corpus.spec, corpus.non_claims, rows))
 }
 
 pub(crate) fn render_report_json(report: &Report) -> Result<String, String> {
