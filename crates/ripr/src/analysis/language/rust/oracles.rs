@@ -713,11 +713,17 @@ fn find_unresolved_assertion_macro_witness_among(
         }) {
             continue;
         }
+        let aliases = index
+            .files()
+            .get(&test.file)
+            .map(|file| assertion_macro_import_aliases(&file.source))
+            .unwrap_or_default();
         for (macro_name, macro_line) in unresolved_assertion_macro_invocations_among(
             &test.body,
             test.start_line,
             owner_in_arguments,
             credited,
+            &aliases,
         ) {
             candidates.push(RustMacroAssertionWitness {
                 test_name: test.name.clone(),
@@ -739,7 +745,7 @@ fn unresolved_assertion_macro_invocations(
     start_line: usize,
     owner_in_arguments: Option<&str>,
 ) -> Vec<(String, usize)> {
-    unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[])
+    unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[], &[])
 }
 
 fn unresolved_assertion_macro_invocations_among(
@@ -747,6 +753,7 @@ fn unresolved_assertion_macro_invocations_among(
     start_line: usize,
     owner_in_arguments: Option<&str>,
     credited: &[String],
+    aliases: &[String],
 ) -> Vec<(String, usize)> {
     let mut invocations = Vec::new();
     let masked_body = mask_rust_comments_and_strings(body);
@@ -779,7 +786,7 @@ fn unresolved_assertion_macro_invocations_among(
             // With credited macros the witness is the credited spelling, not
             // another assertion-like macro in the same test (#7089).
             let named = if credited.is_empty() {
-                is_unresolved_assertion_like_macro(&macro_name)
+                is_unresolved_assertion_like_macro(&macro_name) || aliases.contains(&macro_name)
             } else {
                 credited.contains(&macro_name)
             };
@@ -931,6 +938,51 @@ fn macro_name_before_bang(line: &str, bang: usize) -> Option<String> {
     } else {
         Some(name.to_string())
     }
+}
+
+/// Names a file binds to an assertion macro with `use path::assert_x as name;`
+/// (also inside a brace list). The rename hides the `assert_` spelling the
+/// limit keys on, so `ok_eq!(..)` under `use claims::assert_ok_eq as ok_eq;`
+/// would read as a plain gap although the test asserts (#12779). The alias only
+/// names a limit and never earns an oracle, and it is read file-wide, so a
+/// rename in another scope can only move a gap to the named limit, never the
+/// reverse.
+fn assertion_macro_import_aliases(source: &str) -> Vec<String> {
+    let masked = mask_rust_comments_and_strings(source);
+    let mut aliases = Vec::new();
+    let mut rest = masked.as_str();
+    while let Some(found) = rest.find("use ") {
+        let boundary = rest[..found]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
+        let after = &rest[found + 4..];
+        let end = after.find(';').unwrap_or(after.len());
+        if boundary {
+            let statement = &after[..end];
+            let words: Vec<&str> = statement
+                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .filter(|word| !word.is_empty())
+                .collect();
+            for pair in words.windows(3) {
+                if let [original, "as", alias] = pair
+                    && (*original == "assert"
+                        || original.starts_with("assert_")
+                        || matches!(
+                            *original,
+                            "prop_assert" | "prop_assert_eq" | "prop_assert_ne"
+                        ))
+                    && *alias != "_"
+                {
+                    aliases.push((*alias).to_string());
+                }
+            }
+        }
+        rest = &after[end..];
+    }
+    aliases.sort();
+    aliases.dedup();
+    aliases
 }
 
 fn is_unresolved_assertion_like_macro(macro_name: &str) -> bool {
@@ -1196,9 +1248,10 @@ mod tests {
 
     use super::{
         apply_cross_language_limit, apply_rust_macro_wrapped_assertion_limit,
-        apply_wrapper_error_binding_limit, attr_is_ffi_binding, cross_language_limit_kind,
-        generates_assertion, is_known_rust_assertion_macro, is_unresolved_assertion_like_macro,
-        owner_has_ffi_attr, unresolved_assertion_macro_invocations,
+        apply_wrapper_error_binding_limit, assertion_macro_import_aliases, attr_is_ffi_binding,
+        cross_language_limit_kind, generates_assertion, is_known_rust_assertion_macro,
+        is_unresolved_assertion_like_macro, owner_has_ffi_attr,
+        unresolved_assertion_macro_invocations, unresolved_assertion_macro_invocations_among,
     };
     use crate::analysis::facts::{
         CallFact, FunctionSourceRole, FunctionSummary, LiteralFact, RustIndex, TestSummary,
@@ -1342,6 +1395,30 @@ mod tests {
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn assertion_import_aliases_read_plain_and_braced_renames_only() {
+        let source = "use claims::assert_ok_eq as ok_eq;\nuse claims::{assert_err, assert_some as some, helper as h};\nuse other::check as ck;\n// use claims::assert_none as commented;\nconst S: &str = \"use claims::assert_ok as quoted;\";\nfn note() { let user = 1; }\n";
+        assert_eq!(
+            assertion_macro_import_aliases(source),
+            vec!["ok_eq".to_string(), "some".to_string()]
+        );
+        assert!(assertion_macro_import_aliases("use claims::assert_ok_eq;").is_empty());
+        assert!(assertion_macro_import_aliases("use claims::assert_ok_eq as _;").is_empty());
+    }
+
+    #[test]
+    fn an_alias_is_named_only_when_the_import_binds_it() {
+        let body = "ok_eq!(owner(1), 2);\nother!(owner(1), 2);\n";
+        let aliases = vec!["ok_eq".to_string()];
+        let named: Vec<String> =
+            unresolved_assertion_macro_invocations_among(body, 10, None, &[], &aliases)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
+        assert_eq!(named, vec!["ok_eq".to_string()]);
+        assert!(unresolved_assertion_macro_invocations(body, 10, None).is_empty());
     }
 
     #[test]

@@ -45,6 +45,7 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/effect_assertion_after_return/input --diff <cwd>/fixtures/effect_assertion_after_return/diff.patch --mode fast probe:src_lib.rs:call_deletion:934aa430
   ripr context --root <cwd>/fixtures/effect_assertion_after_return/input --diff <cwd>/fixtures/effect_assertion_after_return/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:934aa430
 
@@ -69,5 +70,6 @@ Weakness
 Next step
   shared guidance: N1
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/effect_assertion_after_return/input --diff <cwd>/fixtures/effect_assertion_after_return/diff.patch --mode fast probe:src_lib.rs:side_effect:95da2a37
   ripr context --root <cwd>/fixtures/effect_assertion_after_return/input --diff <cwd>/fixtures/effect_assertion_after_return/diff.patch --mode fast --at probe:src_lib.rs:side_effect:95da2a37

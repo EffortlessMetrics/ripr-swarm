@@ -257,7 +257,7 @@ Updated:
 ## Pending — owner_return_pin_json_alternate_return (21)
 
 Reason:
-RIPR-SPEC-0224: split assertion_not_credited into assertion_proven_inert and assertion_admission_unproven (#5446)
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
 
 Command:
 `cargo xtask goldens bless owner_return_pin_json_alternate_return --reason "..."`

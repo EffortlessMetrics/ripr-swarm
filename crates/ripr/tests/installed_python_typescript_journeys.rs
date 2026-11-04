@@ -4868,6 +4868,92 @@ fn pending_terminal_recovery_requires_published_receipt() -> Result<(), String> 
     decoy_untouched(&attempt.decoy)
 }
 
+/// #4518: the flat-layout environment-binding control. The product prints the
+/// module-form verify route; executing it from a foreign CWD succeeds, while
+/// the bare console-script form fails in the clean shape without an editable
+/// install.
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+fn python_printed_module_verify_succeeds_while_bare_pytest_fails_in_flat_layout()
+-> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "py-bare", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "check")?;
+    let action = check
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Verify command (Bash): "))
+        .and_then(|line| line.strip_suffix(" (high)"))
+        .ok_or_else(|| format!("check printed no verify action:\n{check}"))?;
+    if !action.contains("python -m pytest ") {
+        return Err(format!("verify is not module-form pytest: {action}"));
+    }
+    let bin = _guard.0.join("bin");
+    std::fs::create_dir(&bin).map_err(|error| format!("bin dir: {error}"))?;
+    let python = bin.join("python");
+    std::fs::write(
+        &python,
+        "#!/bin/sh\n[ \"$1\" = -m ] && [ \"$2\" = pytest ] || exit 9\n[ \"$PWD\" = \"$EXPECTED_ROOT\" ] || exit 8\n[ \"$3\" = \"$EXPECTED_NODE\" ] || exit 6\nfile=${3%%::*}\n[ -f \"$file\" ] || exit 7\nprintf 'module-form selected one test\\n'\n",
+    )
+    .map_err(|error| format!("write python stand-in: {error}"))?;
+    std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755))
+        .map_err(|error| format!("chmod python: {error}"))?;
+    let pytest = bin.join("pytest");
+    std::fs::write(
+        &pytest,
+        "#!/bin/sh\nprintf 'ModuleNotFoundError: No module named '\\''pricing'\\''\\n' >&2\nexit 4\n",
+    )
+    .map_err(|error| format!("write pytest stand-in: {error}"))?;
+    std::fs::set_permissions(&pytest, std::fs::Permissions::from_mode(0o755))
+        .map_err(|error| format!("chmod pytest: {error}"))?;
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let node = "tests/test_pricing.py::test_above_boundary_gets_discount";
+    let run = |script: &str| -> Result<std::process::Output, String> {
+        Command::new("bash")
+            .args(["-c", script])
+            .current_dir(&decoy)
+            .env("PATH", &path)
+            .env("EXPECTED_ROOT", &root_arg)
+            .env("EXPECTED_NODE", node)
+            .output()
+            .map_err(|error| format!("run verify script: {error}"))
+    };
+    let module = run(action)?;
+    let module_out = String::from_utf8_lossy(&module.stdout);
+    expect_exit(module.status.success(), true, "module-form verify")?;
+    need(
+        &module_out,
+        "module-form selected one test",
+        "module-form route ran in the selected root",
+    )?;
+    let bare = action.replacen("python -m pytest ", "pytest ", 1);
+    if bare == action {
+        return Err("could not derive bare pytest command".to_string());
+    }
+    let bare_result = run(&bare)?;
+    expect_exit(bare_result.status.success(), false, "bare pytest verify")?;
+    let bare_err = String::from_utf8_lossy(&bare_result.stderr);
+    need(
+        &bare_err,
+        "ModuleNotFoundError",
+        "bare pytest names the import failure",
+    )?;
+    need(&bare_err, "pricing", "bare pytest names the package")?;
+    if bare_result.status.code() != Some(4) {
+        return Err(format!(
+            "bare pytest should exit 4, got {:?}",
+            bare_result.status.code()
+        ));
+    }
+    decoy_untouched(&decoy)
+}
+
 /// Execute the actual printed action from a decoy directory using a local
 /// argv/cwd-checking python stand-in. The real pytest run is separate proof.
 #[cfg(all(unix, feature = "lang-python"))]
