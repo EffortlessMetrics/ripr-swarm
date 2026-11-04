@@ -408,7 +408,7 @@ fn production_sources(dir: &std::path::Path) -> Result<Vec<(String, String)>, St
 /// closure that decides row eligibility anywhere in the crate reads it.
 #[test]
 fn decision_helpers_never_branch_on_the_miss() -> Result<(), String> {
-    let probe = include_str!("../domain/probe.rs");
+    let probe = include_str!("../../../ripr-contract/src/domain/probe.rs");
     for name in [
         "pub fn is_contributing(&self) -> bool {\n        self.role",
         "pub fn is_examined_only(&self) -> bool {",
@@ -427,6 +427,10 @@ fn decision_helpers_never_branch_on_the_miss() -> Result<(), String> {
     }
     let sources =
         production_sources(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"))?;
+    let mut sources = sources;
+    sources.extend(production_sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ripr-contract/src"),
+    )?);
     assert!(
         sources.len() > 100,
         "scan found only {} files",

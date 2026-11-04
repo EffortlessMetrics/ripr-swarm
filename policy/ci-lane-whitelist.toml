@@ -250,6 +250,16 @@ artifact_families = ["first-run-archive"]
 description = "First-run archive install: on demand only; verifies the documented prebuilt-archive snippets on Linux, macOS and Windows hosted runners and walks the first-run path with the released archive. Read-only; publishes nothing."
 
 [[lane]]
+id = "published-install-matrix"
+posture = "advisory"
+workflow = ".github/workflows/published-install-matrix.yml"
+jobs = ["install"]
+commands = ["cargo install ripr --locked", "pip install --pre ripr-rs", "npm install @effortlessmetrics/ripr@next"]
+estimated_lem = 10
+artifact_families = []
+description = "Published install matrix: weekly and on demand; installs the public crates.io, PyPI and npm packages on Linux x86-64/ARM64, macOS ARM64/Intel and Windows, then runs ripr --version and ripr doctor in a fresh Cargo project. Documented unavailable platforms are reported as known gaps. Read-only; publishes nothing."
+
+[[lane]]
 id = "public-proof"
 posture = "advisory"
 workflow = ".github/workflows/public-proof.yml"
