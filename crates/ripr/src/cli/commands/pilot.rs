@@ -269,6 +269,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 language_routes: None,
                 current_change: None,
                 seam_limit: None,
+                seam_limit_selection_order: None,
                 repo_exposure_byte_bound: None,
             },
         )?;
@@ -397,6 +398,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
+    let real_budget_applied = pilot_budget_info.is_some();
     // The pilot-scoped default inventory cap (#10726) is the pilot budget cut
     // earlier. Disclose it as the budget, naming `RIPR_PILOT_SEAM_BUDGET`, and
     // not as an inventory cut whose repair route would not lift the budget.
@@ -417,6 +419,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         });
         inventory_limit_info = None;
     }
+    // #5371: how the analyzed slice was chosen. A real budget keeps the
+    // current change first; otherwise the slice is the canonical inventory
+    // prefix, plus any current-change seams `fold_classified_change`
+    // appended past that cap.
+    let change_appended = change_seams_added;
     timings.record("seam_budget", budget_started, Some(classified.len()));
     let pilot_budget_truncated = pilot_budget_info.is_some();
     // #12108: the seam budget bounds the seam count, not bytes. Cut the
@@ -448,10 +455,22 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         (budget, inventory) => budget.clone().or_else(|| inventory.clone()),
     };
     let repo_exposure_limit = match (&pilot_budget_info, &inventory_limit_info, &summary_limit) {
+        (Some(_), Some(inventory), Some(summary)) if change_appended => {
+            Some(RepoExposureLimit::BothPlusChange(summary, inventory))
+        }
         (Some(_), Some(inventory), Some(summary)) => {
             Some(RepoExposureLimit::Both(summary, inventory))
         }
-        (Some(budget), None, _) => Some(RepoExposureLimit::PilotBudget(budget)),
+        (Some(budget), None, _) if real_budget_applied => {
+            Some(RepoExposureLimit::PilotBudget(budget))
+        }
+        (Some(budget), None, _) if change_appended => {
+            Some(RepoExposureLimit::PilotDefaultCutPlusChange(budget))
+        }
+        (Some(budget), None, _) => Some(RepoExposureLimit::PilotDefaultCut(budget)),
+        (None, Some(inventory), _) if change_appended => {
+            Some(RepoExposureLimit::InventoryPlusChange(inventory))
+        }
         (None, Some(inventory), _) => Some(RepoExposureLimit::Inventory(inventory)),
         _ => None,
     };
@@ -493,6 +512,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         language_routes: Some(&language_routes),
         current_change: Some(&current_change),
         seam_limit: summary_limit.as_ref(),
+        seam_limit_selection_order: repo_exposure_limit.map(RepoExposureLimit::selection_order),
         repo_exposure_byte_bound: repo_exposure_byte_bound.as_ref(),
     };
 
@@ -2047,6 +2067,7 @@ mod tests {
                 language_routes: None,
                 current_change: None,
                 seam_limit: None,
+                seam_limit_selection_order: None,
                 repo_exposure_byte_bound: None,
             },
         )?;

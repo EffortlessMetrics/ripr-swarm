@@ -18662,7 +18662,11 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
                 .as_object()
                 .ok_or("limitation must be an object")?
                 .len(),
-            6,
+            7,
+            "{name}: {artifact}"
+        );
+        assert_eq!(
+            limit["selection_order"], "current_change_then_inventory_order_prefix",
             "{name}: {artifact}"
         );
         assert_eq!(limit["seams_analyzed"], 1, "{name}: {artifact}");
@@ -18717,7 +18721,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let full_total = count(&full);
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked 1 of {full_total} seams;"
+            "- Seam limit reached: analyzed 1 of {full_total} seams"
         )),
         "{summary}"
     );
@@ -18735,11 +18739,44 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         summary_json["seam_limit"]["total"], full_total,
         "{summary_json}"
     );
+    assert_eq!(
+        summary_json["seam_limit"]["selection_order"], "current_change_then_inventory_order_prefix",
+        "{summary_json}"
+    );
     // When the inventory limit also cuts, the disclosed total is still the
     // inventory's, not the already-capped list the budget saw.
     assert!(
         full_total > 2,
         "fixture must exceed the inventory limit: {full}"
+    );
+    // The pilot-scoped default inventory cap stands in for the budget when
+    // only `RIPR_PILOT_SEAM_BUDGET` is set. It is disclosed under the budget
+    // category but selected the canonical prefix, not the change first
+    // (#5371).
+    let pilot = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[("RIPR_PILOT_SEAM_BUDGET", "1")],
+    )?;
+    assert_success(&pilot);
+    let default_cut: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/repo-exposure.json"),
+    )?)?;
+    assert_eq!(
+        default_cut["limitations"][0]["category"], "pilot_seam_budget_applied",
+        "{default_cut}"
+    );
+    assert_eq!(
+        default_cut["limitations"][0]["selection_order"], "canonical_seam_sort_prefix",
+        "{default_cut}"
+    );
+    let default_summary: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        root.join("target/ripr/pilot/pilot-summary.json"),
+    )?)?;
+    assert_eq!(
+        default_summary["seam_limit"]["selection_order"], "canonical_seam_sort_prefix",
+        "{default_summary}"
     );
     let pilot = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
@@ -18754,7 +18791,7 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let summary = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
     assert!(
         summary.contains(&format!(
-            "- Seam limit reached: ranked 1 of {full_total} seams;"
+            "- Seam limit reached: analyzed 1 of {full_total} seams"
         )),
         "{summary}"
     );
@@ -18780,6 +18817,16 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         assert_eq!(limits[0]["seams_analyzed"], 1);
         assert_eq!(limits[0]["seams_total"], full_total);
         assert_eq!(limits[0]["control"], "RIPR_PILOT_SEAM_BUDGET");
+        // A real budget keeps the change first; the explicit inventory cap
+        // under it kept the canonical prefix (#5371).
+        assert_eq!(
+            limits[0]["selection_order"], "current_change_then_inventory_order_prefix",
+            "{artifact}"
+        );
+        assert_eq!(
+            limits[1]["selection_order"], "canonical_seam_sort_prefix",
+            "{artifact}"
+        );
         assert_eq!(limits[1]["category"], "repo_seam_limit_applied");
         assert_eq!(limits[1]["seams_analyzed"], 2);
         assert_eq!(limits[1]["seams_total"], full_total);
@@ -18829,7 +18876,11 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let limit = inventory_limit[0]
         .as_object()
         .ok_or("packet limitation must be an object")?;
-    assert_eq!(limit.len(), 6, "{inventory_packets}");
+    assert_eq!(limit.len(), 7, "{inventory_packets}");
+    assert_eq!(
+        inventory_limit[0]["selection_order"], "canonical_seam_sort_prefix",
+        "{inventory_packets}"
+    );
     assert_eq!(
         inventory_packets["run_status"], "seam_limit_applied",
         "{inventory_packets}"
@@ -19193,14 +19244,36 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
                 "{label}: {}\n{}",
                 default.1, full.1
             );
-            assert_eq!(
-                default.1["seam_limit"], full.1["seam_limit"],
-                "{label}: the summary must disclose the same cut"
-            );
+            // The same cut, disclosed with the same counts and source. Only the
+            // selection order differs, by design: the default cap is the
+            // canonical sort prefix, a real budget keeps the current change first.
+            for field in ["analyzed", "total", "source"] {
+                assert_eq!(
+                    default.1["seam_limit"][field], full.1["seam_limit"][field],
+                    "{label}: the summary must disclose the same cut ({field})"
+                );
+            }
             // The cut is the pilot budget in both runs: same category, control and
             // repair route, never the inventory control.
             let limitation = |doc: &serde_json::Value| doc["limitations"][0].clone();
-            assert_eq!(limitation(&default.0), limitation(&full.0), "{label}");
+            let without_order = |doc: &serde_json::Value| {
+                let mut limit = limitation(doc);
+                if let Some(object) = limit.as_object_mut() {
+                    object.remove("selection_order");
+                }
+                limit
+            };
+            assert_eq!(without_order(&default.0), without_order(&full.0), "{label}");
+            // Each run names the same order in its limitation as in its summary.
+            for run in [default, full] {
+                assert_eq!(
+                    limitation(&run.0)["selection_order"],
+                    run.1["seam_limit"]["selection_order"],
+                    "{label}: {}\n{}",
+                    run.0,
+                    run.1
+                );
+            }
             assert_eq!(
                 limitation(&default.0)["category"],
                 "pilot_seam_budget_applied",
@@ -19229,6 +19302,16 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
     assert!(total > 1, "{}", full.1);
     assert_eq!(seam_ids(&full.0).len(), 1, "{}", full.0);
     assert_same_result("clean tree", &default, &full);
+    assert_eq!(
+        default.1["seam_limit"]["selection_order"], "canonical_seam_sort_prefix",
+        "{}",
+        default.1
+    );
+    assert_eq!(
+        full.1["seam_limit"]["selection_order"], "current_change_then_inventory_order_prefix",
+        "{}",
+        full.1
+    );
 
     // A changed seam past the cap (the last function of the file, well past
     // a one-seam cap) is still classified and kept.
@@ -19252,6 +19335,14 @@ fn pilot_default_inventory_cap_follows_the_budget_without_moving_the_ranking()
         default.0
     );
     assert_same_result("changed seam past the cap", &default, &full);
+    // With a changed seam the default cap keeps the current change first too.
+    for run in [&default, &full] {
+        assert_eq!(
+            run.1["seam_limit"]["selection_order"], "current_change_then_inventory_order_prefix",
+            "{}",
+            run.1
+        );
+    }
     // An explicit nonzero inventory limit still applies as set (cap 2 here,
     // not the pilot-scoped default of 1), so the run still discloses the
     // whole inventory as its total.
@@ -22063,9 +22154,19 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
     // Precondition: the inventory limit fired and kept one seam, which is
     // not on the change; the changed seams it cut were classified on their
     // own and count as analyzed.
-    assert!(md.contains("- Seam limit reached: ranked "), "{md}");
+    assert!(md.contains("- Seam limit reached: analyzed "), "{md}");
     assert!(!md.contains("ranked 1 of "), "{md}");
-    assert!(md.contains("ranked 4 of 6 seams"), "{md}");
+    // The inventory cap kept the canonical prefix and pilot appended the
+    // changed seams past it, which is neither a pure prefix nor a budget cut
+    // (#5371).
+    assert!(
+        md.contains("analyzed 4 of 6 seams (`canonical_seam_sort_prefix_plus_current_change`)"),
+        "{md}"
+    );
+    assert_eq!(
+        summary["seam_limit"]["selection_order"], "canonical_seam_sort_prefix_plus_current_change",
+        "{summary}"
+    );
     // `ripr check` never classifies the added seams, so the snapshot is not
     // its population and carries no comparable identity.
     let snapshot: serde_json::Value = serde_json::from_str(
@@ -22074,6 +22175,11 @@ fn pilot_ranks_the_current_change_past_the_inventory_seam_limit() -> Result<(), 
     )
     .map_err(|err| format!("parse repo exposure json: {err}"))?;
     assert!(snapshot.get("artifact").is_none(), "{snapshot}");
+    assert_eq!(
+        snapshot["limitations"][0]["selection_order"],
+        "canonical_seam_sort_prefix_plus_current_change",
+        "{snapshot}"
+    );
     assert_eq!(summary["current_change"]["state"], "changed", "{summary}");
     assert_eq!(summary["top_actionable_seams"][0]["line"], 6, "{summary}");
     assert_eq!(
@@ -22312,7 +22418,7 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                 summary["current_change"]["top_recommendation_in_change"], true,
                 "{summary}"
             );
-            assert!(md.contains("ranked 1 of 5 seams"), "{md}");
+            assert!(md.contains("analyzed 1 of 5 seams"), "{md}");
         }
         ignore_remove_dir_all(&root);
         ignore_remove_dir_all(&out);
@@ -25332,6 +25438,15 @@ fn check_repo_exposure_json_run_status_seam_limit_applied_and_complete() -> Resu
     if seams_total < 2 {
         return Err(format!(
             "expected seams_total>=2 for truncation to be real, got: {seams_total}"
+        ));
+    }
+    let selection_order = limited_json
+        .pointer("/limitations/0/selection_order")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("expected limitations[0].selection_order in:\n{limited_stdout}"))?;
+    if selection_order != "canonical_seam_sort_prefix" {
+        return Err(format!(
+            "expected selection_order=canonical_seam_sort_prefix, got: {selection_order}"
         ));
     }
     let control = limited_json
