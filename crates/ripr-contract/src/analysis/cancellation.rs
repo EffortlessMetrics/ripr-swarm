@@ -374,7 +374,7 @@ const SIGINT_FLAG_GRACE: Duration = Duration::from_secs(1);
 /// death with no interrupt flag, or whose flag never arrives, stays an
 /// ordinary producer failure. MCP/LSP `with_server_interrupt` tokens also
 /// carry the flag and get the same bounded wait.
-pub(crate) fn cli_interrupted_after_exit(status: &std::process::ExitStatus) -> bool {
+pub fn cli_interrupted_after_exit(status: &std::process::ExitStatus) -> bool {
     cli_interrupted_after_exit_within(status, SIGINT_FLAG_GRACE)
 }
 
