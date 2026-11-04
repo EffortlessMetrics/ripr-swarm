@@ -662,6 +662,12 @@ fn apply_suppression_policy(output: &mut CheckOutput, policy: &Path) -> Result<(
             .iter()
             .filter(|finding| !matched.contains_key(&finding.id)),
     );
+    output.summary.proof_harness_only = crate::analysis::summary::proof_harness_only_count(
+        output
+            .findings
+            .iter()
+            .filter(|finding| !matched.contains_key(&finding.id)),
+    );
     output.suppression = Some(sup::CheckSuppressionOutcome {
         policy_path: policy.display().to_string(),
         suppressed,

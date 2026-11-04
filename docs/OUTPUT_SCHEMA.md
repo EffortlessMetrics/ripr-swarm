@@ -930,8 +930,10 @@ next=COMMAND
   every test-side gap (candidate-current, `weakly_exposed` or
   `reachable_unrevealed`, not static-limited, not preview-only), and the class
   counts cover every non-suppressed finding in the run.
-- At most 5 gap lines are printed, top triage gap first, then the remaining gaps
-  in finding order; `+M more gaps not shown` states the exact remainder.
+- 5 gap lines are printed, plus one more per 8 gaps, up to 10 (#13081): top
+  triage gap first, then the remaining gaps in finding order; `+M more gaps not
+  shown` states the exact remainder. The `open=` form (unconfirmed findings)
+  stays at 5 lines with `+M more open findings not shown`.
   Fields are whitespace-collapsed, the changed expression and oracle text are
   clipped to 80 characters, and a literal `|` inside a field is written `\|`.
   `missing=` is the first missing discriminator value, or `-`.
@@ -1180,6 +1182,16 @@ carry findings of more than one exposure class. It is emitted only when it is
 greater than `0`, and the per-class counts above still count every finding.
 Selecting one of those findings by location stays ambiguous by design; this
 member is the signal that the same expression was classified two ways.
+
+`summary.proof_harness_only` (additive, no `schema_version` bump, #12921)
+counts findings whose only reaching code is a proof harness ripr does not
+evaluate (`static_limit_kind` `proof_harness_not_evaluated`). It is a subset of
+`no_static_path`, emitted only when greater than `0`; the class buckets are
+unchanged and the proof earns no test credit, so a consumer can tell "covered
+only by an unevaluated proof" from "no guard found". It does not rank a strong
+harness against a vacuous one (#12596). The MCP `ripr_list_gaps` document
+carries the same count as top-level `proof_harness_only` over the filtered items,
+and each such item summary carries `"proof_harness_only": true`.
 
 `language_completeness` (additive, no `schema_version` bump, #11272) is the
 per-language projection of the shared completeness view that the editor, MCP

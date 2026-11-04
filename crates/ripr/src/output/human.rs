@@ -277,6 +277,48 @@ fn no_source_examined(output: &CheckOutput) -> bool {
     }
 }
 
+/// True when a base was compared and the range contained no changed files at
+/// all, as opposed to files that no language adapter analyzes.
+fn no_changed_files_in_range(output: &CheckOutput) -> bool {
+    // Producer-backed: a Git range whose base commit is HEAD itself is empty by
+    // construction. Deleted-only, submodule-only and `--diff <file>` runs do not
+    // establish that, so they keep the language wording.
+    let zero_files = output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.counts.changed_file_count == 0);
+    zero_files
+        && output.analyzed_revisions.as_ref().is_some_and(|revisions| {
+            !crate::output::analyzed_revisions::is_working_tree_read(output)
+                && revisions.base_commit.is_some()
+                && revisions.base_commit == revisions.head_commit
+        })
+}
+
+/// #13036: a range with changed files but no checkable behavior is usually a
+/// tests-only diff (the agent committed its tests, then used the commit before
+/// them as the base). Say so and name the fix, without claiming which it is.
+fn no_behavior_base_hint(output: &CheckOutput) -> String {
+    use crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates;
+    let Some(base) = output.base.as_deref() else {
+        return String::new();
+    };
+    // Only for a real Git range that changed at least one analyzable file;
+    // docs-only diffs already say no analyzable language.
+    if output.analyzed_revisions.is_none() || no_source_examined(output) {
+        return String::new();
+    }
+    let applies = output.analysis_outcome.as_ref().is_some_and(|outcome| {
+        outcome.kind == NoBehavioralCandidates && outcome.counts.changed_file_count > 0
+    });
+    if !applies {
+        return String::new();
+    }
+    format!(
+        "Hint: if `{base}` already includes the production change (for example only tests changed after it), choose a base before that change, such as `ripr check --base <commit before the change>`.\n"
+    )
+}
+
 /// The empty-findings headline. An incomplete analysis checked less than it
 /// was asked to, so claiming it "checked no changed behavior" would contradict
 /// the `Analysis outcome` disclosure printed just above it.
@@ -287,6 +329,11 @@ fn no_findings_line(output: &CheckOutput) -> &'static str {
         }
         // #11396: nothing in scope, or only non-source files changed, examined
         // no behavior; say what was not checked instead of "No findings".
+        // #13036: an empty diff is a different cause from "no analyzable
+        // language"; name the real one so the reader looks at the base.
+        _ if no_source_examined(output) && no_changed_files_in_range(output) => {
+            "Nothing to check: the diff against the comparison base is empty (no changed files), so ripr examined no behavior.\n"
+        }
         _ if no_source_examined(output) => {
             "Nothing to check: no changed source file in a language ripr analyzes was available, so ripr examined no behavior.\n"
         }
@@ -307,6 +354,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
 
     if output.findings.is_empty() {
         out.push_str(no_findings_line(output));
+        out.push_str(&no_behavior_base_hint(output));
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
@@ -363,6 +411,7 @@ pub(crate) fn render_full_with_config_and_navigation(
 
     if output.findings.is_empty() {
         out.push_str(no_findings_line(output));
+        out.push_str(&no_behavior_base_hint(output));
         // RIPR-SPEC-0083: disclose when no analysis scope was provided
         // (#4012: or when the established range is empty — the note then
         // names the compared base instead of claiming no scope).
@@ -591,6 +640,14 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
             if unknown > 0 {
                 classes.push_str(&format!(", {unknown} unclear"));
             }
+            // #12921: "no test path" is not "no guard of any kind". Say how many of
+            // them are reached only by a verifier harness ripr does not evaluate.
+            if s.proof_harness_only > 0 {
+                classes.push_str(&format!(
+                    " ({} of the no test path only have a proof harness that ripr does not evaluate, which is not test coverage)",
+                    s.proof_harness_only
+                ));
+            }
             out.push_str(&format!(
                 "Summary: {} changed {} checked: {}. {} found, {} suppressed by your settings{base_side}\n\n",
                 s.probes,
@@ -604,7 +661,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         out.push_str(&format!(
             "Summary: {} changed behavior(s) checked: {} exposed, {} weakly_exposed, {} reachable_unrevealed, \
              {} no_static_path, {} infection_unknown, {} propagation_unknown, {} static_unknown; \
-             {} of {} finding(s) unsuppressed{base_side}\n",
+             {} of {} finding(s) unsuppressed{proof_only}{base_side}\n",
             output.summary.probes,
             output.summary.exposed,
             output.summary.weakly_exposed,
@@ -615,6 +672,7 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
             output.summary.static_unknown,
             unsuppressed,
             output.summary.findings,
+            proof_only = proof_harness_only_note(&output.summary),
         ));
         // #10691: the stable tokens stay (they are the schema vocabulary);
         // each is glossed once so the line reads without the specs.
@@ -1083,6 +1141,18 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
     out.push('\n');
     out.push_str(&wrap_human_prose(&note, "", "  "));
     out.push('\n');
+}
+
+/// #12921: the non-plain summary names findings reached only by an unevaluated
+/// proof harness (a subset of `no_static_path`; never test coverage).
+fn proof_harness_only_note(summary: &crate::domain::Summary) -> String {
+    if summary.proof_harness_only == 0 {
+        return String::new();
+    }
+    format!(
+        "; {} of the no_static_path finding(s) reached only by a proof harness ripr does not evaluate (proof_harness_only; not test coverage)",
+        summary.proof_harness_only
+    )
 }
 
 const HUMAN_PROSE_WRAP_COLUMN: usize = 100;
@@ -1635,13 +1705,17 @@ mod tests {
             (
                 &range,
                 "Note: `HEAD...HEAD` has no analyzable changed files, so there was nothing to analyze.",
+                // #13036: a Git range whose base commit is HEAD is empty by
+                // construction, so the headline names the empty diff.
+                "Nothing to check: the diff against the comparison base is empty",
             ),
             (
                 &worktree,
                 "Note: the working tree has no analyzable changed files against `HEAD`, so there was nothing to analyze.",
+                "Nothing to check: no changed source file in a language ripr analyzes was available",
             ),
         ];
-        for (output, expected) in cases {
+        for (output, expected, headline) in cases {
             for rendered in [
                 render_with_config(output, &config),
                 render_full_with_config(output, &config),
@@ -1649,12 +1723,7 @@ mod tests {
                 assert!(rendered.contains(expected), "{rendered}");
                 // #11396: the headline states what was not examined and does
                 // not open with an all-clear style "No findings".
-                assert!(
-                    rendered.contains(
-                        "Nothing to check: no changed source file in a language ripr analyzes was available"
-                    ),
-                    "{rendered}"
-                );
+                assert!(rendered.contains(headline), "{rendered}");
                 assert!(!rendered.contains("No findings:"), "{rendered}");
                 assert!(
                     rendered.contains("does NOT mean no behavior changed"),
