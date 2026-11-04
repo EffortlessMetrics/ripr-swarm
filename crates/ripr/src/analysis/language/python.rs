@@ -379,6 +379,11 @@ mod helper_inline;
 mod imported_call_operator;
 mod known_equality_helpers;
 mod loop_walk;
+// The may-reach graph is built and measured by tests and the corpus report
+// only; no verdict reads it yet (#11425), so it is not part of the shipped
+// build.
+#[cfg(test)]
+mod may_reach;
 mod message_pin;
 mod module_value;
 mod test_local_literal;
@@ -2443,6 +2448,8 @@ mod call_chain_tests;
 mod forwarder_tests;
 #[cfg(test)]
 mod imported_call_operator_tests;
+#[cfg(test)]
+mod may_reach_tests;
 #[cfg(test)]
 mod module_value_tests;
 #[cfg(test)]
