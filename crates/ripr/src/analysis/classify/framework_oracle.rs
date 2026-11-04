@@ -1007,7 +1007,8 @@ mod tests {
     }
 
     #[test]
-    fn insta_withholds_an_unredacted_field_and_keeps_the_gap_for_a_redacted_one() -> Result<(), String> {
+    fn insta_withholds_an_unredacted_field_and_keeps_the_gap_for_a_redacted_one()
+    -> Result<(), String> {
         let owner = "make_record";
         let id_change = "        id: next_id(),";
         let items_change = "        items: items.len(),";
