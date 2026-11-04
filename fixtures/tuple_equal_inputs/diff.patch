@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,6 +4,6 @@
+ impl Add for Money {
+     type Output = Money;
+     fn add(self, other: Money) -> Money {
+-        Self(other.0 - self.0)
++        Self(other.0 + self.0)
+     }
+ }
