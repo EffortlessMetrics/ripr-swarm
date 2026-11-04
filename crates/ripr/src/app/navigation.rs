@@ -751,14 +751,14 @@ mod tests {
     /// re-analyze the same `--path`/`--exclude` set. Without the flags the
     /// pasted `explain`/`context`/`check --json` lines hit `diff_scope_oversized`.
     #[test]
-    fn finding_navigation_appends_path_and_exclude_from_the_run_scope() {
+    fn finding_navigation_appends_path_and_exclude_from_the_run_scope() -> Result<(), String> {
         let input = CheckInput {
             base: Some("HEAD".to_string()),
             scope: crate::analysis::DiffScopeFilter::new(
                 ["src/lib.rs".to_string(), "crates/api".to_string()],
                 ["generated/**".to_string(), "src/foo bar.rs".to_string()],
             )
-            .expect("valid scope"),
+            .map_err(|error| format!("valid scope expected: {error:?}"))?,
             ..CheckInput::default()
         };
         let navigation = finding_navigation_with_worktree(&input, None, false, true);
@@ -778,10 +778,12 @@ mod tests {
                     && command.contains(&exclude_space),
                 "scoped drill-in must carry every --path/--exclude, quoted: {command}"
             );
-            let path_at = command.find(&path_lib).expect("first --path missing");
+            let path_at = command
+                .find(&path_lib)
+                .ok_or_else(|| format!("first --path missing: {command}"))?;
             let exclude_at = command
                 .find(&exclude_generated)
-                .expect("first --exclude missing");
+                .ok_or_else(|| format!("first --exclude missing: {command}"))?;
             assert!(
                 path_at < exclude_at,
                 "--path flags must precede --exclude, matching the check retry: {command}"
@@ -826,6 +828,7 @@ mod tests {
             navigation.repair_command("67fc764ba37d77bd"),
             format!("ripr repair 67fc764ba37d77bd --root {root}")
         );
+        Ok(())
     }
 
     /// `check --worktree` lists findings from uncommitted edits; its drill-in
