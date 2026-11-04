@@ -1715,7 +1715,7 @@ adapter contributes:
 For a changed adjacent relational comparison in the closed iterator and
 accumulator selection shape (`best = next(it)` followed by `for x in it`,
 conditional `best = x`, and `return best`), an unresolved boundary observed
-only by direct integer-list value assertions is `infection_unknown`, with an
+only by direct integer-sequence or integer-tuple value assertions is `infection_unknown`, with an
 infection stop reason and no repair suggestion. A list alone does not place
 the loop element and accumulator at the boundary. This limited rule does not
 evaluate arbitrary loops or change identity-assertion classification.

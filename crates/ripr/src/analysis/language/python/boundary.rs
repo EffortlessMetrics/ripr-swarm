@@ -2310,7 +2310,7 @@ mod call_line_text_tests {
 }
 
 /// A deliberately narrow unresolved case: an adjacent comparison change in
-/// the first statement of a loop, observed by one direct integer-list value
+/// the first statement of a loop, observed by one direct integer-sequence or integer-tuple value
 /// assertion. The loop element and accumulator are not owner arguments, so a
 /// literal list alone does not place either operand at the changed boundary.
 /// Identity assertions and other test shapes retain their existing treatment.
@@ -2417,26 +2417,36 @@ pub(super) fn unresolved_loop_list_boundary(
         return false;
     }
     let constants = unrebound_constants(owner, candidates);
-    let (rows, gaps) = strong_owner_call_rows_with_gaps(owner, &constants, candidates, focus);
-    if gaps || rows.is_empty() {
-        return false;
-    }
-    rows.iter().all(|row| {
-        candidates.iter().any(|candidate| {
+    let (rows, _) = strong_owner_call_rows_with_gaps(owner, &constants, candidates, focus);
+    let strong_candidates: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| {
             candidate.relation.uses_oracle()
-                && candidate.test.file == row.file
                 && select_relevant_assertion(&candidate.test.assertions, Some(focus))
                     .assertion()
                     .is_some_and(|assertion| {
-                        assertion.line == row.line
-                            && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                        assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
                     })
-                && is_direct_integer_list_assertion(row, owner, candidate)
         })
-    })
+        .collect();
+    !strong_candidates.is_empty()
+        && strong_candidates.iter().all(|candidate| {
+            let Some(assertion) =
+                select_relevant_assertion(&candidate.test.assertions, Some(focus)).assertion()
+            else {
+                return false;
+            };
+            // Only the selected assertion supplies inputs. Other calls, including
+            // discarded calls, neither supply nor prevent a witness.
+            rows.iter().any(|row| {
+                row.file == candidate.test.file
+                    && row.line == assertion.line
+                    && is_direct_integer_sequence_assertion(row, owner, candidate)
+            })
+        })
 }
 
-fn is_direct_integer_list_assertion(
+fn is_direct_integer_sequence_assertion(
     row: &CallRow,
     owner: &PythonOwner,
     candidate: &PythonRelatedCandidate<'_>,
@@ -2490,8 +2500,13 @@ fn is_direct_integer_list_assertion(
     {
         return false;
     }
-    let [Expr::List(list)] = call.args.as_slice() else {
+    let [argument] = call.args.as_slice() else {
         return false;
     };
-    !list.elts.is_empty() && list.elts.iter().all(integer)
+    let elements = match argument {
+        Expr::List(list) => &list.elts,
+        Expr::Tuple(tuple) => &tuple.elts,
+        _ => return false,
+    };
+    !elements.is_empty() && elements.iter().all(integer)
 }

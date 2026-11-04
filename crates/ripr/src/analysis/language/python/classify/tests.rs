@@ -4148,3 +4148,23 @@ fn loop_boundary_accepts_signed_inputs_reversed_equality_and_alias() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn loop_boundary_numeric_tuple_and_discarded_call() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_a():\n    largest([9, 9])\n    assert largest((1, 5, 3)) == 5\n\ndef test_b():\n    assert largest([2, 7, 4]) == 7\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    assert_eq!(finding.related_tests.len(), 2);
+    Ok(())
+}
