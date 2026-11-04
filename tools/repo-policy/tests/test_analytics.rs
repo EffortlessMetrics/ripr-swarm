@@ -52,6 +52,10 @@ fn measured_budget_and_junit_honesty_are_wired() -> Result<(), String> {
     let (_, upload) = text
         .split_once("- name: Upload JUnit test results\n")
         .ok_or("missing junit upload")?;
+    assert!(
+        upload.contains("if: always() && steps.rust-tests.outcome != 'skipped'"),
+        "failure-bearing JUnit must upload independently of the failing verdict"
+    );
     assert!(upload.contains("if-no-files-found: error"));
     assert!(upload.contains("path: target/nextest/ci/junit.xml"));
     assert!(
