@@ -544,11 +544,11 @@ fn check_with_progress_and_origins_run(
     progress.emit(AnalysisProgressStage::BuildingOutput);
     let suppression_policy = input.suppression_policy.clone();
     let origins = analysis.rust_diagnostic_origins.clone();
-    let mut consumed_sources = std::mem::take(&mut analysis.rust_consumed_sources);
+    let consumed_sources = std::mem::take(&mut analysis.rust_consumed_sources);
     let language_view = analysis.language_view.take();
     let human_output = matches!(input.format, OutputFormat::Human | OutputFormat::HumanFull);
     let mut output = output_builder::check_output_from_analysis(input, analysis);
-    output.file_fact_cache = consumed_sources.file_fact_cache.take();
+    output.file_fact_cache = consumed_sources.file_fact_cache.clone();
     // #6340: only a human-rendered run pays for the Python test walk; JSON, LSP
     // refreshes and other machine consumers never read the note.
     if human_output && python_test_note_possible(&output.findings) {
