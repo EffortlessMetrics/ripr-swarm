@@ -14123,15 +14123,20 @@ return Err(\"typed pin\".into());
     /// initializer scan (#7683 review).
     #[test]
     fn binding_initializer_scan_skips_unrelated_lets() {
-        let body = "let x = 1; let mut other = Inventory::seeded(); let mut stock = Ledger::seeded();";
+        let body =
+            "let x = 1; let mut other = Inventory::seeded(); let mut stock = Ledger::seeded();";
         assert!(owner_call_binding_init_names_impl_type(
             body, "stock", "Ledger"
         ));
         assert!(!owner_call_binding_init_names_impl_type(
-            body, "stock", "Inventory"
+            body,
+            "stock",
+            "Inventory"
         ));
         assert!(owner_call_binding_init_names_impl_type(
-            body, "other", "Inventory"
+            body,
+            "other",
+            "Inventory"
         ));
     }
 }
