@@ -374,7 +374,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
         first_corrupt_reason,
     } = accounting;
     enum Pending {
-        Ready(super::FileFacts),
+        Ready(Box<super::FileFacts>),
         Parse { key: RepoFileFactCacheKey },
     }
     // Only genuine misses need historical paths for invalidation attribution.
@@ -415,7 +415,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
             match load {
                 CacheLoad::Hit(facts) => {
                     stats.hits += 1;
-                    pending.push(Pending::Ready(facts));
+                    pending.push(Pending::Ready(Box::new(facts)));
                 }
                 CacheLoad::Miss => {
                     stats.misses += 1;
@@ -521,7 +521,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                 index.non_utf8_sources.insert(file.clone());
             }
             let summary = match entry {
-                Pending::Ready(facts) => facts,
+                Pending::Ready(facts) => *facts,
                 Pending::Parse { key } => {
                     let Some(facts) = parsed[position].take() else {
                         return Err(format!(

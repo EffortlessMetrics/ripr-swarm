@@ -728,7 +728,7 @@ under `rust_indirect_owner_call_unresolved`:
   A bounded `.map(owner)` chain that the owner pin credits (RIPR-SPEC-0197,
   #9478 slice A) is `exposed` before this limit is consulted; a refused chain
   that still names the owner as a value (async or method owners, non-matching or
-  non-literal expectations, a change invisible at the first input) keeps this
+  non-literal expectations, a change invisible at every input) keeps this
   limit. A chain whose path is unresolved, shadowed by a local binding, or
   qualified to a different same-leaf function is not a value use of the owner and
   is decided by the ordinary classification rules. A call
