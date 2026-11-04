@@ -1643,6 +1643,7 @@ pub(in crate::analysis::test_grip_evidence) fn mixed_generic_shadow_blocks_owner
         .filter(|helper| {
             helper.file == test.file
                 && helper.id != owner.id
+                && !(helper.start_line == test.start_line && helper.name == test.name)
                 && helper.item.container == FunctionContainer::Free
                 && test.calls.iter().any(|call| call.name == helper.name)
         })

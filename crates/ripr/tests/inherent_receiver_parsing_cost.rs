@@ -506,8 +506,8 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
         ("mixed", &mixed, true),
         ("unrelated", &unrelated, false),
         ("intermediate", &intermediate, false),
-        ("alias", &alias, true),
         ("intermediate_mixed", &intermediate_mixed, false),
+        ("alias", &alias, true),
     ] {
         let temp = Fixture {
             root: std::env::temp_dir().join(format!("ripr-shadow-{}-{case}", std::process::id())),
