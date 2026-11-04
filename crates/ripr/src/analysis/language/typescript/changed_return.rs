@@ -42,14 +42,10 @@ pub(crate) fn changed_multiline_return_expressions(
         let old_span = locate(file, &old_source, prefix, suffix, changed)?;
         let new_expression = new_source.get(new_span.0..new_span.1)?;
         let old_expression = old_source.get(old_span.0..old_span.1)?;
-        let outside = |source: &str, span: (usize, usize)| -> Option<String> {
-            Some(format!(
-                "{}\u{0}{}",
-                source.get(..span.0)?,
-                source.get(span.1..)?
-            ))
-        };
-        if outside(&new_source, new_span)? != outside(&old_source, old_span)? {
+        // Everything outside the selected expression must be identical.
+        if new_source.get(..new_span.0)? != old_source.get(..old_span.0)?
+            || new_source.get(new_span.1..)? != old_source.get(old_span.1..)?
+        {
             return None;
         }
         return Some((old_expression.to_string(), new_expression.to_string()));
