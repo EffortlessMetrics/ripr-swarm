@@ -431,6 +431,12 @@ cargo test --workspace --doc
 The JUnit output path is configured in `.config/nextest.toml` at
 `target/nextest/ci/junit.xml`.
 
+After a `ci`-profile run, `cargo xtask slow-test-report` lists the 50 slowest
+tests from that file and judges each against the per-test budget in
+`policy/test-time-budget.toml` (advisory; the baseline allowlist names tests
+already over budget so the budget can be enforced later). The JUnit file is also
+the `rust-junit` artifact of the Test Analytics workflow.
+
 ## Unused suppression-policy disclosure
 
 The [repository configuration contract](specs/RIPR-SPEC-0007-repository-configuration.md#unused-default-suppression-disclosure-7759)

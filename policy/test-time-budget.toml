@@ -1,0 +1,106 @@
+# Per-test time budget for the nextest `ci` profile (#12905, slice 1).
+#
+# `cargo xtask slow-test-report` reads target/nextest/ci/junit.xml (the
+# `rust-junit` artifact of test-analytics.yml) and judges every test against
+# `per_test_budget_seconds`. A test id is `<nextest binary-id> <test name>`.
+#
+# Decision (2026-11-04): the budget is ADVISORY. The suite is ~27k tests over 4
+# shards in a ~35 minute required check; the slowest tests are xtask binary
+# tests that run `cargo` themselves. Failing PRs on them before they are fixed
+# would only teach people to ignore the check.
+# Ratchet: the [[baseline]] allowlist below is every test that was over budget
+# in test-analytics run 41867428230 (main, 2026-11-04). Switching `mode` to
+# "enforced" fails only on an over-budget test that is NOT in the baseline, so it
+# can be turned on without a flood of failures. Ratchet by deleting a baseline
+# entry once its test is fixed (the report lists such entries under "Ratchet
+# candidates") and by lowering the budget; never by adding entries to make a new
+# slow test pass. Flip to "enforced" when the baseline holds fewer than 10 tests
+# or one release cycle passes with no new over-budget test, whichever is first.
+
+schema = "ripr_slow_test_budget.v1"
+
+[decision]
+mode = "advisory"
+per_test_budget_seconds = 30.0
+ratchet = "advisory; baseline allowlist shrinks by deletion; enforce (fail only on tests absent from the baseline) once the baseline holds fewer than 10 tests"
+
+[[baseline]]
+test = "xtask::bin/xtask tests::policy_checker_facade_runs_current_repo_checks"
+recorded_seconds = 178.694
+
+[[baseline]]
+test = "xtask::bin/xtask tests::report_commands_dispatch_through_report_facades"
+recorded_seconds = 169.926
+
+[[baseline]]
+test = "xtask::bin/xtask tests::dogfood_blocking_gate_report_is_self_contained"
+recorded_seconds = 152.520
+
+[[baseline]]
+test = "xtask::bin/xtask tests::dogfood_language_preview_run_checks_static_limit_receipt"
+recorded_seconds = 148.617
+
+[[baseline]]
+test = "xtask::ripr_public_guide_contract doctor_exit_code_guide_distinguishes_analysis_and_source_build"
+recorded_seconds = 133.391
+
+[[baseline]]
+test = "xtask::ripr_public_guide_contract first_run_surfaces_require_clean_checkout_guidance"
+recorded_seconds = 125.866
+
+[[baseline]]
+test = "xtask::ripr_public_guide_contract packaged_help_target_runs_every_case_and_rejects_missing_shared_asset"
+recorded_seconds = 111.768
+
+[[baseline]]
+test = "xtask::bin/xtask policy::file_policy::tests::test_covered_by_production_wrapper_enumerates_through_cargo"
+recorded_seconds = 107.655
+
+[[baseline]]
+test = "xtask::support_tier_fast_route committed_spec_declarations_reach_actual_check_fast_dispatch"
+recorded_seconds = 93.984
+
+[[baseline]]
+test = "xtask::bin/xtask tests::fixture_run_writes_its_facts_into_the_cache_the_runner_cleared"
+recorded_seconds = 82.218
+
+[[baseline]]
+test = "xtask::bin/xtask tests::golden_comparison_runs_consume_the_cache_the_runner_cleared"
+recorded_seconds = 81.767
+
+[[baseline]]
+test = "xtask::ripr_public_guide_contract public_docs_only_pass_flags_the_command_help_lists"
+recorded_seconds = 76.654
+
+[[baseline]]
+test = "xtask::hard_cut_admission_selftest wrapper_keeps_the_residual_counted_when_a_bound_cannot_be_read"
+recorded_seconds = 64.124
+
+[[baseline]]
+test = "ripr::cli_smoke check_json_omitted_base_git_timeout_names_timeout_identity"
+recorded_seconds = 58.105
+
+[[baseline]]
+test = "xtask::bin/xtask warm_ab::tests::stub::control_slowdown_fails_a_pin_at_1_6x_and_a_clean_run_passes_at_1_0x"
+recorded_seconds = 54.227
+
+[[baseline]]
+test = "xtask::bin/xtask tests::count_policy_gates_have_no_stale_bounds"
+recorded_seconds = 39.726
+
+[[baseline]]
+test = "xtask::bin/xtask termination_qualification::tests::unix_stubs::a_hanging_stub_is_a_deadline_row_not_a_pass"
+recorded_seconds = 34.592
+
+[[baseline]]
+test = "ripr::cli_smoke check_json_timeout_and_bad_base_have_distinct_identities"
+recorded_seconds = 34.114
+
+[[baseline]]
+test = "xtask::bin/xtask tests::fixture_cache::fixture_cache_absent_readiness_reaps_gated_child_before_owned_cleanup"
+recorded_seconds = 32.053
+
+[[baseline]]
+test = "ripr analysis::seam_cache::tests::integrity_large_full_and_compact_envelopes_preserve_complete_warm_evidence"
+recorded_seconds = 31.730
+
