@@ -283,11 +283,16 @@ fn no_changed_files_in_range(output: &CheckOutput) -> bool {
     // Producer-backed: a Git range whose base commit is HEAD itself is empty by
     // construction. Deleted-only, submodule-only and `--diff <file>` runs do not
     // establish that, so they keep the language wording.
-    output.analyzed_revisions.as_ref().is_some_and(|revisions| {
-        !crate::output::analyzed_revisions::is_working_tree_read(output)
-            && revisions.base_commit.is_some()
-            && revisions.base_commit == revisions.head_commit
-    })
+    let zero_files = output
+        .analysis_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.counts.changed_file_count == 0);
+    zero_files
+        && output.analyzed_revisions.as_ref().is_some_and(|revisions| {
+            !crate::output::analyzed_revisions::is_working_tree_read(output)
+                && revisions.base_commit.is_some()
+                && revisions.base_commit == revisions.head_commit
+        })
 }
 
 /// #13036: a range with changed files but no checkable behavior is usually a
@@ -1679,13 +1684,17 @@ mod tests {
             (
                 &range,
                 "Note: `HEAD...HEAD` has no analyzable changed files, so there was nothing to analyze.",
+                // #13036: a Git range whose base commit is HEAD is empty by
+                // construction, so the headline names the empty diff.
+                "Nothing to check: the diff against the comparison base is empty",
             ),
             (
                 &worktree,
                 "Note: the working tree has no analyzable changed files against `HEAD`, so there was nothing to analyze.",
+                "Nothing to check: no changed source file in a language ripr analyzes was available",
             ),
         ];
-        for (output, expected) in cases {
+        for (output, expected, headline) in cases {
             for rendered in [
                 render_with_config(output, &config),
                 render_full_with_config(output, &config),
@@ -1693,12 +1702,7 @@ mod tests {
                 assert!(rendered.contains(expected), "{rendered}");
                 // #11396: the headline states what was not examined and does
                 // not open with an all-clear style "No findings".
-                assert!(
-                    rendered.contains(
-                        "Nothing to check: no changed source file in a language ripr analyzes was available"
-                    ),
-                    "{rendered}"
-                );
+                assert!(rendered.contains(headline), "{rendered}");
                 assert!(!rendered.contains("No findings:"), "{rendered}");
                 assert!(
                     rendered.contains("does NOT mean no behavior changed"),
