@@ -4124,16 +4124,16 @@ mod tests {
             &root.join("src/plain.rs"),
             "pub fn plain(x: u32) -> u32 {\n    x + 1\n}\n",
         )?;
+        // An admitted guard fact (#10747) names the region instead of the generic
+        // limitation line; either spelling is the verus disclosure.
+        let names_verus = |line: &String| {
+            line.contains("verus_macro_region_unsupported") || line.contains("verus_guard_fact:")
+        };
         let result = RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
         let verus: Vec<&Finding> = result
             .findings
             .iter()
-            .filter(|finding| {
-                finding
-                    .evidence
-                    .iter()
-                    .any(|line| line.contains("verus_macro_region_unsupported"))
-            })
+            .filter(|finding| finding.evidence.iter().any(|line| names_verus(line)))
             .collect();
         assert_eq!(verus.len(), 1, "{:?}", result.findings);
         let finding = verus[0];
@@ -4169,10 +4169,7 @@ mod tests {
                 .findings
                 .iter()
                 .filter(|finding| finding.probe.location.file.ends_with("src/plain.rs"))
-                .all(|finding| !finding
-                    .evidence
-                    .iter()
-                    .any(|line| line.contains("verus_macro_region_unsupported")))
+                .all(|finding| !finding.evidence.iter().any(|line| names_verus(line)))
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
