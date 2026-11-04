@@ -20,6 +20,17 @@ pub(crate) const COMMAND_SHELL_DISCLOSURE: &str = "Commands are written for Bash
 /// single-quote form instead of the unsafe double-quoted one.
 pub(crate) const COMMAND_SHELL_DISCLOSURE_WINDOWS: &str = "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor for spaced paths. A value carrying `$` or backtick keeps the single-quote form instead — both Git Bash and PowerShell would expand it inside double quotes — so paste that value in Git Bash or PowerShell, not cmd.exe (cmd.exe passes single quotes through as literal characters); the same routing applies to a value carrying `%`, which cmd.exe expands even inside double quotes. An interior `\"` in an argument is kept by cmd.exe and PowerShell but dropped by Git Bash (`\"` cannot occur in a Windows filename, so this touches only exotic non-path arguments). A PowerShell form follows a command only when PowerShell needs a different one: the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command that begins with a `NAME=value` environment assignment is Bash syntax only: PowerShell writes it differently (`$env:NAME = 'value'`, which its PowerShell form already does), and cmd.exe rejects it as an unrecognized command. Paste the PowerShell form, or in cmd.exe run `set NAME=value` on its own line first and then the command without the assignment. A command with no PowerShell form after it runs unchanged in cmd.exe and PowerShell, unless a line says its PowerShell form is unavailable. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
 
+/// One-line shell note for a command that runs unchanged in PowerShell, so a
+/// first-time reader is not handed the whole quoting paragraph before any
+/// command needs it (#11570 item 5). Windows keeps the full host paragraph.
+pub(crate) fn short_command_shell_note() -> &'static str {
+    if cfg!(windows) {
+        COMMAND_SHELL_DISCLOSURE_WINDOWS
+    } else {
+        "This command is written for Bash and runs unchanged in PowerShell. cmd.exe is not supported.\n\n"
+    }
+}
+
 /// The shell disclosure for the running host (#7729).
 pub(crate) fn command_shell_disclosure() -> &'static str {
     if cfg!(windows) {
@@ -416,6 +427,114 @@ pub(crate) fn powershell_form(command: &str) -> PowershellForm {
         Some(line) if line == command => PowershellForm::SameAsBash,
         Some(line) => PowershellForm::Translated(line),
     }
+}
+
+/// Read `typescript_package_root` from a gap-ledger record or embedded evidence lines.
+pub(crate) fn typescript_package_root_from_gap_record(
+    record: &serde_json::Value,
+) -> Option<String> {
+    record
+        .get("typescript_package_root")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            record.get("evidence").and_then(|evidence| {
+                evidence.as_array().and_then(|lines| {
+                    lines
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .find_map(|line| {
+                            line.strip_prefix("typescript_package_root: ")
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(str::to_string)
+                        })
+                })
+            })
+        })
+}
+
+/// Effective working directory for advisory command context: nested TypeScript
+/// packages run from their package root, not the repository root (#5439).
+pub(crate) fn command_context_directory(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+) -> std::path::PathBuf {
+    match confined_typescript_package_directory(workspace_root, record) {
+        Some(directory) => directory,
+        None => workspace_root.to_path_buf(),
+    }
+}
+
+/// Resolve a ledger `typescript_package_root` to a directory under `workspace_root`.
+fn confined_typescript_package_directory(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let rel = typescript_package_root_from_gap_record(record)?;
+    if rel == "." {
+        return None;
+    }
+    let rel_path = std::path::Path::new(&rel);
+    if rel_path.is_absolute()
+        || rel_path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return None;
+    }
+    let joined = workspace_root.join(rel_path);
+    let workspace = workspace_root.canonicalize().ok()?;
+    let resolved = joined.canonicalize().ok()?;
+    if !resolved.is_dir() || !resolved.starts_with(&workspace) {
+        return None;
+    }
+    Some(resolved)
+}
+
+/// Clipboard verify command for nested TypeScript packages when a rooted Bash
+/// form exists; otherwise withhold the clipboard value (#5439).
+pub(crate) fn verify_command_clipboard_for_record(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+    verify: &str,
+) -> Option<String> {
+    typescript_package_root_from_gap_record(record)?;
+    let directory = command_context_directory(workspace_root, record);
+    let context = selected_command_context(&directory, verify, verify);
+    let bash = context
+        .get("verify")
+        .and_then(|forms| forms.get("bash"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|command| !command.is_empty())?;
+    Some(bash.to_string())
+}
+
+/// Advisory command context: verify runs from the nested package directory when
+/// known; receipt stays rooted at the workspace (#5439).
+pub(crate) fn selected_nested_verify_command_context(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+    verify: &str,
+    receipt: &str,
+) -> serde_json::Value {
+    let verify_root = command_context_directory(workspace_root, record);
+    let mut context = selected_command_context(&verify_root, verify, verify);
+    let receipt_context = selected_command_context(workspace_root, receipt, receipt);
+    if let Some(object) = context.as_object_mut() {
+        object.insert(
+            "receipt".to_string(),
+            receipt_context
+                .get("receipt")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        );
+    }
+    context
 }
 
 /// Advisory human forms for the current ledger selection. Raw verification

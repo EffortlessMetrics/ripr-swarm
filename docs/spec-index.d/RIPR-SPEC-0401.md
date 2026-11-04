@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0401](../specs/RIPR-SPEC-0401-r-preview-package-testthat-numerical-data-boundaries.md) | proposed | R preview package, testthat, numerical/data, condition, snapshot, and side-effect boundaries (#5850, #5592) |

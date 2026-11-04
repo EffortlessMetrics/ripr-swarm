@@ -137,6 +137,44 @@ export function testRunnerCommandLeavesScope(normalized: string): boolean {
 }
 
 /**
+ * Whether a server-rendered `(cd -P -- <root> && <test-runner>)` verify form
+ * names a workspace-local package directory and a bounded test-runner command.
+ */
+export function rootedTestRunnerVerifyCommandIsSafe(
+  command: string,
+  redirectRoots: readonly string[]
+): boolean {
+  const trimmed = command.trim();
+  const match = /^\(cd -P -- (.+) && (.+)\)$/.exec(trimmed);
+  if (!match) {
+    return false;
+  }
+  if (hasUnsafeShellMetacharacter(trimmed, isWindowsHost())) {
+    return false;
+  }
+  const [, rootToken, inner] = match;
+  const rootMatches = redirectRoots.some((root) => {
+    if (!path.isAbsolute(root)) {
+      return false;
+    }
+    const displayRoot = path.normalize(root).replace(/\\/g, '/');
+    if (/[\r\n\0`\\"'\u2018-\u201f]/.test(displayRoot)) {
+      return false;
+    }
+    return rootToken === serverShellArg(displayRoot);
+  });
+  if (!rootMatches) {
+    return false;
+  }
+  const normalizedInner = inner.trim().replace(/\s+/g, ' ');
+  return normalizedInner !== ''
+    && !testRunnerCommandLeavesScope(normalizedInner)
+    && TEST_RUNNER_VERIFY_COMMAND_PREFIXES.some((prefix) =>
+      normalizedInner === prefix || normalizedInner.startsWith(`${prefix} `)
+    );
+}
+
+/**
  * Quote one argument exactly as the server's `shell_arg`
  * (`crates/ripr/src/agent/loop_commands.rs`): bare when every character is in
  * `[A-Za-z0-9._/:-]`; on Windows, double-quoted with `"` doubled and a trailing

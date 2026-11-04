@@ -31,6 +31,7 @@ table only documents the label meanings.
 | `status/blocked-upstream` | Blocked on `cargo-allow` or an external repository. |
 | `status/blocked-repo` | Blocked on a tracked in-repo item (PR, issue, or code). |
 | `status/needs-work` | Actionable and not started. Do **not** use it for partially landed work; that understates delivery and invites duplicate implementation. |
+| `status/needs-reverify` | One or more repo-rooted paths cited in the issue changed on `main` after filing. Re-verify each `path:line` anchor against current `main` before acting; the weekly issue-staleness watchdog applies this label and never removes it. |
 | `status/mis-scoped` | Re-scope, close, or supersede — the issue is the wrong scope or stale. |
 | `status/partial` | A bounded portion has merged to `main` (or another authoritative repository) and the residual acceptance plus next owner are recorded. Apply only when a merged deliverable exists — never merely planned. |
 
@@ -48,7 +49,8 @@ Current behavior:
 - `coverage` activates the advisory coverage workflow.
 - `clippy-future` activates the future-Clippy advisory workflow.
 - `vscode` activates the VS Code extension e2e; a PR that changes
-  `editors/vscode/**` or `ci.yml` runs it without the label (#12122).
+  `editors/vscode/**`, `ci.yml`, `vscode-e2e.yml` or `routed-rust.yml` runs it
+  without the label (#12122, #12252).
 - `ci-budget-ack` and `ripr-waive` remain documented policy
   vocabulary that is not yet wired to every target planner behavior; see
   [`current-state.md`](current-state.md).

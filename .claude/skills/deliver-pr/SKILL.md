@@ -20,6 +20,12 @@ One coherent claim has one current candidate, current proof and review for the a
 - `pr_contract:ordinary_squash_merge`
 - `pr_contract:local_commit_not_delivery`
 
+# Incident route markers
+
+- `incident_route:currentness_before_class`
+- `incident_route:no_poll_child`
+- `incident_route:same_subject_retry_bounded`
+
 # Procedure
 
 1. Hydrate the selected claim from the current user instruction, root `CLAUDE.md`, the issue, governing artifacts, current source, live GitHub state, and any existing PR. Prior summaries and subagent reports are leads until verified.

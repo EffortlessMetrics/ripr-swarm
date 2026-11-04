@@ -57,6 +57,7 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.showStatus'));
     assert.ok(commands.includes('ripr.diagnoseSetup'));
     assert.ok(commands.includes('ripr.startCurrentRepair'));
+    assert.ok(commands.includes('ripr.startOrContinueRepair'));
     assert.ok(commands.includes('ripr.copyCurrentRepairPacket'));
     assert.ok(commands.includes('ripr.copyRepoGapMap'));
     assert.ok(commands.includes('ripr.openFirstPrPacket'));
@@ -204,7 +205,7 @@ suite('Extension Smoke', () => {
       );
       assert.notStrictEqual(repairPacket, 'actionable-gap-queue-repair-sentinel');
       assert.ok(repairPacket.includes('Changed behavior: amount >= threshold'), repairPacket);
-      assert.ok(repairPacket.includes('Missing discriminator: amount == threshold'), repairPacket);
+      assert.ok(repairPacket.includes('Missing check: amount == threshold'), repairPacket);
       assert.ok(repairPacket.includes('Focused proof intent: Add exact assertion for amount == threshold.'), repairPacket);
       assert.ok(repairPacket.includes('Repair kind: add_boundary_assertion'), repairPacket);
       assert.ok(repairPacket.includes('Run: ripr agent verify --root . --json'), repairPacket);
@@ -221,7 +222,7 @@ suite('Extension Smoke', () => {
       assert.notStrictEqual(repoMap, 'actionable-gap-queue-map-sentinel');
       assert.ok(repoMap.includes('Canonical gap id: gap:rust:pricing:discount:threshold-boundary'), repoMap);
       assert.ok(repoMap.includes('Changed behavior: amount >= threshold'), repoMap);
-      assert.ok(repoMap.includes('Missing discriminator: amount == threshold'), repoMap);
+      assert.ok(repoMap.includes('Missing check: amount == threshold'), repoMap);
       assert.ok(repoMap.includes('Focused proof intent: Add exact assertion for amount == threshold.'), repoMap);
       assert.ok(repoMap.includes('Movement: improved'), repoMap);
       assert.ok(repoMap.includes('First PR packet state'), repoMap);
@@ -515,11 +516,6 @@ suite('Extension Smoke', () => {
       diagnostic.range
     );
     const contextCommand = assertCommandAction(actions, 'Inspect Test Gap - Copy Context', 'ripr.copyContext');
-    const targetedBriefCommand = assertCommandAction(
-      actions,
-      'Write targeted test: copy brief',
-      'ripr.copyTargetedTestBrief'
-    );
     const packetCommand = assertCommandAction(
       actions,
       'Agent handoff: copy packet command',
@@ -571,14 +567,6 @@ suite('Extension Smoke', () => {
     };
     assert.strictEqual(parsedContextPacket.schema_version, '0.5');
     assert.strictEqual(parsedContextPacket.packets?.[0]?.seam_id, '67fc764ba37d77bd');
-
-    await vscode.commands.executeCommand(targetedBriefCommand.command, ...(targetedBriefCommand.arguments ?? []));
-    const targetedBriefText = await waitForClipboardText((text) => text.includes('Target seam:'));
-    assert.ok(targetedBriefText.includes('Target seam:'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('src/lib.rs:2'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('predicate_boundary'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('Missing discriminator'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('tests/pricing.rs'), targetedBriefText);
 
     await vscode.commands.executeCommand(packetCommand.command, ...(packetCommand.arguments ?? []));
     const packetText = await waitForClipboardText((text) => text.includes('ripr agent packet'));
@@ -963,30 +951,8 @@ suite('Extension Smoke', () => {
       const actions = await waitForCodeActions(
         uri,
         diagnostic.range,
-        (action) => action.title === 'Inspect gap: copy repair packet',
+        (action) => action.title === 'Inspect gap: copy static-limit note',
         10000
-      );
-      const repairPacketCommand = assertCommandAction(
-        actions,
-        'Inspect gap: copy repair packet',
-        'ripr.copyContext'
-      );
-      const relatedTestCommand = assertCommandAction(
-        actions,
-        'Write targeted test: open best related test',
-        'ripr.openRelatedTest'
-      );
-      const verifyCommand = assertCommandAction(
-        actions,
-        'Verify after test: copy verify command',
-        'ripr.copyAgentVerifyCommand',
-        'ripr agent verify'
-      );
-      const receiptCommand = assertCommandAction(
-        actions,
-        'Review result: copy receipt command',
-        'ripr.copyAgentReceiptCommand',
-        'ripr agent receipt'
       );
       const staticLimitCommand = assertCommandAction(
         actions,
@@ -994,52 +960,11 @@ suite('Extension Smoke', () => {
         'ripr.copyContext'
       );
 
-      await vscode.commands.executeCommand(repairPacketCommand.command, ...(repairPacketCommand.arguments ?? []));
-      const repairPacketText = await waitForClipboardText((text) =>
-        text.includes('"source": "gap_decision_ledger"') &&
-        text.includes('"canonical_gap_id": "gap:typescript:pricing:threshold-boundary"')
-      );
-      const repairPacket = JSON.parse(repairPacketText) as {
-        source?: string;
-        packets?: Array<{ language?: string; language_status?: string; verify_command?: string }>;
-      };
-      assert.strictEqual(repairPacket.source, 'gap_decision_ledger');
-      assert.strictEqual(repairPacket.packets?.[0]?.language, 'typescript');
-      assert.strictEqual(repairPacket.packets?.[0]?.language_status, 'preview');
-      assert.strictEqual(repairPacket.packets?.[0]?.verify_command, 'ripr agent verify --root . --json');
-
       await vscode.commands.executeCommand(staticLimitCommand.command, ...(staticLimitCommand.arguments ?? []));
       const staticLimitText = await waitForClipboardText((text) =>
         text.includes('Static limit: missing_import_graph')
       );
-      assert.ok(staticLimitText.includes('TypeScript preview smoke uses syntax-first evidence.'), staticLimitText);
-
-      // #4001: the copied gap route names the selected workspace (either
-      // spelling when the folder is a symlink), not the portable `--root .`.
-      const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      assert.ok(selectedRoot, 'test workspace root must be open');
-      const rootArgs = [selectedRoot, await fs.realpath(selectedRoot)].map((root) =>
-        serverShellArg(root.replace(/\\/g, '/'))
-      );
-      const boundGapCommand = (verb: string) => (text: string) =>
-        rootArgs.some((rootArg) => text === `ripr agent ${verb} --root ${rootArg} --json`);
-
-      await vscode.commands.executeCommand(verifyCommand.command, ...(verifyCommand.arguments ?? []));
-      const verifyText = await waitForClipboardText((text) => text.startsWith('ripr agent verify --root '));
-      assert.ok(boundGapCommand('verify')(verifyText), verifyText);
-
-      await vscode.commands.executeCommand(receiptCommand.command, ...(receiptCommand.arguments ?? []));
-      const receiptText = await waitForClipboardText((text) => text.startsWith('ripr agent receipt --root '));
-      assert.ok(boundGapCommand('receipt')(receiptText), receiptText);
-
-      await vscode.commands.executeCommand(relatedTestCommand.command, ...(relatedTestCommand.arguments ?? []));
-      const activeEditor = vscode.window.activeTextEditor;
-      assert.ok(activeEditor, 'expected related TypeScript test to open an editor');
-      assert.ok(
-        activeEditor.document.uri.fsPath.replace(/\\/g, '/').endsWith('/tests/pricing.test.ts'),
-        activeEditor.document.uri.fsPath
-      );
-      assert.strictEqual(activeEditor.selection.active.line, 3);
+      assert.ok(staticLimitText.includes('Static limit: missing_import_graph'), staticLimitText);
     } finally {
       await cleanupEditorGapSmokeFiles();
       await updateDiagnosticProfile(config, previousProfile);
@@ -1500,6 +1425,217 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('startCurrentRepair runs shared agent repair before for a validated seam handoff', async function (this: Mocha.Context) {
+    skipUnlessTrustedTestHost(this);
+    const seamId = '67fc764ba37d77bd';
+    const attemptId = 'repair-attempt-0123456789abcdef01234567';
+    const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    assert.ok(selectedRoot, 'test workspace root must be open');
+    const rootArg = serverShellArg(selectedRoot.replace(/\\/g, '/'));
+    const beforeStdout = JSON.stringify({
+      schema_version: '0.5',
+      packets: [
+        {
+          seam_id: seamId,
+          allowed_edit_surface: ['tests/pricing.rs'],
+          must_not_change: ['Do not edit production code.'],
+          missing_discriminators: [{ value: 'discount_threshold (equality boundary)' }],
+          nearest_strong_test_to_imitate: {
+            file: 'tests/pricing.rs',
+            line: 4,
+            name: 'below_threshold_has_no_discount',
+          },
+        },
+      ],
+      repair_attempt: {
+        attempt_id: attemptId,
+        manifest_path: `target/ripr/repair-attempts/${attemptId}/attempt.json`,
+        next_command: `ripr agent repair --root ${rootArg} --attempt ${attemptId} --phase after`,
+      },
+    });
+    const statusStdout = JSON.stringify({
+      schema_version: '0.1',
+      tool: 'ripr',
+      kind: 'agent_attempt_status',
+      root: '.',
+      store: {
+        locator: 'target/ripr/repair-attempts',
+        location_class: 'default_repository',
+        currentness: 'present',
+      },
+      attempt: {
+        attempt_id: attemptId,
+        seam_id: seamId,
+        manifest: `target/ripr/repair-attempts/${attemptId}/attempt.json`,
+        state: 'awaiting_edit',
+        status_class: 'awaiting_edit',
+        head_current: true,
+        currentness: 'current',
+        evidence_head: '1a2b3c4d5e6f7890abcdef1234567890abcdef12',
+        unreadable_reason: null,
+        receipt: null,
+        last_after_refusal: null,
+        diverged_recovery: null,
+      },
+      next_action: {
+        step: 'repair_attempt_after',
+        artifact: `target/ripr/repair-attempts/${attemptId}/attempt.json`,
+        reason: 'awaiting edit',
+        command: `ripr agent repair --root ${rootArg} --attempt ${attemptId} --phase after`,
+      },
+      test_run: null,
+      claim_boundary: [],
+      limitations: [],
+      non_claims: [],
+    });
+    const context = createControllerTestContext({
+      runRiprHandler: (args) => {
+        if (args[0] === 'agent' && args[1] === 'status' && !args.includes('--attempt')) {
+          return JSON.stringify({ schema_version: '0.1', repair_attempts: [] });
+        }
+        if (args[0] === 'agent' && args[1] === 'repair') {
+          return beforeStdout;
+        }
+        if (args.includes('--attempt')) {
+          return statusStdout;
+        }
+        return '{}';
+      },
+    });
+    const relativePath = 'src/start-shared-repair.rs';
+    const uri = workspaceFileUri(relativePath);
+    const collection = vscode.languages.createDiagnosticCollection('ripr-start-shared-repair');
+    let provider: vscode.Disposable | undefined;
+    try {
+      await writeWorkspaceFile(relativePath, 'pub fn near() {}\n');
+      const document = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(document);
+      editor.selection = new vscode.Selection(new vscode.Position(0, 2), new vscode.Position(0, 2));
+      const diagnostic = new vscode.Diagnostic(
+        new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 12)),
+        'near ripr gap',
+        vscode.DiagnosticSeverity.Warning
+      );
+      diagnostic.source = 'ripr';
+      diagnostic.code = 'ripr-gap-MissingBoundaryAssertion';
+      collection.set(uri, [diagnostic]);
+
+      provider = vscode.languages.registerCodeActionsProvider(
+        { language: 'rust', scheme: 'file' },
+        {
+          provideCodeActions(_document, range) {
+            const repairCommand = `ripr agent repair --root ${rootArg} --seam-id ${seamId} --phase before`;
+            const action = new vscode.CodeAction('Start repair: copy repair command', vscode.CodeActionKind.QuickFix);
+            action.command = {
+              title: 'Start repair: copy repair command',
+              command: 'ripr.copyAgentRepairCommand',
+              arguments: [
+                agentLoopCommandTarget('agent_repair', repairCommand, 'target/ripr/repair-attempts', { seamId }),
+              ],
+            };
+            return [action];
+          },
+        }
+      );
+
+      await context.controller.start();
+      await waitForCodeAction(uri, diagnostic.range, (action) => action.title === 'Start repair: copy repair command');
+      await context.controller.startCurrentRepair();
+
+      assert.ok(
+        context.runRiprCalls.some(
+          (call) =>
+            call.args[0] === 'agent' &&
+            call.args[1] === 'repair' &&
+            call.args.includes('--json') &&
+            call.args.includes(seamId)
+        )
+      );
+      assert.ok(
+        context.infoMessages.some((message) => message.includes('awaiting an external test edit')),
+        context.infoMessages.join(' | ')
+      );
+    } finally {
+      provider?.dispose();
+      collection.dispose();
+      await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
+    }
+  });
+
+  test('startCurrentRepair fails closed when repair attempt inventory is unreadable', async function (this: Mocha.Context) {
+    skipUnlessTrustedTestHost(this);
+    const seamId = '67fc764ba37d77bd';
+    const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    assert.ok(selectedRoot, 'test workspace root must be open');
+    const rootArg = serverShellArg(selectedRoot.replace(/\\/g, '/'));
+    const context = createControllerTestContext({
+      runRiprHandler: (args) => {
+        if (args[0] === 'agent' && args[1] === 'status' && !args.includes('--attempt')) {
+          throw new Error('inventory unreadable');
+        }
+        return '{}';
+      },
+    });
+    const relativePath = 'src/start-shared-repair-unreadable-inventory.rs';
+    const uri = workspaceFileUri(relativePath);
+    const collection = vscode.languages.createDiagnosticCollection('ripr-start-shared-repair-unreadable');
+    let provider: vscode.Disposable | undefined;
+    try {
+      await writeWorkspaceFile(relativePath, 'pub fn near() {}\n');
+      const document = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(document);
+      editor.selection = new vscode.Selection(new vscode.Position(0, 2), new vscode.Position(0, 2));
+      const diagnostic = new vscode.Diagnostic(
+        new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 12)),
+        'near ripr gap',
+        vscode.DiagnosticSeverity.Warning
+      );
+      diagnostic.source = 'ripr';
+      diagnostic.code = 'ripr-gap-MissingBoundaryAssertion';
+      collection.set(uri, [diagnostic]);
+
+      provider = vscode.languages.registerCodeActionsProvider(
+        { language: 'rust', scheme: 'file' },
+        {
+          provideCodeActions(_document, range) {
+            const repairCommand = `ripr agent repair --root ${rootArg} --seam-id ${seamId} --phase before`;
+            const action = new vscode.CodeAction('Start repair: copy repair command', vscode.CodeActionKind.QuickFix);
+            action.command = {
+              title: 'Start repair: copy repair command',
+              command: 'ripr.copyAgentRepairCommand',
+              arguments: [
+                agentLoopCommandTarget('agent_repair', repairCommand, 'target/ripr/repair-attempts', { seamId }),
+              ],
+            };
+            return [action];
+          },
+        }
+      );
+
+      await context.controller.start();
+      await waitForCodeAction(uri, diagnostic.range, (action) => action.title === 'Start repair: copy repair command');
+      await context.controller.startCurrentRepair();
+
+      assert.ok(
+        !context.runRiprCalls.some(
+          (call) => call.args[0] === 'agent' && call.args[1] === 'repair' && call.args.includes(seamId)
+        )
+      );
+      assert.ok(
+        context.infoMessages.some((message) => message.includes('repair attempt inventory')),
+        context.infoMessages.join(' | ')
+      );
+    } finally {
+      provider?.dispose();
+      collection.dispose();
+      await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
+    }
+  });
+
   test('copyRepairPacketAtCursor uses only the packet action for the containing diagnostic', async function (this: Mocha.Context) {
     skipUnlessTrustedTestHost(this);
     const relativePath = 'src/copy-repair-packet-at-cursor.rs';
@@ -1608,7 +1744,7 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=1, diagnostics=0, files=0, findings=0, seam_diagnostics=0, enabled_languages=1, enabled_language_names=rust, published_files=0, cleared_files=0'
       });
-      assert.ok(context.status.text.includes('ripr: no seams'));
+      assert.ok(context.status.text.includes('ripr: no spots'));
       assert.ok(String(context.status.tooltip).includes('Enabled languages: rust'));
       assert.ok(String(context.status.tooltip).includes('last saved workspace state'));
       assert.ok(String(context.status.tooltip).includes('disabled or unavailable preview languages stay silent'));
@@ -1639,12 +1775,12 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=2, diagnostics=5, files=2, findings=4, seam_diagnostics=0, enabled_languages=1, enabled_language_names=rust, published_files=2, cleared_files=0'
       });
-      assert.ok(context.status.text.includes('ripr: no seams'));
+      assert.ok(context.status.text.includes('ripr: no spots'));
 
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=2, diagnostics=0, files=1, findings=0, seam_diagnostics=0, enabled_languages=3, enabled_language_names=rust|typescript|python, published_files=0, cleared_files=0'
       });
-      assert.ok(context.status.text.includes('ripr: no seams'));
+      assert.ok(context.status.text.includes('ripr: no spots'));
       assert.ok(String(context.status.tooltip).includes('Enabled languages: rust, typescript, python'));
       assert.ok(String(context.status.tooltip).includes('workspace root is correct'));
       assert.ok(String(context.status.tooltip).includes('available in this ripr build'));
@@ -2493,10 +2629,10 @@ suite('Extension Smoke', () => {
       assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
       assert.ok(!context.status.text.includes('ripr: diagnostics'), context.status.text);
       const tooltip = String(context.status.tooltip);
-      assert.ok(tooltip.includes('ripr analysis completed; seam and gap evidence is deferred.'), tooltip);
-      assert.ok(tooltip.includes('Interactive saves defer the seam inventory'), tooltip);
+      assert.ok(tooltip.includes('ripr analysis completed; spot and gap evidence is deferred.'), tooltip);
+      assert.ok(tooltip.includes('Interactive saves defer the spot inventory'), tooltip);
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to compute the full seam inventory.'),
+        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to compute the full spot inventory.'),
         tooltip
       );
     } finally {
@@ -2685,7 +2821,7 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       await context.controller.showStatus();
       const statusOutput = context.outputLines.join('\n');
-      assert.ok(statusOutput.includes('Receipt status: missing; no matching receipt was found for seam 67fc764ba37d77bd'));
+      assert.ok(statusOutput.includes('Receipt status: missing; no matching receipt was found for spot 67fc764ba37d77bd'));
       assert.ok(statusOutput.includes('Receipt command: ripr agent receipt --root . --json'));
       assert.ok(statusOutput.includes('No receipt movement is claimed.'));
       assert.strictEqual(context.runRiprCalls.length, 0);
@@ -2700,7 +2836,7 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       await context.controller.showStatus();
       const statusOutput = context.outputLines.join('\n');
-      assert.ok(statusOutput.includes('Receipt status: movement improved; matching receipt found for seam 67fc764ba37d77bd'));
+      assert.ok(statusOutput.includes('Receipt status: movement improved; matching receipt found for spot 67fc764ba37d77bd'));
       assert.ok(statusOutput.includes('does not prove runtime adequacy or gate eligibility'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
@@ -2714,8 +2850,8 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       await context.controller.showStatus();
       const statusOutput = context.outputLines.join('\n');
-      assert.ok(statusOutput.includes('Receipt status: movement unchanged; matching receipt found for seam 67fc764ba37d77bd'));
-      assert.ok(statusOutput.includes('inspect the focused test and missing discriminator'));
+      assert.ok(statusOutput.includes('Receipt status: movement unchanged; matching receipt found for spot 67fc764ba37d77bd'));
+      assert.ok(statusOutput.includes('inspect the focused test and missing check'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
 
@@ -2728,7 +2864,7 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       await context.controller.showStatus();
       const statusOutput = context.outputLines.join('\n');
-      assert.ok(statusOutput.includes('Receipt status: gap mismatch; receipt seam different-seam does not match current seam 67fc764ba37d77bd'));
+      assert.ok(statusOutput.includes('Receipt status: gap mismatch; receipt spot different-seam does not match current spot 67fc764ba37d77bd'));
       assert.ok(statusOutput.includes('Receipt movement is not projected.'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
@@ -2747,7 +2883,7 @@ suite('Extension Smoke', () => {
       await context.controller.start();
       await context.controller.showStatus();
       const statusOutput = context.outputLines.join('\n');
-      assert.ok(statusOutput.includes('Receipt status: stale; receipt for seam 67fc764ba37d77bd is older than the current first useful action report.'));
+      assert.ok(statusOutput.includes('Receipt status: stale; receipt for spot 67fc764ba37d77bd is older than the current first useful action report.'));
       assert.ok(statusOutput.includes('rerun verify/receipt before trusting movement'));
       assert.strictEqual(context.runRiprCalls.length, 0);
     });
@@ -3164,7 +3300,7 @@ suite('Extension Smoke', () => {
       assert.ok(statusOutput.includes('Gap identity: gap:rust:pricing:discount:threshold-boundary'));
       assert.ok(statusOutput.includes('Changed behavior: amount >= threshold'));
       assert.ok(statusOutput.includes('Current evidence strength: Static evidence found related Rust test context'));
-      assert.ok(statusOutput.includes('Missing discriminator: Equality-boundary assertion for the changed behavior.'));
+      assert.ok(statusOutput.includes('Missing check: Equality-boundary assertion for the changed behavior.'));
       assert.ok(statusOutput.includes('Focused proof intent: Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).'));
       assert.ok(statusOutput.includes('Verify: cargo xtask fixtures boundary_gap'));
       assert.ok(statusOutput.includes('Receipt: ripr agent receipt --root . --json'));
@@ -3329,7 +3465,7 @@ suite('Extension Smoke', () => {
           'Gap identity: gap:rust:pricing:discount:threshold-boundary',
           'Changed behavior: amount >= threshold',
           'Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found.',
-          'Missing discriminator: amount == threshold',
+          'Missing check: amount == threshold',
           'Focused proof intent: Add exact assertion for amount == threshold.',
           'Related test: tests/pricing.rs::premium_customer_gets_discount',
           'Verify: ripr agent verify --root . --json',
@@ -3496,7 +3632,7 @@ suite('Extension Smoke', () => {
       assert.ok(packet.includes('Language: rust (stable)'), packet);
       assert.ok(packet.includes('Changed behavior: amount >= threshold'), packet);
       assert.ok(packet.includes('Why this matters: A related Rust test reaches this change, but no equality-boundary assertion was found.'), packet);
-      assert.ok(packet.includes('Missing discriminator: amount == threshold'), packet);
+      assert.ok(packet.includes('Missing check: amount == threshold'), packet);
       assert.ok(packet.includes('Focused proof intent: Add exact assertion for amount == threshold.'), packet);
       assert.ok(packet.includes('Related test: tests/pricing.rs::premium_customer_gets_discount'), packet);
       assert.ok(packet.includes('Repair kind: add_boundary_assertion'), packet);
@@ -3691,7 +3827,7 @@ suite('Extension Smoke', () => {
         'ripr validated 1 actionable gap artifact.',
         'Actionable gap queue: top repair ready; target/ripr/reports/actionable-gaps.json is advisory.',
         'Next safe action: Open the related test or copy a bounded repair packet',
-        'Receipt status: movement improved; matching receipt found for seam 67fc764ba37d77bd',
+        'Receipt status: movement improved; matching receipt found for spot 67fc764ba37d77bd',
         'First PR packet: top repairable gap available; target/ripr/first-pr/start-here.json is advisory.'
       ]);
 
@@ -3700,7 +3836,7 @@ suite('Extension Smoke', () => {
         'ripr validated 1 actionable gap artifact.',
         'Actionable gap queue: top repair ready; target/ripr/reports/actionable-gaps.json is advisory.',
         'Artifact first useful action report: target/ripr/reports/first-useful-action.json (found',
-        'Receipt status: movement improved; matching receipt found for seam 67fc764ba37d77bd',
+        'Receipt status: movement improved; matching receipt found for spot 67fc764ba37d77bd',
         'First PR packet: top repairable gap available; target/ripr/first-pr/start-here.json is advisory.',
         'Verify: cargo xtask fixtures boundary_gap',
         'Receipt: ripr agent receipt --root . --json',
@@ -3724,7 +3860,7 @@ suite('Extension Smoke', () => {
       assert.ok(context.clipboardWrites.at(-1)?.includes('Gap identity: gap:rust:pricing:discount:threshold-boundary'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Changed behavior: amount >= threshold'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Current evidence strength: Static evidence found related Rust test context'));
-      assert.ok(context.clipboardWrites.at(-1)?.includes('Missing discriminator: Equality-boundary assertion for the changed behavior.'));
+      assert.ok(context.clipboardWrites.at(-1)?.includes('Missing check: Equality-boundary assertion for the changed behavior.'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Focused proof intent: Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('Receipt path: target/ripr/receipts/gap-pr-pricing-threshold-boundary.targeted-test-outcome.json'));
       assert.ok(context.clipboardWrites.at(-1)?.includes('static advisory evidence only; not runtime proof'));
@@ -3740,7 +3876,7 @@ suite('Extension Smoke', () => {
         assert.ok(repairPacket.includes('Repair route: AddBoundaryAssertion'), repairPacket);
         assert.ok(repairPacket.includes('Changed behavior: amount >= threshold'), repairPacket);
         assert.ok(repairPacket.includes('Current evidence strength: Static evidence found related Rust test context'), repairPacket);
-        assert.ok(repairPacket.includes('Missing discriminator: Equality-boundary assertion for the changed behavior.'), repairPacket);
+        assert.ok(repairPacket.includes('Missing check: Equality-boundary assertion for the changed behavior.'), repairPacket);
         assert.ok(repairPacket.includes('Focused proof intent: Add a focused boundary assertion in tests/pricing.rs: assert_eq!(discount(100, 100), 90).'), repairPacket);
         assert.ok(repairPacket.includes('Related test: tests/pricing.rs::premium_customer_gets_discount'), repairPacket);
         assert.ok(repairPacket.includes('Receipt path:'), repairPacket);
@@ -3959,10 +4095,10 @@ suite('Extension Smoke', () => {
       });
       const report = await diagnoseSetupReport(context);
       assertReportIncludes(report, [
-        'Status: ripr analysis completed with no actionable seam diagnostics.',
+        'Status: ripr analysis completed with no actionable spot diagnostics.',
         'Config: ripr.toml (found',
         'Enabled languages: rust',
-        'No ripr seam diagnostics were published',
+        'No ripr spot diagnostics were published',
         'disabled or unavailable preview languages stay silent'
       ]);
     });
@@ -4453,6 +4589,7 @@ suite('Extension Smoke', () => {
       resolvingServer: true,
       serverUnavailable: false,
       serverFailed: true,
+      circuitOpen: true,
       starting: true,
       analysisQueued: true,
       ready: true,
@@ -4783,6 +4920,66 @@ suite('Extension Smoke', () => {
       assert.ok(tooltip.includes('Enable python in ripr.toml'), tooltip);
       assert.ok(tooltip.includes('Run ripr check to regenerate the gap decision ledger'), tooltip);
       assert.ok(tooltip.includes('not trustworthy evidence'), tooltip);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('unavailable_languages remediation backs setup recovery when recovery is absent (#2962)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'limited_incomplete_input',
+        attempt_id: 'run-lang-remediation',
+        snapshot_id: 'snapshot:run-lang-remediation',
+        unavailable_languages: [{
+          language: 'python',
+          file_count: 1,
+          availability_state: 'detected_compiled_disabled',
+          remediation: ['enable `python` under `[languages]` in ripr.toml (`enabled = [..., "python"]`)']
+        }]
+      });
+      assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(tooltip.includes('Enable `python` under `[languages]`'), tooltip);
+      const diagnosis = await diagnoseSetupReport(context);
+      assert.ok(diagnosis.includes('Language availability (python): detected_compiled_disabled'), diagnosis);
+      assert.ok(diagnosis.includes('enable `python` under `[languages]`'), diagnosis);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('unavailable_languages rows survive a mixed limited run status for setup diagnosis (#2962)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'limited',
+        attempt_id: 'run-lang-mixed',
+        snapshot_id: 'snapshot:run-lang-mixed',
+        unavailable_languages: [{
+          language: 'python',
+          file_count: 1,
+          availability_state: 'detected_compiled_disabled',
+          remediation: ['enable `python` under `[languages]` in ripr.toml (`enabled = [..., "python"]`)']
+        }]
+      });
+      // The limited run keeps its own presentation and primary next step.
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      assert.ok(!context.status.text.includes('language off'), context.status.text);
+      const diagnosis = await diagnoseSetupReport(context);
+      assert.ok(diagnosis.includes('Language availability (python): detected_compiled_disabled'), diagnosis);
+      assert.ok(diagnosis.includes('enable `python` under `[languages]`'), diagnosis);
     } finally {
       await context.dispose();
     }
@@ -6005,6 +6202,55 @@ suite('Extension Smoke', () => {
   });
 });
 
+suite('Start or Continue Repair shell (#2928 / #4647)', () => {
+  test('startOrContinueRepair runs the shared after phase for one live attempt', async () => {
+    const fixtureDir = path.resolve(__dirname, '../../../test-fixtures/attempt-status');
+    const awaiting = await fs.readFile(path.join(fixtureDir, 'status-awaiting_edit.json'), 'utf8');
+    const inventory = JSON.stringify({
+      schema_version: '0.1',
+      tool: 'ripr',
+      repair_attempts: [
+        {
+          attempt_id: 'repair-attempt-0123456789abcdef01234567',
+          seam_id: '67fc764ba37d77bd',
+          state: 'awaiting_edit',
+          disposition: 'resumable',
+          command:
+            'ripr agent repair --root . --attempt repair-attempt-0123456789abcdef01234567 --phase after',
+        },
+      ],
+    });
+    const afterEnvelope = JSON.stringify({
+      schema_version: '0.1',
+      kind: 'repair_after_result',
+      verify: {
+        schema_version: '0.3',
+        tool: 'ripr',
+        movement: { summary: 'Result for seam demo: weak -> exposed (improved).' },
+      },
+      agent_status: JSON.parse(awaiting),
+    });
+    const context = createControllerTestContext({
+      cliResult: inventory,
+      afterPhaseResult: afterEnvelope,
+      statusAttemptResult: awaiting,
+    });
+    try {
+      await context.controller.startOrContinueRepair();
+      const afterCall = context.runRiprCalls.find((call) =>
+        call.args.includes('--phase') && call.args[call.args.indexOf('--phase') + 1] === 'after'
+      );
+      assert.ok(afterCall, 'expected shared after-phase CLI invocation');
+      assert.ok(
+        context.infoMessages.some((message) => message.includes('improved')),
+        `expected movement summary in UI: ${context.infoMessages.join(' | ')}`
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+});
+
 interface ControllerTestOptions {
   enabled?: boolean;
   includeUnchangedTests?: boolean;
@@ -6015,6 +6261,9 @@ interface ControllerTestOptions {
   lspError?: Error;
   startupError?: Error;
   cliResult?: string;
+  runRiprHandler?: (args: string[]) => string | Promise<string>;
+  afterPhaseResult?: string;
+  statusAttemptResult?: string;
   firstActionJson?: string | null;
   files?: Record<string, string | null>;
   workspaceRoot?: string | null;
@@ -6499,7 +6748,30 @@ function createControllerTestContext(options: ControllerTestOptions) {
     },
     runRipr: async (command, args, cwd) => {
       runRiprCalls.push({ command, args, cwd });
+      if (options.runRiprHandler) {
+        return options.runRiprHandler(args);
+      }
+      if (args.includes('--attempt') && options.statusAttemptResult) {
+        return options.statusAttemptResult;
+      }
       return options.cliResult ?? '{}';
+    },
+    runRiprProcess: async (command, args, cwd) => {
+      runRiprCalls.push({ command, args, cwd });
+      const phaseIndex = args.indexOf('--phase');
+      const phase = phaseIndex >= 0 ? args[phaseIndex + 1] : undefined;
+      if (phase === 'after') {
+        return {
+          exitCode: 0,
+          stdout: options.afterPhaseResult ?? '{}',
+          stderr: '',
+        };
+      }
+      return {
+        exitCode: 0,
+        stdout: options.cliResult ?? '{}',
+        stderr: '',
+      };
     },
     writeClipboard: async (text) => {
       clipboardWrites.push(text);

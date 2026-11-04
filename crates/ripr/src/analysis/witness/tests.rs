@@ -1130,6 +1130,32 @@ fn unspecified_repo_completeness_is_a_typed_limitation_not_optimistic_parity() {
 }
 
 #[test]
+fn production_retain_python_preview_finding_keeps_digest() {
+    let finding = FindingSpec {
+        language: Some(LanguageId::Python),
+        language_status: Some(LanguageStatus::Preview),
+        ..FindingSpec::default()
+    }
+    .build();
+    super::retain_finding_projection(&finding);
+    let witness = from_finding(&finding);
+    assert_eq!(witness.language, "python");
+    assert!(
+        witness
+            .limitations
+            .iter()
+            .any(|item| item == "preview_language")
+    );
+    assert!(
+        witness
+            .limitations
+            .iter()
+            .any(|item| item == "cross_language_limit")
+    );
+    assert!(witness.digest_matches());
+}
+
+#[test]
 fn production_retain_does_not_mutate_producer_classes_or_relations() {
     let finding = boundary_related_finding();
     let seam = boundary_related_seam();
@@ -1328,4 +1354,16 @@ fn unmatched_repo_witness_stays_in_repo_columns() {
     assert_eq!(row.repo_semantic_digest, repo.semantic_digest);
     assert_eq!(row.diff_target, "absent");
     assert_eq!(row.repo_target, repo.selected_target.kind());
+}
+
+#[test]
+fn rust_shared_witness_authority_uses_existing_adapter() {
+    use super::language_projection::shared_witness_from_rust_finding;
+
+    let finding = FindingSpec::default().build();
+    let input = AdapterInput::diff_current();
+    assert_eq!(
+        from_finding_with_input(&finding, input),
+        shared_witness_from_rust_finding(&finding, input)
+    );
 }

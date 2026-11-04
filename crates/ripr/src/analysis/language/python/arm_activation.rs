@@ -341,9 +341,10 @@ pub(super) fn builtin_names_intact(
         return false;
     }
     let lines: Vec<&str> = owner_source.lines().collect();
+    let modules = builtin_module_names(&lines);
     builtins.iter().all(|name| {
         !lines.iter().any(|line| binds_name(line.trim(), name))
-            && !lines.iter().any(|line| patches_builtin(line.trim(), name))
+            && !(0..lines.len()).any(|index| patches_builtin(&lines, index, name, &modules))
             && !lines.iter().any(|line| {
                 let trimmed = line.trim();
                 let names_it = mentions_identifier(trimmed, name);
@@ -363,23 +364,364 @@ pub(super) fn builtin_names_intact(
     })
 }
 
-/// Whether `line` rewrites the builtin `name` through the `builtins` module
-/// (`builtins.isinstance = f`, `setattr(builtins, ..)`), which no local binding
-/// shows (#12183). A line that mentions `builtins` together with `setattr` or
-/// `__dict__` is refused whatever it sets, because the written name may be
-/// computed; the guard then reads as unknown and keeps its credit.
-fn patches_builtin(line: &str, name: &str) -> bool {
-    if !mentions_identifier(line, "builtins") {
-        return false;
+/// The names the file can reach the builtins module by: `builtins`,
+/// `__builtins__`, and any `import builtins as <alias>` (#12206).
+fn builtin_module_names(lines: &[&str]) -> Vec<String> {
+    let mut modules = vec!["builtins".to_string(), "__builtins__".to_string()];
+    for line in lines {
+        let Some(imports) = line.trim().strip_prefix("import ") else {
+            continue;
+        };
+        for part in imports.split(',') {
+            let mut words = part.split_whitespace();
+            if let (Some("builtins"), Some("as"), Some(alias)) =
+                (words.next(), words.next(), words.next())
+            {
+                modules.push(alias.to_string());
+            }
+        }
     }
-    if line.contains("setattr") || line.contains("__dict__") {
+    modules
+}
+
+/// Whether the line at `index` rewrites the builtin `name` through the
+/// builtins module (`builtins.isinstance = f`, `__builtins__["isinstance"] =
+/// f`, `setattr(builtins, ..)`, `vars(builtins)[..] = f`), which no local
+/// binding shows (#12183, #12206). A `setattr`, `vars(` or `__dict__` line
+/// with a module name on it or in the next three lines (a call split across
+/// lines) is refused whatever it sets, because the written name may be
+/// computed. Whitespace is dropped before matching an assignment, so
+/// `builtins . isinstance = f` reads the same. A refusal only withholds a
+/// demotion: the guard reads as unknown and the arm keeps its credit.
+fn patches_builtin(lines: &[&str], index: usize, name: &str, modules: &[String]) -> bool {
+    let names_module = |text: &str| {
+        modules
+            .iter()
+            .any(|module| mentions_identifier(text, module))
+    };
+    let statement_range = statement_line_range(lines, index);
+    let statement_lines: Vec<&str> = statement_range.clone().map(|i| lines[i]).collect();
+    if statement_lines.iter().any(|line| {
+        let trimmed = line.trim();
+        (trimmed.contains("setattr") || trimmed.contains("__dict__") || trimmed.contains("vars("))
+            && statement_lines
+                .iter()
+                .any(|following| names_module(following.trim()))
+    }) {
         return true;
     }
-    let target = format!("builtins.{name}");
-    line.match_indices(&target).any(|(start, _)| {
-        let rest = line[start + target.len()..].trim_start();
-        rest.starts_with('=') && !rest.starts_with("==")
+    if !statement_lines.iter().any(|line| names_module(line.trim())) {
+        return false;
+    }
+    let compact = compact_statement(lines, index);
+    let spaced = spaced_statement(lines, index);
+    modules.iter().any(|module| {
+        [
+            format!("{module}.{name}"),
+            format!("{module}[\"{name}\"]"),
+            format!("{module}['{name}']"),
+        ]
+        .iter()
+        .any(|target| {
+            binds_in_header(&spaced, target)
+                || compact.match_indices(target.as_str()).any(|(start, _)| {
+                    let boundary = compact[..start]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
+                    boundary && rebinds_target(&compact, target)
+                })
+        })
     })
+}
+
+/// Inclusive index range of physical lines that form one statement with `index`.
+fn statement_line_range(lines: &[&str], index: usize) -> std::ops::RangeInclusive<usize> {
+    let mut start = index;
+    while start > 0 && line_continues_statement(lines[start - 1]) {
+        start -= 1;
+    }
+    let mut end = index;
+    while end + 1 < lines.len() && line_continues_statement(lines[end]) {
+        end += 1;
+    }
+    start..=end
+}
+
+/// Whether `line` continues onto the next physical line (#12593).
+fn line_continues_statement(line: &str) -> bool {
+    let trimmed = strip_comment(line.trim()).trim_end();
+    if trimmed.ends_with('\\') || trimmed.ends_with(',') {
+        return true;
+    }
+    let compact: String = trimmed.chars().filter(|ch| !ch.is_whitespace()).collect();
+    !compact.is_empty() && !closes_cleanly(&compact)
+}
+
+/// Whitespace-stripped text of the statement containing `lines[index]`.
+fn compact_statement(lines: &[&str], index: usize) -> String {
+    statement_line_range(lines, index)
+        .map(|line_index| strip_comment(lines[line_index].trim()))
+        .collect::<String>()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect()
+}
+
+/// Text of the statement containing `lines[index]` with comments removed and
+/// line breaks and `\` continuations turned into single spaces (#12591).
+fn spaced_statement(lines: &[&str], index: usize) -> String {
+    statement_line_range(lines, index)
+        .map(|line_index| {
+            let code = strip_comment(lines[line_index].trim());
+            code.strip_suffix('\\').unwrap_or(code).to_string()
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+/// `text` with the inside of every string literal replaced by `_`, so a
+/// keyword or delimiter inside a string is never read. The result has the
+/// same length as `text`.
+fn mask_strings(text: &str) -> Vec<u8> {
+    let (mut quote, mut escaped) = (0u8, false);
+    let mut masked = Vec::with_capacity(text.len());
+    for byte in text.bytes() {
+        if quote != 0 {
+            if escaped {
+                escaped = false;
+                masked.push(b'_');
+            } else if byte == b'\\' {
+                escaped = true;
+                masked.push(b'_');
+            } else if byte == quote {
+                quote = 0;
+                masked.push(byte);
+            } else {
+                masked.push(b'_');
+            }
+        } else {
+            if byte == b'"' || byte == b'\'' {
+                quote = byte;
+            }
+            masked.push(byte);
+        }
+    }
+    masked
+}
+
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// Whether `word` stands alone at `at` (not part of a longer name or an attribute).
+fn word_at(bytes: &[u8], at: usize, word: &str) -> bool {
+    let word = word.as_bytes();
+    bytes.get(at..at + word.len()) == Some(word)
+        && at
+            .checked_sub(1)
+            .and_then(|before| bytes.get(before))
+            .is_none_or(|&byte| !is_word_byte(byte) && byte != b'.')
+        && bytes
+            .get(at + word.len())
+            .is_none_or(|&byte| !is_word_byte(byte))
+}
+
+/// End of the target that starts at `from`: the first index at bracket depth
+/// zero where `stop` holds, or where an enclosing bracket closes.
+fn target_end(bytes: &[u8], from: usize, stop: impl Fn(&[u8], usize) -> bool) -> usize {
+    let mut depth = 0usize;
+    for (index, &byte) in bytes.iter().enumerate().skip(from) {
+        if depth == 0 && stop(bytes, index) {
+            return index;
+        }
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return index,
+            },
+            _ => {}
+        }
+    }
+    bytes.len()
+}
+
+/// Whether a `for` target (a loop header or comprehension clause) or a
+/// `with ... as` target in `statement` stores into `target` (#12591), so
+/// `for b.isinstance in items:`, `with ctx() as b.isinstance:` and
+/// `[0 for b.isinstance in items]` read as a rebinding. A plain
+/// `for x in items:` or `with ctx() as x:`, and a use of the attribute in the
+/// iterable or context expression, bind nothing. Strings are never read.
+fn binds_in_header(statement: &str, target: &str) -> bool {
+    let masked = mask_strings(statement);
+    let stores = |from: usize, end: usize| {
+        statement.get(from..end).is_some_and(|slice| {
+            let compact: String = slice.chars().filter(|ch| !ch.is_whitespace()).collect();
+            is_store_slot(&compact, target)
+        })
+    };
+    let is_with = (0..masked.len()).any(|at| word_at(&masked, at, "with"));
+    (0..masked.len()).any(|at| {
+        if word_at(&masked, at, "for") {
+            let from = at + "for".len();
+            stores(
+                from,
+                target_end(&masked, from, |bytes, index| word_at(bytes, index, "in")),
+            )
+        } else if is_with && word_at(&masked, at, "as") {
+            let from = at + "as".len();
+            stores(
+                from,
+                target_end(&masked, from, |bytes, index| {
+                    matches!(bytes.get(index), Some(b',' | b':'))
+                }),
+            )
+        } else {
+            false
+        }
+    })
+}
+
+/// Whether the line rebinds `target` (`builtins.name`, `builtins["name"]`;
+/// whitespace already removed) as an assignment store (#12222): a plain,
+/// chained or annotated `target = f`, a tuple/list/parenthesized target list,
+/// or an augmented assignment to `target` (#12592). Each `;` statement is read
+/// on its own, a comment or string never counts, and a use inside a call,
+/// subscript key or right-hand side, a comparison and a bare annotation bind
+/// nothing.
+fn rebinds_target(compact: &str, target: &str) -> bool {
+    split_top(strip_comment(compact), b';')
+        .into_iter()
+        .any(|statement| {
+            let segments = split_assignments(statement);
+            segments.len() > 1
+                && segments[..segments.len() - 1]
+                    .iter()
+                    .any(|segment| is_store_slot(segment, target))
+                || augmented_rebinds_statement(statement, target)
+        })
+}
+
+/// Whether `statement` aug-assigns into `target` (`+=`, `|=`, ...).
+fn augmented_rebinds_statement(statement: &str, target: &str) -> bool {
+    [
+        "+=", "-=", "*=", "/=", "//=", "%=", "@=", "&=", "|=", "^=", ">>=", "<<=", "**=",
+    ]
+    .iter()
+    .any(|op| {
+        statement
+            .split_once(op)
+            .is_some_and(|(lhs, _)| is_store_slot(lhs.trim(), target))
+    })
+}
+
+/// Whether `segment` (one assignment target) stores into `target`, directly,
+/// annotated (`target:type`), starred, or inside a bracketed target group.
+fn is_store_slot(segment: &str, target: &str) -> bool {
+    split_top(segment, b',').into_iter().any(|element| {
+        let element = element.trim_start_matches('*');
+        let group = element
+            .strip_prefix('(')
+            .and_then(|inner| inner.strip_suffix(')'))
+            .or_else(|| {
+                element
+                    .strip_prefix('[')
+                    .and_then(|inner| inner.strip_suffix(']'))
+            });
+        if let Some(inner) = group
+            && closes_cleanly(inner)
+        {
+            return is_store_slot(inner, target);
+        }
+        split_top(element, b':')[0] == target
+    })
+}
+
+/// Whether the brackets in `text` never close more than they open and end balanced.
+fn closes_cleanly(text: &str) -> bool {
+    let mut depth = 0usize;
+    for byte in text.bytes() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => match depth.checked_sub(1) {
+                Some(next) => depth = next,
+                None => return false,
+            },
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// `text` up to the first `#` outside a string.
+fn strip_comment(text: &str) -> &str {
+    let (mut quote, mut escaped) = (0u8, false);
+    for (index, byte) in text.bytes().enumerate() {
+        if quote != 0 {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
+                quote = 0;
+            }
+        } else if byte == b'"' || byte == b'\'' {
+            quote = byte;
+        } else if byte == b'#' {
+            return &text[..index];
+        }
+    }
+    text
+}
+
+/// Splits `text` at `separator` outside brackets and strings. Every
+/// separator is ASCII, so each slice sits on a character boundary.
+fn split_top(text: &str, separator: u8) -> Vec<&str> {
+    split_where(text, |bytes, index| bytes[index] == separator)
+}
+
+/// Splits at each plain assignment `=`: not part of `==`, `!=`, `<=`, `>=`,
+/// `:=` or an augmented operator (`+=`, `|=`, ...).
+fn split_assignments(text: &str) -> Vec<&str> {
+    split_where(text, |bytes, index| {
+        bytes[index] == b'='
+            && bytes.get(index + 1) != Some(&b'=')
+            && index
+                .checked_sub(1)
+                .is_none_or(|at| !b"=!<>:+-*/%&|^@~".contains(&bytes[at]))
+    })
+}
+
+fn split_where(text: &str, splits: impl Fn(&[u8], usize) -> bool) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let (mut depth, mut quote, mut from) = (0usize, 0u8, 0usize);
+    let mut escaped = false;
+    let mut parts = Vec::new();
+    for (index, &byte) in bytes.iter().enumerate() {
+        if quote != 0 {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote {
+                quote = 0;
+            }
+            continue;
+        }
+        match byte {
+            b'"' | b'\'' => quote = byte,
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && splits(bytes, index) => {
+                parts.push(&text[from..index]);
+                from = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[from..]);
+    parts
 }
 
 fn alternative_matches(pattern: &str, value: &str, builtins: bool) -> Option<bool> {

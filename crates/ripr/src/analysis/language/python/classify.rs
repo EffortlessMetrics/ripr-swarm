@@ -963,6 +963,20 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             &focus,
             no_behavior.sole_line_replacement,
         )
+        .or_else(|| {
+            // A nested function whose result the enclosing body discards is
+            // reached by a call, not observed by a result (#12182).
+            matches!(family, ProbeFamily::ReturnValue)
+                .then(|| {
+                    super::nested_result::python_nested_result_gap(
+                        owner,
+                        line_text,
+                        old_line_text,
+                        &related_candidates,
+                    )
+                })
+                .flatten()
+        })
     })
     .flatten();
     let mut table_downgraded = false;
@@ -1615,6 +1629,19 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     } else {
         0.4
     };
+    // #10700 / #12419: the score above is a per-class constant, so name why it
+    // is capped. Evidence-derived and explanatory only: it never changes the
+    // score or any actionability decision.
+    let strong_oracle_present = strongest_strength >= OracleStrength::Strong.rank();
+    let boundary_input_matched = !strong_oracle_present || boundary_gap.is_none();
+    let confidence_basis = crate::domain::ConfidenceCap::for_preview(
+        &class,
+        &crate::domain::ConfidenceBasisInputs {
+            has_related_test: has_oracle_eligible_relation,
+            strong_oracle_present,
+            boundary_input_matched,
+        },
+    );
 
     let mut evidence = vec![
         format!("owner: {}", owner.qualified_name),
@@ -1693,6 +1720,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             boundary_fact: crate::domain::input_boundary_fact(
                 &missing_discriminators,
                 &ProbeFamily::Predicate,
+            ),
+            exact_discriminator_fact: crate::domain::row_exact_discriminator_fact(
+                &missing_discriminators,
+                &family,
             ),
         },
         alignment_prep,
@@ -1854,7 +1885,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     .into_public();
     let mut finding = Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
-        confidence_basis: Vec::new(),
+        confidence_basis,
         id: probe.id.0.clone(),
         canonical_gap,
         probe,

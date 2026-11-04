@@ -57,6 +57,10 @@ url = "https://github.com/EffortlessMetrics/ripr-swarm"
 sha = "7c64b9c8d0778cc7a6aeaab0deb0452d9e521663"
 note = "large workspace (~900 files); pinned, not the checkout under test"
 heavy = true
+# Ratchet ceilings (smaller-size control): just above the hosted run of
+# 2026-11-04 (8.2 s / 551 MB warm) with about 30% headroom for runner noise.
+# Hold this row where it is.
+ceilings = { "speed.warm_check_ms" = 11000, "speed.warm_check_peak_rss_mb" = 720 }
 
 # Larger workspaces, where the inner loop is judged. Warm checks on small
 # libraries meet the 2 s bar easily; these rows are the ones that can miss it.
@@ -101,6 +105,13 @@ url = "https://github.com/EffortlessMetrics/ripr-swarm"
 sha = "8fbe8bd1598e0b11752c6c989aa54198a0510a2f"
 note = "this repository at its 2026-10 size (~2100 .rs files), a fixed pin that will stop being current; the commit edits product Rust under crates/ripr, so the warm check pays for the macro-binding scan"
 heavy = true
+# Ratchet ceilings, not goals. Set just above what main measures today so the
+# row stops creeping: warm check 49.8 s / 1,275 MB and cold pilot 269 s /
+# 1,446 MB hosted (run 41750179854); 35.5 s warm / 59.6 s cold / 1.3 GB local
+# on a 3,280-file checkout. Ratchet goals for this repository (not the global metric targets
+# below): warm check 10 s / 768 MB, cold pilot 60 s (RSS 1,024 MB). Lower these in the PR that earns the gain; never
+# raise them.
+ceilings = { "speed.warm_check_ms" = 60000, "speed.warm_check_peak_rss_mb" = 1536, "speed.cold_pilot_ms" = 300000, "speed.cold_pilot_peak_rss_mb" = 2048 }
 
 # No-Rust diffs. The pinned change touches no `.rs` file, so the warm check
 # should finish without analyzing the workspace. `cargo xtask dx-scoreboard`
@@ -239,6 +250,20 @@ note = "pnpm monorepo whose package is packages/remeda; the commit edits package
 # was warm (about four runs). The ceilings are a regression gate set above the
 # measured second run (48.6 s, 457 MiB on 4 cores), not the 2 s target; tighten
 # them as the steady-state costs come down.
+#
+# The hosted nightlies recorded this row's warm check as `incomplete`
+# (`partial_with_limitations`), so its 4.7 s / 345 MiB were not admissible
+# values. A release build of main on the pinned commit shows why (#12743): the
+# outcome is `partial_with_limitations` from ten typed `language_scope_unsupported`
+# limitations only (47 test files with unindexed shapes, 9,459 workspace files
+# refused by the TypeScript read caps, and per-file read-budget exhaustion), with
+# 26 `no_static_path` findings. The row declares that typed partial result, as
+# `typescript-compiler` does, so the ceilings below are measured on the outcome
+# the default caps produce; a complete result or any other limitation beside it
+# fails the row (#12052). The ceilings stay at their local calibration. The
+# route to a complete result is the read-cap cost work in #11676 and #11767
+# (raising the caps to 2 GiB did not finish in 500 s); the DI-factory
+# receiver miss behind the 26 `no_static_path` findings is #12755.
 [[corpus]]
 id = "vscode-typescript"
 url = "https://github.com/microsoft/vscode"
@@ -247,6 +272,7 @@ language = "typescript"
 note = "very large TypeScript application (5,328 files); commit edits agentHostChangesetCoordinator.ts, agentHostChangesetFileMonitorCoordinator.ts and the coordinator test"
 heavy = true
 ceilings = { "speed.warm_check_ms" = 90000, "speed.warm_check_peak_rss_mb" = 1024 }
+expected_partial = "language_scope_unsupported"
 
 # The TypeScript compiler's own repository: the workspace walk stops at the
 # 20,000-entry cap, so the row pins the refusal rather than a verdict (#11794).
@@ -255,14 +281,30 @@ ceilings = { "speed.warm_check_ms" = 90000, "speed.warm_check_peak_rss_mb" = 102
 # reported zero findings because the changed file was never discovered. Measured
 # on 4 cores: 16.1 s cold, 2.6 s warm, 62 MiB. The ceilings are a regression
 # gate above those numbers, not a claim that the 2 s bar is met.
+#
+# At this pin the walk no longer reaches the 20,000-entry cap (the
+# `tests/baselines/reference` prune, #11984), but the analysis is still
+# `partial_with_limitations`: the diff adds generated baseline `.js` files the
+# preview adapter skips, a test file registers tests the extractor does not
+# index, and the added test fixture does not parse. All three are typed
+# `language_scope_unsupported` limitations. A warm-check sample is admitted only
+# from a complete analysis, so both hosted nightlies of 2026-11-01 and the
+# 2026-11-02 run recorded this row's `speed.warm_check_*` as `incomplete`.
+# `expected_partial` declares the intended outcome: the sample is admitted only
+# when the analysis is the typed partial outcome and its only limitations are
+# of the declared kind. A complete result, or any other limitation kind
+# beside it, fails the row. The admitted row stays visibly partial and is
+# never scanned for contradictions.
+# The ceilings stay (#12052).
 [[corpus]]
 id = "typescript-compiler"
 url = "https://github.com/microsoft/TypeScript"
 sha = "ad04bf7488384a5dcdf7d250ccb8e5263021a8ff"
 language = "typescript"
-note = "TypeScript compiler repository (over the 20,000-entry workspace-walk cap); commit fixes declaration emit for nested binding patterns in src/compiler and adds baseline files"
+note = "TypeScript compiler repository; commit fixes declaration emit for nested binding patterns in src/compiler and adds baseline files"
 heavy = true
 ceilings = { "speed.warm_check_ms" = 5000, "speed.warm_check_peak_rss_mb" = 256 }
+expected_partial = "language_scope_unsupported"
 
 [[corpus]]
 id = "hono-typescript"
@@ -945,6 +987,46 @@ regression_additive = true
 runner_dependent = true
 per_repo = true
 source = "ingest:first-run"
+
+# --------------------------------------------------------------- repair ----
+# First-hour repair funnel (#6308). Host-sensitive durations stay advisory
+# until runner policy is ratified; zero selected cases remain not_measured.
+
+[[metric]]
+id = "repair.time_to_verified_improvement_ms"
+board = "repair"
+title = "Install to verified improvement or closure (project verification plus static movement)"
+unit = "ms"
+direction = "lower_is_better"
+target = 600000
+regression_pct = 25
+regression_floor = 60000
+runner_dependent = true
+source = "ingest:repair-funnel"
+
+[[metric]]
+id = "repair.time_to_first_honest_result_ms"
+board = "repair"
+title = "Install to first decisive honest result on the first-run walk"
+unit = "ms"
+direction = "lower_is_better"
+target = 300000
+regression_pct = 25
+regression_floor = 30000
+runner_dependent = true
+source = "ingest:repair-funnel"
+
+[[metric]]
+id = "repair.selected_case_count"
+board = "repair"
+title = "Governed funnel cases selected for real-route denominators"
+unit = "cases"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "ingest:repair-funnel"
 
 # ------------------------------------------------------------------ agent ----
 # Help-only agents fixing seeded test gaps on pinned crates, scored with

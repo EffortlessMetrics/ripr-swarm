@@ -15,8 +15,9 @@
 
 use super::nesting::parse_clean_source_file;
 use super::ra::LineIndex;
+use crate::analysis::facts::MacroGeneratedOrigin;
 use ra_ap_syntax::{
-    AstNode, SyntaxNode,
+    AstNode, SyntaxNode, TextSize,
     ast::{self, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -305,6 +306,172 @@ pub(super) fn name_scopes_in_tree(
     Some(NameScopes { scopes })
 }
 
+/// Whether a macro expansion declares anything beyond top-level functions:
+/// a `use`, a nested `fn`, a type or a constant. Any of them can rebind a
+/// name the invocation-site scopes would resolve, so a test generated from
+/// such an expansion must not borrow those scopes (#12320). An unparseable
+/// expansion is treated as declaring.
+pub(crate) fn expansion_declares_items(text: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(text) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        let top_level_fn = ast::Fn::can_cast(node.kind())
+            && node
+                .parent()
+                .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
+        let item = ast::Item::can_cast(node.kind())
+            && !top_level_fn
+            && !ast::MacroCall::can_cast(node.kind());
+        item || opaque_macro_call(&node) || binds_outside_a_let(&node)
+    })
+}
+
+/// Single-segment std macros that expand to expressions and bind no names.
+const NAME_FREE_STD_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "matches",
+    "format",
+    "vec",
+    "println",
+    "eprintln",
+    "print",
+    "eprint",
+    "panic",
+    "write",
+    "writeln",
+    "dbg",
+    "unreachable",
+    "unimplemented",
+    "todo",
+];
+
+/// A macro call in the generated body whose expansion cannot be seen: an
+/// external macro such as `helpers::bind!()` may expand to a `use` that
+/// rebinds a callee. Only the std expression macros above are exempt, and only
+/// as a bare name; a path call or any other name is treated as a possible
+/// declaration so the test borrows no invocation scopes (#12320).
+fn opaque_macro_call(node: &SyntaxNode) -> bool {
+    let Some(call) = ast::MacroCall::cast(node.clone()) else {
+        return false;
+    };
+    let Some(path) = call.path() else {
+        return true;
+    };
+    let single = path.qualifier().is_none();
+    let name = path.segment().map(|segment| segment.to_string());
+    !(single && name.is_some_and(|name| NAME_FREE_STD_MACROS.contains(&name.as_str())))
+}
+
+/// A binding pattern whose owner is not a plain `let` statement: a closure or
+/// function parameter, a `for` pattern, an `if let`/`while let` condition or a
+/// `match` arm. `let` bindings are tracked by the test fact's shadow lines;
+/// these are not, so they could rebind a callee invisibly (#12320).
+fn binds_outside_a_let(node: &SyntaxNode) -> bool {
+    if !ast::IdentPat::can_cast(node.kind()) {
+        return false;
+    }
+    node.ancestors()
+        .skip(1)
+        .find(|ancestor| !ast::Pat::can_cast(ancestor.kind()))
+        .is_some_and(|owner| !ast::LetStmt::can_cast(owner.kind()))
+}
+
+/// Name scopes for a test summary. An authored test resolves through its own
+/// function body. A macro-generated test is pinned to its invocation line,
+/// where no `fn` exists, so it borrows the module scopes visible at the
+/// invocation instead (#12320) unless its expanded body declares its own
+/// `use` or item: those can rebind a callee that the invocation-site scopes
+/// would resolve to a different owner, so such a test gets no scopes.
+/// Provenance, not a line lookup, selects the path: a same-name `fn` on the
+/// invocation line is never consulted for a generated test.
+pub(crate) fn name_scopes_for_test_caller(
+    tree: &ast::SourceFile,
+    line_index: &LineIndex,
+    fn_line: usize,
+    fn_name: &str,
+    generated: Option<MacroGeneratedOrigin>,
+) -> Option<NameScopes> {
+    match generated {
+        None => name_scopes_in_tree(tree, line_index, fn_line, fn_name),
+        Some(origin) if origin.body_declares_items => None,
+        Some(_) => name_scopes_at_line(tree, line_index, fn_line),
+    }
+}
+
+fn name_scopes_at_line(
+    tree: &ast::SourceFile,
+    line_index: &LineIndex,
+    line: usize,
+) -> Option<NameScopes> {
+    let start = line_index.line_start(line)?;
+    let offset = TextSize::try_from(start).ok()?;
+    // An indented invocation's first byte sits inside a whitespace token that
+    // began on the previous line; step past trivia to the first real token.
+    let mut token = tree.syntax().token_at_offset(offset).right_biased()?;
+    while token.kind().is_trivia() {
+        token = token.next_token()?;
+    }
+    if line_index.line(token.text_range().start()) != line {
+        return None;
+    }
+    // The line must open an item-position macro invocation; anything else
+    // (a closing brace, a one-line `mod a { gen!(..) }`) is not the pinned
+    // invocation, so fail closed.
+    let invocation = token.parent()?.ancestors().find_map(ast::MacroCall::cast)?;
+    if line_index.line(invocation.syntax().text_range().start()) != line {
+        return None;
+    }
+    // Generated tests are pinned to a line, not an offset: when several
+    // invocations start there, which one a test came from is unknown.
+    let invocations_on_line = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| line_index.line(call.syntax().text_range().start()) == line)
+        .count();
+    if invocations_on_line != 1 {
+        return None;
+    }
+    let modules_of = |node: &SyntaxNode| {
+        let mut modules: Vec<String> = node
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .filter_map(|module| module.name().map(|ident| ident.text().to_string()))
+            .collect();
+        modules.reverse();
+        modules
+    };
+    let mut scopes = Vec::new();
+    for ancestor in invocation.syntax().ancestors() {
+        if ast::Fn::can_cast(ancestor.kind()) {
+            // Macro-generated tests are pinned to an item-position invocation;
+            // an invocation inside a function body is refused by the expander.
+            return None;
+        }
+        if let Some(module) = ast::Module::cast(ancestor.clone()) {
+            let mut scope = NameScope {
+                modules: modules_of(&ancestor),
+                ..NameScope::default()
+            };
+            if let Some(items) = module.item_list() {
+                for item in items.items() {
+                    record_item(&item, &mut scope);
+                }
+            }
+            scopes.push(scope);
+        } else if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
+            scopes.push(name_scope_for_file(&file));
+        }
+    }
+    (!scopes.is_empty()).then_some(NameScopes { scopes })
+}
+
 /// End line of the closure body when `pattern` is a parameter of a closure
 /// expression, else `None`. Only a closure parameter's shadow is bounded,
 /// so a shadowed call in one closure never vetoes the outer real calls.
@@ -464,6 +631,16 @@ pub(crate) fn path_segments(path: &ast::Path) -> Option<Vec<String>> {
         segments.push(segment.name_ref()?.text().to_string());
     }
     (!segments.is_empty()).then_some(segments)
+}
+
+/// Import leaves of one use item, sharing the same grouped-path reading as
+/// function name scopes. The caller supplies the item's lexical scope.
+pub(crate) fn use_item_bindings(item: &ast::Use) -> NameScope {
+    let mut scope = NameScope::default();
+    if let Some(tree) = item.use_tree() {
+        flatten_use_tree(&tree, Some(Vec::new()), &mut scope);
+    }
+    scope
 }
 
 /// `prefix` is `None` once an enclosing tree's path could not be read: its
@@ -719,6 +896,131 @@ mod tests {
         assert_eq!(imports_of(tests, "other_render"), vec![UseBinding::Opaque]);
         assert_eq!(imports_of(tests, "a"), vec![UseBinding::Opaque]);
         assert_eq!(tests.globs, vec![None]);
+    }
+
+    fn generated_scopes(source: &str, line: usize, name: &str, items: bool) -> Option<NameScopes> {
+        let parse = parse_clean_source_file(source)?;
+        name_scopes_for_test_caller(
+            &parse.tree(),
+            &LineIndex::new(source),
+            line,
+            name,
+            Some(MacroGeneratedOrigin {
+                body_declares_items: items,
+            }),
+        )
+    }
+
+    fn has_owner_import(scopes: &NameScopes) -> bool {
+        scopes.scopes.iter().any(|scope| {
+            imports_of(scope, "owner") == vec![UseBinding::Path(strings(&["demo", "owner"]))]
+        })
+    }
+
+    #[test]
+    fn macro_invocation_line_borrows_enclosing_module_imports() -> Result<(), String> {
+        let source = "\
+use demo::owner;\n\
+child_table! {\n\
+    child_under(3, 5, true)\n\
+}\n";
+        let scopes = generated_scopes(source, 2, "child_under", false)
+            .ok_or_else(|| "invocation scopes".to_string())?;
+        assert!(has_owner_import(&scopes), "{scopes:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn indented_macro_invocation_keeps_module_imports() -> Result<(), String> {
+        let source = "\
+mod tests {\n\
+    use demo::owner;\n\
+    child_table!(child_under);\n\
+}\n";
+        let scopes = generated_scopes(source, 3, "child_under", false)
+            .ok_or_else(|| "indented invocation scopes".to_string())?;
+        assert!(has_owner_import(&scopes), "{scopes:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn generated_test_never_borrows_a_same_name_sibling_on_its_line() {
+        // `mod a { gen!(case); } mod b { #[test] fn case() {..} }` on one line:
+        // the line does not open the invocation, so no scopes, and the
+        // sibling's `use` is never lent to the generated test.
+        let source = "\
+mod a { child_table!(case); } mod b { use demo::owner; #[test] fn case() { owner(1); } }\n";
+        assert!(generated_scopes(source, 1, "case", false).is_none());
+    }
+
+    #[test]
+    fn authored_test_on_the_invocation_line_is_not_a_generated_one() {
+        // Provenance, not the line, selects the path: an authored summary
+        // never takes the invocation fallback.
+        let source = "use demo::owner;\nchild_table!(case);\n";
+        let parse = parse_clean_source_file(source);
+        assert!(parse.is_some());
+        let tree = parse.map(|parse| parse.tree());
+        assert!(tree.is_some_and(|tree| {
+            name_scopes_for_test_caller(&tree, &LineIndex::new(source), 2, "case", None).is_none()
+        }));
+    }
+
+    #[test]
+    fn opaque_macro_calls_in_a_generated_body_may_declare() {
+        // `helpers::bind!()` may expand to a `use`; a bare name that is not a
+        // known std expression macro may too. Bare std assertions are exempt.
+        assert!(expansion_declares_items(
+            "fn t() { helpers::bind!(); owner(1); }"
+        ));
+        assert!(expansion_declares_items("fn t() { bind!(); owner(1); }"));
+        assert!(expansion_declares_items(
+            "fn t() { std::assert_eq!(1, 1); }"
+        ));
+        assert!(!expansion_declares_items(
+            "fn t() { assert_eq!(owner(1), 2); }"
+        ));
+    }
+
+    #[test]
+    fn several_invocations_on_one_line_borrow_no_scopes() {
+        let source = "use demo::a::render;\nt!(one); mod x { use demo::b::render; t!(two); }\n";
+        assert!(generated_scopes(source, 2, "two", false).is_none());
+        assert!(generated_scopes(source, 2, "one", false).is_none());
+    }
+
+    #[test]
+    fn non_let_bindings_in_an_expansion_count_as_declarations() {
+        for body in [
+            "let f = |render: i32| render + 1; f(1);",
+            "for render in 0..1 { render; }",
+            "if let Some(render) = x { render; }",
+            "match x { Some(render) => render, None => 0 };",
+        ] {
+            let text = format!("#[test]\nfn case() {{ {body} }}\n");
+            assert!(expansion_declares_items(&text), "{body}");
+        }
+        assert!(!expansion_declares_items(
+            "#[test]\nfn case() { let want = 3; assert_eq!(owner(1), want); }\n"
+        ));
+    }
+
+    #[test]
+    fn expansion_with_local_items_borrows_no_invocation_scopes() {
+        let source = "use demo::owner;\nchild_table!(case);\n";
+        assert!(generated_scopes(source, 2, "case", true).is_none());
+        assert!(!expansion_declares_items(
+            "#[test]\nfn case() { assert_eq!(owner(1), 2); }\n"
+        ));
+        assert!(expansion_declares_items(
+            "#[test]\nfn case() { use other::owner; assert_eq!(owner(1), 2); }\n"
+        ));
+        assert!(expansion_declares_items(
+            "use other::owner;\n#[test]\nfn case() { owner(1); }\n"
+        ));
+        assert!(expansion_declares_items(
+            "#[test]\nfn case() { fn owner() {} owner(); }\n"
+        ));
     }
 
     #[test]

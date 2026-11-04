@@ -27,7 +27,9 @@ use crate::domain::{
     select_canonical_next_action,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
-use crate::output::markdown::{PowershellForm, command_shell_disclosure, powershell_form};
+use crate::output::markdown::{
+    PowershellForm, command_shell_disclosure, powershell_form, short_command_shell_note,
+};
 use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -387,11 +389,20 @@ pub(crate) fn build_agent_status_report_from(
     let gate = RepairStartGate::new(root);
     let repair_attempts =
         inspect_repair_attempts(root, &command_root, &receipt, &mut warnings, store, &gate);
-    let store_flag = quoted_store_flag(store);
-    let store_locator = store
-        .map(|path| path.to_string_lossy().replace("\\", "/"))
-        .filter(|locator| !locator.is_empty())
-        .unwrap_or_else(|| REPAIR_ATTEMPT_DIRECTORY.to_string());
+    let (store_flag, store_locator) = match resolve_store(
+        root,
+        store,
+        crate::app::repair_attempt::RepairAttemptStoreAccess::Open,
+    ) {
+        Ok(resolved) => (resolved.quoted_store_flag(), resolved.locator().to_string()),
+        Err(_) => (
+            quoted_store_flag(store),
+            store
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .filter(|locator| !locator.is_empty())
+                .unwrap_or_else(|| REPAIR_ATTEMPT_DIRECTORY.to_string()),
+        ),
+    };
     let next_command = select_next_command(
         &command_root,
         seam.as_ref(),
@@ -1169,6 +1180,7 @@ fn canonical_next_action_for_inventory(
     store: &StoreFollowUp<'_>,
     resumable: &[&AgentStatusRepairAttempt],
     open_seams: &[&str],
+    gate: &RepairStartGate,
 ) -> Result<CanonicalNextActionV1, String> {
     let attempts = resumable
         .iter()
@@ -1186,6 +1198,11 @@ fn canonical_next_action_for_inventory(
         [attempt] => attempt.seam_id.clone(),
         _ => String::new(),
     };
+    let item_candidates: Vec<String> = open_seams.iter().map(|seam| (*seam).to_string()).collect();
+    let item_candidate_labels: Vec<String> = open_seams
+        .iter()
+        .map(|seam| gate.select_item_label_for_seam(seam).unwrap_or_default())
+        .collect();
     select_canonical_next_action(&NextActionInput {
         producer: NextActionProducer::RepairAttemptStatus,
         root: root_display.to_string(),
@@ -1198,7 +1215,8 @@ fn canonical_next_action_for_inventory(
         item_id,
         check_item: None,
         card_item: None,
-        item_candidates: open_seams.iter().map(|seam| (*seam).to_string()).collect(),
+        item_candidates,
+        item_candidate_labels,
         attempts,
         currentness: NextActionCurrentness {
             head_expected: None,
@@ -1268,7 +1286,7 @@ fn select_next_command(
     let resumable_decision = if resumable.is_empty() {
         Err("no resumable attempt; start one with `ripr agent start`".to_string())
     } else {
-        canonical_next_action_for_inventory(root_display, &store, &resumable, &[])
+        canonical_next_action_for_inventory(root_display, &store, &resumable, &[], gate)
     };
     let choose_attempt = inventory_requires_choice(
         &resumable_decision,
@@ -1352,7 +1370,7 @@ fn select_next_command(
     let open_decision = if open_seam_ids.is_empty() {
         Err("no open gap in the attempt inventory; start one with `ripr agent start`".to_string())
     } else {
-        canonical_next_action_for_inventory(root_display, &store, &[], &open_seam_ids)
+        canonical_next_action_for_inventory(root_display, &store, &[], &open_seam_ids, gate)
     };
     let choose_seam = inventory_requires_choice(
         &open_decision,
@@ -2496,11 +2514,18 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         if next.runs_after_test_edit() {
             rendered.push_str(&format!("{AFTER_TEST_EDIT_NOTE}\n\n"));
         }
-        rendered.push_str(command_shell_disclosure());
+        // A command that runs unchanged in PowerShell needs only the short note;
+        // the full quoting paragraph is for commands that have a second form.
+        let form = powershell_form(&next.command);
+        if matches!(form, PowershellForm::SameAsBash) {
+            rendered.push_str(short_command_shell_note());
+        } else {
+            rendered.push_str(command_shell_disclosure());
+        }
         rendered.push_str("```bash\n");
         rendered.push_str(&next.command);
         rendered.push_str("\n```\n");
-        match powershell_form(&next.command) {
+        match form {
             PowershellForm::Translated(line) => {
                 rendered.push_str("\n```powershell\n");
                 rendered.push_str(&line);
@@ -3154,6 +3179,7 @@ fn canonical_next_action_for_attempt(
         check_item: None,
         card_item: None,
         item_candidates: Vec::new(),
+        item_candidate_labels: Vec::new(),
         attempts: vec![NextActionAttemptView {
             id: id.to_string(),
             // A finished attempt is terminal whether current or
@@ -5710,8 +5736,14 @@ mod tests {
 
         // Several resumable attempts: the decision is a choice, the render
         // refuses to pick one and names every after command.
-        let decision =
-            canonical_next_action_for_inventory(".", &inventory_store(), &[&one, &two], &[])?;
+        let gate = RepairStartGate::new(&root);
+        let decision = canonical_next_action_for_inventory(
+            ".",
+            &inventory_store(),
+            &[&one, &two],
+            &[],
+            &gate,
+        )?;
         assert_eq!(decision.action_class(), NextActionClass::ChooseAttempt);
         let mut warnings = Vec::new();
         let next = select_next_command(
@@ -5731,7 +5763,9 @@ mod tests {
 
         // One resumable attempt: the decision binds it and awaits its edit,
         // and the render offers that attempt's recorded after command.
-        let decision = canonical_next_action_for_inventory(".", &inventory_store(), &[&one], &[])?;
+        let gate = RepairStartGate::new(&root);
+        let decision =
+            canonical_next_action_for_inventory(".", &inventory_store(), &[&one], &[], &gate)?;
         assert_eq!(
             decision.action_class(),
             NextActionClass::SatisfyPrerequisite
@@ -5753,11 +5787,13 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
 
         // Several open seams: the decision is an item choice.
+        let gate = RepairStartGate::new(&root);
         let decision = canonical_next_action_for_inventory(
             ".",
             &inventory_store(),
             &[],
             &["seam-a", "seam-b"],
+            &gate,
         )?;
         assert_eq!(decision.action_class(), NextActionClass::ChooseItem);
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
@@ -5772,8 +5808,10 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         let one = synthetic_attempt("a", "seam-a", "resumable", Some("after a"));
         let two = synthetic_attempt("b", "seam-b", "resumable", Some("after b"));
+        let gate = RepairStartGate::new(&root);
         assert!(
-            canonical_next_action_for_inventory("", &inventory_store(), &[&one], &[]).is_err(),
+            canonical_next_action_for_inventory("", &inventory_store(), &[&one], &[], &gate)
+                .is_err(),
             "an unbound root must not produce a decision"
         );
         let mut warnings = Vec::new();
@@ -5826,10 +5864,18 @@ mod tests {
     /// candidates.
     #[test]
     fn inventory_decision_human_and_json_agree_from_one_dto() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("inventory-dto-agree");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
         let one = synthetic_attempt("a", "seam-a", "resumable", Some("after a"));
         let two = synthetic_attempt("b", "seam-b", "resumable", Some("after b"));
-        let decision =
-            canonical_next_action_for_inventory(".", &inventory_store(), &[&one, &two], &[])?;
+        let gate = RepairStartGate::new(&root);
+        let decision = canonical_next_action_for_inventory(
+            ".",
+            &inventory_store(),
+            &[&one, &two],
+            &[],
+            &gate,
+        )?;
         let json = crate::output::next_action::render_next_action_json_value(&decision);
         let human = crate::output::next_action::render_next_action_human(&decision);
         assert_eq!(json["action_class"], "choose_attempt");
@@ -5845,6 +5891,48 @@ mod tests {
                 .ok_or_else(|| format!("candidate not a string: {candidate}"))?;
             assert!(human.contains(id), "human lost candidate {id}: {human}");
         }
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #9006: open-seam inventory decisions carry file:line labels beside seam
+    /// ids in the canonical select_item stop.
+    #[test]
+    fn inventory_select_item_stop_labels_open_seams_from_the_gate() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let root = unique_agent_status_test_dir("inventory-select-item-labels");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let first = crate::app::task_first::tests::gate_entry(SeamGripClass::Ungripped, Vec::new());
+        let second =
+            crate::app::task_first::tests::gate_entry(SeamGripClass::Ungripped, Vec::new());
+        let first_id = first.seam.id().as_str().to_string();
+        let second_id = second.seam.id().as_str().to_string();
+        let gate = RepairStartGate::preloaded(&root, vec![first, second]);
+        let decision = canonical_next_action_for_inventory(
+            ".",
+            &inventory_store(),
+            &[],
+            &[first_id.as_str(), second_id.as_str()],
+            &gate,
+        )?;
+        assert_eq!(decision.action_class(), NextActionClass::ChooseItem);
+        let stop = decision
+            .stop()
+            .ok_or_else(|| "choose_item must carry a stop".to_string())?;
+        let crate::domain::NextActionStop::SelectItem { labels, .. } = stop else {
+            return Err(format!("expected select_item stop, got {stop:?}"));
+        };
+        assert_eq!(labels.len(), 2);
+        assert!(
+            labels[0].contains("src/pricing.rs:") && labels[1].contains("src/pricing.rs:"),
+            "labels must name file:line rows: {labels:?}"
+        );
+        let human = crate::output::next_action::render_next_action_human(&decision);
+        assert!(
+            human.contains(&format!("{first_id} (src/pricing.rs:")),
+            "human must show id with location:\n{human}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
     }
 

@@ -246,36 +246,44 @@ impl Probe {
         if self.family != ProbeFamily::StaticUnknown {
             return None;
         }
-        let mut rest = self.expression.trim_start();
-        if let Some(after_pub) = rest.strip_prefix("pub") {
-            rest = after_pub.trim_start();
-            if rest.starts_with('(') {
-                rest = rest[rest.find(')')? + 1..].trim_start();
-            }
-        }
-        rest = rest
-            .strip_prefix("const ")
-            .or_else(|| rest.strip_prefix("static "))?
-            .trim_start();
-        rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
-        let end = rest
-            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .unwrap_or(rest.len());
-        let name = &rest[..end];
-        let declaration = rest[end..].trim_start();
-        // An initializer on the line separates an item from a generics or
-        // parameter continuation line such as `const N: usize,`.
-        let named_item = !name.is_empty()
-            && name != "_"
-            && declaration.starts_with(':')
-            && declaration.contains('=');
-        named_item.then_some(name)
+        declared_const_name(&self.expression)
     }
 
     /// Whether `ripr check` resolves a stub route for this probe.
     pub(crate) fn offers_stub_route(&self) -> bool {
         self.family.offers_stub_route() || self.changed_const_name().is_some()
     }
+}
+
+/// The name of the `const` or `static` item a changed line declares
+/// (`pub const GREETING: &str = "hi";` names `GREETING`), when the line holds
+/// its initializer. Shared by the static-unknown const probe and the #11400
+/// reader retarget, so both read one declaration rule.
+pub(crate) fn declared_const_name(expression: &str) -> Option<&str> {
+    let mut rest = expression.trim_start();
+    if let Some(after_pub) = rest.strip_prefix("pub") {
+        rest = after_pub.trim_start();
+        if rest.starts_with('(') {
+            rest = rest[rest.find(')')? + 1..].trim_start();
+        }
+    }
+    rest = rest
+        .strip_prefix("const ")
+        .or_else(|| rest.strip_prefix("static "))?
+        .trim_start();
+    rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let name = &rest[..end];
+    let declaration = rest[end..].trim_start();
+    // An initializer on the line separates an item from a generics or
+    // parameter continuation line such as `const N: usize,`.
+    let named_item = !name.is_empty()
+        && name != "_"
+        && declaration.starts_with(':')
+        && declaration.contains('=');
+    named_item.then_some(name)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -446,6 +454,19 @@ pub(crate) fn input_boundary_fact<'a>(
     }
 }
 
+/// Row-local exact-discriminator support for #5575: typed value/field/error/effect
+/// facts only, never input-activation gaps (guard unentered, unselected arm).
+pub(crate) fn row_exact_discriminator_fact<'a>(
+    facts: &'a [MissingDiscriminatorFact],
+    family: &ProbeFamily,
+) -> Option<&'a MissingDiscriminatorFact> {
+    let boundary = input_boundary_fact(facts, family);
+    facts.iter().find(|fact| {
+        !is_unselected_input_reason(&fact.reason)
+            && boundary.is_none_or(|boundary| !std::ptr::eq(*fact, boundary))
+    })
+}
+
 /// The missing discriminator that names an exact assertion no test makes
 /// (an error variant or a constructed field): the first fact that is not the
 /// predicate input boundary.
@@ -461,7 +482,7 @@ pub(crate) fn exact_assertion_fact<'a>(
 
 /// Prefix the classifier puts on the value-shaped entries of `Finding.missing`.
 ///
-/// The field mixes value-shaped entries (`Missing discriminator value: X`,
+/// The field mixes value-shaped entries (`Missing check value: X`,
 /// built from a [`MissingDiscriminatorFact`]) with prose entries ("No strong
 /// discriminator was detected"), so consumers that already print a
 /// "Missing discriminator" label must strip this prefix to avoid restating it.
@@ -470,7 +491,7 @@ pub(crate) fn exact_assertion_fact<'a>(
 /// Crate-private: this is an internal formatting convention, not a contract
 /// embedders may bind to. `lib.rs` re-exports `pub mod domain`, so a `pub`
 /// constant here would publish the exact wording as library API.
-pub(crate) const MISSING_DISCRIMINATOR_VALUE_PREFIX: &str = "Missing discriminator value: ";
+pub(crate) const MISSING_DISCRIMINATOR_VALUE_PREFIX: &str = "Missing check value: ";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FindingCanonicalGap {
@@ -490,6 +511,11 @@ pub struct ActivationEvidence {
     pub observed_values: Vec<ValueFact>,
     pub missing_discriminators: Vec<MissingDiscriminatorFact>,
 }
+
+/// Next-step text for a finding whose related test has a strong check that
+/// ripr cannot tie to the changed line. The TypeScript classifier writes it
+/// and the preview card reads it, so both stay in step (#12463).
+pub(crate) const STRONG_CHECK_UNTIED_NEXT_STEP: &str = "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelatedTest {

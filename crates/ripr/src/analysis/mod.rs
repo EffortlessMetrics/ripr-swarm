@@ -37,6 +37,11 @@ pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
 };
+/// Honest seam-count reports for repo-scope inventory progress (#8643).
+/// Installed by the app progress owner for the duration of one walk; the
+/// evidence pass reports `processed`/`total` here instead of inventing a
+/// second stage vocabulary.
+pub(crate) mod inventory_progress;
 mod probe_read_trace;
 mod probes;
 pub(crate) mod repair_route;
@@ -46,6 +51,7 @@ pub(crate) mod repair_route;
 /// here, so a new phase cannot invent a parallel spelling.
 pub(crate) mod resource_cost;
 mod rust_index;
+pub(crate) mod rust_snapshot_files;
 pub(crate) mod seam_cache;
 mod seam_classification;
 mod seam_inventory;
@@ -62,10 +68,11 @@ pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
 mod value_resolution;
+pub(crate) mod verification_plan;
 mod witness;
 mod workspace;
 
-pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
+pub(crate) use diff::parse_unified_diff_bounded_with_metadata_core;
 pub(crate) use diff_scope_filter::DiffIntake;
 pub use diff_scope_filter::DiffScopeFilter;
 
@@ -88,11 +95,13 @@ pub use diff::records::{
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
     artifact_root_gitignore_entry, artifact_root_pathspec, is_shallow_repository, load_diff,
-    load_diff_core, load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
-    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
-    parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,
-    resolve_base_commit, resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
-    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
+    load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
+    load_diff_with_effective_base_core, load_worktree_diff,
+    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
+    probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
+    resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
+    untrack_artifacts_command, working_tree_has_tracked_changes,
+    working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -117,6 +126,8 @@ pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
     PartialDiffStopReason,
 };
+#[cfg(all(test, feature = "lang-python"))]
+pub(crate) use language::{python_direct_and_advisory_finding, python_miss_matrix_findings};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
@@ -146,21 +157,25 @@ pub(crate) use seam_inventory::file_fact_store_failure_rows;
 #[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
-    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, FileSeamIndex,
-    PilotInventoryDefault, REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory,
-    ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
+    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+    DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
+    PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
+    REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
+    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, announce_seam_facts_cache_misses,
     apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
     classify_seams_in_files_at_with_config, diff_only_rust_files,
+    evaluate_diff_scoped_classified_seams_from_prepared,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_bound_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
+    inventory_diff_scoped_streamed_seams_with_optional_prepared,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config,
-    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
-    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
-    workspace_cache_key_at_with_config,
+    prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
+    scoped_file_seams, seam_kind_for_probe_family,
+    workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
@@ -173,6 +188,7 @@ pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
 pub(crate) use workspace::apply_module_graph_evidence;
+pub(crate) use workspace::changed_source_files_absent_from_worktree;
 pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
@@ -589,6 +605,26 @@ pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead>
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
 /// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.
 pub(crate) fn stable_path_text(path: &Path) -> String {
+    stable_native_path_text(path).replace('\\', "/")
+}
+
+/// Retain native source identity before display normalization. On Unix a
+/// backslash is a literal filename byte, so reserve `%5C` for it; a literal
+/// percent spelling has already been escaped by the shared native encoder.
+/// On Windows backslashes remain native separators and render as slashes.
+pub(crate) fn stable_source_path_text(path: &Path) -> String {
+    let encoded = stable_native_path_text(path);
+    #[cfg(unix)]
+    {
+        encoded.replace('\\', "%5C")
+    }
+    #[cfg(not(unix))]
+    {
+        encoded.replace('\\', "/")
+    }
+}
+
+fn stable_native_path_text(path: &Path) -> String {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -615,14 +651,14 @@ pub(crate) fn stable_path_text(path: &Path) -> String {
                 }
             }
         }
-        output.replace('\\', "/")
+        output
     }
 
     #[cfg(not(unix))]
     {
         let mut output = String::new();
         push_stable_path_text(&mut output, &path.to_string_lossy());
-        output.replace('\\', "/")
+        output
     }
 }
 
@@ -1289,6 +1325,64 @@ pub(crate) fn changed_line_ownership_for_lines(
     })
 }
 
+/// #11400: the returned expressions a changed `const` reaches, as
+/// `(file, line)`. Read from the diff probe pipeline `ripr check` runs (the
+/// probes `retarget_changed_const_readers` marks), so `ripr repair` counts
+/// exactly the code `ripr check` names as the change. Only Rust files whose
+/// added lines declare a constant are indexed; an index that does not build
+/// reads as none.
+pub(crate) fn changed_const_reader_return_lines(
+    root: &Path,
+    files: &[ChangedFile],
+    test_harnesses: &[crate::config::TestHarnessRegistration],
+) -> Vec<(PathBuf, usize, String)> {
+    let declaring = files
+        .iter()
+        .filter(|file| file.path.extension().is_some_and(|ext| ext == "rs"))
+        .filter(|file| {
+            file.added_lines
+                .iter()
+                .any(|line| crate::domain::declared_const_name(&line.text).is_some())
+        })
+        .collect::<Vec<_>>();
+    if declaring.is_empty() {
+        return Vec::new();
+    }
+    // Only the declaring files. Each retarget guard reads the declaring
+    // file's own facts, which check's index always holds, and the
+    // workspace-wide rules (`name_confined`) read the raw files from disk in
+    // both commands, never an index. A function's composed test-only role
+    // does come from the other indexed files, so this narrower index can
+    // emit a return line that check would not (a reader check sees as
+    // test-only). That is harmless: the repair inventory drops test-only
+    // owners, so neither command starts there.
+    let paths = declaring
+        .iter()
+        .map(|file| file.path.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let Ok(index) = rust_index::build_index(root, &paths) else {
+        return Vec::new();
+    };
+    declaring
+        .into_iter()
+        .flat_map(|file| {
+            probes::probes_for_file_with_relations(root, file, &index, test_harnesses)
+                .into_iter()
+                .filter(|seeded| seeded.const_reader)
+                .map(|seeded| {
+                    (
+                        file.path.clone(),
+                        seeded.probe.location.line,
+                        seeded.probe.expression.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 fn sorted_owners(mut owners: Vec<ChangedLineOwner>) -> Vec<ChangedLineOwner> {
     owners.sort_by(|left, right| {
         left.file
@@ -1319,6 +1413,37 @@ mod tests {
         assert_ne!(
             stable_path_text(Path::new("pricing_%FF.rs")),
             "pricing_%FF.rs"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stable_source_path_text_preserves_literal_backslashes_before_display() {
+        for (native, encoded) in [
+            ("src/odd\\receipt.rs", "src/odd%5Creceipt.rs"),
+            ("src/odd/receipt.rs", "src/odd/receipt.rs"),
+            ("src/odd%5Creceipt.rs", "src/odd%255Creceipt.rs"),
+        ] {
+            assert_eq!(stable_source_path_text(Path::new(native)), encoded);
+            assert_eq!(decode_stable_path_text(encoded), PathBuf::from(native));
+        }
+        assert_ne!(
+            stable_source_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_source_path_text(Path::new("src/odd/receipt.rs"))
+        );
+        assert_eq!(
+            stable_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_path_text(Path::new("src/odd/receipt.rs")),
+            "display normalization still collapses backslashes for stable_path_text"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stable_source_path_text_normalizes_native_separators_on_windows() {
+        assert_eq!(
+            stable_source_path_text(Path::new(r"tests\receipt.rs")),
+            "tests/receipt.rs"
         );
     }
 

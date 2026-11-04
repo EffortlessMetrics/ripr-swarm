@@ -277,6 +277,7 @@
           "anyOf": [
             { "type": "null" },
             { "$ref": "#/$defs/related_test_target" },
+            { "$ref": "#/$defs/proposed_repair_target" },
             { "$ref": "#/$defs/production_caller_target" }
           ]
         },
@@ -314,6 +315,18 @@
         "name": { "type": "string", "minLength": 1 },
         "file": { "type": "string", "minLength": 1 },
         "line": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "proposed_repair_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "proposal_kind", "file", "owner", "provenance"],
+      "properties": {
+        "kind": { "const": "proposed" },
+        "proposal_kind": { "enum": ["inline_unit", "integration"] },
+        "file": { "type": "string", "minLength": 1 },
+        "owner": { "type": "string", "minLength": 1 },
+        "provenance": { "const": "producer_owned" }
       }
     },
     "production_caller_target": {

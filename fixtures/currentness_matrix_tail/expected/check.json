@@ -3,31 +3,19 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/currentness_matrix_tail/input",
-  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":3,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":1,"infection_unknown":0,"propagation_unknown":0,"static_unknown":2,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:0ea2d06701ead7221ad1f9e1a71a524d73d6af92e3ed40816bf848e7b5b0270c","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":5,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
-      "id": "probe:src_lib.rs:predicate:e5dad37e",
-      "canonical_gap_id": "gap:rust:src/lib.rs:retired_helper:predicate_boundary:predicate:cost==0",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:retired_helper:predicate_boundary:predicate:cost==0",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "retired_helper",
-        "behavior_kind": "predicate_boundary",
-        "probe_kind": "predicate",
-        "normalized_discriminator": "cost==0"
-
-      },
+      "id": "probe:src_lib.rs:predicate:9c61088d",
       "classification": "no_static_path",
       "severity": "warning",
-      "confidence": 0.48,
+      "confidence": 0.35,
       "probe": {
-        "id": "probe:src_lib.rs:predicate:e5dad37e",
+        "id": "probe:src_lib.rs:predicate:9c61088d",
         "family": "predicate",
         "delta": "control",
         "file": "./src/lib.rs",
@@ -37,15 +25,14 @@
       "ripr": {
         "reach": {"state":"no","confidence":"medium","summary":"No static test path found for the changed owner"},
         "infect": {"state":"unknown","confidence":"low","summary":"No tests were found, so activation/infection cannot be estimated"},
-        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: if cost > 0 { cost } else { 0 }"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
         "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
-      "evidence_path": ["reach no: No static test path found for the changed owner", "infection unknown: No tests were found, so activation/infection cannot be estimated", "propagation yes: Changed behavior appears to influence returned value: if cost > 0 { cost } else { 0 }", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches returned value: if cost > 0 { cost } else { 0 } (line 15)"],
+      "evidence_path": ["reach no: No static test path found for the changed owner", "infection unknown: No tests were found, so activation/infection cannot be estimated", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test"],
       "flow_sinks": [
-        {"kind":"return_value","text":"if cost > 0 { cost } else { 0 }","line":15}
       ],
-      "evidence": ["Changed behavior appears to influence returned value: if cost > 0 { cost } else { 0 }", "No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No static test path found for the changed owner", "No tests were found, so activation/infection cannot be estimated"],
+      "evidence": ["No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No static test path found for the changed owner", "No tests were found, so activation/infection cannot be estimated", "Propagation is not statically obvious from syntax-first analysis"],
       "missing": ["No detected boundary input for the changed predicate", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
       },
@@ -62,7 +49,7 @@
       "related_tests_total": 0,
       "related_tests": [
       ],
-      "stop_reasons": [],
+      "stop_reasons": ["no_changed_rust_line"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
       "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
@@ -71,24 +58,12 @@
       "source_currentness": "base_deleted"
     },
     {
-      "id": "probe:src_lib.rs:static_unknown:b399449c",
-      "canonical_gap_id": "gap:rust:src/lib.rs:retired_helper:static_unknown:static_unknown:fn_retired_helper->i32",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:retired_helper:static_unknown:static_unknown:fn_retired_helper->i32",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "retired_helper",
-        "behavior_kind": "static_unknown",
-        "probe_kind": "static_unknown",
-        "normalized_discriminator": "fn_retired_helper->i32"
-
-      },
-      "classification": "no_static_path",
-      "severity": "warning",
-      "confidence": 0.35,
+      "id": "probe:src_lib.rs:static_unknown:14bf4614",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.20,
       "probe": {
-        "id": "probe:src_lib.rs:static_unknown:b399449c",
+        "id": "probe:src_lib.rs:static_unknown:14bf4614",
         "family": "static_unknown",
         "delta": "unknown",
         "file": "./src/lib.rs",
@@ -107,7 +82,7 @@
         {"kind":"unknown","text":"unknown sink","line":13}
       ],
       "evidence": ["Changed syntax is not mapped to a high-confidence probe family", "No assertion can discriminate the changed behavior without a reachable test", "No propagation model is available for this changed syntax", "No reachable test oracle found", "No static test path found for the changed owner"],
-      "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
+      "missing": ["No relevant oracle was detected", "No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
       "assertion_texts": {
       },
       "activation": {
@@ -123,7 +98,7 @@
       "related_tests_total": 0,
       "related_tests": [
       ],
-      "stop_reasons": [],
+      "stop_reasons": ["no_changed_rust_line"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
       "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
@@ -132,24 +107,12 @@
       "source_currentness": "base_deleted"
     },
     {
-      "id": "probe:src_lib.rs:static_unknown:1fc3b885",
-      "canonical_gap_id": "gap:rust:src/lib.rs:retired_helper:static_unknown:static_unknown:let_cost=5",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:retired_helper:static_unknown:static_unknown:let_cost=5",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "retired_helper",
-        "behavior_kind": "static_unknown",
-        "probe_kind": "static_unknown",
-        "normalized_discriminator": "let_cost=5"
-
-      },
-      "classification": "no_static_path",
-      "severity": "warning",
-      "confidence": 0.35,
+      "id": "probe:src_lib.rs:static_unknown:77528229",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.20,
       "probe": {
-        "id": "probe:src_lib.rs:static_unknown:1fc3b885",
+        "id": "probe:src_lib.rs:static_unknown:77528229",
         "family": "static_unknown",
         "delta": "unknown",
         "file": "./src/lib.rs",
@@ -168,7 +131,7 @@
         {"kind":"unknown","text":"unknown sink","line":13}
       ],
       "evidence": ["Changed syntax is not mapped to a high-confidence probe family", "No assertion can discriminate the changed behavior without a reachable test", "No propagation model is available for this changed syntax", "No reachable test oracle found", "No static test path found for the changed owner"],
-      "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
+      "missing": ["No relevant oracle was detected", "No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
       "assertion_texts": {
       },
       "activation": {
@@ -184,7 +147,7 @@
       "related_tests_total": 0,
       "related_tests": [
       ],
-      "stop_reasons": [],
+      "stop_reasons": ["no_changed_rust_line"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
       "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",

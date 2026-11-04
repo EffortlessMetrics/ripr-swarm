@@ -357,8 +357,13 @@ fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
 
 fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
-    let prefix =
-        super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    // #12417: where no project anchors the directory the gate refuses instead
+    // of retaining it, so the selector never reads an unrelated tree.
+    let prefix = super::check::resolve_implicit_command_root_refusing(
+        &mut options.root,
+        options.root_explicit,
+    )
+    .map_err(|message| typed_decision(RepairRefusalCode::UnanchoredRoot, message))?;
     ensure_command_root(&options.root, "repair")?;
     let seam_id = match options.item.as_deref() {
         Some(item) => {
@@ -429,7 +434,8 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 );
                 if action.action_class() == crate::domain::NextActionClass::ChooseItem {
                     print_retry_line(&format!(
-                        "ripr repair <seam-id> --root {}",
+                        "ripr repair {} --root {}",
+                        crate::output::next_action::SELECT_ITEM_RETRY_PLACEHOLDER,
                         crate::agent::loop_commands::shell_arg(&bound)
                     ));
                 }
@@ -543,7 +549,10 @@ fn facade_before_options(root: &std::path::Path, seam_id: &str, quiet: bool) -> 
 
 fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
-    super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    // #12417: where no project anchors the directory the gate refuses before
+    // the attempt lookup or the repair-start explanation can read the tree.
+    super::check::resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)
+        .map_err(|message| typed_decision(RepairRefusalCode::UnanchoredRoot, message))?;
     ensure_command_root(&options.root, "continue")?;
     match select_continue_attempt(&options.root, options.attempt_id.as_deref()).map_err(
         |error| {
@@ -820,6 +829,9 @@ fn no_eligible_seam_message(
             "Nothing to do for this change: the existing tests already check it, and `{check}` reports the same. To look for gaps elsewhere in the repository, run `ripr pilot --root {root}`"
         ),
         NoEligibleChange::NoRepairableCode => by_hand.trim_start_matches(". ").to_string(),
+        NoEligibleChange::OpenOnChange => format!(
+            "Next: each changed spot below says what it still needs; write that test by hand (`{check}` shows the detail)"
+        ),
         NoEligibleChange::Other => format!(
             "Next: `ripr pilot --root {root}` explores the whole repository; when this branch has changed code, `{check}` names a gap in it to test by hand"
         ),
@@ -891,7 +903,10 @@ fn none_available_detail(
 
 fn run_facade_status(mut options: StatusFacadeOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
-    super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    // #12417: where no project anchors the directory, status refuses instead
+    // of reporting "no repair state" about a tree that is not a project.
+    super::check::resolve_implicit_command_root_refusing(&mut options.root, options.root_explicit)
+        .map_err(|message| typed_decision(RepairRefusalCode::UnanchoredRoot, message))?;
     super::agent::run_agent_status(AgentStatusOptions {
         out_dir: None,
         root: options.root,
@@ -1027,8 +1042,8 @@ mod tests {
             expected
         );
         assert_eq!(
-            retry_lines("ripr repair <seam-id> --root /work/proj"),
-            vec!["retry: ripr repair <seam-id> --root /work/proj".to_string()]
+            retry_lines("ripr repair <item-id> --root /work/proj"),
+            vec!["retry: ripr repair <item-id> --root /work/proj".to_string()]
         );
     }
 
@@ -1475,6 +1490,35 @@ mod tests {
     /// The no-eligible message separates the zero-seam setup outcome from
     /// the limitation outcome, pluralizes the noun, and carries the named
     /// reasons only when there are some.
+    #[test]
+    fn open_on_change_closes_on_the_reasons_not_the_repository_tour() -> Result<(), String> {
+        use crate::app::task_first::NoEligibleChange;
+        let root = Path::new("/ripr-task-first-root");
+        let reasons = ["the code at src/lib.rs:2 `x`: repair route not ready".to_string()];
+        let open =
+            no_eligible_seam_message(root, None, NoEligibleChange::OpenOnChange, 2, &reasons, 1);
+        let other = no_eligible_seam_message(root, None, NoEligibleChange::Other, 2, &reasons, 1);
+        let checked =
+            no_eligible_seam_message(root, None, NoEligibleChange::AlreadyChecked, 2, &reasons, 1);
+        if !open.contains("Next: each changed spot below says what it still needs; write that test by hand (`ripr check --root ")
+            || open.contains("explores the whole repository")
+            || !open.contains("\n  - the code at src/lib.rs:2")
+        {
+            return Err(format!("OpenOnChange wording:\n{open}"));
+        }
+        if !other.contains("explores the whole repository")
+            || other.contains("each changed spot below")
+        {
+            return Err(format!("Other keeps the repository route:\n{other}"));
+        }
+        if !checked.contains("Nothing to do for this change")
+            || checked.contains("each changed spot below")
+        {
+            return Err(format!("AlreadyChecked keeps nothing-to-do:\n{checked}"));
+        }
+        Ok(())
+    }
+
     #[test]
     fn no_eligible_seam_message_separates_setup_from_limitation() -> Result<(), String> {
         let root = Path::new("/ripr-task-first-root");

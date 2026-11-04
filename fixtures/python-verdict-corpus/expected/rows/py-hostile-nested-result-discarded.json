@@ -1,0 +1,22 @@
+{
+  "case_id": "py-hostile-nested-result-discarded",
+  "subject_id": "authored-py-pytest-hostile",
+  "origin": "authored",
+  "anchor": "hostile/nested_discard.py:3",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_nested_function_result_discarded_by_outer",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

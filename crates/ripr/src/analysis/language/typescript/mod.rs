@@ -71,6 +71,7 @@ mod call_removal_tests;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod catch_arm_guard;
+mod changed_return;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
@@ -87,6 +88,10 @@ mod enum_member_guard;
 mod error_payload_guard;
 mod extraction_cache;
 mod fact_store;
+mod fast_check;
+#[cfg(test)]
+mod fast_check_tests;
+mod push_argument_guard;
 pub(crate) use fact_store::TypeScriptFileFactStore;
 mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
@@ -191,6 +196,9 @@ mod issue7813_alias_member_tests;
 #[path = "tests/issue7815_typeof_mixed_tests.rs"]
 mod issue7815_typeof_mixed_tests;
 mod rethrow_wrapper;
+#[cfg(test)]
+#[path = "tests/snapshot_subject_binding_tests.rs"]
+mod snapshot_subject_binding_tests;
 mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
@@ -213,7 +221,10 @@ pub(crate) use assertion_selection::{
 };
 pub(crate) use boolean_pin_guard::*;
 pub(crate) use boundary_input::*;
-pub(crate) use boundary_selection::typescript_changed_boundary_text;
+pub(crate) use boundary_selection::{
+    typescript_changed_boundary_is_equality_negation, typescript_changed_boundary_text,
+    typescript_changed_line_is_first_body_statement,
+};
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use class_entries::*;
@@ -488,7 +499,7 @@ impl LanguageAdapter for TypeScriptAdapter {
         // Bounded native repo-mode producer (#5545): see `repo.rs`. A capped,
         // unreadable or partially indexed run discloses itself through
         // `partial_reason` on the shared `language_runs` channel.
-        repo::analyze_repo(options, &[])
+        repo::analyze_repo(options, &crate::config::TypescriptLanguageConfig::default())
     }
 }
 
@@ -498,9 +509,9 @@ impl TypeScriptAdapter {
     /// declared hand-written sources diff mode does.
     pub(crate) fn analyze_repo_with_handwritten_env(
         options: &AnalysisOptions,
-        handwritten: &[String],
+        typescript_config: &crate::config::TypescriptLanguageConfig,
     ) -> Result<LanguageRepoResult, String> {
-        repo::analyze_repo(options, handwritten)
+        repo::analyze_repo(options, typescript_config)
     }
 
     /// The deterministic diff-mode core of [`LanguageAdapter::analyze_diff`]
@@ -519,7 +530,7 @@ impl TypeScriptAdapter {
             changed_files,
             file_read_limit,
             workspace_read_budget,
-            &[],
+            &crate::config::TypescriptLanguageConfig::default(),
         )
     }
 
@@ -529,29 +540,31 @@ impl TypeScriptAdapter {
     pub(crate) fn analyze_diff_with_handwritten_env(
         options: &AnalysisOptions,
         changed_files: &[ChangedFile],
-        handwritten: &[String],
+        typescript_config: &crate::config::TypescriptLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
         Self::analyze_diff_with_read_limits_and_handwritten(
             options,
             changed_files,
             ts_file_read_limit(),
             ts_workspace_read_budget(),
-            handwritten,
+            typescript_config,
         )
     }
 
     /// [`analyze_diff_with_read_limits`] plus the `[languages.typescript]
-    /// handwritten_files` declarations (#7386): exact repository-relative
-    /// paths admitted past the built-in excluded-directory conventions, so a
-    /// hand-written source under a `dist/`, `build/` or `out/` directory is
-    /// walked, read and counted instead of silently dropped.
+    /// handwritten_files` and `excluded_file_patterns` declarations (#7386,
+    /// #5380): exact repository-relative paths admitted past the built-in
+    /// excluded-directory conventions, and configured globs omitted from the
+    /// walk and changed-file admission.
     pub(in crate::analysis::language::typescript) fn analyze_diff_with_read_limits_and_handwritten(
         options: &AnalysisOptions,
         changed_files: &[ChangedFile],
         file_read_limit: u64,
         workspace_read_budget: u64,
-        handwritten: &[String],
+        typescript_config: &crate::config::TypescriptLanguageConfig,
     ) -> Result<LanguageDiffResult, String> {
+        let handwritten = &typescript_config.handwritten_files;
+        let excluded_file_patterns = &typescript_config.excluded_file_patterns;
         // Directory-module resolution (#4546) and the tsconfig outDir
         // mapping (#4551) are memoized for this run only (#4638 and #4800
         // reviews); the scope drops the cache when the run returns.
@@ -560,7 +573,7 @@ impl TypeScriptAdapter {
         // workspace index, and the workspace-wide limitations below describe
         // files the diff never consulted. Return the empty complete result
         // before the walk instead of parsing every file for no finding.
-        if !diff_needs_typescript_workspace(changed_files, handwritten) {
+        if !diff_needs_typescript_workspace(changed_files, handwritten, excluded_file_patterns) {
             return Ok(LanguageDiffResult {
                 value_origins: Default::default(),
                 findings: Vec::new(),
@@ -579,8 +592,11 @@ impl TypeScriptAdapter {
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.
-        let workspace_scan =
-            collect_workspace_typescript_files_with_handwritten(&options.root, handwritten);
+        let workspace_scan = collect_workspace_typescript_files_with_handwritten(
+            &options.root,
+            handwritten,
+            excluded_file_patterns,
+        );
         let mut workspace_files = workspace_scan.files;
         if workspace_scan.truncated {
             // #11767: a cut-short walk may never reach a file the diff itself
@@ -588,14 +604,12 @@ impl TypeScriptAdapter {
             // finding at all. The diff is the authority for what changed, so
             // every accepted changed source joins the partial set.
             for changed in changed_files {
-                let excluded = is_detectable_generated_typescript_path(&changed.path)
-                    || (is_detectable_excluded_typescript_path(&changed.path)
-                        && !crate::config::is_declared_handwritten_typescript_path(
-                            handwritten,
-                            &changed.path,
-                        ));
                 if TypeScriptAdapter.accepts_path(&changed.path)
-                    && !excluded
+                    && !typescript_adapter_excludes_path(
+                        &changed.path,
+                        handwritten,
+                        excluded_file_patterns,
+                    )
                     && !workspace_files.contains(&changed.path)
                 {
                     workspace_files.push(changed.path.clone());
@@ -1044,12 +1058,11 @@ impl TypeScriptAdapter {
             // no facts can back a changed file under one of them. Counting it
             // would put an uninspected file in the report denominator.
             if !TypeScriptAdapter.accepts_path(&changed.path)
-                || is_detectable_generated_typescript_path(&changed.path)
-                || (is_detectable_excluded_typescript_path(&changed.path)
-                    && !crate::config::is_declared_handwritten_typescript_path(
-                        handwritten,
-                        &changed.path,
-                    ))
+                || typescript_adapter_excludes_path(
+                    &changed.path,
+                    handwritten,
+                    excluded_file_patterns,
+                )
             {
                 continue;
             }
@@ -1388,16 +1401,12 @@ impl TypeScriptAdapter {
                     // lockfile, …) omit the limitation rather than contradict
                     // the detected name. Do not invent a second limitation
                     // code for the no-related-test case (#7646).
-                    let inferred_cmd = finding
-                        .related_tests
-                        .iter()
-                        // #11228: the first of the strongest rows, the one the
-                        // headline, card and packet name (`max_by_key` would
-                        // return the last of equal strength).
-                        .min_by_key(|t| std::cmp::Reverse(t.oracle_strength.rank()))
-                        .and_then(|best_test| {
-                            verify_command_for_discovery(&pkg_discovery, &best_test.file)
-                        });
+                    let inferred_cmd = crate::domain::typescript_script_preview_related_test(
+                        &finding,
+                    )
+                    .and_then(|best_test| {
+                        verify_command_for_discovery(&pkg_discovery, &best_test.file)
+                    });
                     if let Some(cmd) = inferred_cmd {
                         finding
                             .evidence
@@ -1831,20 +1840,31 @@ impl TypeScriptAdapter {
 /// unless declared hand-written), or a Rust file a Bun bridge profile reads
 /// against the TypeScript test index. Mirrors that loop's own skip conditions
 /// so the early return cannot hide a file the loop would have analyzed.
-fn diff_needs_typescript_workspace(changed_files: &[ChangedFile], handwritten: &[String]) -> bool {
+fn diff_needs_typescript_workspace(
+    changed_files: &[ChangedFile],
+    handwritten: &[String],
+    excluded_file_patterns: &[String],
+) -> bool {
     changed_files.iter().any(|changed| {
         let normalized = normalized_path(&changed.path);
         let bridge_file = BUN_RUST_CROSS_LANGUAGE_BRIDGE_PROFILES
             .iter()
             .any(|profile| normalized == profile.rust_file);
-        let excluded = is_detectable_generated_typescript_path(&changed.path)
-            || (is_detectable_excluded_typescript_path(&changed.path)
-                && !crate::config::is_declared_handwritten_typescript_path(
-                    handwritten,
-                    &changed.path,
-                ));
+        let excluded =
+            typescript_adapter_excludes_path(&changed.path, handwritten, excluded_file_patterns);
         bridge_file || (TypeScriptAdapter.accepts_path(&changed.path) && !excluded)
     })
+}
+
+pub(in crate::analysis::language::typescript) fn typescript_adapter_excludes_path(
+    path: &Path,
+    handwritten: &[String],
+    excluded_file_patterns: &[String],
+) -> bool {
+    is_detectable_generated_typescript_path(path)
+        || crate::config::path_matches_preview_excluded_patterns(excluded_file_patterns, path)
+        || (is_detectable_excluded_typescript_path(path)
+            && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
 }
 
 /// Recovery for partial test extraction. Re-running cannot change the
