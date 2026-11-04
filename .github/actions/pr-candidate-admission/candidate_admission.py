@@ -73,12 +73,27 @@ GENERATED_DECLARATION_ALLOWED = (
     # (.json), sha256-pinned by the case rows, whose provenance and edits stay
     # in the counted cases/ files.
     re.compile(r"^fixtures/[a-z]+-verdict-corpus/packets/\*\*$"),
+    # Repo-exposure captures the evidence-promotion honesty gate regenerates
+    # from their Cargo subject and binds by `content_sha256`, so a hand edit
+    # fails that gate (RIPR-SPEC-0108). Only the two capture families, one glob
+    # each; the hand-written reports beside them stay counted (#12739).
+    re.compile(
+        r"^fixtures/evidence-promotion-honesty-corpus/reports/"
+        r"rust-(?:inherent|repo-exposure)-\*\.json$"
+    ),
 )
 # Families narrower than the global data extensions: only these file types in
 # the family are ever exempt, so a note or log dropped beside the packets stays
 # counted.
 GENERATED_FAMILY_EXTENSIONS = (
     (re.compile(r"^fixtures/[a-z]+-verdict-corpus/packets/"), {".json"}),
+    (
+        re.compile(
+            r"^fixtures/evidence-promotion-honesty-corpus/reports/"
+            r"rust-(?:inherent|repo-exposure)-"
+        ),
+        {".json"},
+    ),
 )
 DEFAULT_MAX_GENERATED_LINES = 40000
 # Bounds on the hand-written blobs read to cap count-less files.
@@ -379,7 +394,7 @@ def check_generated_declarations(text: str) -> list[str]:
             generated_state(attributes) is not False
         ) and not declaration_allowed(pattern):
             problems.append(
-                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/** and metrics/public-proof/** (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
+                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/**, fixtures/<language>-verdict-corpus/packets/**, metrics/public-proof/** and the rust-inherent-*.json and rust-repo-exposure-*.json captures under fixtures/evidence-promotion-honesty-corpus/reports/ (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
             )
     return problems
 
@@ -981,6 +996,8 @@ def self_test() -> None:
         "package-lock.json linguist-generated\nfixtures/**/expected/** linguist-generated\n"
         "metrics/public-proof/** linguist-generated\ncrates/x/*.rs -linguist-generated\n"
         "fixtures/perl-verdict-corpus/packets/** linguist-generated\n"
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.json linguist-generated\n"
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-*.json linguist-generated\n"
     ) == []
     for bad in (
         "fixtures/notexpected/**", "fixtures/myexpected/**", "fixtures/a/xexpected/**",
@@ -992,6 +1009,17 @@ def self_test() -> None:
         "fixtures/perl-corpus/packets/**", "fixtures/Perl-verdict-corpus/packets/**",
         "fixtures/a/b-verdict-corpus/packets/**", "fixtures/perl-verdict-corpus/packets/*.rs",
         "fixtures/perl-verdict-corpus/xpackets/**", "xtask/fixtures/perl-verdict-corpus/packets/**",
+        "fixtures/evidence-promotion-honesty-corpus/reports/**",
+        "fixtures/evidence-promotion-honesty-corpus/reports/*.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-*.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.md",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-*.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/perl-*.json",
+        "fixtures/evidence-promotion-honesty-corpus/**",
+        "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+        "fixtures/other-corpus/reports/rust-inherent-*.json",
+        "xtask/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.json",
     ):
         assert check_generated_declarations(f"{bad} linguist-generated\n"), bad
     corpus_rules = parse_generated_rules("fixtures/perl-verdict-corpus/packets/** linguist-generated\n")
@@ -1009,6 +1037,31 @@ def self_test() -> None:
         "fixtures/perl-verdict-corpus/subjects/s/lib/A.pm", "fixtures/python-verdict-corpus/packets/a.json",
     ):
         assert not is_generated(kept, corpus_rules), kept
+    honesty_rules = parse_generated_rules(
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-*.json linguist-generated\n"
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-*.json linguist-generated\n"
+    )
+    reports = "fixtures/evidence-promotion-honesty-corpus/reports"
+    for captured in (
+        f"{reports}/rust-inherent-async-fn-entry.json",
+        f"{reports}/rust-repo-exposure-uncalled-sibling.json",
+    ):
+        assert is_generated(captured, honesty_rules), captured
+    # The exemption follows the capture families only: hand-written reports,
+    # the case file that carries the provenance, other types and other trees
+    # beside them stay counted.
+    for kept in (
+        f"{reports}/rust-closure-callback-benign-macro-operand.json",
+        f"{reports}/rust-matches-panic-message.json",
+        f"{reports}/perl_token_substring.json",
+        f"{reports}/rust-inherent-async-fn-entry.md",
+        f"{reports}/rust-inherent-async-fn-entry.jsonl",
+        f"{reports}/rust-inherent-x/y.json",
+        "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-x/src/lib.rs",
+        "fixtures/other/reports/rust-inherent-x.json",
+    ):
+        assert not is_generated(kept, honesty_rules), kept
     assert check_generated_declarations("src/lib.rs linguist-generated=false linguist-generated\n")
     assert run(current, [current], "b" * 40)["reason"] == "candidate_head_moved"
     assert (

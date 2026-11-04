@@ -2779,16 +2779,16 @@ Those remain separate qualification and rollout obligations.
 The ordinary size envelope (files and changed lines) counts only what a human
 has to review. Generated files are declared once, with `linguist-generated` in
 `.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
-public-proof metrics, verdict-corpus producer fact packets), and their lines and files are not counted. The
+public-proof metrics, verdict-corpus producer fact packets, honesty-corpus repo-exposure captures), and their lines and files are not counted. The
 declaration is read from the PR's base commit, so a PR cannot label its own
 files; a `.gitattributes` edit is itself counted in full. Three guards keep the
 label from hiding hand-written code: only declarable shapes count (lockfiles,
 `fixtures/**/expected/**`, `fixtures/<language>-verdict-corpus/packets/**`,
-`metrics/public-proof/**`; a new family is added to
+`metrics/public-proof/**`, and the `rust-inherent-*.json` and `rust-repo-exposure-*.json` captures in `fixtures/evidence-promotion-honesty-corpus/reports/`, which `check-evidence-promotion-honesty` binds by name: each must be the `source_report` of a case that regenerates it from a Cargo subject, or a full capture pinned in `report_cache_schema_pins`, so a hand-written file cannot borrow the name; a new family is added to
 `GENERATED_DECLARATION_ALLOWED` in reviewed code, and any other declaration is
 ignored and fails admission with `generated_declaration_invalid`); only data
 file types (`.json`, `.jsonl`, `.lock`, `.md`, `.txt`, `.stdout`) are ever
-exempt (corpus packets: `.json` only), and a file must change at least one line; and the exempt lines have their
+exempt (corpus packets and honesty captures: `.json` only), and a file must change at least one line; and the exempt lines have their
 own cap of 40000 (`generated_scope_oversized`), so a regeneration is separated
 from the hand-written change. A truncated file listing exempts nothing.
 
