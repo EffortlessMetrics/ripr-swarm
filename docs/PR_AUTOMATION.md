@@ -468,7 +468,7 @@ review.
 
 Local `precommit` also runs `goldens check` when the diff against
 `origin/main` touches output-surface code (`crates/ripr/src/output/`,
-`crates/ripr/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
+`crates/ripr-contract/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
 `policy/output_contracts.txt`) or a fixture `expected/` file, because renderer
 wording changes make stale goldens the usual way main goes red (#8421). Other
 diffs print a skip line and do not pay for the fixture run. Real drift fails
