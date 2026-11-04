@@ -1121,7 +1121,7 @@ mod tests {
 
     // Headers and bodies produced by Git -U0 for deletions from a/b/c.
     #[test]
-    fn deletion_gap_coordinates_match_context_and_boundaries_13098() {
+    fn deletion_gap_coordinates_match_context_and_boundaries_13098() -> Result<(), String> {
         let cases = [
             ("@@ -1 +0,0 @@\n-a\n", vec![(1, 1)]),
             ("@@ -2 +1,0 @@\n-b\n", vec![(2, 2)]),
@@ -1143,12 +1143,13 @@ mod tests {
                 .map(|line| (line.line, line.new_side_line))
                 .collect();
             assert_eq!(actual, expected, "{hunk}");
-            let bounded = parse_unified_diff_with_metadata_and_limit(&diff, 10).unwrap();
+            let bounded = parse_unified_diff_with_metadata_and_limit(&diff, 10)?;
             assert_eq!(
                 bounded.changed_files[0].removed_lines,
                 files[0].removed_lines
             );
         }
+        Ok(())
     }
 
     #[test]
