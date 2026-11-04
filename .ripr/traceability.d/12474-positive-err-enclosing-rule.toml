@@ -3,5 +3,7 @@
 id = "RIPR-SPEC-0106"
 tests = [
   "crates/ripr/src/analysis/extract/oracles/patterns.rs::an_err_handed_to_a_value_supplying_adapter_pins_nothing",
+  "crates/ripr/src/analysis/extract/oracles/patterns.rs::a_call_wrapping_the_whole_assertion_keeps_credit",
+  "crates/ripr/src/analysis/extract/oracles/patterns.rs::a_wrapper_inside_the_assertion_still_refuses_when_the_assertion_is_wrapped",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::inline_unwrap_err_equality_discriminates_an_error_variant_seam",
 ]
