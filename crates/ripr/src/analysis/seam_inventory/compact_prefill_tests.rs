@@ -65,7 +65,7 @@ fn compact_windows_full_cold_run_populates_complete_summary_cache() -> Result<()
                     ));
                 }
             }
-            if started.elapsed() >= Duration::from_secs(120)
+            if started.elapsed() >= Duration::from_mins(2)
                 || std::fs::metadata(&log_path)
                     .map_err(|error| error.to_string())?
                     .len()
@@ -345,7 +345,8 @@ fn compact_windows_verification_bounds_cumulative_moved_source() -> Result<(), S
     )?;
     let error = session
         .run()
-        .expect_err("aggregate source growth must refuse");
+        .err()
+        .ok_or("aggregate source growth must refuse")?;
     assert!(
         error.contains("grew beyond its admitted byte limit"),
         "wrong refusal: {error}"
@@ -358,7 +359,8 @@ fn compact_windows_verification_bounds_cumulative_moved_source() -> Result<(), S
     )?;
     let error = session
         .run()
-        .expect_err("one oversized moved file must refuse");
+        .err()
+        .ok_or("one oversized moved file must refuse")?;
     assert!(
         error.contains("grew beyond its admitted byte limit"),
         "wrong refusal: {error}"

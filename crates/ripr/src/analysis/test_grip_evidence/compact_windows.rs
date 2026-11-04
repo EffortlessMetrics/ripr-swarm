@@ -141,7 +141,10 @@ fn compact_windows_cancelled_and_absent_context_never_return_partial_records() -
     let token = AnalysisCancellationToken::new();
     assert!(token.cancel(AnalysisAbortKind::Cancelled));
     for window in [&seams[..], &seams[..0]] {
-        assert!(cancellation::with_token(&token, || pass.compact_evidence_for(window)).is_err());
+        let error = cancellation::with_token(&token, || pass.compact_evidence_for(window))
+            .err()
+            .ok_or("cancelled compact window returned records")?;
+        assert!(cancellation::is_cancellation_error(&error));
     }
     assert_eq!(token.observed_abort(), Some(AnalysisAbortKind::Cancelled));
     assert!(!pass.warm_failed.load(Ordering::Acquire));
@@ -171,7 +174,10 @@ fn compact_windows_checkpoint_after_entry_and_before_empty_return() -> Result<()
                 }
             }),
         );
-        assert!(cancellation::with_token(&token, || pass.compact_evidence_for(window)).is_err());
+        let error = cancellation::with_token(&token, || pass.compact_evidence_for(window))
+            .err()
+            .ok_or("expired compact window returned records")?;
+        assert!(cancellation::is_cancellation_error(&error));
         assert!(calls.load(Ordering::Relaxed) >= 2);
         assert_eq!(
             token.observed_abort(),

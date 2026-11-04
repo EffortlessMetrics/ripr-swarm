@@ -72,9 +72,15 @@ fn compact_windows_failed_or_declined_replacements_preserve_prior_entries() -> R
                 },
             );
             match failure {
-                0 | 2 => assert!(result.is_err()),
+                0 | 2 => {
+                    let error = result.err().ok_or("invalid compact producer succeeded")?;
+                    assert!(
+                        !error.is_empty(),
+                        "producer refusal should explain its cause"
+                    );
+                }
                 1 | 3 => assert!(result?.label.starts_with("skipped_")),
-                _ => unreachable!(),
+                _ => return Err("unknown negative compact-window case".into()),
             }
             round_trip(&cache, &key, &prior)?;
             assert_eq!(listed_generation_dirs(&cache, &key)?, generations);
@@ -108,12 +114,12 @@ fn compact_windows_native_failure_hooks_preserve_prior_entries() -> Result<(), S
                 1 => fail_after_writing_shards(3),
                 _ => fail_after_parking_single_entry(),
             }
-            assert!(
-                publish_compact_windows(&cache, &key, 3, &[], 1, 1_000_000, |_| Ok(Some(vec![
-                    classified_with_pad("next")
-                ])))
-                .is_err()
-            );
+            let error = publish_compact_windows(&cache, &key, 3, &[], 1, 1_000_000, |_| {
+                Ok(Some(vec![classified_with_pad("next")]))
+            })
+            .err()
+            .ok_or("injected compact publication failure was ignored")?;
+            assert!(error.starts_with("injected"), "wrong refusal: {error}");
             round_trip(&cache, &key, &prior)?;
             assert_eq!(listed_generation_dirs(&cache, &key)?, generations);
         }
@@ -160,20 +166,28 @@ fn compact_windows_empty_result_uses_no_producer_or_shards() -> Result<(), Strin
     let cache = RepoSeamFactCache::at_dir(dir.clone());
     let key = empty_key();
     let fallback = vec![PathBuf::from("src/empty-fallback.rs")];
+    let calls = std::cell::Cell::new(0);
     let status = cache.store_compact_classified_windows(&key, 0, &fallback, 2, |_| {
-        panic!("empty producer called")
+        calls.set(calls.get() + 1);
+        Err("empty producer called".into())
     })?;
+    assert_eq!(calls.get(), 0);
     assert_eq!(status.label, "ok");
     assert!(listed_generation_dirs(&cache, &key)?.is_empty());
     assert!(
         matches!(cache.load_classified_seams_with_fallback(&key), CacheLoad::Hit((seams, None, paths)) if seams.is_empty() && paths == fallback)
     );
+    let error = publish_compact_windows(&cache, &key, 0, &[], 0, 1_000_000, |_| {
+        calls.set(calls.get() + 1);
+        Err("invalid producer called".into())
+    })
+    .err()
+    .ok_or("zero compact window size must refuse")?;
     assert!(
-        publish_compact_windows(&cache, &key, 0, &[], 0, 1_000_000, |_| panic!(
-            "invalid producer called"
-        ))
-        .is_err()
+        error.contains("store limit must be positive"),
+        "wrong refusal: {error}"
     );
+    assert_eq!(calls.get(), 0);
     ignore_remove_dir_all(&dir);
     Ok(())
 }
