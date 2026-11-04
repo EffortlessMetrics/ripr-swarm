@@ -207,19 +207,59 @@ mod tests {
             choose_base("qualification", "pull_request", &a, "", &a, "").ok(),
             Some(a.clone())
         );
-        assert!(choose_base("qualification", "pull_request", "", "", &a, &a).is_err());
-        assert!(choose_base("qualification", "pull_request", &a, "", &b, &a).is_err());
-        assert!(choose_base("legacy", "pull_request", "", "", &a, &a).is_err());
-        assert!(choose_base("legacy", "merge_group", "", "", &a, &a).is_err());
+        assert_eq!(
+            choose_base("qualification", "pull_request", "", "", &a, &a)
+                .err()
+                .as_deref(),
+            Some("honesty digest: admitted base missing, malformed, or not HEAD's first parent")
+        );
+        assert_eq!(
+            choose_base("qualification", "pull_request", &a, "", &b, &a)
+                .err()
+                .as_deref(),
+            Some("honesty digest: admitted base missing, malformed, or not HEAD's first parent")
+        );
+        assert_eq!(
+            choose_base("legacy", "pull_request", "", "", &a, &a)
+                .err()
+                .as_deref(),
+            Some(
+                "honesty digest: legacy event base missing, malformed, or not HEAD's first parent"
+            )
+        );
+        assert_eq!(
+            choose_base("legacy", "merge_group", "", "", &a, &a)
+                .err()
+                .as_deref(),
+            Some(
+                "honesty digest: legacy event base missing, malformed, or not HEAD's first parent"
+            )
+        );
         assert_eq!(choose_base("", "", "", "", "", &a).ok(), Some(a.clone()));
-        assert!(choose_base("", "", "", "", "", "").is_err());
+        assert_eq!(
+            choose_base("", "", "", "", "", "").err().as_deref(),
+            Some("honesty digest: no valid local merge base")
+        );
         assert_eq!(
             choose_base("legacy", "pull_request", "", &a, &a, "").ok(),
             Some(a.clone())
         );
-        assert!(choose_base("legacy", "merge_group", "", &a, &b, "").is_err());
-        assert!(entries(&json!({})).is_err());
-        assert!(cases(&json!({})).is_err());
+        assert_eq!(
+            choose_base("legacy", "merge_group", "", &a, &b, "")
+                .err()
+                .as_deref(),
+            Some(
+                "honesty digest: legacy event base missing, malformed, or not HEAD's first parent"
+            )
+        );
+        assert_eq!(
+            entries(&json!({})).err().as_deref(),
+            Some("honesty digest: base required list is missing or malformed")
+        );
+        assert_eq!(
+            cases(&json!({})).err().as_deref(),
+            Some("honesty digest: base cases missing or malformed")
+        );
     }
     #[test]
     fn removed_requirement_requires_original_path_deletion() -> Result<(), String> {
@@ -235,7 +275,12 @@ mod tests {
         );
         let deletion = corpus(&[], &[("projection", PROJ)]);
         assert!(delta_problems(&base, &deletion, |_| Ok(false))?.is_empty());
-        assert!(delta_problems(&base, &deletion, |_| Err("unreadable".into())).is_err());
+        assert_eq!(
+            delta_problems(&base, &deletion, |_| Err("unreadable".into()))
+                .err()
+                .as_deref(),
+            Some("unreadable")
+        );
         Ok(())
     }
 
