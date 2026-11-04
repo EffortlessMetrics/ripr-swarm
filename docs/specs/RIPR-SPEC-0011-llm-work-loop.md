@@ -792,6 +792,15 @@ screen reads the same gate as a not-ready route and keeps its own wording
 ("not complete enough to name a safe test target"); it does not print this
 reason.
 
+## Amendment (#12959): a refused changed-field seam names its next step
+
+A refusal for a field-construction seam whose only missing fact is the changed
+field value names the working stub (`ripr agent stub ... --kind
+field_construction`) or, when the stub refuses (for example a by-value `self`
+setter), says why it cannot write one and that the test is written by hand.
+Refusal text only: eligibility is unchanged, and starting a repair from a weak
+read of a written field stays #11870.
+
 ## Test Mapping
 
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
@@ -801,6 +810,7 @@ reason.
 - `crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection` (#12831)
 - `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
 - `crates/ripr/tests/repair_check_recommended_start.rs::a_start_whose_card_cannot_be_produced_creates_no_attempt` (#12867)
+- `crates/ripr/tests/repair_check_recommended_start.rs::a_refused_field_seam_names_the_stub_or_why_there_is_none` (#12959)
 - `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
 - `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)
 - `crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run` (#12831)

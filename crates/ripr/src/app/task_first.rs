@@ -520,6 +520,10 @@ fn route_not_ready_reason(
                 crate::analysis::seams::SeamKind::ReturnValue,
                 "return_value"
             ) | (crate::analysis::seams::SeamKind::ErrorVariant, "error_path")
+                | (
+                    crate::analysis::seams::SeamKind::FieldConstruction,
+                    "field_construction"
+                )
         )
     {
         // The stub command refuses some owners (async, generic, ...): name
@@ -975,7 +979,7 @@ pub(crate) fn resolve_repair_start(
     let mut open_on_change = 0usize;
     // Distinct refusal reasons in first-seen order, each with the first seam
     // that has it and how many seams share it.
-    let mut blocked_groups: Vec<(String, String, usize)> = Vec::new();
+    let mut blocked_groups: Vec<(String, String, usize, bool)> = Vec::new();
     for (entry, refusal) in &refusals {
         let off = off_change(entry);
         match refusal {
@@ -1010,9 +1014,22 @@ pub(crate) fn resolve_repair_start(
             // verdicts on one change.
             Some((_, reason)) => {
                 open_on_change += 1;
-                match blocked_groups.iter_mut().find(|group| group.0 == *reason) {
-                    Some(group) => group.2 += 1,
-                    None => blocked_groups.push((reason.clone(), seam_label(entry), 1)),
+                // Seams in the same state group even when their by-hand hints
+                // differ (a stub command here, the stub's own refusal there):
+                // the hint is the first member's, the state is the key.
+                match blocked_groups
+                    .iter_mut()
+                    .find(|group| reason_state(&group.0) == reason_state(reason))
+                {
+                    Some(group) => {
+                        group.2 += 1;
+                        // A member whose hint differs from the shown one
+                        // (stub command vs the stub's own refusal) is flagged.
+                        if reason_hint(&group.0) != reason_hint(reason) {
+                            group.3 = true;
+                        }
+                    }
+                    None => blocked_groups.push((reason.clone(), seam_label(entry), 1, false)),
                 }
             }
         }
@@ -1042,13 +1059,14 @@ pub(crate) fn resolve_repair_start(
                 .map(|(_, reason)| reason),
         );
     } else {
-        for (reason, label, count) in blocked_groups {
+        for (reason, label, count, hints_differ) in blocked_groups {
             let mut text = format!("{label}: {reason}");
             if count > 1 {
-                text.push_str(&format!(
-                    " (and {} other gaps in the same state)",
-                    count - 1
-                ));
+                text.push_str(&format!(" (and {} other gaps in the same state", count - 1));
+                if hints_differ {
+                    text.push_str("; the next step may differ for them, see `ripr check`");
+                }
+                text.push(')');
             }
             refusal_reasons.push(text);
         }
@@ -1234,6 +1252,46 @@ fn change_after_closure(
         NoEligibleChange::Other if candidates_left || left_open => NoEligibleChange::OpenOnChange,
         NoEligibleChange::Other if dropped_any => NoEligibleChange::AlreadyChecked,
         other => other,
+    }
+}
+
+/// The part of a not-ready reason that names its state: everything before the
+/// by-hand hint (#12959), so seams missing the same evidence group together.
+fn reason_state(reason: &str) -> &str {
+    reason
+        .split_once(": write the test by hand")
+        .map_or(reason, |(state, _)| state)
+}
+
+/// The by-hand hint of a not-ready reason, or `None` when it has none.
+fn reason_hint(reason: &str) -> Option<&str> {
+    reason
+        .split_once(": write the test by hand")
+        .map(|(_, hint)| hint)
+}
+
+#[cfg(test)]
+mod reason_group_tests {
+    use super::{reason_hint, reason_state};
+
+    /// #12959: the state is the part before the by-hand hint, so seams in
+    /// one state group even when their hints differ; a reason without the
+    /// hint delimiter is its own state, unchanged.
+    #[test]
+    fn same_state_with_different_hints_shares_a_state() {
+        let stub = "repair route not ready (missing evidence: x): write the test by hand, or run `ripr agent stub --at a:1 --kind field_construction`";
+        let why = "repair route not ready (missing evidence: x): write the test by hand; ripr cannot write a fill-in skeleton here because y";
+        assert_eq!(reason_state(stub), reason_state(why));
+        assert_eq!(
+            reason_state(stub),
+            "repair route not ready (missing evidence: x)"
+        );
+        assert_ne!(reason_hint(stub), reason_hint(why));
+        let other = "repair route not ready (missing evidence: z): write the test by hand";
+        assert_ne!(reason_state(stub), reason_state(other));
+        let bare = "no delimiter here";
+        assert_eq!(reason_state(bare), bare);
+        assert_eq!(reason_hint(bare), None);
     }
 }
 
