@@ -420,6 +420,40 @@ fn required_digest_problems(
     }
 }
 
+/// The file-name family `.gitattributes` declares `linguist-generated`, so
+/// candidate admission does not count its lines (#12739, #12859).
+fn is_declared_generated_capture(label: &str) -> bool {
+    let name = label.rsplit('/').next().unwrap_or(label);
+    name.ends_with(".json")
+        && (name.starts_with("rust-inherent-") || name.starts_with("rust-repo-exposure-"))
+}
+
+/// The admission exemption is a file name, so the gate must make the name
+/// true: a report in the declared family either is the `source_report` of a
+/// case that regenerates it from a Cargo subject, or is a full capture the
+/// corpus pins at an older generation in `report_cache_schema_pins` (a visible,
+/// reasoned `corpus.json` edit). Anything else could be hand-written text
+/// that borrowed the name to skip the size cap.
+fn declared_family_problems(
+    reports: &[(String, Value)],
+    regenerable: &[String],
+    pinned: &[String],
+    violations: &mut Vec<String>,
+) {
+    for (label, report) in reports {
+        if !is_declared_generated_capture(label) {
+            continue;
+        }
+        let regenerated = regenerable.iter().any(|path| path == label);
+        let held = pinned.iter().any(|path| path == label) && is_full_capture(report);
+        if !regenerated && !held {
+            violations.push(format!(
+                "{label}: this name is declared generated in `.gitattributes`, so admission does not count its lines, but no corpus case regenerates it (`source_report` with `report_subject`) and it is not a pinned full capture. Add a case that reads it, or rename the file (#12859)"
+            ));
+        }
+    }
+}
+
 /// Verify the self-digest of every committed report in the corpus (#12602).
 /// The regeneration guard above judges seams only and ignores the producer
 /// stamps, so a hand edit of a stamp left the digest stale with every gate green.
@@ -450,6 +484,26 @@ pub(super) fn check_report_digests(violations: &mut Vec<String>) -> Result<(), S
     let exemptions = read_digest_exemptions(&corpus, violations);
     stamp_problems(&parsed, &exemptions, violations);
     required_digest_problems(&corpus, &parsed, violations);
+    let mut ignored = Vec::new();
+    let regenerable: Vec<String> = corpus
+        .get("cases")
+        .and_then(Value::as_array)
+        .map(|cases| repo_seam_cases(cases, &mut ignored))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(_, report, _)| report)
+        .collect();
+    let pinned: Vec<String> = corpus
+        .get("report_cache_schema_pins")
+        .and_then(Value::as_array)
+        .map(|pins| {
+            pins.iter()
+                .filter_map(|pin| pin.get("report").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    declared_family_problems(&parsed, &regenerable, &pinned, violations);
     Ok(())
 }
 
@@ -679,6 +733,45 @@ mod tests {
             &mut clean,
         );
         assert!(clean.is_empty(), "{clean:?}");
+    }
+
+    #[test]
+    fn a_declared_family_name_needs_a_regenerating_case_or_a_pinned_capture() {
+        let hand_written = json!({"scope": {}, "seams": []});
+        let name = "fixtures/x/reports/rust-inherent-pad.json";
+        let run = |report: &Value, regenerable: &[&str], pinned: &[&str]| {
+            let mut violations = Vec::new();
+            declared_family_problems(
+                &[(name.to_string(), report.clone())],
+                &regenerable
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect::<Vec<_>>(),
+                &pinned.iter().map(|s| (*s).to_string()).collect::<Vec<_>>(),
+                &mut violations,
+            );
+            violations
+        };
+        // An unreferenced marker-less file borrowing the name fails.
+        let failed = run(&hand_written, &[], &[]);
+        assert!(
+            failed.len() == 1 && failed[0].contains("#12859"),
+            "{failed:?}"
+        );
+        // A pin does not launder a file that is not a full capture.
+        assert_eq!(run(&hand_written, &[], &[name]).len(), 1);
+        // A regenerating case, or a pinned full capture, satisfies it.
+        assert!(run(&hand_written, &[name], &[]).is_empty());
+        assert!(run(&capture(true), &[], &[name]).is_empty());
+        // A name outside the family is not this rule's business.
+        let mut other = Vec::new();
+        declared_family_problems(
+            &[("a/reports/rust-matches-x.json".to_string(), hand_written)],
+            &[],
+            &[],
+            &mut other,
+        );
+        assert!(other.is_empty());
     }
 
     #[test]

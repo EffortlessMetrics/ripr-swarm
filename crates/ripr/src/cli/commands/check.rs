@@ -1677,6 +1677,14 @@ fn check_inner(
         // and the full walk runs (#12505).
         crate::analysis::announce_seam_facts_cache_misses();
     }
+    if check_timeout_explicitly_provided
+        && let Some(disclosure) = super::check_budget::explicit_check_timeout_disclosure(
+            check_timeout,
+            format.is_repo_seam_inventory(),
+        )
+    {
+        eprintln!("{disclosure}");
+    }
     if matches!(format, OutputFormat::RepoExposureJson) {
         // #7781: this path never reaches `check_with_progress`, so it needs
         // its own containment check before the inventory caches write.
