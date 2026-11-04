@@ -303,6 +303,7 @@ impl RiprConfig {
         severity
     }
 
+    #[cfg(test)]
     pub(crate) fn oracles_for(&self, crate_name: Option<&str>, path: &str) -> OraclePolicy {
         let mut oracles = self.oracles.clone();
         oracles.overlays.clear();
