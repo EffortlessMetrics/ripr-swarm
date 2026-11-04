@@ -1667,6 +1667,7 @@ impl ClassifiedProbeEvidence {
                             .collect();
                         crate::analysis::classify::assigned_field_weak_read_start(
                             owner,
+                            &context.probe.expression,
                             &path,
                             &tests,
                             context.index,

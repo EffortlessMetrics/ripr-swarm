@@ -305,9 +305,12 @@ rejected alternative. Any can be reversed later without touching the rest.
    owner directly reads `<binding>.<field>` as one whole side of a relational
    check (`>`, `<`, `>=`, `<=`, `!=`) or `assert_ne!`, against a side that
    does not name the binding, from the binding it ran the owner on, under the
-   confirming read's binding guards; and no other assertion in a related test
-   reads that field or names that binding (it could be the exact check these
-   rules do not place). A strong read stays "nothing to do"; no read, a
+   confirming read's binding guards; and nothing else in a related test body can be
+   the exact check these rules do not place: no other statement, assertion or
+   not, names the field or uses the binding except as the owner call or its
+   `let` (an alias, a helper call, a destructure, a move, an `if`/`panic!`
+   check withholds); the owner's `Self` type is also not a non-plain `Drop`
+   type. A strong read stays "nothing to do"; no read, a
    sibling field, another binding, a later write, a by-value owner, an
    equality, a bare boolean, a getter and a private field start nothing.
    Rejected: crediting a seam by the field name alone, which any binding or
@@ -457,7 +460,7 @@ changes `self.count += 2` to `self.count += 1`.
   equivalent, so they have no runtime-labeled case.
 - Weak-read start (#11870): `test_grip_evidence/tests.rs`
   `a_weak_read_of_a_written_field_is_the_missing_discriminator_only_when_placed`
-  and the real-binary `repair_check_recommended_start.rs`
+  (including the non-assertion checks above) and the real-binary `repair_check_recommended_start.rs`
   `a_weak_read_of_a_written_field_starts_the_repair_check_recommends`
   (positive start, the strong read as "nothing to do", and the negatives).
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.

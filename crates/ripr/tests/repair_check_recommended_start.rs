@@ -470,15 +470,36 @@ fn write_test(body: &str) -> String {
     format!("use fx::Counter;\n\n#[test]\nfn t() {{\n{body}\n}}\n")
 }
 
+/// The classification of every finding `ripr check --format json` reports.
+fn finding_classes(root: &Path) -> Result<Vec<String>, String> {
+    let check = ripr(root, &["check", "--base", "main", "--format", "json"])?;
+    let json: serde_json::Value =
+        serde_json::from_slice(&check.stdout).map_err(|e| format!("check json: {e}"))?;
+    Ok(json["findings"]
+        .as_array()
+        .ok_or("check json has no findings")?
+        .iter()
+        .filter_map(|f| f["classification"].as_str().map(str::to_string))
+        .collect())
+}
+
 /// No start anywhere: check offers none, bare repair is refused and starts no
-/// attempt. Returns what repair printed.
+/// attempt. Returns what repair printed. `class` is the one finding the
+/// change must produce (so a fixture that analyzed nothing cannot pass).
 fn assert_no_write_start(
     label: &str,
     base: &str,
     changed: &str,
     test: &str,
+    class: &str,
 ) -> Result<String, String> {
     let repo = repo(label, base, changed, test, true)?;
+    let classes = finding_classes(&repo.root)?;
+    if classes != [class] {
+        return Err(format!(
+            "{label}: expected one `{class}` finding, found {classes:?}"
+        ));
+    }
     if let Some(id) = check_start_id(&repo.root)? {
         return Err(format!("{label}: check must offer no start, offered {id}"));
     }
@@ -502,19 +523,86 @@ fn a_weak_read_of_a_written_field_starts_the_repair_check_recommends() -> Result
     let run = "    let mut c = Counter::new();\n    c.bump();\n";
     let weak = write_test(&format!("{run}    assert!(c.count > 0);"));
     let repo = repo("writeweak", WRITE_BASE, &changed, &weak, true)?;
+    if finding_classes(&repo.root)? != ["weakly_exposed"] {
+        return Err("the weak read must stay one weakly_exposed finding".to_string());
+    }
     assert_starts_check_recommendation(&repo, "written-field-weak-read")?;
-    // The started packet asks for the written field, not a sibling.
-    let packet = std::fs::read_to_string(repo.root.join("target/ripr/workflow/agent-packet.json"))
-        .map_err(|e| e.to_string())?;
-    if !packet.contains("count") {
-        return Err(format!("the packet must name the written field:\n{packet}"));
+    // The started packet asks for the written field's FieldValue check.
+    let packet: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(repo.root.join("target/ripr/workflow/agent-packet.json"))
+            .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let missing = &packet["packets"][0]["missing_discriminators"][0];
+    if missing["value"] != "count"
+        || !missing["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("written field `count` is read only by a weak check"))
+    {
+        return Err(format!(
+            "the packet must carry the FieldValue fact:\n{missing}"
+        ));
+    }
+    if packet["packets"][0]["assertion_shape"]["kind"] != "field_equality" {
+        return Err("the packet must ask for a field equality".to_string());
     }
     // Strong read: already checked, repair says so.
     let strong = write_test(&format!("{run}    assert_eq!(c.count, 2);"));
-    let err = assert_no_write_start("writestrong", WRITE_BASE, &changed, &strong)?;
+    let err = assert_no_write_start("writestrong", WRITE_BASE, &changed, &strong, "exposed")?;
     if !err.contains("Nothing to do") {
         return Err(format!("a strong read is nothing to do:\n{err}"));
     }
+    // Checks that reach the field without an assertion fact: the weak
+    // assertion is present in each, the exact check is not an assertion on
+    // the field, and the start is still withheld (#11870 review).
+    let verify = "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n";
+    for (label, body, tail) in [
+        (
+            "writealias",
+            "    assert!(c.count > 0);\n    let n = c.count;\n    assert_eq!(n, 2);",
+            "",
+        ),
+        (
+            "writehelper",
+            "    assert!(c.count > 0);\n    verify(&c);",
+            verify,
+        ),
+        (
+            "writedestructure",
+            "    assert!(c.count > 0);\n    let Counter { count, .. } = c;\n    assert_eq!(count, 2);",
+            "",
+        ),
+        (
+            "writerefalias",
+            "    assert!(c.count > 0);\n    let r = &c.count;\n    assert_eq!(*r, 2);",
+            "",
+        ),
+        (
+            "writeifpanic",
+            "    assert!(c.count > 0);\n    if c.count != 2 {\n        panic!(\"bad\");\n    }",
+            "",
+        ),
+    ] {
+        let test = format!("{}{tail}", write_test(&format!("{run}{body}")));
+        assert_no_write_start(label, WRITE_BASE, &changed, &test, "static_unknown")?;
+    }
+    // A `Drop` that may exit while a failed assertion unwinds: no repair.
+    let drop_impl = "\nimpl Drop for Counter {\n    fn drop(&mut self) {\n        std::process::exit(1);\n    }\n}\n";
+    let (drop_base, drop_new) = (
+        format!("{WRITE_BASE}{drop_impl}"),
+        format!("{changed}{drop_impl}"),
+    );
+    let drop_repo = repo_with("writedrop", &drop_base, &drop_new, &weak)?;
+    if check_start_id(&drop_repo.root)?.is_some() {
+        return Err("a non-plain Drop owner type must start nothing".to_string());
+    }
+    // The related-test set is the same for `check` and `repair`: an exact
+    // check in a second test withholds the start in both commands.
+    let two = format!(
+        "{}\n#[test]\nfn u() {{\n{run}    let n = c.count;\n    assert_eq!(n, 2);\n}}\n",
+        write_test(&format!("{run}    assert!(c.count > 0);"))
+    );
+    assert_no_write_start("writetwo", WRITE_BASE, &changed, &two, "static_unknown")?;
     for (label, base, new, body) in [
         // The field is written and never read: nothing weak to strengthen.
         ("writeonly", WRITE_BASE, changed.clone(), format!("{run}    assert!(c.other == 0);")),
@@ -544,7 +632,7 @@ fn a_weak_read_of_a_written_field_starts_the_repair_check_recommends() -> Result
             format!("{run}    assert!(c.count > 0);\n    assert_eq!(c.count, 2);"),
         ),
     ] {
-        assert_no_write_start(label, base, &new, &write_test(&body))?;
+        assert_no_write_start(label, base, &new, &write_test(&body), "static_unknown")?;
     }
     // A by-value owner writes a moved copy: a read of the binding sees nothing.
     let by_value_base = WRITE_BASE.replace(
@@ -552,14 +640,20 @@ fn a_weak_read_of_a_written_field_starts_the_repair_check_recommends() -> Result
         "pub fn bump(mut self) -> Self {\n        self.count = 1;\n        self\n    }",
     );
     let by_value_new = by_value_base.replace("self.count = 1;", "self.count = 2;");
-    assert_no_write_start("writebyvalue", &by_value_base, &by_value_new, &weak)?;
+    assert_no_write_start(
+        "writebyvalue",
+        &by_value_base,
+        &by_value_new,
+        &weak,
+        "static_unknown",
+    )?;
     // Skipped tests never run the read.
     for (label, attr) in [
         ("writeignored", "#[ignore]"),
         ("writepanics", "#[should_panic]"),
     ] {
         let skipped = weak.replace("#[test]", &format!("#[test]\n{attr}"));
-        assert_no_write_start(label, WRITE_BASE, &changed, &skipped)?;
+        assert_no_write_start(label, WRITE_BASE, &changed, &skipped, "static_unknown")?;
     }
     Ok(())
 }

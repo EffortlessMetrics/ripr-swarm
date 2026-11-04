@@ -22682,6 +22682,61 @@ fn a_weak_read_of_a_written_field_is_the_missing_discriminator_only_when_placed(
         let facts = field_write_facts(signature, &body)?;
         assert!(facts.is_empty(), "{label} must start nothing: {facts:?}");
     }
+    // A check that reaches the field without being an assertion fact.
+    for (label, body, tail) in [
+        (
+            "a let alias of the field then an exact check",
+            weak("assert!(c.count > 0);\n    let n = c.count;\n    assert_eq!(n, 2);"),
+            "",
+        ),
+        (
+            "a helper that checks the binding",
+            weak("assert!(c.count > 0);\n    verify(&c);"),
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        ),
+        (
+            "a helper on the same line as the weak assertion",
+            weak("assert!(c.count > 0); verify(&c);"),
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        ),
+        (
+            "a destructure of the binding",
+            weak(
+                "assert!(c.count > 0);\n    let Counter { count, .. } = c;\n    assert_eq!(count, 2);",
+            ),
+            "",
+        ),
+        (
+            "a reference alias of the field",
+            weak("assert!(c.count > 0);\n    let r = &c.count;\n    assert_eq!(*r, 2);"),
+            "",
+        ),
+        (
+            "an if-panic check of the field",
+            weak("assert!(c.count > 0);\n    if c.count != 2 {\n        panic!(\"bad\");\n    }"),
+            "",
+        ),
+        (
+            "a move of the binding",
+            weak("assert!(c.count > 0);\n    let moved = c;\n    drop(moved);"),
+            "",
+        ),
+    ] {
+        let facts = field_write_facts_with_tail(by_ref, &body, "", tail)?;
+        assert!(facts.is_empty(), "{label} must start nothing: {facts:?}");
+    }
+    // The same shapes without the extra statement still start, so the
+    // negatives above are the statement's doing and not the harness'.
+    assert_eq!(
+        field_write_facts_with_tail(
+            by_ref,
+            &weak("assert!(c.count > 0);"),
+            "",
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        )?,
+        vec!["count".to_string()],
+        "an unrelated helper item does not withhold"
+    );
     for attr in ["#[ignore]", "#[should_panic]"] {
         let facts = field_write_facts_with_attr(by_ref, &weak("assert!(c.count > 0);"), attr)?;
         assert!(facts.is_empty(), "{attr} must start nothing: {facts:?}");
@@ -22694,12 +22749,23 @@ fn field_write_facts_with_attr(
     test_body: &str,
     attr: &str,
 ) -> Result<Vec<String>, String> {
+    field_write_facts_with_tail(signature, test_body, attr, "")
+}
+
+/// As [`field_write_facts`], with `tail` (helper items) after the test fn.
+fn field_write_facts_with_tail(
+    signature: &str,
+    test_body: &str,
+    attr: &str,
+    tail: &str,
+) -> Result<Vec<String>, String> {
     let prod = PathBuf::from("src/counter.rs");
     let prod_src = format!(
         "pub struct Counter {{\n    pub count: u32,\n    pub other: u32,\n}}\n\nimpl Counter {{\n    pub fn new() -> Self {{\n        Counter {{ count: 0, other: 0 }}\n    }}\n\n    {signature} {{\n        self.count = 2;\n    }}\n}}\n"
     );
     let tests = PathBuf::from("tests/counter_tests.rs");
-    let tests_src = format!("use fx::Counter;\n\n#[test]\n{attr}\nfn t() {{\n{test_body}\n}}\n");
+    let tests_src =
+        format!("use crate::Counter;\n\n#[test]\n{attr}\nfn t() {{\n{test_body}\n}}\n{tail}\n");
     let index = index_from_files(&[(prod, prod_src.as_str()), (tests, tests_src.as_str())])?;
     let seams = inventory_seams_from_index(&[PathBuf::from("src/counter.rs")], &index);
     let seam = seams

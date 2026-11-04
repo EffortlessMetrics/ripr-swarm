@@ -1000,7 +1000,11 @@ thread_local! {
 /// generic parameters withholds; a workspace holding a macro or outside-crate
 /// item calls no type plain. A name no workspace source declares is a
 /// standard-library type, whose `Drop` cannot exit the process.
-fn names_non_plain_drop_type(owner: &FunctionSummary, expression: &str, index: &RustIndex) -> bool {
+pub(in crate::analysis) fn names_non_plain_drop_type(
+    owner: &FunctionSummary,
+    expression: &str,
+    index: &RustIndex,
+) -> bool {
     let body: &str = &owner.body;
     let signature = body.find('{').map_or(body, |open| &body[..open]);
     if returns_generic_or_opaque_type(owner, signature, index) {

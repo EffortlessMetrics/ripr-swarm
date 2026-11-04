@@ -87,9 +87,9 @@ pub(super) fn missing_field_value_facts(
 
 /// #11870: the missing-discriminator fact for a changed `self.f = ..` write
 /// that a related test reads with a relational or `assert_ne!` check only.
-/// Fail-closed: the policy is [`assigned_field_weak_read_start`]; a non-plain
-/// `Drop` owner type (a failed assertion may exit while unwinding) and an
-/// owner the seam cannot place withhold it.
+/// Fail-closed: the policy is [`assigned_field_weak_read_start`] (which also
+/// withholds a non-plain `Drop` owner type); an owner the seam cannot place
+/// withholds it.
 fn assigned_field_weak_read_fact(
     seam: &RepoSeam,
     related: &[&CompactTest<'_>],
@@ -101,14 +101,13 @@ fn assigned_field_weak_read_fact(
     };
     let tests: Vec<&crate::analysis::rust_index::TestSummary> =
         related.iter().map(|indexed| indexed.test).collect();
-    if super::names_non_plain_drop_type(owner, seam.expression(), context.index)
-        || !crate::analysis::classify::assigned_field_weak_read_start(
-            owner,
-            field,
-            &tests,
-            context.index,
-        )
-    {
+    if !crate::analysis::classify::assigned_field_weak_read_start(
+        owner,
+        seam.expression(),
+        field,
+        &tests,
+        context.index,
+    ) {
         return Vec::new();
     }
     vec![MissingDiscriminatorFact {

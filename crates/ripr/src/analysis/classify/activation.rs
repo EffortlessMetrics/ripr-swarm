@@ -4270,14 +4270,22 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
 /// owner's related tests):
 /// - the owner borrows its receiver (a by-value `self` writes a moved copy,
 ///   so no read of the test's binding can see the write);
+/// - the owner and the changed `expression` name no type with a non-plain
+///   `Drop` impl (a failed assertion may exit while unwinding, so an exact
+///   assertion would not be a repair);
 /// - no test is `#[ignore]`d or `#[should_panic]` (a strengthened one would
 ///   not run, or would pass by panicking before its read);
 /// - no assertion confirms the write ([`assigned_field_read_confirms`]); a
-///   confirmed write is already checked and has nothing to repair; and
+///   confirmed write is already checked and has nothing to repair;
 /// - a test that calls the owner directly has an assertion that reads the
 ///   written field from the binding it ran the owner on, as one side of a
 ///   relational check (`>`, `<`, `>=`, `<=`, `!=`) or `assert_ne!`, under
-///   the confirming rule's binding guards ([`weak_assigned_field_read`]).
+///   the confirming rule's binding guards ([`weak_assigned_field_read`]); and
+/// - nothing else in any related test body can be the exact check these rules
+///   do not place ([`test_body_may_check_field_elsewhere`]): any statement,
+///   not only an assertion, that names the field or uses a weakly read
+///   binding other than as the owner call or its declaration (a `let` alias,
+///   a destructure, a helper call, a move, an `if`/`panic!` check).
 ///
 /// `check` (the finding's class) and the seam's missing-discriminator fact
 /// both ask this, so `ripr check` and `ripr repair` start the same gap. A
@@ -4285,6 +4293,7 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
 /// write, a getter, an equality or a bare boolean) starts nothing.
 pub(in crate::analysis) fn assigned_field_weak_read_start(
     owner: &FunctionSummary,
+    expression: &str,
     path: &str,
     tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
@@ -4296,9 +4305,20 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
                 || test.attrs.iter().any(|attr| attr.contains("should_panic"))
         })
         || macro_names_rebound(index, &["assert", "assert_ne"])
+        // The test's binding is the impl's `Self` type, which a `&mut self`
+        // signature never names: ask about it explicitly (an owner with no
+        // established impl type withholds).
+        || crate::analysis::test_grip_evidence::names_non_plain_drop_type(
+            owner,
+            &format!("{expression} Self"),
+            index,
+        )
     {
         return false;
     }
+    let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
+        return false;
+    };
     let mut weak = false;
     for test in tests {
         let direct = super::related_tests::owner_call_is_direct(test, owner, index);
@@ -4330,9 +4350,66 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
                 return false;
             }
         }
+        // Pass three: the rest of the body, assertions or not.
+        if test_body_may_check_field_elsewhere(test, &weak_reads, call.name(), path) {
+            return false;
+        }
         weak = weak || !weak_reads.is_empty();
     }
     weak
+}
+
+/// Whether `test`'s body, with the weak-read assertions (`weak_reads`) cut
+/// out, still names the written field `path` or uses a weakly read binding
+/// anywhere but as the owner call `<binding>.<owner>(` or its declaration
+/// `let [mut] <binding>`. Such a statement may check the field exactly
+/// without being an assertion fact (`let n = c.count; assert_eq!(n, 2)`,
+/// `verify(&c)`, `let Counter { count, .. } = c`, `let r = &c.count`,
+/// `if c.count != 2 { panic!() }`). A weak assertion whose text cannot be
+/// found in the body withholds (fail closed).
+fn test_body_may_check_field_elsewhere(
+    test: &TestSummary,
+    weak_reads: &[(usize, String)],
+    owner_name: &str,
+    path: &str,
+) -> bool {
+    let mut rest = crate::analysis::extract::mask_comments_and_strings(test.body.as_ref());
+    for (at, _) in weak_reads {
+        let Some(assertion) = test.assertions.get(*at) else {
+            return true;
+        };
+        let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+        let text = masked.trim();
+        let text = text.strip_suffix(';').unwrap_or(text).trim_end();
+        if text.is_empty() || !rest.contains(text) {
+            return true;
+        }
+        rest = rest.replacen(text, " ", 1);
+    }
+    if names_field_access(&rest, path) {
+        return true;
+    }
+    let mut bindings: Vec<&str> = weak_reads.iter().map(|(_, b)| b.as_str()).collect();
+    bindings.sort_unstable();
+    bindings.dedup();
+    bindings.into_iter().any(|binding| {
+        let mut rest = rest.replace(&format!("{binding}.{owner_name}("), " (");
+        for head in [format!("let mut {binding}"), format!("let {binding}")] {
+            while let Some(at) = rest.find(&head) {
+                let end = at + head.len();
+                let boundary = rest[end..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+                if boundary {
+                    rest.replace_range(at..end, " ");
+                } else {
+                    break;
+                }
+            }
+        }
+        names_whole_ident(&rest, binding)
+    })
 }
 
 /// Whether `masked` names `ident` as a whole identifier.
