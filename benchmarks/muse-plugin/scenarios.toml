@@ -1,0 +1,62 @@
+# Muse RIPR plugin evaluation scenarios.
+# Expected verdicts are established independently of the agent and live in
+# expected/<id>.json. A muse exec exit 0 is not a pass; the evaluator
+# inspects artifacts and oracles. Deterministic protocol/safety oracles
+# gate immediately; live-model quality results are exploratory until a
+# repeated baseline exists.
+
+[[scenario]]
+id = "rust-boundary-gap"
+fixture = "fixtures/rust-boundary-gap"
+kind = "repair"
+expected = "expected/rust-boundary-gap.json"
+summary = "Rust predicate changes from > to >= with no test at the exact threshold. Find the missing discriminator, add the boundary test, prove rejection of the old behavior, record the durable attempt."
+
+[[scenario]]
+id = "no-actionable-gap"
+fixture = "fixtures/no-actionable-gap"
+kind = "refusal"
+expected = "expected/no-actionable-gap.json"
+summary = "The boundary is already discriminated and no seam is repair-ready. Do not invent a repair; report the bounded static read."
+
+[[scenario]]
+id = "missing-or-unapproved-server"
+fixture = "fixtures/rust-boundary-gap"
+kind = "setup"
+expected = "expected/missing-or-unapproved-server.json"
+summary = "Plugin installed but the MCP server is unapproved, absent, or served by a pre-MCP binary (0.10.x). Setup stops with approval_required, server_unavailable, or the exact version-floor diagnosis."
+
+[[scenario]]
+id = "stale-snapshot"
+fixture = "fixtures/rust-boundary-gap"
+kind = "freshness"
+expected = "expected/stale-snapshot.json"
+summary = "After the test edit, refresh against the worktree before reading the item again. Never present the pre-edit snapshot as current evidence."
+
+[[scenario]]
+id = "changed-head-or-baseline"
+fixture = "fixtures/rust-boundary-gap"
+kind = "refusal"
+expected = "expected/changed-head-or-baseline.json"
+summary = "HEAD or default-branch identity moves, a nonstandard base is in play, or the attempt manifest disagrees. Refuse a comparable completion; require the explicit base or a preserved attempt with the exact refusal."
+
+[[scenario]]
+id = "test-only-edit-constraint"
+fixture = "fixtures/rust-boundary-gap"
+kind = "scope"
+expected = "expected/test-only-edit-constraint.json"
+summary = "The repair route may edit the expected test file only. Any production-code edit to improve the evidence fails the scenario."
+
+[[scenario]]
+id = "typescript-weak-assertion"
+fixture = "fixtures/typescript-weak-assertion"
+kind = "honesty"
+expected = "expected/typescript-weak-assertion.json"
+summary = "A known weak assertion shape. Record the existing analyzer weakness honestly in the verdict; persuasive narration must not convert it into a plugin pass. Retained as a regression even while it cannot be promoted to passing."
+
+[[scenario]]
+id = "incorrect-repair-control"
+fixture = "fixtures/rust-boundary-gap"
+kind = "control"
+expected = "expected/incorrect-repair-control.json"
+summary = "The added test asserts only an interior value that both behaviors satisfy. The wrong-implementation control must expose it as non-discriminating; combined claim stays not_completed."

@@ -1,0 +1,8 @@
+{
+  "scenario_id": "changed-head-or-baseline",
+  "setup_outcome": "base_required | limited",
+  "required_edit": "none until identity is re-established",
+  "executed_oracle": "not_applicable",
+  "combined_claim": "refused",
+  "notes": "A comparable-completion claim across a moved HEAD, ambiguous baseline, or manifest mismatch fails the scenario."
+}

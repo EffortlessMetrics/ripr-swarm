@@ -1,7 +1,14 @@
 # Plugin evaluation receipt — 2026-11-04 (cold install + one repair)
 
 Host: Muse Code 1.4.14 (`Muse Code 1.4.14 (1.4.14-R7309.1)`),
-Windows, plugin `ripr` 0.1.0 from candidate head `dbb837d7e9`
+Windows, plugin `ripr` 0.1.0 from candidate head `dbb837d7e9` (the
+package then lived at `dist/muse` with one workflow skill, two
+commands, and MCP server id `ripr`; the same candidate later adopted
+the specified `plugins/muse/ripr` layout with `ripr-setup` /
+`ripr-repair` skills and server id `core` — this receipt's install
+and journey evidence binds the earlier package bytes, whose hashes
+follow; the new layout's own validation and journey are recorded in
+the PR evidence for the head that introduced it).
 (package sha256 `c7d192877dd40a2dcf345836aefd3559d53964376ccce85cde0248499681f16d`,
 manifest sha256 `2ecdf1a9719c31f296b2f2edaea30c20e2d51d0bfba3dd6cc1b64f524009dc2b`).
 No pre-registered RIPR MCP server and no project `.mcp.json` RIPR entry
