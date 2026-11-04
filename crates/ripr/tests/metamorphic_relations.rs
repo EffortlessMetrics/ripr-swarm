@@ -14,16 +14,29 @@
 //!    never lowers the class rank, and replacing an exact oracle with a smoke
 //!    one never raises it.
 //!
-//! Every language runs two seeds (a comparison boundary and an error path).
+//! Every language runs a comparison-boundary seed and an error-path seed;
+//! Python adds `python_sink_token`, the `python_adversarial_buffer_token`
+//! shape, whose oracle observes a derived local. The rename relation also
+//! compares `oracle_alignment`: a substring sink-token match moves the
+//! alignment label (`orthogonal` to `changed_sink_token`) while a later gate
+//! still holds the class at `weakly_exposed`, so the class alone would miss it.
 //! Each case first asserts that its fixture produced exactly one finding for
 //! the intended changed expression with the expected baseline class, so a
 //! relation can never pass over an empty or misparsed workspace. These are
 //! static classes: nothing here claims a runtime mutation outcome.
 //!
 //! A relation that is known not to hold for a seed is listed in
-//! [`EXCEPTIONS`] with its reason; the case then asserts the recorded
-//! divergence instead of being skipped. The table starts empty because every
-//! relation held on every seed when the suite was written.
+//! [`EXCEPTIONS`] with its reason; the case then asserts the relation still
+//! fails (a stale exception fails the test) instead of being skipped. The
+//! table is empty because every relation held on every seed when the suite
+//! was written. The `python_sink_token` seed is exempt only from the strict
+//! smoke-below-exact check (`strict_oracle: false`): its exact oracle is
+//! itself `weakly_exposed`, so monotonicity (smoke never above exact) is all
+//! it can show.
+//!
+//! The suite needs the default features (`lang-rust`, `lang-typescript` and
+//! `lang-python` are all default); a reduced-feature build runs only the
+//! enabled languages.
 
 use ripr::app::check_workspace_with_config;
 use ripr::config::RiprConfig;
@@ -385,9 +398,17 @@ fn run_relation(seed: &Seed, relation: Relation) -> Result<(), String> {
         Relation::OracleStrength => check_oracle_strength(seed),
     };
     match excepted(seed, relation) {
+        // An excepted relation must still diverge: if it starts holding, the
+        // exception is stale and the entry has to be removed.
         Some(reason) => {
             assert!(!reason.is_empty());
-            Ok(())
+            match outcome {
+                Err(_) => Ok(()),
+                Ok(()) => Err(format!(
+                    "{}: {relation:?} is listed as an exception ({reason}) but now holds",
+                    seed.name
+                )),
+            }
         }
         None => outcome,
     }
