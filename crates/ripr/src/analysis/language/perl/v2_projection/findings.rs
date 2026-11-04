@@ -336,6 +336,7 @@ pub(crate) fn unowned_change_findings(
                 observed_sink: None,
                 oracle_alignment: None,
                 alignment_reason: None,
+                superseded_alignment_reason: None,
                 source_currentness: perl_lines_currentness(root, changed_files, file, line..=line),
             });
         }
@@ -885,6 +886,7 @@ pub(crate) fn packet_to_findings_with_currentness(
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            superseded_alignment_reason: None,
             // #6586: resolved by the caller from the observed diff; without one
             // the disposition stays the explicit unknown (#3280).
             source_currentness: currentness(file, change),
