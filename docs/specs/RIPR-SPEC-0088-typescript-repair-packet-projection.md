@@ -418,3 +418,26 @@ MOD  crates/ripr/src/lsp/actions.rs
   contain the named limitation section.
 - Authority boundary unchanged: all four surfaces carry
   `authority_boundary: preview_advisory_only`; TypeScript remains `preview`.
+
+## Advisory unknown findings in the first-pr ledger (#12930)
+
+The check-output ledger retains a TypeScript or JavaScript preview finding as
+an advisory static limitation when its classification is `weakly_exposed` or
+`static_unknown`, no repair packet is present, `repair_packet_ready` is explicitly
+false, and the producer provides a nonempty reason. An `already_observed` state
+is excluded. The record preserves the original language and reason; it provides
+no repair route, verification command, receipt, or gate/agent/badge authority.
+Unknown language, missing explanation, and exposed/no-path findings do not enter
+this limitation route.
+
+This prevents a valid unknown finding from disappearing into an empty ledger
+and an ineffective regeneration instruction. It does not establish whole-corpus
+currentness: first-pr retains `source_currentness_unavailable` where required,
+now with the actual limitation attached. JavaScript repair starts and no-action
+projection are outside this change.
+
+Regression mapping:
+
+- `gap_decision_ledger::tests::check_output_typescript_family_unknown_preserves_advisory_limit`
+- `first_pr_run_chain::run_chain_retains_javascript_unknown_as_advisory_limitation`
+- `first_pr_run_chain::run_chain_retains_typescript_unknown_as_advisory_limitation`

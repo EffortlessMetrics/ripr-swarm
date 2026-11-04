@@ -2088,7 +2088,8 @@ fn gap_record_from_typescript_not_delegatable_finding(
     finding: &Value,
     index: usize,
 ) -> Option<GapRecord> {
-    if string_at(finding, &["language"]) != Some("typescript")
+    let language = string_at(finding, &["language"])?;
+    if !matches!(language, "typescript" | "javascript")
         || finding.get("typescript_repair_packet").is_some()
     {
         return None;
@@ -2101,12 +2102,13 @@ fn gap_record_from_typescript_not_delegatable_finding(
     {
         return None;
     }
-    // Only a weakly exposed finding is a gap whose repair packet failed
-    // closed. An exposed finding has nothing to repair, and a no-path finding
-    // is a test gap rather than an analyzer limitation; neither may be framed
-    // as a not-delegatable static limitation (#4226 review).
-    if string_at(finding, &["classification"]) != Some("weakly_exposed")
-        || string_at(actionability, &["gap_state"]) == Some("already_observed")
+    // A weak or explicitly unknown preview finding with a closed packet and
+    // a producer reason is an advisory limitation, not missing input. Exposed
+    // and no-path findings must not be reframed as analyzer limitations.
+    if !matches!(
+        string_at(finding, &["classification"]),
+        Some("weakly_exposed" | "static_unknown")
+    ) || string_at(actionability, &["gap_state"]) == Some("already_observed")
     {
         return None;
     }
@@ -2136,7 +2138,7 @@ fn gap_record_from_typescript_not_delegatable_finding(
                 .map(python_static_limit_gap_component)
                 .unwrap_or_else(|| "module".to_string());
             format!(
-                "gap:typescript:{file}:{owner}:not_delegatable:{}",
+                "gap:{language}:{file}:{owner}:not_delegatable:{}",
                 python_static_limit_gap_component(behavior_kind)
             )
         });
@@ -2184,7 +2186,7 @@ fn gap_record_from_typescript_not_delegatable_finding(
         canonical_gap_id,
         seam_id: None,
         kind: "StaticLimitation".to_string(),
-        language: "typescript".to_string(),
+        language: language.to_string(),
         language_status: string_at(finding, &["language_status"])
             .unwrap_or("preview")
             .to_string(),
@@ -6023,6 +6025,47 @@ mod tests {
             Some("src/auth.ts")
         );
         assert_eq!(report.summary.static_limitation_total, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn check_output_typescript_family_unknown_preserves_advisory_limit() -> Result<(), String> {
+        for language in ["typescript", "javascript"] {
+            let mut value: Value =
+                serde_json::from_str(&typescript_fail_closed_packet_check_output())
+                    .map_err(|error| error.to_string())?;
+            let finding = &mut value["findings"][0];
+            finding["language"] = Value::from(language);
+            finding["classification"] = Value::from("static_unknown");
+            finding["preview_actionability"]["gap_state"] = Value::from("unknown");
+            let reason = finding["preview_actionability"]["why_not_actionable"].clone();
+            let report = check_output_ledger(value.to_string());
+            assert_eq!(report.records.len(), 1, "{language}: {:?}", report.warnings);
+            let record = &report.records[0];
+            assert_eq!(record.language, language);
+            assert_eq!(record.gap_state, "static_limitation");
+            assert_eq!(record.static_limit_detail.as_deref(), reason.as_str());
+            assert_eq!(record.repairability, "analyzer_limitation");
+            assert!(record.repair_route.is_none());
+            assert!(record.verification_commands.is_empty());
+            assert!(record.receipt_command.is_none());
+            for projection in [
+                "agent_packet",
+                "pr_comment",
+                "gate_candidate",
+                "ripr_zero_count",
+                "ripr_plus_count",
+            ] {
+                assert!(!projection_eligible(record, projection), "{projection}");
+            }
+            // A language or reason the producer did not establish cannot be
+            // manufactured into a supported static-limit record.
+            value["findings"][0]["language"] = Value::from("rust");
+            assert!(check_output_ledger(value.to_string()).records.is_empty());
+            value["findings"][0]["language"] = Value::from(language);
+            value["findings"][0]["preview_actionability"]["why_not_actionable"] = Value::from("");
+            assert!(check_output_ledger(value.to_string()).records.is_empty());
+        }
         Ok(())
     }
 
