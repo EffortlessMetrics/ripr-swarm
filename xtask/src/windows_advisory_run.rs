@@ -61,6 +61,24 @@ struct Options {
     drain_grace: Duration,
 }
 
+/// The prefix every diagnostic line this runner itself writes into the retained
+/// log carries (spawn failure, timeout banner and replay, still-running list,
+/// pipe and evidence notices). `windows_advisory.rs::parse_log` stops
+/// attributing observations at the first such line: everything after it is the
+/// runner speaking about the run, not the run speaking for itself — the
+/// replayed "last output" tail otherwise reads as a second observation of rows
+/// already counted (run 41583153155: a timeout replay duplicated
+/// `wrapper_admits_a_lockfile_pr_whose_listing_lacks_counts` and the honest
+/// truncation signal was buried under a spurious duplicate).
+pub(crate) const RUNNER_DIAGNOSTIC_PREFIX: &str = "windows-advisory-run: ";
+
+/// Whether a retained-log line is the runner's own diagnostic prose rather than
+/// child output. Producer and parser share this one predicate so the contract
+/// cannot drift.
+pub(crate) fn is_runner_diagnostic_line(line: &str) -> bool {
+    line.starts_with(RUNNER_DIAGNOSTIC_PREFIX)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct Outcome {
     status: i32,
@@ -341,7 +359,7 @@ fn execute(options: &Options, out: Box<dyn Write + Send>) -> Result<Outcome, Str
     let child = match spawned {
         Ok(child) => child,
         Err(err) => {
-            let banner = format!("windows-advisory-run: could not start `{describe}`: {err}\n");
+            let banner = format!("{RUNNER_DIAGNOSTIC_PREFIX}could not start `{describe}`: {err}\n");
             output.emit(banner.as_bytes());
             let sink_note = output.sink.finish();
             if output.faults.is_empty() {
@@ -442,20 +460,22 @@ fn execute(options: &Options, out: Box<dyn Write + Send>) -> Result<Outcome, Str
             Some(err) => format!("process tree termination NOT confirmed: {err}"),
         };
         banner.push_str(&format!(
-            "windows-advisory-run: TIMEOUT after {}s running `{describe}`; {result}\n",
+            "{RUNNER_DIAGNOSTIC_PREFIX}TIMEOUT after {}s running `{describe}`; {result}\n",
             options.timeout.as_secs()
         ));
         if still_running.is_empty() {
-            banner.push_str(
-                "windows-advisory-run: no test was reported running for over 60 seconds; \
-                 last output:\n",
-            );
+            banner.push_str(&format!(
+                "{RUNNER_DIAGNOSTIC_PREFIX}no test was reported running for over 60 seconds; \
+                 last output:\n"
+            ));
             for line in &tail {
                 banner.push_str(&format!("  {line}\n"));
             }
         } else {
             for name in &still_running {
-                banner.push_str(&format!("windows-advisory-run: still running: {name}\n"));
+                banner.push_str(&format!(
+                    "{RUNNER_DIAGNOSTIC_PREFIX}still running: {name}\n"
+                ));
             }
         }
     }
@@ -465,13 +485,14 @@ fn execute(options: &Options, out: Box<dyn Write + Send>) -> Result<Outcome, Str
             Some(err) => format!("termination of the process tree was requested but failed: {err}"),
         };
         banner.push_str(&format!(
-            "windows-advisory-run: output was still open {}s after the command exited; {result}\n",
+            "{RUNNER_DIAGNOSTIC_PREFIX}output was still open {}s after the command exited; \
+             {result}\n",
             options.drain_grace.as_secs()
         ));
     }
     if !output.faults.is_empty() {
         banner.push_str(&format!(
-            "windows-advisory-run: OUTPUT EVIDENCE INCOMPLETE ({}); command status {status} \
+            "{RUNNER_DIAGNOSTIC_PREFIX}OUTPUT EVIDENCE INCOMPLETE ({}); command status {status} \
              is not recorded so the summarizer refuses this step\n",
             output.faults.join("; ")
         ));
@@ -482,7 +503,7 @@ fn execute(options: &Options, out: Box<dyn Write + Send>) -> Result<Outcome, Str
     let sink_note = output.sink.finish();
     if let Some(note) = &sink_note {
         // Not evidence loss: the log file above is the record.
-        let line = format!("windows-advisory-run: {note}; the log file is the record\n");
+        let line = format!("{RUNNER_DIAGNOSTIC_PREFIX}{note}; the log file is the record\n");
         if let Err(err) = output.log.write_all(line.as_bytes()) {
             output.fault(format!("write the log file: {err}"));
         }

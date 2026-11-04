@@ -20,6 +20,8 @@ pub(crate) use super::extract::{
 use super::facts::ModulePathTarget;
 #[cfg(test)]
 pub(crate) use super::facts::build_index_from_loaded_files_with_cache_and_test_harnesses;
+#[cfg(test)]
+pub(crate) use super::facts::reuse_cached_index_with_loaded_files;
 pub(crate) use super::facts::validated_file_wide_harness_targets;
 #[cfg(test)]
 pub use super::facts::{CallFact, FileFacts, LiteralFact, ReturnFact};
@@ -29,7 +31,7 @@ pub use super::facts::{
 };
 pub(crate) use super::facts::{
     build_analysis_index_from_loaded_files, build_index_from_paths_with_cache_and_test_harnesses,
-    reuse_cached_index_with_loaded_files,
+    build_index_from_paths_with_cache_and_test_harnesses_and_consumed, reuse_cached_index_in_run,
 };
 #[cfg(test)]
 use super::syntax::LexicalRustSyntaxAdapter;
@@ -265,8 +267,15 @@ pub(crate) fn module_composition_disclosure(index: &RustIndex) -> Option<String>
 }
 
 pub(crate) fn apply_oracle_policy(index: &mut RustIndex, policy: &OraclePolicy) {
+    if !policy.has_overlays() {
+        index.for_each_test_mut(|test| {
+            apply_oracle_policy_to_assertions(&mut test.assertions, policy);
+        });
+        return;
+    }
     index.for_each_test_mut(|test| {
-        apply_oracle_policy_to_assertions(&mut test.assertions, policy);
+        let resolved = policy.resolved_for_path(&test.file);
+        apply_oracle_policy_to_assertions(&mut test.assertions, &resolved);
     });
 }
 

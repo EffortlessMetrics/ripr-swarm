@@ -40,6 +40,7 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_discriminating_state_update/input --diff <cwd>/fixtures/ts_discriminating_state_update/diff.patch --mode fast probe:src_cart.ts:typescript_preview:2c9269a6
   ripr context --root <cwd>/fixtures/ts_discriminating_state_update/input --diff <cwd>/fixtures/ts_discriminating_state_update/diff.patch --mode fast --at probe:src_cart.ts:typescript_preview:2c9269a6
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

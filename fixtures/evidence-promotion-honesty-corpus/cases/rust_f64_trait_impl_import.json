@@ -1,0 +1,33 @@
+{
+  "id": "rust_f64_trait_impl_import",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/rust_f64_trait_impl_import",
+  "vector": "trait_dispatch_identity_f64_impl_import",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "render_is_empty",
+      "file": "src/lib.rs",
+      "line": 16,
+      "kind": "exact_value",
+      "strength": "strong",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/object_rows.rs::single_expect_statement_accepts_only_one_expect_chain",
+]
+fixtures = ["fixtures/ts_table_callback_comment_credited"]
+code = ["crates/ripr/src/analysis/language/typescript/object_rows.rs"]

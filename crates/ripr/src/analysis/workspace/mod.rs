@@ -6,14 +6,23 @@ mod discover;
 mod module_graph;
 mod named_dependent_scope;
 mod path_dependencies;
+mod project_facts_digest;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "policy:6423-projection-slice: adapter is not wired to command or LSP consumers yet (#6423)"
+    )
+)]
+mod rust_project_facts;
 mod select;
 mod source_role;
 
 pub(crate) use assertion_dependency::{
     AnyhowIdentity, JsonRootEligibilityMemo, LiteralJsonIdentity, MetadataProbeFailure,
     config_snapshot_identity, eligible_json_root, eligible_manifest, eligible_proptest_root,
-    locked_at_audited_version, verified_anyhow_identity, verified_json_identity,
-    verified_proptest_identity, verified_proptest_identity_result,
+    locked_at_audited_version, verified_anyhow_identity, verified_bolero_identity,
+    verified_json_identity, verified_proptest_identity, verified_proptest_identity_result,
 };
 pub(crate) use cargo_input_identity::cargo_input_identity;
 pub(crate) use cargo_targets::{
@@ -31,6 +40,8 @@ pub(crate) use source_role::{
 
 pub(crate) use classify::{normalize_path, package_root};
 pub(crate) use discover::UnlinkedPythonTests;
+#[cfg(test)]
+pub(crate) use discover::discover_probe;
 pub use discover::discover_rust_files;
 pub(crate) use discover::path_enters_ignored_dir;
 pub(crate) use discover::{
