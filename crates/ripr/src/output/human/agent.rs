@@ -30,8 +30,17 @@ use crate::output::path::repository_display_path;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// Gap lines printed before the explicit `+N more` line.
-pub(super) const MAX_GAP_LINES: usize = 5;
+/// Gap lines printed when there are few gaps, before the explicit `+N more` line.
+pub(super) const MIN_GAP_LINES: usize = 5;
+/// Hard ceiling on printed gap lines, however large the diff (#13081).
+pub(super) const MAX_GAP_LINES: usize = 15;
+
+/// How many gap lines to print for `total` gaps: the floor, plus one line per
+/// eight gaps, never above the ceiling. The order is still the triage
+/// selector's; this only decides how far down that order the report reads.
+pub(super) fn gap_line_budget(total: usize) -> usize {
+    (MIN_GAP_LINES + total / 8).min(MAX_GAP_LINES)
+}
 /// Character budget for the changed expression and the oracle text.
 const FIELD_BUDGET: usize = 80;
 
@@ -75,7 +84,8 @@ pub(super) fn render(
     }
 
     let mut tests: Vec<TestRef> = Vec::new();
-    for finding in gaps.iter().take(MAX_GAP_LINES) {
+    let budget = gap_line_budget(gaps.len());
+    for finding in gaps.iter().take(budget) {
         let test_ref =
             strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
         out.push_str(&gap_line(&output.root, finding, test_ref, true));
@@ -84,10 +94,10 @@ pub(super) fn render(
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
     }
-    if gaps.len() > MAX_GAP_LINES {
+    if gaps.len() > budget {
         out.push_str(&format!(
             "+{} more gaps not shown; `--format json` lists all\n",
-            gaps.len() - MAX_GAP_LINES
+            gaps.len() - budget
         ));
     }
     push_limits(&mut out, &considered, &gaps);
@@ -237,7 +247,7 @@ fn render_open_limited(
         "open=a static limit leaves reach unconfirmed, but a related test asserts too weakly to notice the change; not a confirmed gap, and tests may still help\n",
     );
     let mut tests: Vec<TestRef> = Vec::new();
-    for finding in open.iter().take(MAX_GAP_LINES) {
+    for finding in open.iter().take(MIN_GAP_LINES) {
         let test_ref = triage::weak_assertion_row(finding)
             .map(|test| intern_test(&mut tests, &output.root, test));
         out.push_str(&gap_line(&output.root, finding, test_ref, false));
@@ -246,10 +256,10 @@ fn render_open_limited(
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
     }
-    if open.len() > MAX_GAP_LINES {
+    if open.len() > MIN_GAP_LINES {
         out.push_str(&format!(
             "+{} more open findings not shown; `--format json` lists all\n",
-            open.len() - MAX_GAP_LINES
+            open.len() - MIN_GAP_LINES
         ));
     }
     push_limits(&mut out, considered, &[]);

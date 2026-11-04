@@ -1,6 +1,6 @@
 //! Contract tests for `ripr check --format agent` (#11580).
 
-use super::agent::{MAX_GAP_LINES, render, render_finding};
+use super::agent::{MAX_GAP_LINES, MIN_GAP_LINES, gap_line_budget, render, render_finding};
 use crate::app::{CheckDiffProvenance, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
@@ -265,7 +265,7 @@ fn reach_limit_with_weak_assertion_row_does_not_stop() {
 /// exact omitted count; `reachable_unrevealed` opens the same way.
 #[test]
 fn open_limited_findings_over_the_cap_report_the_omitted_count() {
-    let total = MAX_GAP_LINES + 2;
+    let total = MIN_GAP_LINES + 2;
     let mut findings = Vec::new();
     for index in 0..total {
         let mut open = reach_limited_weak(&format!("probe:open{index}"), 10 + index);
@@ -278,7 +278,7 @@ fn open_limited_findings_over_the_cap_report_the_omitted_count() {
     assert!(text.contains("\nopen="), "{text}");
     assert!(!text.contains("stop="), "{text}");
     assert!(
-        text.matches("|test=t1|id=probe:open").count() <= MAX_GAP_LINES,
+        text.matches("|test=t1|id=probe:open").count() <= MIN_GAP_LINES,
         "{text}"
     );
     assert!(
@@ -406,7 +406,7 @@ fn gap_lines_are_bounded_and_the_rest_is_counted_explicitly() {
     let text = rendered(&output(findings));
     assert_eq!(
         text.matches("\nweakly_exposed|").count(),
-        MAX_GAP_LINES,
+        MIN_GAP_LINES,
         "{text}"
     );
     assert!(text.contains(" gaps=7 "), "{text}");
@@ -616,4 +616,41 @@ fn explain_agent_suppressed_gap_is_not_open_but_unsuppressed_is() {
         "{suppressed}"
     );
     assert!(suppressed.contains("|test=-|"), "{suppressed}");
+}
+
+#[test]
+fn the_gap_budget_grows_with_the_gap_count_and_stops_at_the_ceiling() {
+    assert_eq!(gap_line_budget(0), MIN_GAP_LINES);
+    assert_eq!(gap_line_budget(7), MIN_GAP_LINES);
+    assert_eq!(gap_line_budget(8), MIN_GAP_LINES + 1);
+    assert_eq!(gap_line_budget(46), 10);
+    assert_eq!(gap_line_budget(116), MAX_GAP_LINES);
+    assert_eq!(gap_line_budget(100_000), MAX_GAP_LINES);
+}
+
+#[test]
+fn a_larger_diff_prints_more_gap_lines_and_counts_the_rest() {
+    let findings: Vec<Finding> = (0..40)
+        .map(|index| weak_gap(&format!("probe:g{index}"), index + 1))
+        .collect();
+    let text = rendered(&output(findings));
+    let budget = gap_line_budget(40);
+    assert_eq!(budget, 10);
+    assert_eq!(text.matches("\nweakly_exposed|").count(), budget, "{text}");
+    assert!(text.contains(" gaps=40 "), "{text}");
+    assert!(text.contains("\n+30 more gaps not shown;"), "{text}");
+}
+
+#[test]
+fn the_maximum_report_fits_the_pr_comment_ceiling() {
+    let findings: Vec<Finding> = (0..200)
+        .map(|index| weak_gap(&format!("probe:g{index}"), index + 1))
+        .collect();
+    let text = rendered(&output(findings));
+    assert_eq!(
+        text.matches("\nweakly_exposed|").count(),
+        MAX_GAP_LINES,
+        "{text}"
+    );
+    assert!(text.len() < 6000, "{} bytes", text.len());
 }
