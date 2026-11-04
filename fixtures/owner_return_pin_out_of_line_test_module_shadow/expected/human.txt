@@ -12,7 +12,7 @@ Start here:
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:17
   Static exposure: unrevealed (severity: warning, confidence 0.66)
-  Why unrevealed: no test is seen calling this change
+  Why unrevealed: test reach to this change is not established
   Gap ID (for scripts): gap:rust:src/lib.rs:impl Clone for Window::clone:field_construction:field_construction:start_self.start
   Changed behavior: start: self.start
   Missing check (1 of 4): start: self.start

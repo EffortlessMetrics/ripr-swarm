@@ -50,7 +50,7 @@ pub(crate) fn guard_refusal_digest_classification_hint(
         ExposureClass::StaticUnknown => true,
         ExposureClass::ReachableUnrevealed => {
             finding.ripr.reveal.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
-                && finding.ripr.reach.state != StageState::Weak
+                && finding.ripr.reach.state == StageState::Yes
                 && !finding
                     .ripr
                     .reach

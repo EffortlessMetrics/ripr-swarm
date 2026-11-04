@@ -175,3 +175,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_glob_shadow (15)
+
+Reason:
+RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_glob_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
