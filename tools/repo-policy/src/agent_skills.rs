@@ -774,6 +774,54 @@ mod tests {
         Ok(())
     }
 
+    fn incident_route_skill_text(skill: &str) -> String {
+        INCIDENT_ROUTE_REQUIRED_MARKERS
+            .iter()
+            .filter(|(owner, _)| *owner == skill)
+            .map(|(_, marker)| format!("- `{marker}`"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn incident_route_markers_reject_each_missing_duplicate_and_foreign_declaration()
+    -> Result<(), String> {
+        for skill in ["finish-pr", "deliver-pr", "deliver-goal"] {
+            let complete = incident_route_skill_text(skill);
+            let findings = incident_route_findings(skill, &complete);
+            if !findings.is_empty() {
+                return Err(format!("{skill} complete set was rejected: {findings:?}"));
+            }
+            let Some((_, marker)) = INCIDENT_ROUTE_REQUIRED_MARKERS
+                .iter()
+                .find(|(owner, _)| *owner == skill)
+            else {
+                return Err(format!("{skill} declares no incident route markers"));
+            };
+            let line = format!("- `{marker}`");
+            let missing = complete.replacen(&line, "", 1);
+            if incident_route_findings(skill, &missing).len() != 1 {
+                return Err(format!("{skill} accepted a missing marker `{marker}`"));
+            }
+            let duplicate = format!("{complete}\n{line}");
+            if incident_route_findings(skill, &duplicate).len() != 1 {
+                return Err(format!("{skill} accepted a duplicate marker `{marker}`"));
+            }
+            let unknown = format!("{complete}\n- `incident_route:invented_route`");
+            if incident_route_findings(skill, &unknown).len() != 1 {
+                return Err(format!("{skill} accepted an unknown marker"));
+            }
+        }
+        let foreign = format!(
+            "{}\n- `incident_route:instrument_repair_before_retry`",
+            incident_route_skill_text("deliver-pr")
+        );
+        if incident_route_findings("deliver-pr", &foreign).len() != 1 {
+            return Err("deliver-pr accepted a finish-pr-owned marker".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn operating_markers_reject_each_missing_and_duplicate_declaration() -> Result<(), String> {
         let root = AGENTS_ROOT_OPERATING_MARKERS

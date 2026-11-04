@@ -2503,13 +2503,19 @@ pub(crate) fn validate_packaged_repair_parity_fixture(
 pub(crate) fn validate_admission_incident_route_fixture_corpus(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
-    let root = Path::new("fixtures/admission_incident_route");
-    let corpus_path = root.join("corpus.json");
-    if !corpus_path.exists() {
-        violations.push(format!(
-            "admission incident route fixture corpus is missing {}",
-            normalize_path(&corpus_path)
-        ));
+    let root = Path::new(repo_policy::admission_incident_route::DEFAULT_ROUTE_CORPUS_DIR);
+    let mut complete = true;
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "admission incident route fixture is missing {}",
+                normalize_path(&path)
+            ));
+            complete = false;
+        }
+    }
+    if !complete {
         return Ok(());
     }
     if let Err(error) = repo_policy::admission_incident_route::check_committed_route_corpus() {

@@ -455,53 +455,6 @@
       }
     },
     {
-      "id": "repair_material_finding_refresh_only_affected",
-      "packet": {
-        "schema": "admission_incident.v1",
-        "subject": {
-          "candidate_head_sha": "sha256:head-h1",
-          "merge_group_id": "g1",
-          "workflow_attempt_id": "attempt-1"
-        },
-        "currentness": {
-          "basis_is_current": true,
-          "observed_candidate_head_sha": "sha256:head-h1",
-          "observed_merge_group_id": "g1",
-          "observed_workflow_attempt_id": "attempt-1"
-        },
-        "incident_class": "candidate_escape",
-        "candidate_mutation_allowed": "yes",
-        "same_subject_retry_allowed": "no",
-        "owner_class": "candidate_writer",
-        "route_inputs": {
-          "regression_guard_or_limitation_recorded": true,
-          "material_finding_during_repair": true
-        }
-      },
-      "context": {
-        "candidate_head_sha": "sha256:head-h1",
-        "merge_group_id": "g1",
-        "workflow_attempt_id": "attempt-1"
-      },
-      "expected": {
-        "route_id": "candidate_escape_repair",
-        "revoke_admission_custody": true,
-        "return_pr_to_draft": true,
-        "mutate_candidate_bytes": true,
-        "same_subject_retry": false,
-        "requires_new_ready_transaction": true,
-        "requires_regression_guard_or_limitation": true,
-        "route_complete": true,
-        "preserve_unaffected_review": true,
-        "handoff_repository_health_owner": false,
-        "release_pr_local_actor": false,
-        "forbid_poll_child": true,
-        "retain_incident_lineage": true,
-        "visible_blocker": false,
-        "owner_class": "candidate_writer"
-      }
-    },
-    {
       "id": "lineage_retained_after_h2_passes",
       "packet": {
         "schema": "admission_incident.v1",

@@ -51,13 +51,12 @@ pub struct IncidentCurrentnessV1 {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct RouteInputFlagsV1 {
     pub regression_guard_or_limitation_recorded: bool,
     pub behind_main_only: bool,
     pub slow_in_progress: bool,
     pub independent_defect_evidence_for_candidate_mutation: bool,
-    pub material_finding_during_repair: bool,
     pub instrument_repaired: bool,
 }
 
@@ -394,6 +393,24 @@ pub fn load_route_corpus(path: &Path) -> Result<RouteCorpusV1, String> {
 pub fn validate_route_corpus(corpus: &RouteCorpusV1) -> Vec<String> {
     let mut findings = Vec::new();
     let mut ids = BTreeSet::new();
+    const ALL_CLASSES: [IncidentClassV1; 7] = [
+        IncidentClassV1::CandidateEscape,
+        IncidentClassV1::IntegrationInteraction,
+        IncidentClassV1::MainUnhealthy,
+        IncidentClassV1::InstrumentDefect,
+        IncidentClassV1::InfrastructureFailure,
+        IncidentClassV1::SupersededNoVerdict,
+        IncidentClassV1::NotProven,
+    ];
+    for class in ALL_CLASSES {
+        if !corpus
+            .scenarios
+            .iter()
+            .any(|scenario| scenario.packet.incident_class == class)
+        {
+            findings.push(format!("corpus has no scenario for class {class:?}"));
+        }
+    }
     for scenario in &corpus.scenarios {
         if !ids.insert(scenario.id.clone()) {
             findings.push(format!("duplicate scenario id `{}`", scenario.id));
@@ -495,6 +512,59 @@ mod tests {
         };
         assert!(matches!(error, RouteErrorV1::StaleOrMismatchedSubject(_)));
         Ok(())
+    }
+
+    fn refusal_for(mutate: impl FnOnce(&mut AdmissionIncidentV1)) -> Result<RouteErrorV1, String> {
+        let mut packet = sample_packet(
+            IncidentClassV1::CandidateEscape,
+            RouteInputFlagsV1::default(),
+        );
+        mutate(&mut packet);
+        match route_admission_incident(&packet, &sample_context()) {
+            Ok(_) => Err("mismatched packet must fail closed".to_string()),
+            Err(error) => Ok(error),
+        }
+    }
+
+    #[test]
+    fn wrong_schema_refuses_routing() -> Result<(), String> {
+        let error = refusal_for(|packet| packet.schema = "wrong.schema".to_string())?;
+        assert!(matches!(error, RouteErrorV1::WrongSchema(_)), "{error:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn non_current_basis_refuses_routing() -> Result<(), String> {
+        let error = refusal_for(|packet| packet.currentness.basis_is_current = false)?;
+        assert!(matches!(error, RouteErrorV1::PacketNotCurrent(_)), "{error:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn candidate_head_merge_group_and_observation_mismatches_refuse_routing() -> Result<(), String> {
+        let head = refusal_for(|packet| {
+            packet.subject.candidate_head_sha = "sha256:head-other".to_string();
+        })?;
+        let group = refusal_for(|packet| {
+            packet.subject.merge_group_id = Some("g2".to_string());
+        })?;
+        let observed = refusal_for(|packet| {
+            packet.currentness.observed_merge_group_id = Some("g2".to_string());
+        })?;
+        for error in [head, group, observed] {
+            assert!(
+                matches!(error, RouteErrorV1::StaleOrMismatchedSubject(_)),
+                "{error:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_route_input_key_is_rejected() {
+        let parsed: Result<RouteInputFlagsV1, _> =
+            serde_json::from_str(r#"{"slow_in_progres": true}"#);
+        assert!(parsed.is_err(), "misspelled route input must not default");
     }
 
     #[test]
