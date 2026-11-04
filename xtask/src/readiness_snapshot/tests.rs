@@ -101,6 +101,13 @@ fn rehearsal_plan_rejects_mutation_execution_and_unknown_metadata() -> Result<()
         bad["plan"][field] = serde_json::json!(["unexpected"]);
         cases.push(bad);
     }
+    for field in ["reads", "tools", "prohibited_operations"] {
+        for value in [serde_json::json!([]), serde_json::json!([""])] {
+            let mut bad = original.clone();
+            bad["plan"][field] = value;
+            cases.push(bad);
+        }
+    }
     for (field, value) in [
         ("profile", serde_json::json!("executed")),
         ("source_tree", serde_json::json!("wrong")),

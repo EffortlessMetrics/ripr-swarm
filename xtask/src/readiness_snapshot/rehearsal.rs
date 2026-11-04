@@ -65,6 +65,12 @@ fn validate_plan(receipt: &RehearsalReceipt) -> Result<(), String> {
         || plan.reads.is_empty()
         || plan.tools.is_empty()
         || plan.prohibited_operations.is_empty()
+        || plan
+            .reads
+            .iter()
+            .chain(&plan.tools)
+            .chain(&plan.prohibited_operations)
+            .any(String::is_empty)
     {
         return Err("invalid schema 1.1 plan identity, profile or boundary".to_string());
     }
