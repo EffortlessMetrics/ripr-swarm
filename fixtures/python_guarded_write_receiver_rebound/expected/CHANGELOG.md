@@ -132,7 +132,20 @@ Updated:
 ## Pending — python_guarded_write_receiver_rebound (11)
 
 Reason:
-RIPR-SPEC-0238 / #5574: per-row sink alignment tri-state re-serializes related-test oracle rows and human related-test lines; goldens check formatting_only; exposure classes unchanged.
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless python_guarded_write_receiver_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_guarded_write_receiver_rebound (12)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
 
 Command:
 `cargo xtask goldens bless python_guarded_write_receiver_rebound --reason "..."`

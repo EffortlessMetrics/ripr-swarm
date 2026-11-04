@@ -1,3 +1,4 @@
+pub(crate) mod analysis_execution_identity;
 mod candidate_relation;
 mod canonical_item;
 mod causal_delta;
@@ -17,6 +18,8 @@ mod finding_test_evidence;
 mod fix_instruction;
 mod git_candidate;
 mod guard_refusal;
+#[doc(hidden)]
+pub mod guarded_edit;
 mod identity;
 mod intervention_study;
 mod language;
@@ -28,14 +31,21 @@ mod language_capability_drift;
 mod limit_guidance;
 mod next_action;
 mod probe;
+mod project_facts;
 mod refusal_remedy;
 mod repair_card;
 mod summary;
 mod support;
+mod test_candidate_set;
 mod test_evidence_identity;
 mod test_evidence_summary;
+mod typescript_oracle_seam;
+mod typescript_preview_related_test;
 mod verification_result;
 
+pub(crate) use analysis_execution_identity::{
+    AnalysisAttemptId, CompletedAnalysisSnapshotId, ContinuationId, DiagnosticResultId,
+};
 pub use candidate_relation::CandidateRelation;
 pub use canonical_item::{CanonicalItemId, CanonicalItemParseError};
 pub use causal_delta::{
@@ -132,8 +142,9 @@ pub(crate) use next_action::{
     select_canonical_next_action, whole_repo_pilot_command,
 };
 pub(crate) use probe::{
-    ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, exact_assertion_fact,
-    input_boundary_fact, is_unselected_input_reason, row_exact_discriminator_fact,
+    ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, STRONG_CHECK_UNTIED_NEXT_STEP,
+    exact_assertion_fact, input_boundary_fact, is_unselected_input_reason,
+    row_exact_discriminator_fact,
 };
 pub use probe::{
     ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,
@@ -160,10 +171,17 @@ pub(crate) use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub(crate) use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
 pub(crate) use probe::boundary_input_observed_with_weak_oracle;
 pub(crate) use probe::declared_const_name;
+pub(crate) use project_facts::{
+    CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
+    SourceUnitFactV1, TestEnvironmentFactV1,
+};
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};
+pub use test_candidate_set::{TestCandidateNextRoute, TestCandidateRow, TestCandidateSet};
 pub(crate) use test_evidence_identity::normalize_transport_path;
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};
+pub(crate) use typescript_oracle_seam::ts_oracle_kind_matches_seam;
+pub(crate) use typescript_preview_related_test::typescript_script_preview_related_test;
 pub(crate) use verification_result::CommandSpecDigest;
 pub use verification_result::{
     VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION, VerificationCurrentnessV1,

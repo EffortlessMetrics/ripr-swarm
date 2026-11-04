@@ -56,6 +56,7 @@ Limitation detail
 Next step
   Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/property_macro_noop_property_assertion/input --diff <cwd>/fixtures/property_macro_noop_property_assertion/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/property_macro_noop_property_assertion/input --diff <cwd>/fixtures/property_macro_noop_property_assertion/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
 

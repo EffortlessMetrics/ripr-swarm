@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A doc example no longer registers as a test when a `#[cfg(..)]` that is not provably true under the package's default features sits on an enclosing `mod`, `impl` or `trait`, on the `mod name;` declaration that reaches its file (including the `#[path]` form), or as an inner `#![cfg(..)]` on a declaring file. An enclosing gate is read by the same rule as the item's own (#12453).

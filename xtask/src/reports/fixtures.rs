@@ -730,6 +730,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                 name,
                 "active-goal-authority-audit"
                     | "actionable-gap-outcomes-corpus"
+                    | "admission_incident_route"
                     | "blind_journey_contract"
                     | "cache-payload-tamper-recovery"
                     | "blind_journey_execute"
@@ -740,6 +741,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "convergence"
                     | "cross-language-oracle-graph-corpus"
                     | "cross-language-edge-registry-corpus"
+                    | "dotnet-evidence-contract-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
                     | "editor_first_pr_bridge"
@@ -756,8 +758,10 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "issue_lifecycle_contract_plan"
                     | "issue_lifecycle_intake"
                     | "issue_lifecycle_real_rows"
+                    | "incomplete_diff_corpus"
                     | "github_unanalyzed_states"
                     | "orchestration_attempt_receipts"
+                    | "packaged_repair_parity"
                     | "packaged-repair-parity"
                     | "perl_lsp_facts_exporter"
                     | "perl-real-repo-evals"
@@ -767,6 +771,8 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "python-judged-pr-panel"
                     | "python-real-repo-evals"
                     | "real-repair-attempts"
+                    | "readiness-snapshot"
+                    | "repair_funnel"
                     | "rust-verdict-corpus"
                     | "typescript-verdict-corpus"
                     | "python-verdict-corpus"
@@ -792,6 +798,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
                     | "user-surface-projection-alignment"
+                    | "verification_run_snapshot_binding"
             )
         })
 }
@@ -4499,9 +4506,9 @@ mod tests {
         let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
         let untied_list = transitional::NO_SEAM_UNTIED_SURFACES;
         let gripped_list = transitional::NO_SEAM_GRIPPED_SURFACES;
-        if untied_list.len() != 44 || gripped_list.len() != 92 {
+        if untied_list.len() != 44 || gripped_list.len() != 94 {
             return Err(format!(
-                "expected 44 untied and 92 gripped surfaces, got {} and {}",
+                "expected 44 untied and 94 gripped surfaces, got {} and {}",
                 untied_list.len(),
                 gripped_list.len()
             ));

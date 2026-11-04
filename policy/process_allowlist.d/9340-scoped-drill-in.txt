@@ -1,0 +1,1 @@
+crates/ripr/tests/scoped_drill_in.rs|Command::new|1|cli-tests|Runs the built ripr binary against an isolated temp workspace to check that scoped drill-in commands carry --path/--exclude. No shell, network, or user-repository mutation.

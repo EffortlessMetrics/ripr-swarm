@@ -59,6 +59,7 @@ Limitation detail
 Next step
   Tests cannot close this static-analysis limitation: ripr cannot trace entry `outer` -> owner `inner` through a transitive Rust helper path (restricted-visibility helper `inner` behind public entry point `outer`; candidate path only). Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_transitive_reach_positive/input --diff <cwd>/fixtures/rust_transitive_reach_positive/diff.patch --mode fast probe:src_internal.rs:predicate:114f2322
   ripr context --root <cwd>/fixtures/rust_transitive_reach_positive/input --diff <cwd>/fixtures/rust_transitive_reach_positive/diff.patch --mode fast --at probe:src_internal.rs:predicate:114f2322
 
