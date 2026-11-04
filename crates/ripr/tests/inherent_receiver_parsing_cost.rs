@@ -481,6 +481,11 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
             "    let _ = other::read_as_object(); helpers::read_as_object()",
         );
     let intermediate = source.replace("fn route_read_as_object<helpers: Foreign>() -> Option<u32> {\n    helpers::read_as_object()\n}", "fn middle_read_as_object<helpers: Foreign>() -> Option<u32> { helpers::read_as_object() }\nfn route_read_as_object<helpers: Foreign>() -> Option<u32> { middle_read_as_object::<helpers>() }");
+    let transitive_shadow = source.replace("fn route_read_as_object<helpers: Foreign>() -> Option<u32> {\n    helpers::read_as_object()\n}", "fn middle_read_as_object<helpers: Foreign>() -> Option<u32> {\n    helpers::read_as_object()\n}\nfn route_read_as_object<helpers: Foreign>() -> Option<u32> {\n    middle_read_as_object::<helpers>()\n}");
+    let transitive_positive = transitive_shadow.replace(
+        "    helpers::read_as_object()",
+        "    crate::helpers::read_as_object()",
+    );
     let alias = source
         .replace(
             "trait Foreign",
@@ -489,6 +494,21 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
         .replace(
             "    helpers::read_as_object()",
             "    let _ = helpers::read_as_object(); actual_read()",
+        );
+    let alias_with_rival = alias.replace(
+        "trait Foreign",
+        "mod other { pub fn read_as_object() -> Option<u32> { Some(7) } }\ntrait Foreign",
+    );
+    let local_shadowed_import = unrelated.replace("trait Foreign", "use crate::helpers::read_as_object as unrelated;\ntrait Foreign").replace("    let _ = other::read_as_object(); helpers::read_as_object()", "    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()");
+    let expired_shadow_import = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    { let unrelated = || Some(7); let _ = unrelated(); }\n    let _ = unrelated(); helpers::read_as_object()");
+    let alias_shadow = alias
+        .replace(
+            "    let _ = helpers::read_as_object(); actual_read()",
+            "    const actual_read: fn() -> Option<u32> = fake; actual_read()",
+        )
+        .replace(
+            "trait Foreign",
+            "fn fake() -> Option<u32> { Some(7) }\ntrait Foreign",
         );
     let intermediate_mixed = intermediate
         .replace(
@@ -499,15 +519,165 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
             "{ helpers::read_as_object() }",
             "{ let _ = other::read_as_object(); helpers::read_as_object() }",
         );
-    for (case, src, expected) in [
-        ("shadow", &source, false),
-        ("module", &module, true),
-        ("anchored", &anchored, true),
-        ("mixed", &mixed, true),
-        ("unrelated", &unrelated, false),
-        ("intermediate", &intermediate, false),
-        ("intermediate_mixed", &intermediate_mixed, false),
-        ("alias", &alias, true),
+    let unrelated_import = unrelated.replace(
+        "trait Foreign",
+        "use std::vec::Vec as Unused;\ntrait Foreign",
+    );
+    let unrelated_same_name_alias = unrelated
+        .replace(
+            "trait Foreign",
+            "use crate::other::read_as_object as unrelated;\ntrait Foreign",
+        )
+        .replace(
+            "    let _ = other::read_as_object(); helpers::read_as_object()",
+            "    let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()",
+        );
+    let cross_file_route = unrelated.replace("fn route_read_as_object<helpers: Foreign>() -> Option<u32> {\n    let _ = other::read_as_object(); helpers::read_as_object()\n}", "mod routes;").replace("route_read_as_object::<Fake>()", "routes::route_read_as_object::<Fake>()");
+    let dormant = source.replace(
+        "    helpers::read_as_object()",
+        "    let _unused = || crate::helpers::read_as_object(); helpers::read_as_object()",
+    );
+    let extra_helper = unrelated
+        .replace("#[cfg(test)]", "fn benign() {}\n#[cfg(test)]")
+        .replace(
+            "assert_eq!(route_read_as_object::<Fake>()",
+            "benign(); assert_eq!(route_read_as_object::<Fake>()",
+        );
+    let extra_helper_nested = unrelated
+        .replace(
+            "#[cfg(test)]",
+            "fn opaque() {}\nfn benign() { opaque(); }\n#[cfg(test)]",
+        )
+        .replace(
+            "assert_eq!(route_read_as_object::<Fake>()",
+            "benign(); assert_eq!(route_read_as_object::<Fake>()",
+        );
+    let extra_helper_external = unrelated
+        .replace(
+            "#[cfg(test)]",
+            "fn benign() { std::hint::black_box(1); }\n#[cfg(test)]",
+        )
+        .replace(
+            "assert_eq!(route_read_as_object::<Fake>()",
+            "benign(); assert_eq!(route_read_as_object::<Fake>()",
+        );
+    let alternate_real = unrelated.replace("#[cfg(test)]", "fn real_read_as_object() -> Option<u32> { crate::helpers::read_as_object() }\n#[cfg(test)]").replace("assert_eq!(route_read_as_object::<Fake>()", "assert_eq!(real_read_as_object(), Some(7)); assert_eq!(route_read_as_object::<Fake>()");
+    let macro_positive = source.replace(
+        "    helpers::read_as_object()",
+        "    assert_eq!(crate::helpers::read_as_object(), Some(7)); helpers::read_as_object()",
+    );
+    let macro_discard = source
+        .replace(
+            "trait Foreign",
+            "macro_rules! discard { ($e:expr) => { () }; }\ntrait Foreign",
+        )
+        .replace(
+            "    helpers::read_as_object()",
+            "    discard!(crate::helpers::read_as_object()); helpers::read_as_object()",
+        );
+    let macro_message = source.replace("    helpers::read_as_object()", "    assert_eq!(1, 1, \"{:?}\", crate::helpers::read_as_object()); helpers::read_as_object()");
+    let macro_other = unrelated.replace(
+        "    let _ = other::read_as_object(); helpers::read_as_object()",
+        "    assert_eq!(other::read_as_object(), Some(7)); helpers::read_as_object()",
+    );
+    let macro_shadow = source.replace(
+        "    helpers::read_as_object()",
+        "    assert!(helpers::read_as_object().is_some()); Some(7)",
+    );
+    let inline = "mod helpers {\n    use super::JsonValue;\n    pub fn read_as_object() -> Option<u32> { let value = JsonValue::Object(7); value.as_object() }\n}";
+    let cross = source.replace(inline, "mod helpers;");
+    let cross_positive = anchored.replace(inline, "mod helpers;");
+    let cross_mixed = unrelated.replace(inline, "mod helpers;");
+    let cross_mixed_positive = mixed.replace(inline, "mod helpers;");
+    let cross_intermediate_mixed = intermediate_mixed.replace(inline, "mod helpers;");
+    let cross_transitive_shadow = transitive_shadow.replace(inline, "mod helpers;");
+    let cross_transitive_positive = transitive_positive.replace(inline, "mod helpers;");
+    let cross_alias = alias.replace(inline, "mod helpers;");
+    let cross_file_hop = cross
+        .replace("mod helpers;", "mod helpers;\nmod bridge;")
+        .replace(
+            "    helpers::read_as_object()",
+            "    bridge::middle_read_as_object::<helpers>()",
+        );
+    let sibling_rival = unrelated.replace("trait Foreign", "mod sibling;\ntrait Foreign");
+    let imported_unrelated = unrelated
+        .replace(
+            "trait Foreign",
+            "use crate::other::benign as unrelated;\ntrait Foreign",
+        )
+        .replace(
+            "pub fn read_as_object() -> Option<u32> { Some(7) } }",
+            "pub fn read_as_object() -> Option<u32> { Some(7) } pub fn benign() {} }",
+        )
+        .replace(
+            "assert_eq!(route_read_as_object::<Fake>()",
+            "unrelated(); assert_eq!(route_read_as_object::<Fake>()",
+        );
+    let helper_file = "use super::JsonValue;\npub fn read_as_object() -> Option<u32> { let value = JsonValue::Object(7); value.as_object() }\n";
+    for (case, src, expected, extra) in [
+        ("shadow", &source, false, None),
+        ("module", &module, true, None),
+        ("anchored", &anchored, true, None),
+        ("mixed", &mixed, true, None),
+        ("unrelated", &unrelated, false, None),
+        ("local_shadowed_import", &local_shadowed_import, false, None),
+        ("expired_shadow_import", &expired_shadow_import, true, None),
+        ("sibling_rival", &sibling_rival, false, None),
+        ("imported_unrelated", &imported_unrelated, false, None),
+        ("unrelated_import", &unrelated_import, false, None),
+        (
+            "unrelated_same_name_alias",
+            &unrelated_same_name_alias,
+            false,
+            None,
+        ),
+        ("cross_file_route", &cross_file_route, false, None),
+        ("dormant", &dormant, false, None),
+        ("extra_helper", &extra_helper, false, None),
+        ("extra_helper_nested", &extra_helper_nested, false, None),
+        ("extra_helper_external", &extra_helper_external, false, None),
+        ("alternate_real", &alternate_real, true, None),
+        ("macro_positive", &macro_positive, true, None),
+        ("macro_discard", &macro_discard, false, None),
+        ("macro_message", &macro_message, false, None),
+        ("macro_other", &macro_other, false, None),
+        ("macro_shadow", &macro_shadow, false, None),
+        ("intermediate", &intermediate, false, None),
+        ("intermediate_mixed", &intermediate_mixed, false, None),
+        ("transitive_shadow", &transitive_shadow, false, None),
+        ("transitive_positive", &transitive_positive, true, None),
+        ("alias", &alias, true, None),
+        ("alias_rival", &alias_with_rival, true, None),
+        ("alias_shadow", &alias_shadow, false, None),
+        ("cross_shadow", &cross, false, Some(helper_file)),
+        ("cross_anchored", &cross_positive, true, Some(helper_file)),
+        ("cross_mixed", &cross_mixed, false, Some(helper_file)),
+        (
+            "cross_mixed_anchored",
+            &cross_mixed_positive,
+            true,
+            Some(helper_file),
+        ),
+        (
+            "cross_intermediate_mixed",
+            &cross_intermediate_mixed,
+            false,
+            Some(helper_file),
+        ),
+        ("cross_alias", &cross_alias, true, Some(helper_file)),
+        ("cross_file_hop", &cross_file_hop, false, Some(helper_file)),
+        (
+            "cross_transitive_shadow",
+            &cross_transitive_shadow,
+            false,
+            Some(helper_file),
+        ),
+        (
+            "cross_transitive_positive",
+            &cross_transitive_positive,
+            true,
+            Some(helper_file),
+        ),
     ] {
         let temp = Fixture {
             root: std::env::temp_dir().join(format!("ripr-shadow-{}-{case}", std::process::id())),
@@ -515,6 +685,22 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
         std::fs::create_dir_all(temp.root.join("src")).map_err(|e| e.to_string())?;
         std::fs::write(temp.root.join("Cargo.toml"), "[package]\nname = \"shadow-control\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
         std::fs::write(temp.root.join("src/lib.rs"), src).map_err(|e| e.to_string())?;
+        if case == "sibling_rival" {
+            std::fs::write(
+                temp.root.join("src/sibling.rs"),
+                "pub fn route_read_as_object() -> Option<u32> { super::other::read_as_object() }\n",
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        if case == "cross_file_route" {
+            std::fs::write(temp.root.join("src/routes.rs"), "use super::Foreign;\npub fn route_read_as_object<helpers: Foreign>() -> Option<u32> {\n    let _ = super::other::read_as_object(); helpers::read_as_object()\n}\n").map_err(|e| e.to_string())?;
+        }
+        if case == "cross_file_hop" {
+            std::fs::write(temp.root.join("src/bridge.rs"), "use super::*;\npub(crate) fn middle_read_as_object<helpers: Foreign>() -> Option<u32> {\n    helpers::read_as_object()\n}\n").map_err(|e| e.to_string())?;
+        }
+        if let Some(helper) = extra {
+            std::fs::write(temp.root.join("src/helpers.rs"), helper).map_err(|e| e.to_string())?;
+        }
         let run = |format: &str| -> Result<serde_json::Value, String> {
             let result = Command::new(env!("CARGO_BIN_EXE_ripr"))
                 .args(["check", "--root"])
@@ -536,7 +722,12 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
         let seam = seams
             .iter()
             .find(|s| {
-                s["owner"] == "src/lib.rs::helpers::read_as_object"
+                s["owner"]
+                    == if extra.is_some() {
+                        "src/helpers.rs::read_as_object"
+                    } else {
+                        "src/lib.rs::helpers::read_as_object"
+                    }
                     && s["expression"] == "value.as_object()"
             })
             .ok_or("missing module helper seam")?;
@@ -550,6 +741,16 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
             expected,
             "{case}: {seam}"
         );
+        if case == "alias_rival" {
+            let other = seams
+                .iter()
+                .find(|s| s["owner"] == "src/lib.rs::other::read_as_object")
+                .ok_or("missing rival seam")?;
+            assert_ne!(
+                other["evidence"]["reach"], "yes",
+                "alias must not credit rival: {other}"
+            );
+        }
         for (class, count) in compact["metrics"]["grip_class"]
             .as_object()
             .ok_or("missing compact counts")?

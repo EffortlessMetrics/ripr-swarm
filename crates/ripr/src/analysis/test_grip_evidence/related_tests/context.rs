@@ -1,10 +1,10 @@
 use super::*;
-use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::facts::FunctionContainer;
+use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::test_grip_evidence::owner_result_binding::ParsedTestFile;
 use crate::analysis::test_grip_evidence::shared_grips::SharedGrips;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
-use ra_ap_syntax::{AstNode, ast};
+use ra_ap_syntax::{AstNode, ast, ast::HasName};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// Precomputed per-test facts for repo seam evidence consumers. This
@@ -42,6 +42,10 @@ pub(crate) struct CompactGripContext<'a> {
     function_name_counts: BTreeMap<String, usize>,
     name_module_candidates: NameModuleCandidateIndex,
     inherent_helper_reach: Mutex<BTreeMap<(usize, String), bool>>,
+    free_helper_alias_reach: Mutex<BTreeMap<(PathBuf, usize, String, String), bool>>,
+    free_helper_shadow: Mutex<BTreeMap<(PathBuf, usize, String, String), bool>>,
+    direct_helper_edges: HelperOwnerCallsByFile,
+    direct_helper_files: BTreeMap<String, BTreeSet<PathBuf>>,
     owner_named_cache: Mutex<BTreeMap<String, Vec<usize>>>,
     same_module_cache: Mutex<BTreeMap<String, Vec<usize>>>,
     pub(in crate::analysis::test_grip_evidence) source_digest_cache:
@@ -339,6 +343,16 @@ impl<'a> CompactGripContext<'a> {
                     || helper_owner_calls_by_file_with_fanout(index, &shared, false),
                 )
             });
+        let direct_helper_edges = same_file_helper_owner_call_pairs.direct.clone();
+        let mut direct_helper_files: BTreeMap<String, BTreeSet<PathBuf>> = BTreeMap::new();
+        for (file, helpers) in &direct_helper_edges {
+            for name in helpers.keys() {
+                direct_helper_files
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(file.clone());
+            }
+        }
         let (same_file_helper_owner_calls_by_file, same_file_free_helper_owner_calls_by_file) = (
             same_file_helper_owner_call_pairs.any_spelling,
             same_file_helper_owner_call_pairs.free_spelling,
@@ -645,6 +659,10 @@ impl<'a> CompactGripContext<'a> {
             function_name_counts,
             name_module_candidates,
             inherent_helper_reach: Mutex::new(BTreeMap::new()),
+            free_helper_alias_reach: Mutex::new(BTreeMap::new()),
+            free_helper_shadow: Mutex::new(BTreeMap::new()),
+            direct_helper_edges,
+            direct_helper_files,
             owner_named_cache: Mutex::new(BTreeMap::new()),
             same_module_cache: Mutex::new(BTreeMap::new()),
             source_digest_cache: Mutex::new(BTreeMap::new()),
@@ -687,6 +705,55 @@ impl<'a> CompactGripContext<'a> {
             )
         });
         memo(&self.inherent_helper_reach).insert(key, answer);
+        answer
+    }
+
+    pub(in crate::analysis::test_grip_evidence) fn renamed_helper_reaches_owner(
+        &self,
+        test: &TestSummary,
+        owner: &FunctionSummary,
+    ) -> bool {
+        let key = (
+            test.file.clone(),
+            test.start_line,
+            test.name.clone(),
+            owner.id.0.clone(),
+        );
+        if let Some(answer) = memo(&self.free_helper_alias_reach).get(&key) {
+            return *answer;
+        }
+        let answer = renamed_import_helper_reaches_owner(test, owner, self.index);
+        memo(&self.free_helper_alias_reach).insert(key, answer);
+        answer
+    }
+
+    pub(in crate::analysis::test_grip_evidence) fn generic_shadow_blocks_owner(
+        &self,
+        test: &TestSummary,
+        owner: &FunctionSummary,
+    ) -> bool {
+        let key = (
+            test.file.clone(),
+            test.start_line,
+            test.name.clone(),
+            owner.id.0.clone(),
+        );
+        if let Some(answer) = memo(&self.free_helper_shadow).get(&key) {
+            return *answer;
+        }
+        let answer = !self.renamed_helper_reaches_owner(test, owner)
+            && crate::analysis::classify::shared_owner_call_identity(self.index, owner)
+                .is_some_and(|identity| {
+                    generic_shadow_blocks_graph_paths(
+                        test,
+                        owner,
+                        &identity,
+                        self.index,
+                        &self.direct_helper_edges,
+                        &self.direct_helper_files,
+                    )
+                });
+        memo(&self.free_helper_shadow).insert(key, answer);
         answer
     }
 
@@ -1622,104 +1689,590 @@ pub(in crate::analysis::test_grip_evidence) struct HelperOwnerCallsByFilePair {
     pub(in crate::analysis::test_grip_evidence) any_spelling: HelperOwnerCallsByFile,
     pub(in crate::analysis::test_grip_evidence) free_spelling: HelperOwnerCallsByFile,
     free_intermediate: HelperOwnerCallsByFile,
+    direct: HelperOwnerCallsByFile,
 }
 
-/// Refuse a mixed same-file helper only when each call of this owner's name
-/// is either rooted at a type parameter or resolves to a different owner.
-/// Restrict the check to a unique direct helper; other graph paths retain
-/// their existing candidate semantics.
-pub(in crate::analysis::test_grip_evidence) fn mixed_generic_shadow_blocks_owner(
+fn call_executes_in_function(call: &ast::CallExpr, function: &ast::Fn) -> bool {
+    call.syntax()
+        .ancestors()
+        .skip(1)
+        .take_while(|node| node != function.syntax())
+        .all(|node| {
+            !ast::Item::can_cast(node.kind())
+                && !ast::ClosureExpr::can_cast(node.kind())
+                && ast::BlockExpr::cast(node).is_none_or(|block| block.async_token().is_none())
+        })
+}
+
+/// Decide only paths represented by the unclosed helper-name graph. The
+/// name graph supplies candidate edges; executable syntax and owner identity
+/// decide each edge. Unknown paths retain the prior candidate.
+fn generic_shadow_blocks_graph_paths(
     test: &TestSummary,
     owner: &FunctionSummary,
     identity: &crate::analysis::classify::OwnerCallIdentity,
     index: &RustIndex,
+    direct: &HelperOwnerCallsByFile,
+    direct_files: &BTreeMap<String, BTreeSet<PathBuf>>,
 ) -> bool {
-    if test.file != owner.file {
-        return false;
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum PathResult {
+        None,
+        Blocked,
+        Possible,
     }
-    let candidates: Vec<_> = index
-        .functions()
-        .iter()
-        .filter(|helper| {
-            helper.file == test.file
-                && helper.id != owner.id
-                && !(helper.start_line == test.start_line && helper.name == test.name)
-                && helper.item.container == FunctionContainer::Free
-                && test.calls.iter().any(|call| call.name == helper.name)
-        })
-        .collect();
-    let [helper] = candidates.as_slice() else {
+    fn merge(left: PathResult, right: PathResult) -> PathResult {
+        match (left, right) {
+            (PathResult::Possible, _) | (_, PathResult::Possible) => PathResult::Possible,
+            (PathResult::Blocked, _) | (_, PathResult::Blocked) => PathResult::Blocked,
+            _ => PathResult::None,
+        }
+    }
+    // A same-named function in another file matters only when the caller
+    // actually names it (or identity cannot settle that call).
+    fn named_call_target(
+        caller: &TestSummary,
+        target: &FunctionSummary,
+        index: &RustIndex,
+    ) -> CallTarget {
+        let Some(identity) =
+            crate::analysis::classify::shared_solo_owner_call_identity(index, target)
+        else {
+            return CallTarget::Unsettled;
+        };
+        let Some(parse) = parse_clean_source_file(&caller.body) else {
+            return CallTarget::Unsettled;
+        };
+        let Some(item) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
+            return CallTarget::Unsettled;
+        };
+        // A local value may intercept an otherwise correctly resolved bare
+        // spelling; item definitions are hoisted, patterns are conservatively
+        // refused anywhere in this function.
+        if item
+            .syntax()
+            .descendants()
+            .filter_map(ast::IdentPat::cast)
+            .filter_map(|pat| pat.name())
+            .any(|name| name.text().trim_start_matches("r#") == target.name)
+            || item
+                .syntax()
+                .descendants()
+                .filter_map(ast::Const::cast)
+                .filter_map(|item| item.name())
+                .any(|name| name.text().trim_start_matches("r#") == target.name)
+            || item
+                .syntax()
+                .descendants()
+                .filter_map(ast::Static::cast)
+                .filter_map(|item| item.name())
+                .any(|name| name.text().trim_start_matches("r#") == target.name)
+            || caller
+                .nested_fn_names
+                .iter()
+                .any(|name| name == &target.name)
+        {
+            return CallTarget::Unsettled;
+        }
+        let params = crate::analysis::syntax::function_type_param_names(&item);
+        let found = std::cell::Cell::new(false);
+        let possible = std::cell::Cell::new(false);
+        let unsettled = std::cell::Cell::new(false);
+        crate::analysis::classify::executable_call_probe(caller, index, &|node, _| {
+            let Some(call) = ast::CallExpr::cast(node) else {
+                return false;
+            };
+            let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
+                return false;
+            };
+            let Some(path) = expr.path() else {
+                return false;
+            };
+            if path
+                .segment()
+                .and_then(|segment| segment.name_ref())
+                .is_none_or(|name| name.text().trim_start_matches("r#") != target.name)
+            {
+                return false;
+            }
+            found.set(true);
+            let prefix = path
+                .qualifier()
+                .map(|part| part.syntax().text().to_string());
+            let segments: Vec<String> = prefix
+                .as_deref()
+                .unwrap_or("")
+                .split("::")
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(|part| part.trim_start_matches("r#").to_string())
+                .collect();
+            if !segments.first().is_some_and(|root| params.contains(root)) {
+                match identity.resolve_call(caller, index, &segments) {
+                    CallTarget::Owner => possible.set(true),
+                    CallTarget::Unsettled => unsettled.set(true),
+                    CallTarget::Other => {}
+                }
+            }
+            false
+        });
+        if possible.get() {
+            CallTarget::Owner
+        } else if !found.get() || unsettled.get() {
+            CallTarget::Unsettled
+        } else {
+            CallTarget::Other
+        }
+    }
+    fn follow(child: PathResult, target: CallTarget) -> PathResult {
+        match target {
+            CallTarget::Owner => child,
+            CallTarget::Other => PathResult::None,
+            CallTarget::Unsettled if child != PathResult::None => PathResult::Possible,
+            CallTarget::Unsettled => PathResult::None,
+        }
+    }
+    fn visit(
+        helper: &FunctionSummary,
+        owner: &FunctionSummary,
+        identity: &crate::analysis::classify::OwnerCallIdentity,
+        index: &RustIndex,
+        direct: &HelperOwnerCallsByFile,
+        direct_files: &BTreeMap<String, BTreeSet<PathBuf>>,
+        remaining: usize,
+        visited: &mut BTreeSet<(PathBuf, usize, String)>,
+    ) -> PathResult {
+        if remaining == 0 {
+            return PathResult::Possible;
+        }
+        let key = (helper.file.clone(), helper.start_line, helper.name.clone());
+        if !visited.insert(key.clone()) {
+            return PathResult::Possible;
+        }
+        let Some(edges) = direct
+            .get(&helper.file)
+            .and_then(|file| file.get(&helper.name))
+        else {
+            visited.remove(&key);
+            return PathResult::None;
+        };
+        let Some(facts) = index.files().get(&helper.file) else {
+            visited.remove(&key);
+            return PathResult::Possible;
+        };
+        let caller = helper_call_view(helper);
+        let mut result = PathResult::None;
+        // A renamed import may be an additional path to the target even if
+        // the terminal-name graph cannot attribute it to this call.
+        let imports = direct_function_import_aliases(&facts.source);
+        if helper.calls.iter().any(|call| {
+            imports
+                .get(&call.name)
+                .and_then(|binding| binding.binding_at(call.line))
+                .is_some_and(|binding| {
+                    binding.name == owner.name
+                        && crate::analysis::classify::resolve_renamed_owner_call(
+                            index, owner, &caller, &call.name, call.line,
+                        ) != CallTarget::Other
+                })
+        }) {
+            result = PathResult::Possible;
+        }
+        if edges.contains(&owner.name) {
+            let Some(parse) = parse_clean_source_file(&helper.body) else {
+                visited.remove(&key);
+                return PathResult::Possible;
+            };
+            let Some(item) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
+                visited.remove(&key);
+                return PathResult::Possible;
+            };
+            let params = crate::analysis::syntax::function_type_param_names(&item);
+            let found = std::cell::Cell::new(false);
+            let shadowed = std::cell::Cell::new(false);
+            let possible = std::cell::Cell::new(false);
+            crate::analysis::classify::executable_call_probe(&caller, index, &|node, _| {
+                let Some(call) = ast::CallExpr::cast(node) else {
+                    return false;
+                };
+                let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
+                    return false;
+                };
+                let Some(path) = expr.path() else {
+                    return false;
+                };
+                if path
+                    .segment()
+                    .and_then(|segment| segment.name_ref())
+                    .is_none_or(|name| name.text().trim_start_matches("r#") != owner.name)
+                {
+                    return false;
+                }
+                found.set(true);
+                let prefix = path
+                    .qualifier()
+                    .map(|part| part.syntax().text().to_string());
+                let segments: Vec<String> = prefix
+                    .as_deref()
+                    .unwrap_or("")
+                    .split("::")
+                    .map(str::trim)
+                    .filter(|part| !part.is_empty())
+                    .map(|part| part.trim_start_matches("r#").to_string())
+                    .collect();
+                if segments.first().is_some_and(|root| params.contains(root)) {
+                    shadowed.set(true);
+                } else if identity.resolve_call(&caller, index, &segments) != CallTarget::Other {
+                    possible.set(true);
+                }
+                false
+            });
+            result = merge(
+                result,
+                if !found.get() || possible.get() || !shadowed.get() {
+                    PathResult::Possible
+                } else {
+                    PathResult::Blocked
+                },
+            );
+        }
+        for name in edges
+            .iter()
+            .filter(|name| *name != &owner.name && *name != &helper.name)
+        {
+            if let Some(files) = direct_files.get(name) {
+                for file in files.iter().filter(|file| *file != &helper.file) {
+                    let Some(other_facts) = index.files().get(file) else {
+                        result = PathResult::Possible;
+                        continue;
+                    };
+                    for other in other_facts.functions.iter().filter(|f| f.name == *name) {
+                        let child = visit(
+                            other,
+                            owner,
+                            identity,
+                            index,
+                            direct,
+                            direct_files,
+                            remaining - 1,
+                            visited,
+                        );
+                        result = merge(
+                            result,
+                            follow(child, named_call_target(&caller, other, index)),
+                        );
+                    }
+                }
+            }
+            // Name graphs cannot identify a duplicate same-file definition.
+            let matches: Vec<_> = facts.functions.iter().filter(|f| f.name == *name).collect();
+            if matches.len() != 1 {
+                if matches.len() > 1 {
+                    result = PathResult::Possible;
+                }
+                continue;
+            }
+            let next = matches[0];
+            let child = visit(
+                next,
+                owner,
+                identity,
+                index,
+                direct,
+                direct_files,
+                remaining - 1,
+                visited,
+            );
+            if child == PathResult::None {
+                continue;
+            }
+            result = merge(
+                result,
+                if free_helper_call_resolves(&caller, next, index) {
+                    child
+                } else {
+                    PathResult::Possible
+                },
+            );
+        }
+        visited.remove(&key);
+        result
+    }
+    let Some(facts) = index.files().get(&test.file) else {
         return false;
     };
-    if !free_helper_call_resolves(test, helper, index)
-        || index
-            .files()
-            .get(&helper.file)
-            .is_none_or(|facts| facts.source.contains(" as "))
-        || helper.calls.iter().any(|call| {
-            call.name != owner.name
-                && index
-                    .functions()
-                    .iter()
-                    .any(|other| other.id != helper.id && other.name == call.name)
-        })
+    let mut result = PathResult::None;
+    let test_imports = direct_function_import_aliases(&facts.source);
+    for call in &test.calls {
+        if let Some(import) = test_imports
+            .get(&call.name)
+            .and_then(|binding| binding.binding_at(call.line))
+        {
+            if import.name == owner.name
+                && crate::analysis::classify::resolve_renamed_owner_call(
+                    index, owner, test, &call.name, call.line,
+                ) != CallTarget::Other
+            {
+                result = PathResult::Possible;
+            }
+            if let Some(files) = direct_files.get(&import.name) {
+                for file in files {
+                    let Some(import_facts) = index.files().get(file) else {
+                        result = PathResult::Possible;
+                        continue;
+                    };
+                    for target in import_facts
+                        .functions
+                        .iter()
+                        .filter(|f| f.name == import.name)
+                    {
+                        let child = visit(
+                            target,
+                            owner,
+                            identity,
+                            index,
+                            direct,
+                            direct_files,
+                            HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
+                            &mut BTreeSet::new(),
+                        );
+                        result = merge(
+                            result,
+                            follow(
+                                child,
+                                crate::analysis::classify::resolve_renamed_owner_call(
+                                    index, target, test, &call.name, call.line,
+                                ),
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        if let Some(files) = direct_files.get(&call.name) {
+            for file in files.iter().filter(|file| *file != &test.file) {
+                let Some(other_facts) = index.files().get(file) else {
+                    result = PathResult::Possible;
+                    continue;
+                };
+                for other in other_facts.functions.iter().filter(|f| f.name == call.name) {
+                    let child = visit(
+                        other,
+                        owner,
+                        identity,
+                        index,
+                        direct,
+                        direct_files,
+                        HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
+                        &mut BTreeSet::new(),
+                    );
+                    result = merge(result, follow(child, named_call_target(test, other, index)));
+                }
+            }
+        }
+        let Some(file_edges) = direct.get(&test.file) else {
+            continue;
+        };
+        if !file_edges.contains_key(&call.name) {
+            continue;
+        }
+        let matches: Vec<_> = facts
+            .functions
+            .iter()
+            .filter(|f| {
+                f.name == call.name && !(f.start_line == test.start_line && f.name == test.name)
+            })
+            .collect();
+        if matches.len() != 1 {
+            return false;
+        }
+        let helper = matches[0];
+        let child = visit(
+            helper,
+            owner,
+            identity,
+            index,
+            direct,
+            direct_files,
+            HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
+            &mut BTreeSet::new(),
+        );
+        if child == PathResult::None {
+            continue;
+        }
+        result = merge(
+            result,
+            if free_helper_call_resolves(test, helper, index) {
+                child
+            } else {
+                PathResult::Possible
+            },
+        );
+    }
+    result == PathResult::Blocked
+}
+
+/// Prove a same-file helper chain ending in a bare renamed import of this
+/// exact owner. Unsupported paths remain candidates of the existing graph.
+pub(in crate::analysis::test_grip_evidence) fn renamed_import_helper_reaches_owner(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    fn visit(
+        caller: &TestSummary,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+        remaining: usize,
+        visited: &mut BTreeSet<(PathBuf, usize, String)>,
+    ) -> bool {
+        if remaining == 0 {
+            return false;
+        }
+        let Some(facts) = index.files().get(&caller.file) else {
+            return false;
+        };
+        let imports = direct_function_import_aliases(&facts.source);
+        for helper in facts.functions.iter().filter(|helper| {
+            helper.item.container == FunctionContainer::Free
+                && helper.id != owner.id
+                && !(helper.start_line == caller.start_line && helper.name == caller.name)
+                && caller.calls.iter().any(|call| call.name == helper.name)
+        }) {
+            let key = (helper.file.clone(), helper.start_line, helper.name.clone());
+            if visited.contains(&key)
+                || crate::analysis::classify::function_declaration_is_async(helper, index)
+                    != Some(false)
+                || !free_helper_call_resolves(caller, helper, index)
+            {
+                continue;
+            }
+            visited.insert(key.clone());
+            let body = TestSummary {
+                name: helper.name.clone(),
+                file: helper.file.clone(),
+                start_line: helper.start_line,
+                end_line: helper.end_line,
+                body: helper.body.clone(),
+                calls: helper.calls.clone(),
+                assertions: Vec::new(),
+                literals: helper.literals.clone(),
+                attrs: helper.attrs.clone(),
+                nested_fn_names: helper.nested_fn_names.clone(),
+                let_bindings: helper.let_bindings.clone(),
+                generated: None,
+            };
+            if let Some(parse) = parse_clean_source_file(&helper.body) {
+                if let Some(item) = parse.tree().syntax().children().find_map(ast::Fn::cast) {
+                    for call in item.syntax().descendants().filter_map(ast::CallExpr::cast) {
+                        if call
+                            .syntax()
+                            .ancestors()
+                            .skip(1)
+                            .take_while(|node| node != item.syntax())
+                            .any(|node| {
+                                ast::Item::can_cast(node.kind())
+                                    || ast::ClosureExpr::can_cast(node.kind())
+                                    || ast::BlockExpr::cast(node)
+                                        .is_some_and(|block| block.async_token().is_some())
+                            })
+                        {
+                            continue;
+                        }
+                        let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
+                            continue;
+                        };
+                        let Some(path) = expr.path() else { continue };
+                        if path.qualifier().is_some() {
+                            continue;
+                        }
+                        let Some(name) = path.segment().and_then(|segment| segment.name_ref())
+                        else {
+                            continue;
+                        };
+                        let alias = name.text().to_string();
+                        if helper.nested_fn_names.iter().any(|name| name == &alias)
+                            || item.syntax().descendants().any(|node| {
+                                ast::Const::cast(node.clone())
+                                    .and_then(|item| item.name())
+                                    .is_some_and(|name| name.text() == alias)
+                                    || ast::Static::cast(node)
+                                        .and_then(|item| item.name())
+                                        .is_some_and(|name| name.text() == alias)
+                            })
+                            || item
+                                .syntax()
+                                .descendants()
+                                .any(|node| ast::MacroCall::can_cast(node.kind()))
+                        {
+                            continue;
+                        }
+                        let offset = u32::from(name.syntax().text_range().start()) as usize;
+                        let line = helper.start_line
+                            + helper.body[..offset]
+                                .bytes()
+                                .filter(|b| *b == b'\n')
+                                .count();
+                        let Some(import) = imports
+                            .get(&alias)
+                            .and_then(|binding| binding.binding_at(line))
+                        else {
+                            continue;
+                        };
+                        if import.name != owner.name || alias == owner.name {
+                            continue;
+                        }
+                        let resolved = crate::analysis::classify::resolve_renamed_owner_call(
+                            index, owner, &body, &alias, line,
+                        );
+                        if resolved == CallTarget::Owner {
+                            return true;
+                        }
+                        if resolved == CallTarget::Other
+                            || helper.file != owner.file
+                            || item
+                                .syntax()
+                                .descendants()
+                                .filter_map(ast::IdentPat::cast)
+                                .any(|pat| pat.name().is_some_and(|name| name.text() == alias))
+                        {
+                            continue;
+                        }
+                        // The indexed use parser accepts only crate-root imports. Resolve the
+                        // resulting spelled path with the existing same-file authority.
+                        let qualified = format!("crate::{}::{}", import.module_path, import.name);
+                        let end = u32::from(name.syntax().text_range().end()) as usize;
+                        let mut rewritten = body.clone();
+                        let mut text = helper.body.to_string();
+                        text.replace_range(offset..end, &qualified);
+                        rewritten.body = text.into();
+                        if free_helper_call_resolves(&rewritten, owner, index) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            if visit(&body, owner, index, remaining - 1, visited) {
+                return true;
+            }
+            visited.remove(&key);
+        }
+        false
+    }
+    if index
+        .files()
+        .get(&test.file)
+        .is_none_or(|facts| !facts.source.contains(" as "))
     {
         return false;
     }
-    let Some(parse) = parse_clean_source_file(&helper.body) else {
-        return false;
-    };
-    let Some(item) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
-        return false;
-    };
-    let params = crate::analysis::syntax::function_type_param_names(&item);
-    if params.is_empty() {
-        return false;
-    }
-    let caller = TestSummary {
-        name: helper.name.clone(),
-        file: helper.file.clone(),
-        start_line: helper.start_line,
-        end_line: helper.end_line,
-        body: helper.body.clone(),
-        calls: helper.calls.clone(),
-        assertions: Vec::new(),
-        literals: helper.literals.clone(),
-        attrs: helper.attrs.clone(),
-        nested_fn_names: helper.nested_fn_names.clone(),
-        let_bindings: helper.let_bindings.clone(),
-        generated: None,
-    };
-    let mut shadowed = false;
-    for call in item.syntax().descendants().filter_map(ast::CallExpr::cast) {
-        let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
-            continue;
-        };
-        let Some(path) = expr.path() else { continue };
-        let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
-            continue;
-        };
-        if name.text().trim_start_matches("r#") != owner.name {
-            continue;
-        }
-        let prefix = path
-            .qualifier()
-            .map(|part| part.syntax().text().to_string());
-        let segments: Vec<String> = prefix
-            .as_deref()
-            .unwrap_or("")
-            .split("::")
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-            .map(|part| part.trim_start_matches("r#").to_string())
-            .collect();
-        if segments.first().is_some_and(|root| params.contains(root)) {
-            shadowed = true;
-        } else if identity.resolve_call(&caller, index, &segments) != CallTarget::Other {
-            return false;
-        }
-    }
-    shadowed
+    visit(
+        test,
+        owner,
+        index,
+        HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
+        &mut BTreeSet::new(),
+    )
 }
 
 // A renamed direct import can reach an owner even when an unrelated generic
@@ -1733,11 +2286,13 @@ fn has_bare_renamed_owner_call(
     let Some(parse) = parse_clean_source_file(&function.body) else {
         return false;
     };
-    parse
-        .tree()
-        .syntax()
+    let Some(item) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    item.syntax()
         .descendants()
         .filter_map(ast::CallExpr::cast)
+        .filter(|call| call_executes_in_function(call, &item))
         .any(|call| {
             let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
                 return false;
@@ -1752,7 +2307,19 @@ fn has_bare_renamed_owner_call(
                 return false;
             };
             let alias = name.text().trim_start_matches("r#").to_string();
-            alias != owner_name
+            let shadowed = item.syntax().descendants().any(|node| {
+                ast::Const::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| name.text() == alias)
+                    || ast::Static::cast(node.clone())
+                        .and_then(|item| item.name())
+                        .is_some_and(|name| name.text() == alias)
+                    || ast::IdentPat::cast(node)
+                        .and_then(|pat| pat.name())
+                        .is_some_and(|name| name.text() == alias)
+            });
+            !shadowed
+                && alias != owner_name
                 && function
                     .calls
                     .iter()
@@ -1769,7 +2336,10 @@ fn has_bare_renamed_owner_call(
 /// Names for which every visible call is rooted at a function type parameter.
 /// Call facts retain only a name and source line, so inspect individual syntax
 /// calls before reducing them to names; a real call on the same line wins.
-fn type_parameter_only_call_names(function: &FunctionSummary) -> BTreeSet<String> {
+fn type_parameter_only_call_names(
+    function: &FunctionSummary,
+    index: &RustIndex,
+) -> BTreeSet<String> {
     if !function.body.contains("::") || !function.body.contains('<') {
         return BTreeSet::new();
     }
@@ -1785,7 +2355,12 @@ fn type_parameter_only_call_names(function: &FunctionSummary) -> BTreeSet<String
     }
     let mut shadowed = BTreeSet::new();
     let mut other = BTreeSet::new();
-    for call in item.syntax().descendants().filter_map(ast::CallExpr::cast) {
+    for call in item
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .filter(|call| call_executes_in_function(call, &item))
+    {
         let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
             continue;
         };
@@ -1812,7 +2387,103 @@ fn type_parameter_only_call_names(function: &FunctionSummary) -> BTreeSet<String
             other.insert(name);
         }
     }
-    shadowed.difference(&other).cloned().collect()
+    let caller = helper_call_view(function);
+    if function.body.contains('!') {
+        for fact in &function.calls {
+            if !params.iter().any(|param| fact.text.contains(param)) {
+                continue;
+            }
+            if crate::analysis::classify::executable_call_probe(&caller, index, &|node, _| {
+                let Some(call) = ast::CallExpr::cast(node) else {
+                    return false;
+                };
+                let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
+                    return false;
+                };
+                let Some(path) = expr.path() else {
+                    return false;
+                };
+                if path
+                    .segment()
+                    .and_then(|segment| segment.name_ref())
+                    .is_none_or(|part| part.text().trim_start_matches("r#") != fact.name)
+                {
+                    return false;
+                }
+                path.qualifier().is_some_and(|part| {
+                    params.contains(
+                        part.syntax()
+                            .text()
+                            .to_string()
+                            .split("::")
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .trim_start_matches("r#"),
+                    )
+                })
+            }) {
+                shadowed.insert(fact.name.clone());
+            }
+        }
+    }
+    shadowed
+        .difference(&other)
+        .filter(|name| {
+            // Assertion operands are token trees in the source AST. Only the
+            // shared executable-call authority may admit them as positive calls.
+            !function.body.contains('!')
+                || !crate::analysis::classify::executable_call_probe(&caller, index, &|node, _| {
+                    let Some(call) = ast::CallExpr::cast(node) else {
+                        return false;
+                    };
+                    let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
+                        return false;
+                    };
+                    let Some(path) = expr.path() else {
+                        return false;
+                    };
+                    if path
+                        .segment()
+                        .and_then(|segment| segment.name_ref())
+                        .is_none_or(|part| part.text().trim_start_matches("r#") != name.as_str())
+                    {
+                        return false;
+                    }
+                    let prefix = path
+                        .qualifier()
+                        .map(|part| part.syntax().text().to_string());
+                    !prefix.as_deref().is_some_and(|prefix| {
+                        params.contains(
+                            prefix
+                                .split("::")
+                                .next()
+                                .unwrap_or("")
+                                .trim()
+                                .trim_start_matches("r#"),
+                        )
+                    })
+                })
+        })
+        .cloned()
+        .collect()
+}
+
+fn helper_call_view(function: &FunctionSummary) -> TestSummary {
+    TestSummary {
+        name: function.name.clone(),
+        file: function.file.clone(),
+        start_line: function.start_line,
+        end_line: function.end_line,
+        body: function.body.clone(),
+        calls: function.calls.clone(),
+        assertions: Vec::new(),
+        literals: function.literals.clone(),
+        attrs: function.attrs.clone(),
+        nested_fn_names: function.nested_fn_names.clone(),
+        let_bindings: function.let_bindings.clone(),
+        generated: None,
+    }
 }
 
 pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_fanout(
@@ -1840,7 +2511,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
         })
     }) {
         let helper_name_lower = function.name.to_ascii_lowercase();
-        let shadowed = type_parameter_only_call_names(function);
+        let shadowed = type_parameter_only_call_names(function, index);
         let local_function_names = function_names_by_file.get(&function.file);
         let external_owner_names =
             rust_index::is_test_file(&function.file).then_some(production_owner_names);
@@ -1916,6 +2587,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
                 .insert(function.name.clone(), free_owner_calls);
         }
     }
+    let direct = helpers.clone();
     extend_helper_owner_calls_through_bounded_graph(&mut helpers);
     extend_helper_owner_calls_through_bounded_graph(&mut free_intermediate);
     extend_free_helper_owner_calls_through_bounded_graph(&mut free_helpers, &free_intermediate);
@@ -1923,6 +2595,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
         any_spelling: helpers,
         free_spelling: free_helpers,
         free_intermediate,
+        direct,
     }
 }
 
@@ -2268,7 +2941,7 @@ impl TargetAffinityOwnerCalls {
                 .filter(|call| call_text_may_call_free_function(&call.text, &call.name))
                 .map(|call| call.name.clone())
                 .collect();
-            let shadowed = type_parameter_only_call_names(function);
+            let shadowed = type_parameter_only_call_names(function, index);
             // Text-visible edges keep their free spelling; direct-imported
             // edges are callee-identity-resolved by the scoped import
             // binding, so they join regardless of the alias spelling

@@ -397,24 +397,32 @@ pub(super) fn match_helper_owner_call(
     } else {
         context.tests_by_helper_owner_call_name.get(&owner.name)
     };
-    let Some(indices) = indices else {
-        return;
-    };
-    for test_index in indices {
+    let direct_indices: BTreeSet<usize> = indices.into_iter().flatten().copied().collect();
+    let mut all_indices = direct_indices.clone();
+    if owner.free_function {
+        if let Some(extra) = context.tests_by_helper_owner_call_name.get(&owner.name) {
+            all_indices.extend(extra.iter().copied());
+        }
+    }
+    for test_index in &all_indices {
         if owner.free_function
-            && owner
-                .function
-                .zip(owner.identity.as_deref())
-                .is_some_and(|(function, identity)| {
-                    context.tests.get(*test_index).is_some_and(|test| {
-                        context::mixed_generic_shadow_blocks_owner(
-                            test.test,
-                            function,
-                            identity,
-                            context.index,
-                        )
-                    })
-                })
+            && !direct_indices.contains(test_index)
+            && !owner.function.is_some_and(|function| {
+                context
+                    .tests
+                    .get(*test_index)
+                    .is_some_and(|test| context.renamed_helper_reaches_owner(test.test, function))
+            })
+        {
+            continue;
+        }
+        if owner.free_function
+            && owner.function.is_some_and(|function| {
+                context
+                    .tests
+                    .get(*test_index)
+                    .is_some_and(|test| context.generic_shadow_blocks_owner(test.test, function))
+            })
         {
             continue;
         }
@@ -467,15 +475,7 @@ pub(super) fn match_target_affinity_owner_call(
         if (owner.free_function
             && owner
                 .function
-                .zip(owner.identity.as_deref())
-                .is_some_and(|(function, identity)| {
-                    context::mixed_generic_shadow_blocks_owner(
-                        test.test,
-                        function,
-                        identity,
-                        context.index,
-                    )
-                }))
+                .is_some_and(|function| context.generic_shadow_blocks_owner(test.test, function)))
             || !test_assertion_mentions_any_target_token(test, target_tokens)
             || (owner.inherent_receiver
                 && !owner.inherent_owner.is_some_and(|function| {

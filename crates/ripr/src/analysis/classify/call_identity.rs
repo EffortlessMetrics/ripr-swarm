@@ -433,7 +433,7 @@ fn shared_call_identity(
 
 /// [`shared_owner_call_identity`] for an owner that may have no rival
 /// (#9218): the identity used to settle a qualified call's spelled path.
-fn shared_solo_owner_call_identity(
+pub(in crate::analysis) fn shared_solo_owner_call_identity(
     index: &RustIndex,
     owner: &FunctionSummary,
 ) -> Option<std::sync::Arc<OwnerCallIdentity>> {
@@ -453,6 +453,191 @@ fn shared_solo_owner_call_identity(
         return identities.entry(key).or_insert(built).clone();
     }
     built
+}
+
+/// Whether every bare alias call on a line is shadowed by a function
+/// parameter or an earlier `let` in an enclosing statement list. Return
+/// `None` for unsupported pattern scopes, nested functions/closures, or when
+/// the line contains calls with different binding states.
+fn renamed_call_local_shadow(caller: &TestSummary, alias: &str, line: usize) -> Option<bool> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let parse = crate::analysis::syntax::parse_clean_source_file(&caller.body)?;
+    let item = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let binds = |node: &ra_ap_syntax::SyntaxNode| {
+        node.descendants()
+            .filter_map(ast::IdentPat::cast)
+            .filter_map(|pat| pat.name())
+            .any(|name| name.text().trim_start_matches("r#") == alias)
+    };
+    // Only parameter and direct let patterns have a scope this check reads.
+    for pattern in item.syntax().descendants().filter_map(ast::IdentPat::cast) {
+        if pattern
+            .name()
+            .is_none_or(|name| name.text().trim_start_matches("r#") != alias)
+        {
+            continue;
+        }
+        let mut supported = false;
+        for ancestor in pattern
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .take_while(|node| node != item.syntax())
+        {
+            if ast::ClosureExpr::can_cast(ancestor.kind()) || ast::Fn::can_cast(ancestor.kind()) {
+                return None;
+            }
+            if let Some(binding) = ast::LetStmt::cast(ancestor.clone()) {
+                supported = binding.pat().is_some_and(|pat| {
+                    pat.syntax()
+                        .text_range()
+                        .contains_range(pattern.syntax().text_range())
+                }) && binding
+                    .syntax()
+                    .parent()
+                    .is_some_and(|parent| ast::StmtList::can_cast(parent.kind()));
+                break;
+            }
+            if ast::Param::can_cast(ancestor.kind()) {
+                supported = true;
+                break;
+            }
+        }
+        if !supported {
+            return None;
+        }
+    }
+    let parameter_shadow = item
+        .param_list()
+        .is_some_and(|params| binds(params.syntax()));
+    let mut answer = None;
+    for call in item.syntax().descendants().filter_map(ast::CallExpr::cast) {
+        let Some(ast::Expr::PathExpr(expr)) = call.expr() else {
+            continue;
+        };
+        let Some(path) = expr.path() else { continue };
+        if path.qualifier().is_some()
+            || path
+                .segment()
+                .and_then(|part| part.name_ref())
+                .is_none_or(|name| name.text().trim_start_matches("r#") != alias)
+        {
+            continue;
+        }
+        let offset = u32::from(call.syntax().text_range().start()) as usize;
+        let call_line = caller.start_line
+            + caller.body[..offset]
+                .bytes()
+                .filter(|b| *b == b'\n')
+                .count();
+        if call_line != line {
+            continue;
+        }
+        let mut shadowed = parameter_shadow;
+        for ancestor in call
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .take_while(|node| node != item.syntax())
+        {
+            if ast::ClosureExpr::can_cast(ancestor.kind()) || ast::Fn::can_cast(ancestor.kind()) {
+                return None;
+            }
+            if let Some(list) = ast::StmtList::cast(ancestor) {
+                if list
+                    .syntax()
+                    .children()
+                    .filter_map(ast::LetStmt::cast)
+                    .any(|binding| {
+                        binding.syntax().text_range().end() <= call.syntax().text_range().start()
+                            && binding.pat().is_some_and(|pat| binds(pat.syntax()))
+                    })
+                {
+                    shadowed = true;
+                }
+            }
+        }
+        if answer.is_some_and(|previous| previous != shadowed) {
+            return None;
+        }
+        answer = Some(shadowed);
+    }
+    answer
+}
+
+/// Resolve one bare call of a renamed import against an exact free owner.
+/// The caller must supply an executable parsed call site and its source line.
+/// Definite parameter and enclosing prior-let shadows return `Other`.
+/// Opaque macros, unsupported binding scopes, and unresolved Cargo/module
+/// paths return `Unsettled`; none grants reach.
+pub(in crate::analysis) fn resolve_renamed_owner_call(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    caller: &TestSummary,
+    alias: &str,
+    call_line: usize,
+) -> CallTarget {
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return CallTarget::Unsettled;
+    };
+    // Macro expansions can introduce a value binding or an item. The caller
+    // may separately prove a standard assertion operand, but this bounded
+    // binding reader does not infer which other macros can declare names.
+    if caller.body.contains('!') {
+        return CallTarget::Unsettled;
+    }
+    let alias = alias.trim_start_matches("r#");
+    let local_shadow = renamed_call_local_shadow(caller, alias, call_line);
+    if local_shadow == Some(true) {
+        return CallTarget::Other;
+    }
+    let scope = identity.test_scope(caller, index);
+    let Some(scopes) = scope.scopes.as_deref() else {
+        return CallTarget::Unsettled;
+    };
+    for current in &scopes.scopes {
+        if current.block_binds(alias)
+            || current.child_modules.contains(alias)
+            || current.defines.contains(alias)
+            || (local_shadow != Some(false)
+                && current.local_bindings.get(alias).is_some_and(|sites| {
+                    sites.iter().any(|site| {
+                        site.line <= call_line && site.end_line.is_none_or(|end| call_line <= end)
+                    })
+                }))
+        {
+            return CallTarget::Unsettled;
+        }
+        let imports: Vec<_> = current.imports_of(alias).collect();
+        if !imports.is_empty() {
+            let [UseBinding::Renamed(path)] = imports.as_slice() else {
+                return CallTarget::Unsettled;
+            };
+            let Some((name, module)) = path.split_last() else {
+                return CallTarget::Unsettled;
+            };
+            if name.trim_start_matches("r#") != identity.name.trim_start_matches("r#")
+                || module.is_empty()
+            {
+                return CallTarget::Unsettled;
+            }
+            // The imported value cannot rebind its own path prefix.
+            let mut import_scope = current.clone();
+            import_scope.imports.retain(|import| import.bound != alias);
+            let base = scope
+                .file_segments
+                .as_deref()
+                .map(|file| join(file, &current.modules));
+            let target = use_target(module, base.as_deref(), &import_scope, &scope.crate_names);
+            return identity.target_of(&identity.matches_module(target));
+        }
+        // The scan cannot place a call inside nested blocks or decide which
+        // item a glob supplies. Preserve uncertainty rather than guessing.
+        if !current.globs.is_empty() {
+            return CallTarget::Unsettled;
+        }
+    }
+    CallTarget::Unsettled
 }
 
 /// The owner and its same-named, same-package module-level rivals.

@@ -5616,6 +5616,23 @@ pub(in crate::analysis) fn free_helper_call_resolves(
     })
 }
 
+/// Probe executable calls in a function-shaped summary, including operands of
+/// source-verified standard assertion macros. Synthetic operand nodes carry
+/// the original macro invocation as their lexical scope anchor.
+pub(in crate::analysis) fn executable_call_probe(
+    caller: &TestSummary,
+    index: &RustIndex,
+    resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
+) -> bool {
+    executable_call_resolves(
+        caller,
+        Some(index),
+        &index.call_identity_memos.receiver_pin_syntax,
+        false,
+        resolves,
+    )
+}
+
 /// Walk only syntax executed by the outer function. Item declarations,
 /// closures and async blocks do not execute their bodies by being declared.
 /// Even an invoked nested function stays unresolved here; its body cannot
