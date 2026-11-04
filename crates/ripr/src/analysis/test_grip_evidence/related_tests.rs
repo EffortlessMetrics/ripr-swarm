@@ -10,6 +10,9 @@ use std::sync::Arc;
 pub(super) mod context;
 mod visibility;
 
+#[cfg(test)]
+mod direct_owner_prefilter_tests;
+
 pub(crate) use context::CompactGripContext;
 pub(super) use context::{CompactTest, call_text_contains_named_call};
 
@@ -331,10 +334,19 @@ pub(super) fn match_direct_owner_call(
         let Some(indexed) = context.tests.get(*test_index) else {
             continue;
         };
+        // The inserter rejects these tests unconditionally. Avoid resolving
+        // same-named receivers across unrelated packages before that rejection.
+        if let Some(prefix) = prefix
+            && !indexed.path_normalized.starts_with(prefix)
+        {
+            continue;
+        }
         if owner.inherent_receiver {
             // Every inherent entry borrows the complete shared owner refusal,
             // independently of the legacy impl-name ambiguity shortcut.
             if !owner.inherent_owner.is_some_and(|function| {
+                #[cfg(test)]
+                direct_owner_prefilter_tests::record_inherent_receiver_check(*test_index);
                 inherent_owner_call_resolves(indexed.test, function, context.index)
             }) {
                 continue;

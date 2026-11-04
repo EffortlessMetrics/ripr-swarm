@@ -16,6 +16,7 @@ tests = [
 [[extend]]
 id = "RIPR-SPEC-0005"
 tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/direct_owner_prefilter_tests.rs::direct_owner_package_prefilter_skips_excluded_receiver_work_without_changing_credit",
   "crates/ripr/src/analysis/test_grip_evidence/compact_windows.rs::compact_windows_fresh_and_full_context_match_canonical_compact",
   "crates/ripr/src/analysis/test_grip_evidence/compact_windows.rs::compact_windows_refuse_both_shared_warm_panic_points",
   "crates/ripr/src/analysis/test_grip_evidence/compact_windows.rs::compact_windows_panic_permanently_poisons_context",
