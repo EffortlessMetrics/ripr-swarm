@@ -277,3 +277,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_nested_literal (23)
+
+Reason:
+RIPR-SPEC-0240 #6642 merged-tree golden refresh: this branch's insta-redaction withhold does not change these fixtures; re-blessed against current main so the goldens match main's analyzer output. No class, stage or evidence change from the PR itself.
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_nested_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
