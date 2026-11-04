@@ -194,6 +194,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::Receipts(args) => super::reports::receipts(&args),
         XtaskCommand::Worktree(args) => super::worktree(&args),
         XtaskCommand::Specs(args) => super::specs(&args),
+        XtaskCommand::Generations(args) => super::generations(&args),
         XtaskCommand::GoldenDrift => super::reports::golden_drift(),
         XtaskCommand::CiFast => super::ci_fast(),
         XtaskCommand::CiFull => super::ci_full(),
@@ -216,6 +217,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckDroidReviewConfig => super::check_droid_review_config(),
         XtaskCommand::CheckSpecFormat => super::check_spec_format(),
         XtaskCommand::CheckSpecNumbering => super::check_spec_numbering(),
+        XtaskCommand::CheckGenerationPins => super::check_generation_pins(),
         XtaskCommand::CheckFixtureContracts => super::check_fixture_contracts(),
         XtaskCommand::CheckEvidencePromotionHonesty(args) => {
             super::check_evidence_promotion_honesty(&args)
