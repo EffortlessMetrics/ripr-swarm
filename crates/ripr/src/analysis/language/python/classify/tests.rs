@@ -4202,3 +4202,49 @@ fn classify_range_case(
     )
     .ok_or_else(|| "range edit must produce a finding".to_string())
 }
+
+#[test]
+fn changed_range_credits_only_the_call_in_the_exact_pin() -> Result<(), String> {
+    let before = "    for i in range(1, n + 1):";
+    let after = "    for i in range(1, n):";
+    let source =
+        format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n");
+    for (body, exposed) in [
+        ("    sum_to(3)\n    assert sum_to(0) == 0", false),
+        ("    sum_to(3); assert sum_to(0) == 0", false),
+        ("    assert sum_to(0) == 0, sum_to(3)", false),
+        ("    assert sum_to(sum_to(3)) == 0", false),
+        ("    assert sum_to(0) == sum_to(3)", false),
+        ("    sum_to(0)\n    assert sum_to(3) == 6", true),
+        ("    assert 6 == sum_to(3)", true),
+    ] {
+        let tests = format!("from src.subject import sum_to\n\ndef test_sum():\n{body}\n");
+        let finding = classify_range_case(&source, &tests, 3, before, after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{body}: {finding:?}"
+        );
+        if !exposed {
+            assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        }
+    }
+    for (body, exposed) in [
+        (
+            "        sum_to(3)\n        self.assertEqual(sum_to(0), 0)",
+            false,
+        ),
+        ("        self.assertEqual(sum_to(3), 6)", true),
+    ] {
+        let tests = format!(
+            "import unittest\nfrom src.subject import sum_to\n\nclass Checks(unittest.TestCase):\n    def test_sum(self):\n{body}\n"
+        );
+        let finding = classify_range_case(&source, &tests, 3, before, after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{body}: {finding:?}"
+        );
+    }
+    Ok(())
+}

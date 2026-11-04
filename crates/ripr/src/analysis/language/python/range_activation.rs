@@ -2,13 +2,15 @@
 //! This is a withholding gate, not a general loop evaluator or a repair producer.
 use super::PythonOwner;
 use super::arm_activation::builtin_names_intact;
-use super::assertion_selection::PythonAssertionFocus;
-use super::boundary::{resolve_operand, strong_owner_call_rows_with_gaps, unrebound_constants};
+use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::boundary::{
+    CallRow, resolve_operand, strong_owner_call_rows_with_gaps, unrebound_constants,
+};
 use super::guard_activation::name_rebound_in_owner;
 use super::module_constants::mentions_identifier;
 use super::related_tests::PythonRelatedCandidate;
 use super::static_limits::PythonStaticLimit;
-use crate::domain::StaticLimitKind;
+use crate::domain::{OracleStrength, StaticLimitKind};
 
 pub(super) fn changed_range_limit(
     new_line: &str,
@@ -40,6 +42,9 @@ pub(super) fn changed_range_limit(
                         || !name_rebound_in_owner(source, owner, &parameter.name)
                 })
                 && rows.iter().any(|row| {
+                    if !row_is_asserted(row, candidates, focus) {
+                        return false;
+                    }
                     let read = |header: &RangeHeader| {
                         let values: Option<Vec<i128>> = header
                             .args
@@ -56,6 +61,106 @@ pub(super) fn changed_range_limit(
         evidence: "static_limit unsupported_syntax: changed range has no established differing accumulator result".to_string(),
         missing: "Static limit `unsupported_syntax`: no strong related Python call establishes different old and new returned range sums. Both ranges may be empty or sum to the same value for the pinned input; other loop bodies, unreadable bounds, rebound names and unavailable source remain unresolved. Check an input that changes the iterations with a runtime test.".to_string(),
     })
+}
+
+/// The shared row reader inventories every call in a strong test. A range
+/// witness must instead be the call observed by its selected assertion.
+/// Parse the complete, bounded row excerpt: partial/multiline rows refuse.
+fn row_is_asserted(
+    row: &CallRow,
+    candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> bool {
+    use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+    let selected = candidates.iter().find(|candidate| {
+        candidate.test.file == row.file
+            && select_relevant_assertion(&candidate.test.assertions, Some(focus))
+                .assertion()
+                .is_some_and(|assertion| {
+                    assertion.line == row.line
+                        && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                })
+    });
+    let Some(candidate) = selected else {
+        return false;
+    };
+    let Ok(Mod::Module(module)) = super::source_facts::parse_module_result(
+        std::path::Path::new("<range-assertion>"),
+        &row.text,
+    ) else {
+        return false;
+    };
+    let pair = match module.body.as_slice() {
+        [Stmt::Assert(assertion)] if assertion.msg.is_none() => {
+            let Expr::Compare(compare) = assertion.test.as_ref() else {
+                return false;
+            };
+            let ([ast::CmpOp::Eq], [right]) =
+                (compare.ops.as_slice(), compare.comparators.as_slice())
+            else {
+                return false;
+            };
+            (compare.left.as_ref(), right)
+        }
+        [Stmt::Expr(statement)] if candidate.test.framework == super::PythonFramework::Unittest => {
+            let Expr::Call(assertion) = statement.value.as_ref() else {
+                return false;
+            };
+            if !assertion.keywords.is_empty()
+                || !super::expr_full_name(&assertion.func).is_some_and(|name| {
+                    matches!(
+                        name.rsplit('.').next(),
+                        Some("assertEqual" | "assertEquals")
+                    )
+                })
+            {
+                return false;
+            }
+            let [left, right] = assertion.args.as_slice() else {
+                return false;
+            };
+            (left, right)
+        }
+        _ => return false,
+    };
+    direct_integer_pin(pair.0, pair.1) || direct_integer_pin(pair.1, pair.0)
+}
+
+fn direct_integer_pin(
+    value: &rustpython_parser::ast::Expr,
+    expected: &rustpython_parser::ast::Expr,
+) -> bool {
+    use rustpython_parser::ast::{self, Expr};
+    let expected = match expected {
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::UAdd | ast::UnaryOp::USub) => {
+            unary.operand.as_ref()
+        }
+        other => other,
+    };
+    if !matches!(expected, Expr::Constant(c) if matches!(c.value, ast::Constant::Int(_))) {
+        return false;
+    }
+    let Expr::Call(call) = value else {
+        return false;
+    };
+    super::expr_full_name(&call.func).is_some()
+        && call.args.iter().all(plain_argument)
+        && call
+            .keywords
+            .iter()
+            .all(|keyword| keyword.arg.is_some() && plain_argument(&keyword.value))
+}
+
+fn plain_argument(value: &rustpython_parser::ast::Expr) -> bool {
+    use rustpython_parser::ast::{self, Expr};
+    match value {
+        Expr::Constant(_) | Expr::Name(_) => true,
+        Expr::Attribute(_) => super::expr_full_name(value).is_some(),
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::UAdd | ast::UnaryOp::USub) => {
+            plain_argument(&unary.operand)
+        }
+        _ => false,
+    }
 }
 
 struct RangeHeader {

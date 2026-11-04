@@ -1674,6 +1674,11 @@ parameters must remain intact. Literal bounds and the existing bounded integer
 offset reader are supported; checked arithmetic refuses overflow without
 walking or allocating the range.
 
+The witness must be the selected assertion's direct owner call, compared with an
+integer literal by plain equality or unittest `assertEqual`. Discarded calls,
+assertion messages, nested calls and comparisons between calls do not supply
+the witness; partial or multiline row excerpts remain unresolved.
+
 Without that witness, the change carries `unsupported_syntax`, unknown
 infection and a non-exposed classification. Missing old text, unreadable
 inputs, zero steps, rebinding, other loop bodies and unavailable owner source
