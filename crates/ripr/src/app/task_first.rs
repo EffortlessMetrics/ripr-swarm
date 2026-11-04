@@ -72,7 +72,11 @@ pub(crate) enum NoEligibleChange {
     AlreadyChecked,
     /// The changed Rust lines touch no code a repair can start on.
     NoRepairableCode,
-    /// An open spot on the change cannot start, or no diff was read.
+    /// A spot on the changed lines is still open but cannot start a repair;
+    /// each reason says what it needs, so the next step is to write that test
+    /// by hand (#12861).
+    OpenOnChange,
+    /// No diff was read, so nothing can be said about the change.
     Other,
 }
 
@@ -997,10 +1001,12 @@ pub(crate) fn resolve_repair_start(
     let all_changed_checked = matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && gripped_on_change > 0
         && open_on_change == 0;
-    let change = if all_changed_checked {
+    let mut change = if all_changed_checked {
         NoEligibleChange::AlreadyChecked
     } else if matches!(scope, Some(ChangeScope::TouchesNoSeam(_))) {
         NoEligibleChange::NoRepairableCode
+    } else if matches!(scope, Some(ChangeScope::TouchesSeams(_))) && open_on_change > 0 {
+        NoEligibleChange::OpenOnChange
     } else {
         NoEligibleChange::Other
     };
@@ -1122,6 +1128,7 @@ pub(crate) fn resolve_repair_start(
             candidates.retain(|(id, _)| *id == chosen);
         } else {
             let before = candidates.len();
+            let mut left_open = false;
             let mut kept = Vec::new();
             for (id, note) in std::mem::take(&mut candidates) {
                 let closed = classified
@@ -1147,7 +1154,10 @@ pub(crate) fn resolve_repair_start(
                         }
                     });
                 match closed {
-                    Some(reason) => refusal_reasons.push(reason),
+                    Some(reason) => {
+                        left_open |= reason.ends_with(CHECK_UNKNOWN_REASON);
+                        refusal_reasons.push(reason);
+                    }
                     None => kept.push((id, note)),
                 }
             }
@@ -1156,12 +1166,14 @@ pub(crate) fn resolve_repair_start(
             // its own; it is offered by id instead.
             if kept.len() == 1 && kept.len() < before {
                 let (_, note) = kept.remove(0);
+                left_open = true;
                 refusal_reasons.push(format!(
                     "the code at {} `{}`: `ripr check` recommends no repair start for this change; to repair it anyway, run `{}`",
                     note.location, note.code, note.command
                 ));
             }
             candidates = kept;
+            change = change_after_closure(change, !candidates.is_empty(), left_open, before > 0);
         }
     }
     let (reasons, reasons_total) =
@@ -1185,6 +1197,23 @@ pub(crate) fn resolve_repair_start(
         start_spec: spec.as_ref(),
         change,
     })
+}
+
+/// The outcome after check's closure dropped candidates (#12861). Only a spot
+/// check cannot judge, or a survivor check did not recommend, leaves something
+/// to write by hand; when every candidate was dropped as already noticed there
+/// is nothing to do. Outcomes other than `Other` are already decided.
+fn change_after_closure(
+    change: NoEligibleChange,
+    candidates_left: bool,
+    left_open: bool,
+    dropped_any: bool,
+) -> NoEligibleChange {
+    match change {
+        NoEligibleChange::Other if candidates_left || left_open => NoEligibleChange::OpenOnChange,
+        NoEligibleChange::Other if dropped_any => NoEligibleChange::AlreadyChecked,
+        other => other,
+    }
 }
 
 /// Runs `run` at most once and shares its result.
@@ -4270,6 +4299,28 @@ pub(crate) mod tests {
             || counted(Some(Vec::new())),
         );
         assert_eq!(runs.get(), 2);
+    }
+
+    /// #12861: all candidates dropped as already noticed is nothing to do, not
+    /// "write that test by hand".
+    #[test]
+    fn closure_outcome_says_nothing_to_do_when_everything_was_noticed() {
+        use NoEligibleChange::*;
+        assert_eq!(
+            change_after_closure(Other, false, false, true),
+            AlreadyChecked
+        );
+        assert_eq!(change_after_closure(Other, false, true, true), OpenOnChange);
+        assert_eq!(change_after_closure(Other, true, false, true), OpenOnChange);
+        assert_eq!(change_after_closure(Other, false, false, false), Other);
+        assert_eq!(
+            change_after_closure(OpenOnChange, false, false, true),
+            OpenOnChange
+        );
+        assert_eq!(
+            change_after_closure(AlreadyChecked, false, false, true),
+            AlreadyChecked
+        );
     }
 
     /// #12831: the noticed-by-check screen and the recommended-start
