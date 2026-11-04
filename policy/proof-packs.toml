@@ -115,7 +115,7 @@ never_routed = true
 
 [[pack]]
 id = "identity-registry"
-paths = ["crates/ripr/src/domain/identity/**", "docs/identity/**", "xtask/src/identity_registry.rs"]
+paths = ["crates/ripr-contract/src/domain/identity/**", "docs/identity/**", "xtask/src/identity_registry.rs"]
 required_commands = ["cargo xtask check-identity-registry", "cargo test -p ripr", "cargo test -p xtask"]
 advisory_commands = []
 ci_lane = "routed-rust-small"

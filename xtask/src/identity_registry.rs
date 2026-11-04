@@ -423,7 +423,7 @@ mod tests {
         // validation-field literal in the same compiled candidate source.
         let source = include_str!("../../crates/ripr-contract/src/domain/command_spec.rs");
         let tokenizer = source
-            .find("pub(crate) fn command_tokens(")
+            .find("pub fn command_tokens(")
             .ok_or("actual command tokenizer source must be present")?;
         let command_id = source
             .find("\"command_id\"")
