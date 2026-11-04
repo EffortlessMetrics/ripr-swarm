@@ -2214,3 +2214,19 @@ evidence = [
 fixtures = ["crates/ripr/tests/data/source-role-corpus"]
 next = "analysis/source-role-authority"
 metric = "source_role_layout_classification, source_role_declared_targets, source_role_production_like_opt_in, source_role_harness_registry, source_role_cfg_composition, source_role_naming_lookalike_rejected"
+
+[[capability]]
+id = "ruby_preview_static_facts"
+name = "Ruby preview static facts"
+status = "planned"
+spec = "RIPR-SPEC-0391"
+evidence = [
+  "docs/specs/RIPR-SPEC-0391-ruby-preview-static-facts.md defines wire language ruby, lang-ruby feature gate, project/source roles, owner and exact-span probe families, separate RSpec and Minitest activation mapping through shared #5542 vocabulary, bounded oracle and reach law through #5546, Ruby-specific static_limit_kind tokens, and the soundness invariant that unresolved Ruby dynamism cannot become no_static_path",
+  "docs/spec-index.d/RIPR-SPEC-0391.md registers the spec in the doc index",
+  ".ripr/traceability.toml registers RIPR-SPEC-0391",
+  "docs/CAPABILITY_MATRIX.md lists ruby_preview_static_facts as planned with no gate, badge, baseline, RIPR Zero, or repair-loop authority",
+  "Parent epic #5583 and issue #5606 acceptance: contract-only slice with positive and negative acceptance examples; implementation, parser selection (#5607), and framework cells in the runtime registry land in follow-on PRs",
+]
+fixtures = []
+next = "adr/ruby-parser-substrate"
+metric = "language_adapter_ruby_spec_registered"
