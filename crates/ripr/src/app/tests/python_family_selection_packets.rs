@@ -246,6 +246,15 @@ fn passed_over_stronger_assertion_card_is_not_newly_delegated() -> Result<(), St
     )?;
     assert_not_delegated(&check, "other_behavior_assertion_passed_over")?;
     let finding = check.only_finding()?;
+    if finding
+        .get("superseded_alignment_reason")
+        .and_then(Value::as_str)
+        != Some("strong_oracle_observes_different_sink")
+    {
+        return Err(format!(
+            "passed-over card must retain the strength-only alignment reason: {finding}"
+        ));
+    }
     let oracle = finding
         .get("related_tests")
         .and_then(Value::as_array)

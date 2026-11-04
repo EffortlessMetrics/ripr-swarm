@@ -186,15 +186,9 @@ fn changed_field(line_text: &str, old_line_text: Option<&str>) -> Option<PythonC
 fn shape_matches_family(shape: PythonOracleShape, family: &ProbeFamily) -> bool {
     use PythonOracleShape as Shape;
     match family {
-        // An error path is observed by the raised exception or its visible
-        // effect (status code, captured output); a normal-value observer
-        // never triggers the changed raise. (Handler lines are admitted
-        // wholesale in `admits`.) A field assertion on a captured exception
-        // (`with pytest.raises(E) as excinfo:` then `assert
-        // excinfo.value.code == 3`) is not recognized here: telling it from a
-        // normal-value field assertion needs the `as` binding, which the
-        // assertion inventory does not carry, so it stays a value observer
-        // and fails closed for a changed raise.
+        // ErrorPath admits exception observers including a field read on a
+        // captured exception (`with pytest.raises(E) as excinfo:` then
+        // `assert excinfo.value.code == 3`, #6910 item 4).
         ProbeFamily::ErrorPath => matches!(
             shape,
             Shape::ExceptionAssertion

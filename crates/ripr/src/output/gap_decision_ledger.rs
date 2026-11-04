@@ -5480,6 +5480,71 @@ mod tests {
     }
 
     #[test]
+    fn other_behavior_assertion_passed_over_repair_card_is_not_delegated() -> Result<(), String> {
+        let payload = serde_json::json!({
+            "findings": [{
+                "id": "probe:src_app.py:python_preview:passed_over",
+                "classification": "weakly_exposed",
+                "source_currentness": "candidate_current",
+                "canonical_gap_id": "gap:python:src/app.py:scale:return_value:return_value:x*3",
+                "probe": {
+                    "file": "src/app.py",
+                    "line": 4,
+                    "family": "return_value"
+                },
+                "oracle_alignment": "unknown",
+                "alignment_reason": "other_behavior_assertion_passed_over",
+                "superseded_alignment_reason": "strong_oracle_observes_different_sink",
+                "related_tests": [{
+                    "name": "test_scale",
+                    "file": "tests/test_app.py",
+                    "line": 6,
+                    "oracle": "assert scale(2) > 0"
+                }],
+                "python_repair_card": {
+                    "canonical_gap_id": "gap:python:src/app.py:scale:return_value:return_value:x*3",
+                    "language": "python",
+                    "language_status": "preview",
+                    "authority_boundary": "preview_advisory_only",
+                    "repair_action": "strengthen_existing_test",
+                    "changed_owner": "scale",
+                    "changed_behavior": "return_value changed at src/app.py:4",
+                    "missing_discriminator": "scale(2) == 6",
+                    "suggested_assertion": "Assert the changed return value directly.",
+                    "suggested_location": {
+                        "test_file": "tests/test_app.py",
+                        "test_name": "test_scale"
+                    },
+                    "verify": {
+                        "command": "python -m pytest tests/test_app.py::test_scale"
+                    },
+                    "receipt": {
+                        "command": null,
+                        "status": "unavailable_until_python_gap_ledger"
+                    },
+                    "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner."],
+                    "limits": ["Syntax-first Python preview evidence only."]
+                }
+            }]
+        });
+        let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: "fixtures/python_family_selection_passed_over_card/input".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+            records_path: "expected/check.json".to_string(),
+            records_json: Ok(payload.to_string()),
+        });
+        let record = report
+            .records
+            .first()
+            .ok_or_else(|| "passed-over card must produce a gap record".to_string())?;
+        if projection_eligible(record, "agent_packet") {
+            return Err("other_behavior_assertion_passed_over must not delegate".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn python_repair_card_corpus_pins_alignment_inventory() -> Result<(), String> {
         let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -5562,6 +5627,12 @@ mod tests {
                             return Err(format!("no-family-relevant fixture eligible: {name}"));
                         }
                     }
+                    (_, Some("other_behavior_assertion_passed_over")) => {
+                        family_selection += 1;
+                        if eligible {
+                            return Err(format!("passed-over fixture eligible: {name}"));
+                        }
+                    }
                     (Some("orthogonal"), Some("strong_oracle_observes_different_sink")) => {
                         orthogonal += 1;
                         if eligible {
@@ -5594,6 +5665,8 @@ mod tests {
         // alignment of its normal-value assertion, which is not relevant to the
         // changed raise, so it moves from eligible `direct` to the
         // never-delegated `no_family_relevant_assertion` (RIPR-SPEC-0224).
+        // #6910: `python_family_selection_passed_over_card` adds one
+        // never-delegated `other_behavior_assertion_passed_over` repair card.
         // #7526: `python_empty_sink_unrelated_short_function` contributes one
         // orthogonal return-value card after unsupported observation credit is
         // withheld; the per-record check above keeps it packet-ineligible.
@@ -5695,7 +5768,7 @@ mod tests {
         // #12182: `python_nested_result_discarded` is a weak return finding
         // that names the result of the nested def as its discriminator, one
         // more direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (22, 36, 31, 1) {
+        if (direct, no_strong, orthogonal, family_selection) != (22, 36, 31, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

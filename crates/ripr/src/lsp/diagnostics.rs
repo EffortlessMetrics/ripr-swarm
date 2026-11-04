@@ -6177,6 +6177,7 @@ mod diagnostic_policy_tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            superseded_alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }
@@ -8014,6 +8015,7 @@ mod lsp_next_step_parity_tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            superseded_alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }
@@ -8204,6 +8206,7 @@ mod canonical_group_member_tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            superseded_alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
     }

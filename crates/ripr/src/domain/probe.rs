@@ -740,6 +740,10 @@ pub struct Finding {
     /// Stable snake_case reason token explaining the `oracle_alignment` value.
     /// Additive optional per RIPR-SPEC-0028.
     pub alignment_reason: Option<String>,
+    /// When family selection replaces `alignment_reason`, the strength-only
+    /// sink-alignment reason before the override (#6910).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_alignment_reason: Option<String>,
     /// Producer-owned resolution of this finding's source against the
     /// candidate (head-side) revision (#3212 / #3280). Set by the producer
     /// that observed the diff evidence; `UnresolvedSubject` is the explicit

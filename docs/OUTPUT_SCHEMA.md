@@ -2227,6 +2227,14 @@ The evidence-first fields are additive in schema `0.2`:
   assertion than the strength-only pick, which can be equally strong).
   `oracle_alignment` keeps what the selected assertions show.
 
+  When family selection replaces `alignment_reason` with one of those two
+  values, the additive optional `superseded_alignment_reason` (#6910; absent
+  otherwise, no `schema_version` bump) retains the strength-only
+  `alignment_reason` that would have surfaced before the override, for example
+  `strong_oracle_observes_different_sink`, so the passed-over decision stays
+  inspectable. It is omitted when the strength-only reason was
+  `no_strong_oracle` or one of the two override values.
+
   Example — an `exposed` finding aligned directly, and a `weakly_exposed`
   finding whose strong oracle is orthogonal:
 

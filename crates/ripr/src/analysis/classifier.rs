@@ -422,6 +422,7 @@ pub(in crate::analysis) fn classification_incomplete_finding(probe: &Probe) -> F
         observed_sink: None,
         oracle_alignment: None,
         alignment_reason: None,
+        superseded_alignment_reason: None,
         source_currentness: SourceCurrentness::UnresolvedSubject,
     }
 }

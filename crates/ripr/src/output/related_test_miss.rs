@@ -417,6 +417,7 @@ mod tests {
                 observed_sink: None,
                 oracle_alignment: None,
                 alignment_reason: None,
+                superseded_alignment_reason: None,
             }
         }
 
@@ -567,6 +568,7 @@ mod tests {
             observed_sink: None,
             oracle_alignment: None,
             alignment_reason: None,
+            superseded_alignment_reason: None,
         };
 
         let selected = typescript_script_preview_related_test(&finding);

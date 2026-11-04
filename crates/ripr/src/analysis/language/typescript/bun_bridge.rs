@@ -1365,6 +1365,7 @@ pub(crate) fn bun_cross_language_finding_for_changed_rust_line_with_profile(
         observed_sink: None,
         oracle_alignment: None,
         alignment_reason: None,
+        superseded_alignment_reason: None,
         source_currentness,
     })
 }

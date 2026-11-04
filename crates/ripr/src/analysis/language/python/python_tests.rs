@@ -1025,6 +1025,59 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
 }
 
 #[test]
+fn excinfo_value_field_read_uses_exception_assertion_shape() -> Result<(), String> {
+    let source = r#"
+import pytest
+
+from src.app import parse
+
+
+def test_parse_error():
+    with pytest.raises(ValueError) as excinfo:
+        parse("")
+    assert excinfo.value.args[0] == "empty"
+"#;
+    let shapes: BTreeSet<_> = assertion_shapes(source).into_iter().collect();
+    if !shapes.contains(&PythonOracleShape::ExceptionAssertion)
+        || shapes.contains(&PythonOracleShape::FieldAssertion)
+    {
+        return Err(format!(
+            "excinfo.value assertion must be exception-shaped, not field-shaped: {:?}",
+            shapes
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn mixed_return_and_excinfo_compare_stays_non_exception_shaped() -> Result<(), String> {
+    let source = r#"
+import pytest
+
+from src.app import scale
+
+
+def test_mixed():
+    with pytest.raises(ValueError) as excinfo:
+        scale(-1)
+    assert scale(2) == excinfo.value.args[0]
+"#;
+    let tests = extract_tests(Path::new("tests/test_inline.py"), source);
+    let mixed = tests
+        .iter()
+        .flat_map(|test| test.assertions.iter())
+        .find(|assertion| assertion.text.contains("scale(2)"))
+        .ok_or_else(|| "missing mixed compare assertion".to_string())?;
+    if mixed.oracle_shape == PythonOracleShape::ExceptionAssertion {
+        return Err(format!(
+            "mixed return/excinfo compare must not be exception-only shaped: {:?}",
+            mixed.oracle_shape
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn unittest_oracle_shapes_use_assertion_arguments() -> Result<(), String> {
     let source = r#"
 import unittest

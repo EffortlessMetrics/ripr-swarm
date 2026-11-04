@@ -80,6 +80,7 @@ fn finding() -> Finding {
         observed_sink: None,
         oracle_alignment: None,
         alignment_reason: None,
+        superseded_alignment_reason: None,
         source_currentness: SourceCurrentness::UnresolvedSubject,
     }
 }
