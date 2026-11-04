@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An exact error-variant assertion that names a sibling variant of an `error_variant` seam is no longer published as a strong oracle in that seam's related-test record. The classify stage already graded it weak (`kind-match false`) because the pin names a different variant; the record now grades it weak too, so both views agree. The seam the assertion does name keeps its strong credit in both (#12836).
