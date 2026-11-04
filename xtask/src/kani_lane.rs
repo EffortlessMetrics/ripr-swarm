@@ -333,7 +333,7 @@ fn tool_available(timeout_secs: u64) -> Result<(), String> {
     )
     // A low-level capture error may itself contain unsanitized child output.
     // Report the failure class, not arbitrary subprocess text as trusted Markdown.
-    .map_err(|_| "cargo kani --version failed to run or capture output".to_string())?;
+    .map_err(|_error| "cargo kani --version failed to run or capture output".to_string())?;
     if output.timed_out {
         let units = if budget.as_secs() == 1 {
             "second"
