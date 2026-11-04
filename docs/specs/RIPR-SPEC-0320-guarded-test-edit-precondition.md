@@ -48,7 +48,9 @@ one existing assertion expression/node in one recognized Rust test file
   producer-owned inputs and fails closed on ambiguous, stale, preview,
   production, import-requiring, multi-file, or validation-failed cases;
 - apply-time helpers (`verify_source_text`, `verify_document_version`,
-  `client_supports_guarded_edit`) that reuse the same reasons.
+  `client_supports_guarded_edit`) that reuse the same reasons. An absent
+  document version, on the precondition or on the current document, never
+  verifies: `verify_document_version` refuses with `document_version_mismatch`.
 
 One invariant check, `ExactTestEditPrecondition::validate`, sits behind both the
 builder (which runs it on its own output) and any decoded document, so a decoded

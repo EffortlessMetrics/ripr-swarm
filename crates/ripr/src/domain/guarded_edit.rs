@@ -595,13 +595,13 @@ impl ExactTestEditPrecondition {
     }
 }
 
+/// Fails closed: an absent version on either side never verifies.
 pub fn verify_document_version(
     precondition: &ExactTestEditPrecondition,
     current_document_version: Option<u32>,
 ) -> Result<(), GuardedEditUnavailable> {
     match (precondition.document_version, current_document_version) {
         (Some(expected), Some(actual)) if expected == actual => Ok(()),
-        (None, _) => Ok(()),
         _ => Err(GuardedEditUnavailable::new(
             GuardedEditUnavailableReason::DocumentVersionMismatch,
         )),
@@ -961,6 +961,30 @@ mod tests {
                 GuardedEditUnavailableReason::ProductionFileTarget
             ),
             Ok(_) => return Err("expected production unavailable".to_string()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fix_instruction_guarded_edit_absent_document_version_never_verifies() -> Result<(), String> {
+        let precondition = try_build_exact_test_edit_precondition(&sample_input())
+            .map_err(|unavailable| format!("{unavailable:?}"))?;
+        // Current document version unknown: refuse.
+        match verify_document_version(&precondition, None) {
+            Err(unavailable)
+                if unavailable.reason == GuardedEditUnavailableReason::DocumentVersionMismatch => {}
+            other => return Err(format!("expected mismatch for unknown current: {other:?}")),
+        }
+        // Precondition minted without a version: refuse any current version.
+        let mut unversioned = precondition.clone();
+        unversioned.document_version = None;
+        for current in [None, Some(3)] {
+            match verify_document_version(&unversioned, current) {
+                Err(unavailable)
+                    if unavailable.reason
+                        == GuardedEditUnavailableReason::DocumentVersionMismatch => {}
+                other => return Err(format!("expected mismatch for {current:?}: {other:?}")),
+            }
         }
         Ok(())
     }
