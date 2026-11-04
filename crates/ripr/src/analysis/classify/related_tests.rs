@@ -8532,6 +8532,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 attrs: Vec::new(),
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -12713,6 +12714,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![macro_test],
@@ -12743,6 +12745,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![call_test],
@@ -13424,6 +13427,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -14138,6 +14142,7 @@ let r = try_parse_summary(\"x\");",
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let mut first = second.clone();
         first.start_line = 3;
@@ -14825,6 +14830,7 @@ try_parse_summary(raw).map_err(Into::into)"
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -14888,6 +14894,7 @@ try_parse_summary(raw).map_err(Into::into)"
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

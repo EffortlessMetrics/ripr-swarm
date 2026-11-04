@@ -240,10 +240,19 @@ note = "pnpm monorepo whose package is packages/remeda; the commit edits package
 # measured second run (48.6 s, 457 MiB on 4 cores), not the 2 s target; tighten
 # them as the steady-state costs come down.
 #
-# The 2026-11-01 hosted nightly recorded this row's warm check as `incomplete`
-# (`partial_with_limitations`), so its 4.7 s / 345 MiB are not admissible values
-# and the ceilings stay at their local calibration until the row completes
-# (#12052; workspace-walk accounting is #11984).
+# The hosted nightlies recorded this row's warm check as `incomplete`
+# (`partial_with_limitations`), so its 4.7 s / 345 MiB were not admissible
+# values. A release build of main on the pinned commit shows why (#12743): the
+# outcome is `partial_with_limitations` from ten typed `language_scope_unsupported`
+# limitations only (47 test files with unindexed shapes, 9,459 workspace files
+# refused by the TypeScript read caps, and per-file read-budget exhaustion), with
+# 26 `no_static_path` findings. The row declares that typed partial result, as
+# `typescript-compiler` does, so the ceilings below are measured on the outcome
+# the default caps produce; a complete result or any other limitation beside it
+# fails the row (#12052). The ceilings stay at their local calibration. The
+# route to a complete result is the read-cap cost work in #11676 and #11767
+# (raising the caps to 2 GiB did not finish in 500 s); the DI-factory
+# receiver miss behind the 26 `no_static_path` findings is #12755.
 [[corpus]]
 id = "vscode-typescript"
 url = "https://github.com/microsoft/vscode"
@@ -252,6 +261,7 @@ language = "typescript"
 note = "very large TypeScript application (5,328 files); commit edits agentHostChangesetCoordinator.ts, agentHostChangesetFileMonitorCoordinator.ts and the coordinator test"
 heavy = true
 ceilings = { "speed.warm_check_ms" = 90000, "speed.warm_check_peak_rss_mb" = 1024 }
+expected_partial = "language_scope_unsupported"
 
 # The TypeScript compiler's own repository: the workspace walk stops at the
 # 20,000-entry cap, so the row pins the refusal rather than a verdict (#11794).
