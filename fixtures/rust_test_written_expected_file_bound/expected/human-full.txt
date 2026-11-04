@@ -46,6 +46,7 @@ Weakness
 Next step
   The related test `renders` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_test_written_expected_file_bound/input --diff <cwd>/fixtures/rust_test_written_expected_file_bound/diff.patch --mode fast probe:src_lib.rs:return_value:8711762f
   ripr context --root <cwd>/fixtures/rust_test_written_expected_file_bound/input --diff <cwd>/fixtures/rust_test_written_expected_file_bound/diff.patch --mode fast --at probe:src_lib.rs:return_value:8711762f
 
@@ -90,5 +91,6 @@ Stop reasons:
 Next step
   Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_test_written_expected_file_bound/input --diff <cwd>/fixtures/rust_test_written_expected_file_bound/diff.patch --mode fast probe:src_lib.rs:static_unknown:50cb4ce1
   ripr context --root <cwd>/fixtures/rust_test_written_expected_file_bound/input --diff <cwd>/fixtures/rust_test_written_expected_file_bound/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:50cb4ce1
