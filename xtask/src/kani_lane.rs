@@ -434,7 +434,59 @@ fn kani_command(args: &KaniArgs) -> Vec<String> {
     command
 }
 
-fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> Vec<HarnessResult> {
+/// A process outcome is not an individual harness verdict.
+struct KaniRun {
+    results: Vec<HarnessResult>,
+    process_problem: Option<String>,
+}
+
+fn process_completion_problem(
+    timed_out: bool,
+    exit_success: Option<bool>,
+    exit_label: &str,
+    timeout_secs: u64,
+) -> Option<String> {
+    if timed_out {
+        return Some(format!("cargo kani timed out after {timeout_secs} seconds"));
+    }
+    match exit_success {
+        Some(true) => None,
+        Some(false) => Some(format!(
+            "cargo kani exited with {exit_label}; text verdicts do not establish a successful run"
+        )),
+        None => Some("cargo kani returned without a process exit status".to_string()),
+    }
+}
+
+/// Keep independently observed rows even when a run fails or is incomplete.
+fn reconcile_kani_output(
+    harnesses: &[Harness],
+    output: &str,
+    process_problem: Option<String>,
+) -> KaniRun {
+    KaniRun {
+        results: results_from_output(harnesses, output),
+        process_problem,
+    }
+}
+
+/// A failed or incomplete native process cannot be hidden by success-looking rows.
+fn complete_lane_verdict(
+    results: &[HarnessResult],
+    tool_available: bool,
+    allow_empty: bool,
+    process_problem: Option<&str>,
+) -> Result<(), String> {
+    let rows = lane_verdict(results, tool_available, allow_empty);
+    match (rows, process_problem) {
+        (Ok(()), None) => Ok(()),
+        (Err(reason), None) => Err(reason),
+        (Ok(()), Some(problem)) => Err(format!("NOT-ESTABLISHED: {problem}")),
+        (Err(reason), Some(problem)) => Err(format!("NOT-ESTABLISHED: {problem}; {reason}")),
+    }
+}
+
+fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> KaniRun {
     let command = kani_command(args);
     let output = match run::capture_output_with_timeout(
         "cargo",
@@ -443,15 +495,27 @@ fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> Vec<HarnessResult> {
         Duration::from_secs(args.timeout_secs),
         "cargo kani",
     ) {
-        Err(error) => return all_not_established(harnesses, &error),
+        Err(error) => {
+            return KaniRun {
+                results: all_not_established(harnesses, &error),
+                process_problem: Some(error),
+            };
+        }
         Ok(output) => output,
     };
-    if output.timed_out {
-        let reason = format!("cargo kani timed out after {} seconds", args.timeout_secs);
-        return all_not_established(harnesses, &reason);
-    }
+    let exit_success = output.status.as_ref().map(|status| status.success());
+    let exit_label = output
+        .status
+        .as_ref()
+        .map_or_else(String::new, ToString::to_string);
+    let problem = process_completion_problem(
+        output.timed_out,
+        exit_success,
+        &exit_label,
+        args.timeout_secs,
+    );
     let combined = format!("{}\n{}", output.stdout, output.stderr);
-    results_from_output(harnesses, &combined)
+    reconcile_kani_output(harnesses, &combined, problem)
 }
 
 pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
@@ -463,27 +527,37 @@ pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
         harnesses.retain(|harness| harness.name.contains(wanted.as_str()));
     }
     let available = tool_available();
-    let results = if available && !harnesses.is_empty() {
+    let run = if available && !harnesses.is_empty() {
         eprintln!("kani: checking {} harness(es)", harnesses.len());
         run_kani(&harnesses, &args)
     } else {
-        Vec::new()
+        KaniRun {
+            results: Vec::new(),
+            process_problem: None,
+        }
     };
     let note = if !available {
-        "NOT-ESTABLISHED: cargo-kani is not installed; no harness was run."
-    } else if results.is_empty() {
-        "NOT-ESTABLISHED: zero harnesses found."
+        "NOT-ESTABLISHED: cargo-kani is not installed; no harness was run.".to_string()
+    } else if let Some(problem) = &run.process_problem {
+        format!("NOT-ESTABLISHED: {problem}")
+    } else if run.results.is_empty() {
+        "NOT-ESTABLISHED: zero harnesses found.".to_string()
     } else {
-        ""
+        String::new()
     };
-    let report = render_report(&results, note);
+    let report = render_report(&run.results, &note);
     fs::create_dir_all(REPORT_DIR)
         .map_err(|err| format!("failed to create {REPORT_DIR}: {err}"))?;
     let report_path = Path::new(REPORT_DIR).join(REPORT_FILE);
     fs::write(&report_path, &report)
         .map_err(|err| format!("failed to write {}: {err}", report_path.display()))?;
     println!("{report}");
-    lane_verdict(&results, available, args.allow_empty)
+    complete_lane_verdict(
+        &run.results,
+        available,
+        args.allow_empty,
+        run.process_problem.as_deref(),
+    )
 }
 
 #[cfg(test)]
@@ -772,6 +846,129 @@ mod tests {
             Some(HarnessStatus::NotEstablished(_))
         ));
         assert!(lane_verdict(&results, true, false).is_err());
+    }
+
+    #[test]
+    fn native_process_error_cannot_be_hidden_by_verified_rows() {
+        let harnesses = [Harness {
+            file: "proof.rs".to_string(),
+            name: "proof".to_string(),
+        }];
+        let output =
+            "Checking harness m::proof...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 1s\n";
+        let success = reconcile_kani_output(&harnesses, output, None);
+        assert_eq!(
+            complete_lane_verdict(&success.results, true, false, None).err(),
+            None
+        );
+
+        for (timed_out, status, expected) in [
+            (false, Some(false), "exited"),
+            (false, None, "without a process exit status"),
+            (true, Some(true), "timed out"),
+        ] {
+            let problem = process_completion_problem(timed_out, status, "exit status: 1", 5);
+            assert!(
+                problem
+                    .as_deref()
+                    .is_some_and(|text| text.contains(expected))
+            );
+            let run = reconcile_kani_output(&harnesses, output, problem);
+            assert!(matches!(&run.results[0].status, HarnessStatus::Verified));
+            assert_eq!(run.results[0].time, "1s");
+            assert!(
+                render_report(&run.results, run.process_problem.as_deref().unwrap_or(""))
+                    .contains(expected)
+            );
+            for allow_empty in [false, true] {
+                assert!(
+                    complete_lane_verdict(
+                        &run.results,
+                        true,
+                        allow_empty,
+                        run.process_problem.as_deref(),
+                    )
+                    .is_err()
+                );
+            }
+        }
+        assert!(process_completion_problem(false, Some(true), "exit status: 0", 5).is_none());
+    }
+
+    #[test]
+    fn partial_timeout_preserves_completed_rows_but_never_passes() -> Result<(), String> {
+        let harnesses = [
+            Harness {
+                file: "first.rs".to_string(),
+                name: "first".to_string(),
+            },
+            Harness {
+                file: "second.rs".to_string(),
+                name: "second".to_string(),
+            },
+        ];
+        let text = "Checking harness a::first...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 2s\nChecking harness b::second...\nCompiling\n";
+        let problem = process_completion_problem(true, None, "", 10);
+        let run = reconcile_kani_output(&harnesses, text, problem);
+        assert_eq!(run.results.len(), 2);
+        assert!(matches!(&run.results[0].status, HarnessStatus::Verified));
+        assert!(matches!(
+            &run.results[1].status,
+            HarnessStatus::NotEstablished(_)
+        ));
+        assert_eq!(run.results[1].time, "n/a");
+        assert!(
+            render_report(&run.results, "NOT-ESTABLISHED: process timed out").contains("second.rs")
+        );
+        let error =
+            complete_lane_verdict(&run.results, true, false, run.process_problem.as_deref())
+                .err()
+                .ok_or("partial timeout cannot pass")?;
+        assert!(error.contains("timed out"));
+        assert!(error.contains("1 not established"));
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_failure_and_absent_results_keep_distinct_dispositions() -> Result<(), String> {
+        let harnesses = [
+            Harness {
+                file: "first.rs".to_string(),
+                name: "first".to_string(),
+            },
+            Harness {
+                file: "second.rs".to_string(),
+                name: "second".to_string(),
+            },
+        ];
+        let mixed = reconcile_kani_output(
+            &harnesses,
+            "Checking harness a::first...\nVERIFICATION:- FAILED\nChecking harness b::second...\nVERIFICATION:- SUCCESSFUL\n",
+            Some("cargo kani exited with exit status: 1".to_string()),
+        );
+        assert!(matches!(&mixed.results[0].status, HarnessStatus::Failed(_)));
+        assert!(matches!(&mixed.results[1].status, HarnessStatus::Verified));
+        let err = complete_lane_verdict(
+            &mixed.results,
+            true,
+            false,
+            mixed.process_problem.as_deref(),
+        )
+        .err()
+        .ok_or("failed harness must fail aggregate")?;
+        assert!(err.contains("1 failed"));
+
+        let absent = reconcile_kani_output(&harnesses, "", None);
+        assert!(
+            absent
+                .results
+                .iter()
+                .all(|row| matches!(&row.status, HarnessStatus::NotEstablished(_)))
+        );
+        assert!(complete_lane_verdict(&absent.results, true, false, None).is_err());
+        assert!(complete_lane_verdict(&[], true, true, Some("abnormal exit")).is_err());
+        assert_eq!(complete_lane_verdict(&[], true, true, None).err(), None);
+        Ok(())
     }
 
     #[test]

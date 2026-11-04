@@ -44,6 +44,9 @@
 //! synthetic text and names the library by its import names, never through
 //! `crate::` (`RustIndex::doctest_source`).
 
+mod enclosing;
+
+use self::enclosing::enclosing_gate_refuses;
 use super::cfg_predicates::rust_ident_name;
 use super::{FunctionSourceRole, RustIndex, SourceRoleProvenanceEdgeKind, TestFact};
 use crate::analysis::syntax::ra::summarize_file_with_parser;
@@ -116,6 +119,11 @@ pub(super) fn register_doctests(index: &mut RustIndex) {
         }
         for example in examples {
             if !documents_production_function(index, path, example.item_line) {
+                continue;
+            }
+            // A gate on an enclosing mod, impl or `mod name;` declaration
+            // gates the example as a gate on the item does (#12453).
+            if enclosing_gate_refuses(index, path, example.item_line, defaults) {
                 continue;
             }
             let source = example.synthetic_source();
