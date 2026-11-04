@@ -70,10 +70,12 @@ tool, service or security denials; route genuine doubt to the user.
 
 Development checks and review belong in the owning session. Ordinary PR
 publication, Draft/Ready transitions, updates and review comments must not start
-Actions, including cheap or skipped-job wrappers. #4842 retires auxiliary
-subscribers; the explicit legacy label route and its main cache writer remain
-bootstrap debt under #4838, not an exception in the final design. Do not restore
-an automated advisory reviewer to compensate for the retirement.
+Actions, including cheap or skipped-job wrappers. The `merge-queue-v1` source
+under #4838 retires auxiliary subscribers, label admission, main replay and label
+recovery. This activation candidate must land only with truthful protected H
+admission, owned capacity/cache qualification and native G-to-M readback ready.
+Source does not establish installed settings. Do not restore a legacy label
+request or automated advisory reviewer as an ordinary fallback.
 
 Keep development cheap: focused warm proof, substantive review and joined repairs
 before expensive qualification. Useful alternative Drafts may be compared, but
@@ -85,12 +87,12 @@ queue. Complete each focused objective's code, tests and documentation together.
 Use the actual installed request interface described in
 [merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
 qualification of the actual merge composition. Workflow support does not establish
-live queue activation: until verified migration, the installed `merge-ready` label
-requests late PR qualification, followed by current product/integration judgment
-and protected expected-head squash. Ready alone requests nothing. Do not arm
-generic auto-merge as a substitute for that legacy final judgment. After verified
-activation, follow the native-queue procedure and its conditional landing
-authorization. Preserve actual required checks and approvals; this guidance does
+live queue activation. Until verified migration, retain the reviewed candidate
+and exact evidence; only the coordinated activation owner may use an explicitly
+selected bootstrap transaction under the still-installed protections. Do not
+request ordinary legacy `merge-ready` qualification. Ready alone requests nothing.
+After verified activation, follow the native-queue procedure and its conditional
+landing authorization. Preserve actual required checks and approvals; this guidance does
 not change triggers, settings or result producers.
 
 Source review and focused proof can be complete while hosted qualification is

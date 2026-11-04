@@ -644,16 +644,23 @@ fn caller_portfolio_binding(source: &str) -> bool {
             || !body.lines().any(|line| line == "      workflow_generation: ${{ github.workflow_sha }}")
         { return false; }
     }
-    source.matches("      proof-profile: ${{ github.event_name == 'merge_group' && 'merge-group' || 'legacy' }}").count() == 4
+    source.matches("      proof-profile: merge-group").count() == 1
+        && source.contains("      execution-profile: owned-jit")
         && result.contains("if: always() && github.event_name == 'merge_group'")
         && result.contains("GROUP_PROOF_RESULT: ${{ steps.group_proof.outcome }}")
-        && result.contains("[ \"$EVENT_NAME\" = merge_group ] && [ \"$GROUP_PROOF_RESULT\" != success ]")
-        && ["run_rust_only", "run_release_proof", "run_msrv", "run_vscode"]
-            .iter().all(|input| source.contains(&format!("      {input}: true\n")))
+        && result.contains("\"$GROUP_PROOF_RESULT\" == success")
+        && [
+            "run_rust_only",
+            "run_release_proof",
+            "run_msrv",
+            "run_vscode",
+        ]
+        .iter()
+        .all(|input| source.contains(&format!("      {input}: true\n")))
 }
 
 #[test]
-fn caller_requires_every_frozen_native_group_leaf_and_preserves_legacy_defaults() {
+fn caller_requires_every_frozen_native_group_leaf_on_the_owned_route() {
     assert!(caller_portfolio_binding(CALLER));
     for wrong in [
         CALLER.replace(
@@ -699,6 +706,7 @@ fn production_aggregate_refuses_missing_failed_skipped_cancelled_or_wrong_subjec
         ("BASE", &fixture.base),
         ("GROUP", &fixture.group),
         ("GENERATION", &fixture.group),
+        ("OWNED_RESULT", "success"),
         ("WINDOWS_RESULT", "success"),
         ("WHEEL_RESULT", "success"),
         ("CI_RESULT", "success"),
@@ -714,6 +722,7 @@ fn production_aggregate_refuses_missing_failed_skipped_cancelled_or_wrong_subjec
             .success()
     );
     for name in [
+        "OWNED_RESULT",
         "WINDOWS_RESULT",
         "WHEEL_RESULT",
         "CI_RESULT",
@@ -764,8 +773,8 @@ fn docs_only_group_cannot_bypass_full_portfolio_or_the_rust_result() -> TestResu
         ("DOCS_GATE_RESULT", "success"),
         ("ROUTE_RESULT", "success"),
         ("TARGET", "github"),
-        ("GITHUB_RESULT", "success"),
-        ("GITHUB_TESTS_RESULT", "success"),
+        ("OWNED_RESULT", "success"),
+        ("CUT_STATUS", "passed"),
         ("GROUP_PROOF_RESULT", "success"),
     ] {
         env.insert(key.into(), value.into());
@@ -781,12 +790,7 @@ fn docs_only_group_cannot_bypass_full_portfolio_or_the_rust_result() -> TestResu
             .status
             .success()
     );
-    for name in [
-        "GITHUB_RESULT",
-        "GITHUB_TESTS_RESULT",
-        "GROUP_PROOF_RESULT",
-        "ELIGIBILITY_RESULT",
-    ] {
+    for name in ["OWNED_RESULT", "GROUP_PROOF_RESULT", "ELIGIBILITY_RESULT"] {
         for value in ["", "skipped", "failure", "cancelled"] {
             let mut wrong = env.clone();
             wrong.insert(name.into(), value.into());

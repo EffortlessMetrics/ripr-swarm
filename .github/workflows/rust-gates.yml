@@ -316,7 +316,13 @@ jobs:
           echo "status=success" >> "$GITHUB_OUTPUT"
           echo "message=ok" >> "$GITHUB_OUTPUT"
 
+      - uses: ./.github/actions/select-owned-rust
+        if: inputs.execution-profile == 'owned-jit'
+        with:
+          require-llvm: 'true'
+
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        if: inputs.execution-profile == 'legacy'
         with:
           toolchain: 1.95.0
           components: llvm-tools-preview

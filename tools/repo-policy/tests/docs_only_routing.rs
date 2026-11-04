@@ -1,4 +1,5 @@
-//! Execute the production Actions shell against real Git DAGs, not a copied classifier.
+//! Historical bootstrap regression; the live queue-only source is covered by queue_workflow and merge_group_subject.
+//! Execute the retained bootstrap Actions shell against real Git DAGs.
 //! The workflow runs on Ubuntu; these subprocess fixtures require Bash and Git on Unix.
 #![cfg(unix)]
 
@@ -8,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const WORKFLOW: &str = include_str!("../../../.github/workflows/routed-rust.yml");
+const WORKFLOW: &str = include_str!("../../../fixtures/convergence/queue-bootstrap/routed-rust.yml");
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);

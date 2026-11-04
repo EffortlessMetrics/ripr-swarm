@@ -1,3 +1,4 @@
+//! Historical bootstrap regression; the live queue-only source is covered by queue_workflow and merge_group_subject.
 //! #8858: execute the actual route shell with a local gh stub, never the runner API.
 #![cfg(target_os = "linux")]
 
@@ -7,7 +8,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const WORKFLOW: &str = include_str!("../../../.github/workflows/routed-rust.yml");
+const WORKFLOW: &str = include_str!("../../../fixtures/convergence/queue-bootstrap/routed-rust.yml");
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 

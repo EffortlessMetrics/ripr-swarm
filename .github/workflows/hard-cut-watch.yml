@@ -1,17 +1,14 @@
-name: Hard-cut main watch
+name: Explicit hard-cut audit
 
-# A push to main is judged against the hard-cut packet it carries (#5391).
-# Inactive is a seconds-long no-op. While a cut is active, the PR path cannot
-# stop a PR whose required check was green before the freeze, so a non-packet
-# commit lands red here instead of extending the denominator silently.
-# This is its own workflow, with a concurrency group per commit, because it
-# used to live in routed-rust.yml where a newer push cancelled the run before
-# any job started: the watch never executed on a busy main. It never gates a PR
-# and starts no Rust work.
-
+# Protected G admission enforces the cut before landing. This selected audit
+# answers a named release/incident question; it never allocates on ordinary M.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_or_incident:
+        description: Exact release or incident question this selected audit must answer.
+        type: string
+        required: true
 
 concurrency:
   group: hard-cut-watch-${{ github.sha }}
@@ -27,6 +24,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Require an explicit release or incident question
+        env:
+          AUDIT_PURPOSE: ${{ inputs.release_or_incident }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main && -n "${AUDIT_PURPOSE//[[:space:]]/}" ]]
+          printf 'Selected cut audit: %s\n' "$AUDIT_PURPOSE" >> "$GITHUB_STEP_SUMMARY"
       - name: Judge the landed commit against the cut packet
         env:
           GH_TOKEN: ${{ github.token }}

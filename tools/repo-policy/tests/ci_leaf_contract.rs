@@ -583,6 +583,7 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
         let actions = |s: &str| {
             s.lines()
                 .filter(|l| l.trim_start().starts_with("- uses:"))
+                .filter(|l| l.trim() != "- uses: ./.github/actions/select-owned-rust")
                 .map(str::trim)
                 // Mainline pins actions to a commit with the tag in a comment; the
                 // retained predecessor names the tag. Compare the tag identity.
@@ -607,6 +608,22 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
                 })
                 .collect::<Vec<_>>()
         };
+        if name != &"vscode" {
+            assert_eq!(
+                payload_job(name)
+                    .matches("- uses: ./.github/actions/select-owned-rust")
+                    .count(),
+                1
+            );
+            let selection = payload_job(name)
+                .split_once("- uses: ./.github/actions/select-owned-rust")
+                .ok_or("owned selector")?
+                .1
+                .split("\n      - ")
+                .next()
+                .ok_or("selector step")?;
+            assert!(selection.contains("if: inputs.proof_profile == 'merge-group'"));
+        }
         assert_eq!(actions(payload_job(name)), actions(job(ORIGINAL, name)));
         let child = payload_job(name);
         if name == &"vscode" {
@@ -966,11 +983,28 @@ fn removing_the_declared_shell_reproduces_masked_pkgid_failures() -> TestResult 
 fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestResult {
     let release = job(WORKFLOW, "release-proof");
     let mut count = 0;
+    let mut cache_count = 0;
+    let mut toolchain_count = 0;
     for step in release.split("\n      - ") {
         if let Some(expr) = step
             .lines()
             .find_map(|line| line.strip_prefix("        if: "))
         {
+            if step.starts_with("uses: Swatinem/rust-cache@") {
+                assert_eq!(expr, "inputs.proof_profile != 'merge-group'");
+                cache_count += 1;
+                continue;
+            }
+            if step.starts_with("uses: ./.github/actions/select-owned-rust") {
+                assert_eq!(expr, "inputs.proof_profile == 'merge-group'");
+                toolchain_count += 1;
+                continue;
+            }
+            if step.starts_with("uses: dtolnay/rust-toolchain@") {
+                assert_eq!(expr, "inputs.proof_profile != 'merge-group'");
+                toolchain_count += 1;
+                continue;
+            }
             count += 1;
             for event in ["pull_request", "push", "workflow_dispatch"] {
                 for label in ["", "full-ci", "release-check", "unrelated"] {
@@ -994,6 +1028,14 @@ fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestR
         }
     }
     assert_eq!(count, 5, "four release steps and receipt upload");
+    assert_eq!(
+        toolchain_count, 2,
+        "disjoint owned and legacy toolchain setup"
+    );
+    assert_eq!(
+        cache_count, 1,
+        "owned queue execution excludes the hosted archive"
+    );
     Ok(())
 }
 

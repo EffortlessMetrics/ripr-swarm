@@ -1,39 +1,48 @@
 # Merge flow for swarm PRs
 
-## Current route and October 21 target
+## Queue-only source and activation state
 
-Steven selected native queue-time qualification on October 21, 2026 under
-[#4984](https://github.com/EffortlessMetrics/ripr-swarm/issues/4984#issuecomment-6308919863).
-The target replaces the earlier no-queue mechanism; it does not weaken review,
-proof, ordinary protected squash, or separate release authority.
+Steven selected native queue-time qualification under #4984 and the November 4
+zero-development-Actions ruling. The `merge-queue-v1` source generation accepts
+only `merge_group: checks_requested` at the ordinary protected caller. Draft,
+Ready, PR updates, labels and ordinary main pushes allocate no workflow. The
+label-conflict and label-staleness recovery roots are retired. The hard-cut audit
+is an explicitly named release/incident dispatch.
 
-**Target selected; live queue activation is not established by this document.**
-Since #9106, `.github/workflows/routed-rust.yml` also subscribes to
-`merge_group` (`checks_requested`) so the required `Ripr Rust Small Result` can be
-earned once per queue entry on the exact queued merge commit (see
-[CI](CI.md#merge-queue-request-cutover)). Admission is per PR, so the queue must
-use a group size of 1 and the queued commit must be a single squash commit on the
-group's `base_sha`; batching needs per-PR admission (#8082). The workflow also
-still requests PR qualification on the explicit `merge-ready` label and runs on
-main/master push and manual dispatch. The branch summary names
-`Ripr Rust Small Result` (application 15368); a complete current enforcement
-readback is still required before changing settings, and whether the repository's
-merge queue is enabled for `main` is a live setting this document does not
-establish. A file or issue edit does not install new protection.
+**This is the final source candidate, not evidence of live activation.** The
+preparation branches preserve the installed producer; this generation may replace
+it only with the coordinated source/settings/publisher transaction below. The
+previous required Actions context was `Ripr Rust Small Result`, application
+15368. An external H publisher cannot satisfy an Actions-bound requirement by
+sharing its name. Keep an explicit expected App binding; never set it to any App.
+No unqualified direct merge is allowed between producer generations.
 
-Until the replacement is qualified and activated, use the installed label route
-below. Do not treat a proposed enqueue command, Ready state, or this target as
-permission to skip its checks. Current user rulings and controller decisions
-supersede older no-queue target prose; source, rehearsed, active and accepted
-remain separate states.
+The reviewed Hermes profile proposes `CI Lifecycle Qualification` for both H
+and G. Its numeric App identity and effective protection binding still require
+admission and native readback. `.github/settings.yml` retains the legacy context
+declaration as an explicit coordinated dependency: reconcile its actual consumer
+before activation so it cannot reinstall the Actions-only requirement or replace
+an accepted App binding with a name-only requirement.
+
+The caller freezes actual B/H/G/tree, native run/attempt and source generation,
+requires the complete G portfolio, and rechecks review, cut, eligibility and
+succession. The configured canary is a singleton squash group, not an invented
+PR merge or a per-PR merge-method override. It uses static owned capability for
+candidate composition, main Rust and generic Linux proof; finalization reads
+only the immutable trusted bundle and API state on separate control capacity.
+Wheel ABI, Windows/macOS and GUI test contracts retain their qualified platforms.
+
+Until activation is verified, retain the reviewed candidate and its evidence.
+An explicitly selected bootstrap transaction belongs to the activation owner;
+ordinary development must not fall back to label CI. Source, rehearsed, active
+and accepted remain separate states.
 
 ## Who owns the change
 
-Development publication, updates and review use no Actions workflow after the
-#4842 auxiliary-trigger retirement. The two legacy label subscribers and the
-required caller's main cache writer remain explicit cutover obligations; source
-retirement alone does not establish the final zero-label/native-queue state.
-See [the event inventory](CI.md#development-events-and-retained-bootstrap-route).
+Development publication, updates and review use no Actions workflow. The final
+source removes the protected bootstrap event roots; installing it is conditional
+on truthful H admission and qualified G execution. See
+[the event inventory](CI.md#development-events-and-retired-bootstrap-route).
 
 The PR's owning lead carries review, repair, qualification and landing through
 the applicable protected route without asking for routine repo permission again.
@@ -65,9 +74,11 @@ Useful review and local evidence can be complete before future hosted proof
 exists. Missing future CI must not make requesting CI circular. Conversely,
 source review is not a claim that required execution already passed.
 
-## Installed label-request procedure
+## Historical bootstrap procedure (activation owner only)
 
-`Ripr Rust Small Result` is requested by applying `merge-ready`. Ready is review
+The retained predecessor requested `Ripr Rust Small Result` by applying
+`merge-ready`; the final source does not. The following records the explicit
+bootstrap mechanism, not an ordinary fallback. Ready is review
 state, not the request. Other labels produce `Merge-ready Nonrequest`, not the
 required result.
 
@@ -145,11 +156,11 @@ Sequence the rollout:
    PR fields; an added event alone cannot adapt them. Group scope is the union
    of applicable constituent and integration risks, not one guessed PR number.
 3. Prove every required G result, negative controls and frozen-source review.
-   Keep full legacy PR qualification during the bounded queue bootstrap.
+   Keep the existing producer satisfiable through the explicitly selected bootstrap transaction; do not create ordinary label runs.
 4. Apply/read back queue enforcement through #4838. Demonstrate an actual native
    queue transaction before changing protected PR success to cheap admission.
 5. Retire duplicate expensive label/main-push and child routes coherently. Keep
-   cheap main reconciliation and distinct incident/deep/release obligations.
+   publisher G-to-M readback without a new Actions run, plus distinct incident/deep/release obligations.
 6. Observe a real operating cohort before declaring economics or adoption accepted.
 
 Rollback restores and verifies full PR qualification before queue-only protection
@@ -173,11 +184,15 @@ GitHub issues, PRs, checks and queue entries carry shared state. A session-local
 `/mnt/project-files/merge-queue/status.md` may be advisory but is not a required
 shared coordination database or a substitute for live GitHub evidence.
 
-A main-health incident has one integration owner. Parallel diagnosis may continue,
-but ordinary queue admission pauses while the designated repair is qualified.
-The health guard must admit that verified repair without granting a blanket
-bypass or requiring already-green main. Record cause, current state, owner and
-next transition on the existing incident.
+A main-health incident has one integration owner. Bound admission restrictions
+to the actual failing integration or affected dependency; the verified repair
+must be able to proceed without requiring an already-green main run. The normal
+health basis is retained qualified-G evidence joined to protected M readback.
+Missing readback is unknown and requires bounded reconciliation; it is neither
+a healthy result nor a reason to wait for an ordinary main Actions run that this
+source no longer starts. Real failing integration evidence remains refused under
+its applicable guard. Record cause, scope, owner and next transition on the
+existing incident.
 
 After landing, read back M and the accepted candidate; verify the corresponding
 tree and claim closure. A returned merge acknowledgment is not the readback.

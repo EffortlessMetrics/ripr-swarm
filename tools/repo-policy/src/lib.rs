@@ -11,6 +11,7 @@ pub mod coverage_diagnostics;
 pub mod executable_files;
 mod identity;
 pub mod python_wheel;
+pub mod queue_workflow;
 pub mod workflow_lifecycle;
 pub use identity::{enter_workspace_root, preflight, verify_executable_identity, verify_preflight};
 pub const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
@@ -425,6 +426,7 @@ pub fn check_workflows_impl() -> Result<(), String> {
         let text = read_text_lossy(&path)?;
         workflows.push((normalized.clone(), text.clone()));
         violations.extend(workflow_lifecycle::violations(&normalized, &text));
+        violations.extend(workflow_duplicate_step_keys_violations(&normalized, &text));
         let Some(budget) = budgets.get(&normalized) else {
             violations.push(format!(
                 "missing workflow budget for {normalized} in policy/workflow_allowlist.txt"
@@ -532,6 +534,7 @@ pub fn composite_action_run_block_violations(
             continue;
         }
         let text = read_text_lossy(&path)?;
+        violations.extend(workflow_duplicate_step_keys_violations(&normalized, &text));
         let blocks = extract_workflow_run_blocks(&text);
         if blocks.is_empty() {
             continue;
@@ -555,6 +558,61 @@ pub fn composite_action_run_block_violations(
         }
     }
     Ok(violations)
+}
+
+/// Reject duplicate direct mapping keys in block-style Action steps. A second
+/// `if` can silently replace a cache/trust guard in permissive YAML readers.
+/// Nested input/env keys and literal script content are separate mappings.
+pub fn workflow_duplicate_step_keys_violations(path: &str, source: &str) -> Vec<String> {
+    let mut findings = Vec::new();
+    let mut step_indent = None;
+    let mut keys = BTreeMap::new();
+    for (index, line) in source.lines().enumerate() {
+        let indent = line.len() - line.trim_start().len();
+        let text = line.trim();
+        if text.is_empty() || text.starts_with('#') {
+            continue;
+        }
+        let is_step = matches!(indent, 4 | 6) && text.starts_with("- ");
+        if is_step {
+            step_indent = Some(indent);
+            keys.clear();
+        } else if step_indent.is_some_and(|base| indent <= base) {
+            step_indent = None;
+            keys.clear();
+        }
+        if !is_step && step_indent.is_none_or(|base| indent != base + 2) {
+            continue;
+        }
+        let text = text.strip_prefix("- ").unwrap_or(text);
+        let Some((key, _)) = text.split_once(':') else {
+            continue;
+        };
+        let key = key.trim().trim_matches(['\'', '"']);
+        if !matches!(
+            key,
+            "name"
+                | "id"
+                | "uses"
+                | "run"
+                | "if"
+                | "with"
+                | "env"
+                | "shell"
+                | "working-directory"
+                | "continue-on-error"
+                | "timeout-minutes"
+        ) {
+            continue;
+        }
+        if let Some(previous) = keys.insert(key.to_owned(), index + 1) {
+            findings.push(format!(
+                "{path}:{} duplicate step key {key} (first at {previous})",
+                index + 1
+            ));
+        }
+    }
+    findings
 }
 
 /// Keep the scratch-GC matrix isolated by pool.
@@ -1255,6 +1313,13 @@ pub fn routed_rust_event_route(
     action: Option<&str>,
     label: Option<&str>,
 ) -> RoutedRustEventRoute {
+    if workflow
+        .lines()
+        .any(|line| line == queue_workflow::GENERATION)
+        && event_name != "merge_group"
+    {
+        return RoutedRustEventRoute::WorkflowNotTriggered;
+    }
     if event_name == "merge_group" {
         let action = action.unwrap_or("");
         if !routed_rust_event_types(workflow, "merge_group")
@@ -1490,6 +1555,12 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
     settings: Option<&str>,
     lane_whitelist: Option<&str>,
 ) -> Vec<String> {
+    if workflow
+        .lines()
+        .any(|line| line == queue_workflow::GENERATION)
+    {
+        return queue_workflow::violations(workflow, reusable_workflow);
+    }
     let mut violations = Vec::new();
     let delegated_jobs: Vec<&str> = ROUTED_RUST_IMPLEMENTATION_JOBS
         .iter()

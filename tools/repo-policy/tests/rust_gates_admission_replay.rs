@@ -431,3 +431,199 @@ fn legacy_profile_is_inert_and_rejects_partial_or_unknown_input() -> TestResult 
     f.rejects("unknown profile", &unknown)?;
     Ok(())
 }
+
+mod owned_toolchain {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    const ACTION: &str = include_str!("../../../.github/actions/select-owned-rust/action.yml");
+    const STUBS: &str = r#"
+check_selection() { [[ "$RUSTUP_TOOLCHAIN" == 1.95.0 && "$RUSTUP_AUTO_INSTALL" == 0 ]]; }
+rustc() {
+  check_selection || return 88
+  [[ "$SCENARIO" != permanent_failure ]] || return 89
+  if [[ "$RUSTUP_HOME" == "$ORIGINAL_RUST_HOME" && ( "$SCENARIO" == absent || "$SCENARIO" == install_failure ) ]]; then return 90; fi
+  case "$*" in
+    --version)
+      if [[ "$RUSTUP_HOME" == "$ORIGINAL_RUST_HOME" && "$SCENARIO" == wrong_version ]]; then
+        echo 'rustc 1.98.1 (primary)'
+      else echo 'rustc 1.95.0 (fixture)'; fi ;;
+    '--print target-libdir') printf '%s\n' "$FIXTURE_LIBRARY" ;;
+    *) return 91 ;;
+  esac
+}
+cargo() {
+  check_selection || return 88
+  case "$*" in
+    --version) echo 'cargo 1.95.0 (fixture)' ;;
+    'clippy --version') echo 'clippy (fixture)' ;;
+    *) return 92 ;;
+  esac
+}
+rustfmt() { check_selection && [[ "$*" == --version ]]; }
+rustup() {
+  check_selection || return 88
+  [[ "$RUSTUP_HOME" == "$RUNNER_TEMP"/ripr-rustup.* && "$RUSTUP_HOME" != "$ORIGINAL_RUST_HOME" ]] || return 93
+  printf '%s\n%s\n' "$RUSTUP_HOME" "$*" >> "$INSTALL_RECORD"
+  [[ "$SCENARIO" != install_failure ]] || return 94
+  [[ "$*" == 'toolchain install 1.95.0 --profile minimal --no-self-update --component rustfmt,clippy'* ]] || return 95
+}
+"#;
+
+    struct Case {
+        root: PathBuf,
+        output: Output,
+    }
+    impl Drop for Case {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+    fn replay(scenario: &str, llvm: bool, body: Option<&str>) -> TestResult<Case> {
+        let root = std::env::temp_dir().join(format!(
+            "owned-toolchain-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::SeqCst)
+        ));
+        for dir in ["work", "tmp", "image-rustup", "tool/lib", "tool/bin"] {
+            std::fs::create_dir_all(root.join(dir))?;
+        }
+        std::fs::write(
+            root.join("image-rustup/settings.toml"),
+            "default_toolchain=1.98.1\n",
+        )?;
+        for tool in ["llvm-cov", "llvm-profdata"] {
+            let path = root.join("tool/bin").join(tool);
+            std::fs::write(
+                &path,
+                "#!/bin/bash\n[[ \"$RUSTUP_HOME\" != \"$ORIGINAL_RUST_HOME\" || \"$SCENARIO\" != missing_llvm ]]\n",
+            )?;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+        }
+        let script = ACTION
+            .split_once("      run: |\n")
+            .ok_or("selector body")?
+            .1
+            .lines()
+            .map(|line| line.strip_prefix("        ").unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let body = body.unwrap_or(&script);
+        let output = Command::new("timeout")
+            .args([
+                "--kill-after=1s",
+                "10s",
+                "bash",
+                "--noprofile",
+                "--norc",
+                "-eo",
+                "pipefail",
+                "-c",
+                &format!("{STUBS}\n{body}"),
+            ])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("RUNNER_ENVIRONMENT", "self-hosted")
+            .env("RUNNER_OS", "Linux")
+            .env("RUNNER_ARCH", "X64")
+            .env("CARGO_HOME", "/cache/cargo")
+            .env("SCCACHE_DIR", "/cache/sccache")
+            .env("RUSTC_WRAPPER", "sccache")
+            .env("CARGO_INCREMENTAL", "0")
+            .env("CARGO_BUILD_JOBS", "8")
+            .env("NEXTEST_TEST_THREADS", "8")
+            .env("RUST_TEST_THREADS", "8")
+            .env("REQUIRE_LLVM", if llvm { "true" } else { "false" })
+            .env("GITHUB_WORKSPACE", root.join("work"))
+            .env("RUNNER_TEMP", root.join("tmp"))
+            .env("GITHUB_ENV", root.join("github-env"))
+            .env("RUSTUP_HOME", root.join("image-rustup"))
+            .env("ORIGINAL_RUST_HOME", root.join("image-rustup"))
+            .env("RUSTUP_TOOLCHAIN", "1.98.1")
+            .env("FIXTURE_LIBRARY", root.join("tool/lib"))
+            .env("INSTALL_RECORD", root.join("install-record"))
+            .env("SCENARIO", scenario)
+            .output()?;
+        assert_ne!(output.status.code(), Some(124), "selector timed out");
+        assert_eq!(
+            std::fs::read_to_string(root.join("image-rustup/settings.toml"))?,
+            "default_toolchain=1.98.1\n"
+        );
+        Ok(Case { root, output })
+    }
+
+    #[test]
+    fn installed_owned_toolchain_is_selected_without_installing_or_mutating_primary() -> TestResult
+    {
+        for llvm in [false, true] {
+            let case = replay("ready", llvm, None)?;
+            assert!(
+                case.output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&case.output.stderr)
+            );
+            assert!(!case.root.join("install-record").exists());
+            let env = std::fs::read_to_string(case.root.join("github-env"))?;
+            assert!(env.contains("RUSTUP_TOOLCHAIN=1.95.0\nRUSTUP_AUTO_INSTALL=0"));
+            assert!(!env.contains("RUSTUP_HOME="));
+            assert!(case.root.join("work/target/tmp").is_dir());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn missing_wrong_or_incomplete_image_tools_use_only_a_private_job_install() -> TestResult {
+        for scenario in ["absent", "wrong_version", "missing_llvm"] {
+            let case = replay(scenario, true, None)?;
+            assert!(
+                case.output.status.success(),
+                "{scenario}: {}",
+                String::from_utf8_lossy(&case.output.stderr)
+            );
+            let record = std::fs::read_to_string(case.root.join("install-record"))?;
+            assert!(record.contains("--component rustfmt,clippy,llvm-tools-preview"));
+            assert!(record.starts_with(case.root.join("tmp/ripr-rustup.").to_str().ok_or("path")?));
+            let env = std::fs::read_to_string(case.root.join("github-env"))?;
+            assert!(env.contains("RUSTUP_HOME="));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn failed_install_or_unusable_tools_never_publish_qualified_environment() -> TestResult {
+        for scenario in ["install_failure", "permanent_failure"] {
+            let case = replay(scenario, true, None)?;
+            assert!(!case.output.status.success());
+            assert!(!case.root.join("github-env").exists());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn removing_explicit_selection_or_private_install_exposes_failure() -> TestResult {
+        let script = ACTION
+            .split_once("      run: |\n")
+            .ok_or("body")?
+            .1
+            .lines()
+            .map(|line| line.strip_prefix("        ").unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for (old, new) in [
+            (
+                "export RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_AUTO_INSTALL=0",
+                "export RUSTUP_AUTO_INSTALL=0",
+            ),
+            (
+                "RUSTUP_HOME=$(mktemp -d \"$RUNNER_TEMP/ripr-rustup.XXXXXX\")",
+                "RUSTUP_HOME=$ORIGINAL_RUST_HOME",
+            ),
+        ] {
+            assert!(script.contains(old));
+            let case = replay("absent", true, Some(&script.replace(old, new)))?;
+            assert!(!case.output.status.success());
+            assert!(!case.root.join("github-env").exists());
+        }
+        Ok(())
+    }
+}

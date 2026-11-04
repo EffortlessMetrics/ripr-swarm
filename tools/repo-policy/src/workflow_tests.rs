@@ -37,20 +37,45 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
             "683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1"
         };
         let prepared = |text: &str, command: &str| {
+            let legacy = if route == "rust-gates.yml" {
+                "        if: inputs.execution-profile == 'legacy'\n"
+            } else {
+                ""
+            };
             let setup = format!(
-                "      - uses: dtolnay/rust-toolchain@{action}\n        with:\n          toolchain: 1.95.0\n          components: llvm-tools-preview"
+                "      - uses: dtolnay/rust-toolchain@{action}\n{legacy}        with:\n          toolchain: 1.95.0\n          components: llvm-tools-preview"
             );
-            match (text.find(setup.as_str()), text.find(command)) {
-                (Some(setup), Some(test)) => {
-                    setup < test
-                        && text[setup..]
+            let Some(test) = text.find(command) else {
+                return false;
+            };
+            let Some(setup) = text.find(setup.as_str()) else {
+                return false;
+            };
+            let step = text[setup..].split("\n      - ").next().unwrap_or("");
+            if setup >= test
+                || step
+                    .lines()
+                    .filter(|line| line.starts_with("        if:"))
+                    .count()
+                    != usize::from(!legacy.is_empty())
+            {
+                return false;
+            }
+            if route == "rust-gates.yml" {
+                let owned = "      - uses: ./.github/actions/select-owned-rust\n        if: inputs.execution-profile == 'owned-jit'\n        with:\n          require-llvm: 'true'";
+                text.find(owned).is_some_and(|pos| {
+                    pos < test
+                        && text[pos..]
                             .split("\n      - ")
                             .next()
-                            .is_some_and(|step| {
-                                !step.lines().any(|line| line.starts_with("        if:"))
-                            })
-                }
-                _ => false,
+                            .unwrap_or("")
+                            .lines()
+                            .filter(|line| line.starts_with("        if:"))
+                            .count()
+                            == 1
+                })
+            } else {
+                true
             }
         };
         let text = fs::read_to_string(root.join(".github/workflows").join(route))
@@ -71,6 +96,16 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
             &text.replace("toolchain: 1.95.0", "toolchain: stable"),
             command
         ));
+        if route == "rust-gates.yml" {
+            assert!(!prepared(
+                &text.replace("require-llvm: 'true'", "require-llvm: 'false'"),
+                command
+            ));
+            assert!(!prepared(
+                &text.replace("if: inputs.execution-profile == 'owned-jit'", "if: false"),
+                command
+            ));
+        }
         let test_first = format!("{command}\n{text}");
         assert!(!prepared(&test_first, command));
         assert!(!prepared(
@@ -765,8 +800,8 @@ jobs = ["Ripr Rust Small Result"]
 }
 
 #[test]
-fn routed_rust_live_contract_rejects_reviewed_semantic_regressions() {
-    let workflow = include_str!("../../../.github/workflows/routed-rust.yml");
+fn routed_rust_bootstrap_contract_rejects_reviewed_semantic_regressions() {
+    let workflow = include_str!("../../../fixtures/convergence/queue-bootstrap/routed-rust.yml");
     let reusable = include_str!("../../../.github/workflows/rust-gates.yml");
     let settings = include_str!("../../../.github/settings.yml");
     let lane = include_str!("../../../policy/ci-lane-whitelist.toml");
@@ -980,8 +1015,8 @@ jobs = ["Ripr Rust Small Result", "Ripr Rust Small on CX53"]
 }
 
 #[test]
-fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
-    let workflow = include_str!("../../../.github/workflows/routed-rust.yml");
+fn routed_rust_bootstrap_event_matrix_withholds_draft_and_label_context() {
+    let workflow = include_str!("../../../fixtures/convergence/queue-bootstrap/routed-rust.yml");
     let cases = [
         (
             "pull_request",
@@ -1264,10 +1299,13 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let step_level_cleanup = workflow.replace(
-        "    uses: ./.github/workflows/rust-gates.yml\n    with:\n      runner-config: '\"ubuntu-latest\"'",
-        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:\n      runner-config: '\"ubuntu-latest\"'",
+        "    uses: ./.github/workflows/rust-gates.yml\n    with:\n",
+        "    uses: ./.github/workflows/rust-gates.yml\n    # cleanup may use always()\n    with:\n",
     );
-    assert_ne!(step_level_cleanup, workflow, "fixture must add the comment");
+    assert!(
+        step_level_cleanup != workflow,
+        "fixture must add the comment"
+    );
     assert!(
         !routed_rust_ready_event_contract_violations(&step_level_cleanup)
             .iter()
@@ -1942,4 +1980,23 @@ fn retired_major_is_rejected_when_a_sha_pin_comment_names_it() {
     assert!(!rejects(&format!(
         "      - uses: actions/cache@{sha} # v4.2.0\n"
     )));
+}
+
+#[test]
+fn workflow_duplicate_step_conditions_are_rejected_without_confusing_nested_inputs_or_script() {
+    let valid = "jobs:\n  test:\n    steps:\n      - uses: example/action@sha\n        if: input != 'merge-group'\n        with:\n          if: literal-input\n      - run: |\n          if: literal-script\n        if: success()\n";
+    assert!(super::workflow_duplicate_step_keys_violations("test.yml", valid).is_empty());
+    let duplicate = valid.replace(
+        "        with:",
+        "        if: surface == 'true'\n        with:",
+    );
+    assert_eq!(
+        super::workflow_duplicate_step_keys_violations("test.yml", &duplicate).len(),
+        1
+    );
+    let composite = "runs:\n  steps:\n    - if: success()\n      uses: example/action@sha\n      'if': always()\n";
+    assert_eq!(
+        super::workflow_duplicate_step_keys_violations("action.yml", composite).len(),
+        1
+    );
 }

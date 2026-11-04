@@ -54,6 +54,10 @@ zero-test command.
 
 ## Merge queue request (cutover)
 
+The current `merge-queue-v1` activation candidate is described in the event and
+owned-runner sections below. This historical account records the predecessor
+that remained satisfiable during source preparation.
+
 `routed-rust.yml` also subscribes to `merge_group` (`checks_requested`), so the
 required `Ripr Rust Small Result` can be earned once per merge-queue entry, on
 the exact queued merge commit, instead of by a label. The queue run reads the
@@ -122,85 +126,34 @@ read and protected merge atomic. Preserve the installed gates until the
 source, producer and live-enforcement migration in [MERGE_FLOW](MERGE_FLOW.md)
 is qualified.
 
-## Development events and retained bootstrap route
+## Development events and retired bootstrap route
 
-Focused checks, useful tool feedback, substantive review and repair run in the
-owning session before admission. Draft publication, Ready transitions and PR
-updates start no repository Actions workflow. The automated UB Review and Droid
-mention subscribers are retired; their review configuration and guidance remain
-available to the session. A skipped job would still allocate a workflow, so a
-job guard is not an exception to this rule.
+The final `merge-queue-v1` source accepts only actual native merge-group check
+requests at the ordinary caller. Draft publication, Ready transitions, PR edits,
+pushes, labels and review comments start no workflow. All development proof,
+useful advisory feedback and review remain in the owning session. A skipped job
+or cheap wrapper is still allocation and is not an exception.
 
-The source retirement under #4842 removes 33 automatic event edges from 20
-workflow files. Auxiliary PR subscriptions and duplicate auxiliary main-push
-builds are gone. Callable qualification leaves remain available to the existing
-#8082 owner; explicit manual proof and separately purposed security, corpus and
-maintenance schedules retain their declared scope. The main-health timer is
-retired; a main-health incident probe requires an incident and a concrete
-question.
+The earlier #4842 preparation removed 33 auxiliary event edges. This final slice
+removes the remaining label/main caller roots and the label-conflict/staleness
+recovery workflows. The hard-cut observer becomes a named explicit release or
+incident audit, with no automatic main trigger. The 16 remaining specialty
+maintenance/deep schedules are constrained to inspected names and exact cadences;
+there is no generic timer exception or recurring main-health probe.
 
-This is a source migration stage, not completed native activation. These
-remaining event edges are explicit bootstrap debt:
+| Event or operation | Source behavior |
+|---|---|
+| Draft, Ready, ordinary updates or labels | No Actions workflow |
+| Exact-H session proof/review and conditional authorization | Existing owning session and protected publisher |
+| Native singleton G | Complete frozen mandatory proof portfolio |
+| Ordinary resulting M | Protected native readback; no qualification replay |
+| Named incident, release or deep proof | Its separately declared purpose and authority |
 
-| Retained source | Event and purpose | Retirement condition |
-| --- | --- | --- |
-| `routed-rust.yml` | `pull_request: labeled` requests the current protected qualification; other labels still start its nonrequest wrapper | Truthful H admission and enforced queue-only landing, with actual G proof |
-| `merge-ready-conflict-notice.yml` | `pull_request_target: labeled` reports the legacy request's conflict | Native queue request/refusal replaces the label interface |
-| `routed-rust.yml` | Main/master push retains the current required caller and cache-writer opportunity | Accepted selected-route cache continuity and coherent protected cutover |
-| `hard-cut-watch.yml` | Every main push allocates its release-cut observer, even when it only reports an inactive cut | Transitional debt: retire the automatic trigger after protected G/cut enforcement replaces it, or move its selected release purpose to an explicit operation |
-
-Do not convert the protected PR result into a cheap success while a direct merge
-could consume it. #4834/#4838 own the reviewed source/settings delta, readback and
-rollback. Preserve #8082's caller implementation; do not create a parallel
-controller. The existing label route remains the bounded bootstrap interface
-until its replacement is qualified. After verified activation, admission is
-conditional authorization to land, actual G is qualified once, and the owning
-session reconciles M without routine main replay.
-
-Run `cargo policy check-workflows` in the owning session before publication.
-The existing policy command checks the source event perimeter. It rejects new PR, review, comment and
-push subscribers even when all jobs would be skipped, and rejects unauditable
-flow/alias/duplicate event declarations. The retained label/main exceptions are
-bound to exact files and declarations; the policy cannot establish live settings,
-execution, queue admission or economic acceptance.
-
-Schedules have no blanket exception. The policy preserves only the following
-inspected roots and their current exact cron declarations; an unknown name,
-renamed main-health timer or expanded cadence fails. This inventory preserves
-current separate purposes during preparation, not a claim that every cadence
-is economical or that the final lifecycle is activated.
-
-| Retained scheduled root | Current purpose |
-| --- | --- |
-| `droid-security-scan.yml`, `security.yml` | Security/advisory drift observation |
-| `dx-scoreboard.yml` | DX scoreboard measurement |
-| `first-run-install.yml` | Published/default install-surface observation |
-| `fuzz.yml`, `kani.yml` | Fuzzing and bounded model-checking proof |
-| `issue-staleness-watchdog.yml` | Stale issue path citations |
-| `pr-staleness-watchdog.yml` | Legacy label/request staleness; retire with that interface |
-| `macos-advisory.yml`, `windows-advisory.yml` | Named platform-advisory portfolios |
-| `pilot-ranking.yml`, `rust-corpus.yml` | Corpus/ranking measurement |
-| `printed-command-paste.yml` | Cross-platform shell compatibility |
-| `public-proof.yml` | Public proof drift |
-| `size-scaling.yml` | Scaling measurement |
-| `scratch-gc.yml` | Lease-governed terminal scratch reclamation |
-| `source-of-truth.yml` | Source/spec maintenance digest |
-
-### What starts what in this source stage
-
-| Action | Repository Actions behavior |
-| --- | --- |
-| Open, development-branch push, synchronize, reopen, edit, Draft or Ready transition | No development workflow |
-| Review or ordinary Conversation comment | No development workflow |
-| Apply a label | The two retained legacy subscribers may start; this is an unresolved cutover edge, not the final zero-label design |
-| Native queue `checks_requested` | Existing composed-candidate qualification route |
-| Ordinary main push | Required-caller cache opportunity and every-main cut observer remain transitional debt |
-| Explicit selected proof | Its named callable/manual authority; no automatic admission or landing |
-
-The required check's source and live enforcement remain separate from this
-inventory. Inspect current source, exact head, review findings and native state
-before any consequential request. Do not infer readiness from a missing or
-skipped check, a quiet PR, or an earlier green result.
+This branch is an activation candidate. The published preparation still
+preserves the old required producer until H/App protection, owned capacity/cache
+qualification and native G-to-M observations are available. Source alone does
+not install a required check, authorize trusted-cache execution, establish a
+cache hit or prove the <=20-minute active qualification target.
 
 ### Actual-G callable source preparation (#8082)
 
@@ -227,8 +180,9 @@ binds the complete Windows subset, Python wheel, feature/release/MSRV/VS Code
 and printed-command portfolio to the same G receipt. All four reusable results
 and the selected Rust result are mandatory. Missing, skipped, cancelled and
 failed required leaves refuse the aggregate; docs-only classification cannot
-prune a queue qualification. The existing label/main route remains available
-under its legacy profile until protected activation.
+prune a queue qualification. The final caller selects owned JIT. Its callable
+legacy profile remains available only for separately authorized compatibility
+work; no ordinary label/main caller root remains in this generation.
 
 The admission job retains `ripr-queue-subject-<run_id>-<run_attempt>` with the
 canonical subject, its digest, observed native queue-entry id and complete
@@ -245,10 +199,10 @@ The initial singleton is a measured canary contract; multi-constituent support
 requires a reviewed constituent/composition model. Parent-shape acceptance in
 the verifier does not grant a per-PR native queue merge-method override.
 
-### Owned runner preparation and final activation
+### Owned runner source and final activation
 
-The Rust leaf has an optional `execution-profile: owned-jit`; the preparation
-caller still uses its default `legacy` profile. Owned JIT is admitted only for
+The final Rust caller selects `execution-profile: owned-jit`; the published
+preparation retains the default `legacy` profile until activation. Owned JIT is admitted only for
 the native-G proof profile, unsharded full nextest, and the exact capability
 projection `{"group":"em-ci-build","labels":["self-hosted","linux","x64","rust-heavy"]}`.
 The em-ci source authority is `config/capability-contracts.json` and
@@ -260,9 +214,18 @@ keeps `target` and temporary files inside this job's disposable workspace.
 Only the governed registry/git/global Cargo cache and compiler cache are shared.
 It never runs the legacy scratch lease, cache deletion or hosted cache writer.
 The host owns bounded cycle disposal. Rust 1.95.0 is selected process-locally;
-the pinned per-job toolchain action retains matching LLVM-component setup until
-a qualified image demonstrably supplies it. Existing image nextest/sccache
-executables are checked before proof. No new cache service is introduced.
+the shared selector verifies rustc, Cargo, formatting, Clippy and (for the full
+Rust lane) executable LLVM tools. Missing compatibility tools are installed into
+a new bounded per-job `RUSTUP_HOME`, with auto-install disabled for proof; the
+image's primary/default remains unchanged. Feature/release/MSRV all currently
+require the declared 1.95.0. Existing image nextest/sccache executables are
+checked before proof. No new cache service is introduced.
+
+Printed-command Linux retains its qualified shell platform: the owned Rust
+image does not supply zsh, PowerShell or sudo. Its full bash/sh/zsh/pwsh
+denominator remains intact, alongside the Windows/macOS shell lanes, Ubuntu
+22.04 wheel ABI and extension/Xvfb platform obligations. These are named
+platform requirements, not an automatic hosted recovery route.
 
 The current main-scope writer stays intact in this preparation. Removing it is
 a source/settings activation, gated by actual installed heavy and separate
@@ -273,9 +236,9 @@ are not claimed reusable across unrelated refs. Explicit hosted recovery may
 be cold or restore-only; it is not an ordinary fallback and must not write a
 normal protected success under a different resource/trust contract.
 
-The final activation must also remove label subscriptions, ordinary main push,
-the label-conflict observer and the every-main hard-cut observer after protected
-G/cut enforcement replaces it. The H publisher and required-check App binding
+This final source removes label subscriptions, ordinary main push, label
+recovery and the every-main hard-cut observer; protected G/cut enforcement and
+its explicitly selected audit retain the cut obligation. The H publisher and required-check App binding
 must be satisfiable first; no unrestricted publisher binding or unqualified
 merge is part of this migration. A native G and resulting M readback close the
 loop. Source preparation alone establishes none of these runtime observations.

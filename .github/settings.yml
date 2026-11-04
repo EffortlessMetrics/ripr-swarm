@@ -31,6 +31,11 @@ branches:
     protection:
       required_pull_request_reviews: null
       required_status_checks:
+        # Coordinated activation dependency: this is the legacy declaration.
+        # The intended Hermes context is CI Lifecycle Qualification, but no
+        # admitted numeric App binding is recorded here. Do not apply this
+        # block unchanged after queue activation or replace it with a name-only
+        # requirement; reconcile the actual settings owner and expected App.
         strict: true
         contexts:
           - Ripr Rust Small Result
@@ -44,7 +49,7 @@ branches:
 labels:
   - name: merge-ready
     color: "0e8a16"
-    description: Start pull-request CI. Add last; gated non-required lanes do not run on a Draft or Ready PR without it.
+    description: Historical bootstrap request; the queue-only source grants this label no CI or merge authority.
   - name: full-ci
     color: "5319e7"
     description: Run required, advisory, and release-like CI lanes.

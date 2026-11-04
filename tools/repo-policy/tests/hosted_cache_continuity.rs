@@ -1,10 +1,11 @@
-//! Source contract for the hosted cache writer opportunity (#7827).
+//! Historical bootstrap regression; the live queue-only source is covered by queue_workflow and merge_group_subject.
+//! Retained predecessor contract for the hosted cache writer opportunity (#7827).
 //!
 //! This does not observe a save, a hit, or cross-ref readability. When retiring
 //! main-push qualification, replace this temporary contract with the reviewed
 //! selected-route lifecycle proof; do not retain full qualification just to warm
 //! a cache. The archive-boundary contract (#7685) remains independent.
-const CALLER: &str = include_str!("../../../.github/workflows/routed-rust.yml");
+const CALLER: &str = include_str!("../../../fixtures/convergence/queue-bootstrap/routed-rust.yml");
 const PRODUCER: &str = include_str!("../../../.github/workflows/rust-gates.yml");
 
 fn block<'a>(source: &'a str, name: &str, indent: usize) -> Option<&'a str> {
@@ -106,7 +107,7 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
 }
 
 #[test]
-fn current_source_preserves_a_main_scope_writer_opportunity() {
+fn bootstrap_fixture_preserves_the_retired_main_scope_writer_opportunity() {
     assert_eq!(continuity_findings(CALLER, PRODUCER), Vec::<&str>::new());
 }
 
