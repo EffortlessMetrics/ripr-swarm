@@ -19,7 +19,7 @@ use crate::analysis::extract::{
     mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
 };
 use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
-use crate::analysis::seam_cache::PathDependencySection;
+use crate::analysis::seam_cache::path_dependencies::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationConfidence, RelationReason};
 use ra_ap_syntax::{
@@ -11008,7 +11008,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         edges: &[(&str, &str, PathDependencySection, &str)],
         limitations: bool,
     ) -> PathDependencyAdjacency {
-        use crate::analysis::seam_cache::{
+        use crate::analysis::seam_cache::path_dependencies::{
             PathDependencyEdge, PathDependencyLimitation, PathDependencyLimitationKind,
             PathDependencyResolution, PathDependencySource, WorkspaceGraphProvenance,
         };

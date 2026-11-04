@@ -90,6 +90,7 @@ mod fact_store;
 mod fast_check;
 #[cfg(test)]
 mod fast_check_tests;
+mod push_argument_guard;
 pub(crate) use fact_store::TypeScriptFileFactStore;
 mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);

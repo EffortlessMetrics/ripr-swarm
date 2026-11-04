@@ -159,7 +159,7 @@ The artifact embeds an input identity computed at check time:
   input option fails compilation until it is explicitly classified;
 - `config_identity_version` and `config_identity_hash` — a closed,
   versioned allowlist contract over `ripr.toml`: the finding-affecting
-  fields (`oracles.*`, production-like targets and test harnesses,
+  fields (`oracles.*`, `overrides.oracles`, production-like targets and test harnesses,
   Rust generated patterns and `handwritten_files`,
   `typescript.resolve_tsconfig_paths`, `perl.*`),
   canonically serialized with defaults materialized, sorted, and hashed.
