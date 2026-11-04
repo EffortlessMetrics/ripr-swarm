@@ -103,6 +103,7 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 pub(crate) struct CreditFacts<'a> {
     pub(crate) mock_facts: &'a MockCallFacts,
     pub(crate) pin_facts: &'a PinFacts,
+    pub(crate) push_facts: &'a super::push_argument_guard::PushArgumentFacts,
     /// The one field of a single-line returned object literal whose value
     /// changed, when the old line is known (RIPR-SPEC-0243 rule 17).
     pub(crate) changed_field: Option<&'a TypeScriptChangedField>,
@@ -225,6 +226,7 @@ pub(crate) fn ts_candidate_changed_sink_observation(
     let CreditFacts {
         mock_facts,
         pin_facts,
+        push_facts,
         changed_field,
     } = credits;
     let owner_name = owner.name.as_str();
@@ -279,6 +281,9 @@ pub(crate) fn ts_candidate_changed_sink_observation(
         .iter()
         .filter(|a| focus_assertion.is_none_or(|focus| std::ptr::eq(*a, focus)))
     {
+        if push_facts.withhold(candidate.test, assertion) {
+            continue;
+        }
         // RIPR-SPEC-0247 rule 1: a credited literal mock-call payload is
         // the strong effect observer `strongest_family_matching_oracle`
         // read; the effect branch below confirms it by kind.
@@ -6486,6 +6491,7 @@ pub(crate) fn strongest_family_matching_oracle(
     error_facts: &ErrorChangeFacts,
     mock_facts: &MockCallFacts,
     pin_facts: &PinFacts,
+    push_facts: &super::push_argument_guard::PushArgumentFacts,
 ) -> (u8, OracleKind) {
     let mut best_rank: u8 = 0;
     let mut best_kind = OracleKind::Unknown;
@@ -6508,6 +6514,9 @@ pub(crate) fn strongest_family_matching_oracle(
             };
         for (assertion_index, assertion) in candidate.test.assertions.iter().enumerate() {
             let (kind, strength) = match (&assertion.error_payload, &assertion.mock_payload) {
+                _ if push_facts.withhold(candidate.test, assertion) => {
+                    (OracleKind::ExactValue, OracleStrength::Weak)
+                }
                 (Some(payload), _)
                     if matches!(assertion.oracle_kind, OracleKind::ExactErrorVariant)
                         && !error_payload_credits(payload, error_facts) =>
@@ -7495,12 +7504,22 @@ pub(crate) fn classify_resolved_owner(
     if !pin_facts.is_empty() {
         project_credited_pin_rows(&mut related, related_candidates, &pin_facts);
     }
+    let push_facts = if matches!(probe_shape.family, ProbeFamily::SideEffect) {
+        super::push_argument_guard::PushArgumentFacts::read(
+            old_line_text,
+            owner,
+            related_candidates,
+        )
+    } else {
+        super::push_argument_guard::PushArgumentFacts::default()
+    };
     let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
         &probe_shape.family,
         related_candidates,
         &error_facts,
         &mock_facts,
         &pin_facts,
+        &push_facts,
     );
     let mock_payload_oracle = related_mock_payload_oracle(&related);
 
@@ -7631,6 +7650,7 @@ pub(crate) fn classify_resolved_owner(
                 CreditFacts {
                     mock_facts: &mock_facts,
                     pin_facts: &pin_facts,
+                    push_facts: &push_facts,
                     changed_field: changed_field.as_ref(),
                 },
             ));
@@ -7824,12 +7844,16 @@ pub(crate) fn classify_resolved_owner(
             StageState::Yes,
             StageState::Weak,
             StageState::Weak,
-            vec![weak_oracle_missing_summary(
-                &owner.name,
-                &strongest_kind,
-                &probe_shape.family,
-                mock_payload_oracle.as_deref(),
-            )],
+            vec![if !push_facts.is_empty() {
+                "The available evidence does not establish discrimination of the changed appended value; use an input changed by the edit and assert the appended element.".to_string()
+            } else {
+                weak_oracle_missing_summary(
+                    &owner.name,
+                    &strongest_kind,
+                    &probe_shape.family,
+                    mock_payload_oracle.as_deref(),
+                )
+            }],
         )
     };
     // Post-ladder rules re-read the ladder verdict and may rewrite it; a
@@ -7867,6 +7891,7 @@ pub(crate) fn classify_resolved_owner(
             error_facts: &error_facts,
             mock_facts: &mock_facts,
             pin_facts: &pin_facts,
+            push_facts: &push_facts,
             changed_field: changed_field.as_ref(),
         },
         mock_paths: &context.mock_paths,
@@ -8083,6 +8108,7 @@ pub(crate) fn classify_resolved_owner(
             credits: CreditFacts {
                 mock_facts: &mock_facts,
                 pin_facts: &pin_facts,
+                push_facts: &push_facts,
                 changed_field: changed_field.as_ref(),
             },
             boundary_fact: missing_discriminators.first(),
@@ -8113,11 +8139,18 @@ pub(crate) fn classify_resolved_owner(
         Confidence::Low,
         "TypeScript preview adapter does not yet model propagation.",
     );
-    let observe_summary = format!(
-        "Strongest extracted oracle kind: `{}` (rank {})",
-        strongest_kind.as_str(),
-        strongest_strength
-    );
+    let observe_summary = if !push_facts.is_empty()
+        && strongest_strength < OracleStrength::Strong.rank()
+    {
+        "An exact assertion was extracted, but this evidence does not establish discrimination of the changed appended value."
+            .to_string()
+    } else {
+        format!(
+            "Strongest extracted oracle kind: `{}` (rank {})",
+            strongest_kind.as_str(),
+            strongest_strength
+        )
+    };
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
     let discriminate_summary = if let Some(verdict) = &infection {
         format!(
@@ -8184,6 +8217,8 @@ pub(crate) fn classify_resolved_owner(
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // RIPR-SPEC-0098: strong oracle exists but observation guard failed.
         "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.".to_string()
+    } else if !push_facts.is_empty() && strongest_strength < OracleStrength::Strong.rank() {
+        "TypeScript preview: this evidence does not establish discrimination of the changed appended value; use an input changed by the edit and assert the appended element.".to_string()
     } else if let Some(discriminator) = missing_discriminators.first() {
         format!(
             "TypeScript preview adapter found no strong discriminator; missing proof: `{}`.",
@@ -8234,6 +8269,9 @@ pub(crate) fn classify_resolved_owner(
             Some(gap) => gap.no_static_path_recommendation(),
             None => no_static_path_recommendation(owner),
         },
+        _ if !push_facts.is_empty() && strongest_strength < OracleStrength::Strong.rank() => {
+            "TypeScript preview advisory: use an input changed by the edit and assert the appended element; no actionable repair packet is emitted.".to_string()
+        }
         // Owner-call evidence with a named missing discriminator takes
         // precedence over the relation note: the oracle classification is
         // independent of relation credit, so the next step names the proof
@@ -10104,6 +10142,7 @@ struct Rule8LadderFacts<'a> {
     error_facts: &'a ErrorChangeFacts,
     mock_facts: &'a MockCallFacts,
     pin_facts: &'a PinFacts,
+    push_facts: &'a super::push_argument_guard::PushArgumentFacts,
     changed_field: Option<&'a TypeScriptChangedField>,
 }
 
@@ -10131,6 +10170,7 @@ fn ts_rule8_mocked_changed_callee(
         error_facts,
         mock_facts,
         pin_facts,
+        push_facts,
         changed_field,
     } = ladder;
     let mut files: Vec<&Path> = Vec::new();
@@ -10171,6 +10211,7 @@ fn ts_rule8_mocked_changed_callee(
             error_facts,
             mock_facts,
             pin_facts,
+            push_facts,
         );
         if !only_module_entry
             && strength >= OracleStrength::Strong.rank()
@@ -10185,6 +10226,7 @@ fn ts_rule8_mocked_changed_callee(
                 CreditFacts {
                     mock_facts,
                     pin_facts,
+                    push_facts,
                     changed_field,
                 },
             )

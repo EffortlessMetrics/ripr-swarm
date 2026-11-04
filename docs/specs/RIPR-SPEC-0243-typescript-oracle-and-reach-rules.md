@@ -1732,6 +1732,20 @@ the masker.
     parse, and a worker-refusal textual fallback likewise retain the existing
     reading (a disclosed fail-open). `toHaveBeenCalledTimes` already reads weak mock
     evidence without an exact-value equality.
+    For the separately bounded #12949 case, a direct Vitest test passes a fresh
+    empty array and an ASCII string literal to a single-statement owner whose
+    `array.push(value)` argument changes to `value.toUpperCase()`. A length
+    pin does not observe the appended value. The recognizer admits only the
+    exact straight-line shape, standard bindings and inert literal assertions;
+    it withholds count and unrelated assertions from both oracle ranking and
+    sink observation. An exact pin on index zero that distinguishes the
+    literal from its uppercase form retains credit. Added or multiple push
+    arguments, aliases, mutation, shadowing and unrecognized forms retain
+    their prior readings. This syntax-first preview assumes ordinary native
+    Array and String behavior; it cannot inspect every external setup module.
+    Empty `[]` array-type brackets do not count as computed member writes;
+    nonempty computed writes remain replacement refusals. The factory-getter
+    consumer has a separate reach and replacement control for that distinction.
 23. **Factory-built getter receivers (2026-10-30, #10402).** Adopted: a getter
     owner is related to a test that binds `const box = factory(...)` once and
     asserts `expect(box.<getter>)`, when the owner's module exports `factory`

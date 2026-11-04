@@ -18989,6 +18989,16 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::length_does_not_pin_the_changed_push_argument",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::indexed_value_still_pins_the_changed_argument",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::mixed_length_and_wrong_index_do_not_restore_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::mixed_length_and_changed_index_keep_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::changed_cardinality_is_not_a_value_only_replacement",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::refuses_ambiguous_push_argument_witnesses",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::array_types_do_not_masquerade_as_index_writes",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::count_only_report_names_the_missing_element",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::unchanged_case_and_wrong_index_do_not_claim_length_is_the_problem",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_factory_tests.rs::typed_array_declaration_preserves_factory_getter_and_index_write_refuses",
   "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::awaited_returned_and_expression_bodied_promise_assertions_stay_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::floating_promise_assertions_supply_no_discriminator",
   "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::promise_all_wrapping_is_never_newly_credited",
@@ -19405,6 +19415,7 @@ tests = [
 fixtures = [
   "fixtures/typescript_mock_count_nested_alias",
   "fixtures/typescript_mock_count_block_alias",
+  "fixtures/typescript_push_argument_length",
   "fixtures/typescript_mock_count_alias",
   "fixtures/typescript_mock_count_optional",
   "fixtures/typescript_mock_count_computed",
@@ -19435,6 +19446,7 @@ fixtures = [
   "fixtures/ts_table_row_expected_refused",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/push_argument_guard.rs",
   "crates/ripr/src/analysis/language/typescript/declaration_bindings.rs",
   "crates/ripr/src/analysis/language/typescript/tests_extract_hook_identity.rs",
   "crates/ripr/src/analysis/language/typescript/call_removal_guard.rs",
