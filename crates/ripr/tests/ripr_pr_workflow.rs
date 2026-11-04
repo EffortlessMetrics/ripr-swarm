@@ -211,7 +211,7 @@ fn a_real_size_refusal_is_reconstructed_from_its_numbers() -> TestResult {
 
 #[test]
 fn raw_diagnostics_never_reach_the_comment_or_the_artifact() -> TestResult {
-    let cases: [(&str, Vec<u8>); 9] = [
+    let cases: [(&str, Vec<u8>); 12] = [
         ("first line secret", b"SECRET_FIRST\nripr: diff_scope_oversized: 1 changed Rust lines exceed the RIPR_X limit (1)\n".to_vec()),
         ("second line secret", b"ripr: diff_scope_oversized: 5 changed Rust lines exceed the RIPR_X limit (1)\nSECRET_SECOND\n".to_vec()),
         ("token after allowed code", b"ripr: analysis_timeout: SECRET_TOKEN ghp_abc123\n".to_vec()),
@@ -220,6 +220,9 @@ fn raw_diagnostics_never_reach_the_comment_or_the_artifact() -> TestResult {
         ("unknown env name", b"ripr: diff_scope_oversized: 5 changed Rust lines exceed the RIPR_ASECRET limit (1)\n".to_vec()),
         ("oversized number", format!("ripr: diff_scope_oversized: {} changed Rust lines exceed the RIPR_MAX_DIFF_INDEX_FILES limit (1) SECRET\n", "9".repeat(150)).into_bytes()),
         ("unknown code", b"ripr: SECRET_CODE: 1 changed Rust lines exceed the RIPR_X limit (1)\n".to_vec()),
+        ("lowercase unknown code", b"ripr: other_thing: 5 changed Rust lines exceed the RIPR_MAX_DIFF_INDEX_FILES limit (1)\n".to_vec()),
+        ("oversized number valid env no tail", format!("ripr: diff_scope_oversized: {} changed Rust lines exceed the RIPR_MAX_DIFF_INDEX_FILES limit (1)\n", "7".repeat(150)).into_bytes()),
+        ("oversized limit valid env no tail", format!("ripr: diff_scope_oversized: 5 changed Rust lines exceed the RIPR_MAX_DIFF_INDEX_FILES limit ({})\n", "8".repeat(150)).into_bytes()),
         ("oversized first line", {
             let mut big = b"ripr: analysis_timeout: ".to_vec();
             big.extend(std::iter::repeat_n(b'a', 2_000_000));
@@ -240,6 +243,21 @@ fn raw_diagnostics_never_reach_the_comment_or_the_artifact() -> TestResult {
             );
         }
         assert!(
+            outcome.log.contains("ripr: "),
+            "{label}: producer step must have run and logged stderr"
+        );
+        for text in [&outcome.body, &outcome.artifact] {
+            assert!(!text.contains("other_thing"), "{label}: unknown code kept");
+            assert!(
+                !text.contains("7777777777"),
+                "{label}: oversized number kept"
+            );
+            assert!(
+                !text.contains("8888888888"),
+                "{label}: oversized limit kept"
+            );
+        }
+        assert!(
             !outcome.artifact.contains("stderr.txt"),
             "{label}: raw stderr must not be uploaded"
         );
@@ -256,6 +274,8 @@ fn raw_diagnostics_never_reach_the_comment_or_the_artifact() -> TestResult {
 fn a_tampered_artifact_reason_is_rejected_by_the_comment_job() -> TestResult {
     for forged in [
         "foo: SECRET_FIRST\n",
+        "unknown_code: SECRET_LOWER\n",
+        "unknown_code: 5 changed Rust lines exceed the RIPR_MAX_DIFF_INDEX_FILES limit (1)\n",
         "diff_scope_oversized: SECRET_FIRST\n",
         "diff_scope_oversized: 5 changed Rust lines exceed the RIPR_X limit (1) SECRET_TAIL\n",
         "diff_scope_oversized: 1\n```\n@all\n",
@@ -264,6 +284,10 @@ fn a_tampered_artifact_reason_is_rejected_by_the_comment_job() -> TestResult {
         assert!(
             !outcome.body.contains("SECRET"),
             "{forged:?} reached the body"
+        );
+        assert!(
+            !outcome.body.contains("unknown_code"),
+            "{forged:?} unknown code reached the body"
         );
         assert!(
             !outcome.body.contains("@all"),
@@ -307,6 +331,48 @@ fn a_successful_report_is_unchanged() -> TestResult {
     assert!(
         !outcome.body.contains("SECRET_NOTE"),
         "stderr notes stay in the log"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_forged_oversized_number_with_a_valid_name_is_rejected_by_the_comment_job() -> TestResult {
+    let forged = format!(
+        "diff_scope_oversized: {} changed Rust lines exceed the RIPR_MAX_DIFF_INDEX_FILES limit (1)\n",
+        "6".repeat(150)
+    );
+    let outcome = Case::new("forged-long")?.run(REAL_REFUSAL.as_bytes(), "", 2, Some(&forged))?;
+    assert!(
+        !outcome.body.contains("6666666666"),
+        "oversized number reached the body"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_resume_token_differs_between_runs() -> TestResult {
+    let token = |label: &str| -> TestResult<String> {
+        let outcome = Case::new(label)?.run(b"ripr: analysis_timeout: x\n", "", 2, None)?;
+        let line = outcome
+            .log
+            .lines()
+            .find(|line| line.starts_with("::stop-commands::"))
+            .ok_or("missing stop-commands")?;
+        Ok(line.trim_start_matches("::stop-commands::").to_string())
+    };
+    let (first, second) = (token("tok-a")?, token("tok-b")?);
+    assert_eq!(first.len(), 16);
+    assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_ne!(first, second, "token must be fresh per run");
+    Ok(())
+}
+
+#[test]
+fn the_producer_bounds_its_stderr_read() -> TestResult {
+    let block = run_block("Run ripr on the pull request diff")?;
+    assert!(
+        block.contains("head -c 4096"),
+        "stderr read must be bounded"
     );
     Ok(())
 }
