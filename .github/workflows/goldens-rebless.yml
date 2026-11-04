@@ -116,6 +116,11 @@ jobs:
           if [ "$head_repo" != "$REPOSITORY" ]; then
             refuse "goldens-rebless refused PR #$pr_num: the head lives on \`$head_repo\` (fork), where this token holds no write; bless the same-repo branch instead."
           fi
+          default_branch="$(gh api "repos/$REPOSITORY" --jq .default_branch)"
+          head_protected="$(gh api "repos/$REPOSITORY/branches/$head_branch" --jq .protected 2>/dev/null || echo unknown)"
+          if [ "$head_branch" = "$default_branch" ] || [ "$head_protected" != "false" ]; then
+            refuse "goldens-rebless refused PR #$pr_num: its head branch \`$head_branch\` is the default branch, protected, or its protection could not be read (protected=$head_protected); the route only pushes to unprotected PR branches."
+          fi
           echo "pr_number=$pr_num" >> "$GITHUB_OUTPUT"
           echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
           echo "head_branch=$head_branch" >> "$GITHUB_OUTPUT"
@@ -185,14 +190,19 @@ jobs:
         with:
           ref: refs/pull/${{ needs.prepare.outputs.pr_number }}/merge
           persist-credentials: false
+          fetch-depth: 2
+
+      - name: Require the merge ref to be built from the preflight head
+        run: |
+          set -euo pipefail
+          merge_parent="$(git rev-parse --verify --quiet 'HEAD^2' || true)"
+          if [ "$merge_parent" != "$HEAD_SHA" ]; then
+            echo "::error::merge ref second parent (${merge_parent:-none}) is not the preflight head $HEAD_SHA; the PR moved or the merge ref is stale, re-dispatch"
+            exit 1
+          fi
 
       - name: Install the pinned toolchain
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-
-      - name: Restore the shared Rust cache (read-only for this run)
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          save-if: false
 
       - name: Fetch the locked fixture manifests
         run: |

@@ -1411,9 +1411,9 @@ unmerged on this repository (fork heads are refused — the token holds no write
 there), and it must be mergeable, because `refs/pull/N/merge` only exists
 while the PR merges cleanly. It then records its convergence claim in the
 PR_AUTOMATION.md house format and refuses while another actor's claim is
-younger than 4 hours. `bless` (`contents: read`, no token) checks out the
+younger than 4 hours. It refuses a head branch that is the default branch, is protected, or whose protection cannot be read. `bless` (`contents: read`, no token) checks out the
 two-parent integration tree the required merge-ready qualification already
-compiles and executes, with `persist-credentials: false`, and runs the judge,
+compiles and executes, with `persist-credentials: false` and `fetch-depth: 2`, verifies the merge commit's second parent is the preflight head (a stale merge ref is refused), restores no build cache, and runs the judge,
 the bless loop and the confirmation. It uploads only a patch and the drift
 report as artifacts.
 

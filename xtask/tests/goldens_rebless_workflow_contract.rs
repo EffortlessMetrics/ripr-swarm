@@ -501,6 +501,115 @@ fn publish_validates_and_commits_on_the_head() -> Result<(), String> {
 }
 
 #[test]
+fn security_boundaries_hold_per_job() -> Result<(), String> {
+    let source = repo_file(WORKFLOW)?;
+    let lines = executable_lines(&source);
+    let bless = job_block(&lines, "bless");
+    let publish = job_block(&lines, "publish");
+    let refuse = job_block(&lines, "refuse");
+    let prepare = job_block(&lines, "prepare");
+    require(
+        &bless,
+        "persist-credentials: false",
+        "the job that executes PR-authored build scripts keeps no token in .git/config",
+    )?;
+    require(
+        &publish,
+        "persist-credentials: false",
+        "the publish checkout never persists the write token into .git/config",
+    )?;
+    forbid(
+        &bless,
+        "GITHUB_TOKEN",
+        "no token reaches the job that executes PR-authored code",
+    )?;
+    forbid(
+        &bless,
+        "rust-cache",
+        "a restored cache is attacker-influenced input to the PR-code job",
+    )?;
+    require(
+        &bless,
+        "fetch-depth: 2",
+        "the merge commit's parents must be present to verify its provenance",
+    )?;
+    require(
+        &bless,
+        "'HEAD^2'",
+        "the merge ref's PR parent is compared with the preflight head",
+    )?;
+    require(
+        &bless,
+        "!= \"$HEAD_SHA\"",
+        "a merge ref built from another head is refused",
+    )?;
+    for line in &refuse {
+        if line.contains("contents:") && !line.contains("contents: read") {
+            return Err("the refuse job comments only and must hold no contents write".to_string());
+        }
+    }
+    require(
+        &refuse,
+        "pull-requests: write",
+        "the refuse job posts the comment",
+    )?;
+    forbid(&refuse, "contents: write", "comment-only job")?;
+    forbid(
+        &publish,
+        "refs/pull/",
+        "the publish job builds on the preflight head, never the merge ref",
+    )?;
+    for job in [&bless, &publish, &refuse, &prepare] {
+        for fragment in [
+            "--force",
+            "--force-with-lease",
+            "+HEAD",
+            "git push -f",
+            " -f origin",
+        ] {
+            forbid(
+                job,
+                fragment,
+                "the route never rewrites or force-pushes a branch",
+            )?;
+        }
+    }
+    require(
+        &publish,
+        "if [ \"$remote_head\" != \"$HEAD_SHA\" ]; then",
+        "the writer guard compares the remote branch with the preflight head",
+    )?;
+    let guard_exit = publish
+        .iter()
+        .skip_while(|line| !line.contains("remote_head\" != \"$HEAD_SHA"))
+        .take(3)
+        .any(|line| line.trim() == "exit 1");
+    if !guard_exit {
+        return Err("a moved head must end the publish job with `exit 1`".to_string());
+    }
+    require(
+        &publish,
+        "^fixtures/[A-Za-z0-9_][A-Za-z0-9_-]*/expected/[A-Za-z0-9_.-]+$",
+        "the patch path allowlist is exactly fixtures/<name>/expected/<file>",
+    )?;
+    forbid(
+        &publish,
+        "^.+$",
+        "a widened path regex would accept any file from the PR-code job",
+    )?;
+    require(
+        &prepare,
+        ".protected",
+        "a protected or default head branch is refused before anything runs",
+    )?;
+    require(
+        &prepare,
+        "default_branch",
+        "the default branch is never a bless target",
+    )
+}
+
+#[test]
 fn re_arm_is_comment_only() -> Result<(), String> {
     let source = repo_file(WORKFLOW)?;
     let lines = executable_lines(&source);
