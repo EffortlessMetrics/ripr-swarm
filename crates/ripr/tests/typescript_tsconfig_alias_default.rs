@@ -122,11 +122,34 @@ fn config_relative_paths_without_base_url_are_credited() -> Result<(), String> {
         } else {
             std::fs::write(subject.0.join(config), paths).map_err(|e| e.to_string())?;
         }
-        let json = subject.json()?;
-        if !json.contains("\"classification\": \"exposed\"")
-            || !json.contains("test/pricing.test.ts")
-        {
-            return Err(format!("{config}: expected aliased test credit: {json}"));
+        let json: serde_json::Value =
+            serde_json::from_str(&subject.json()?).map_err(|e| e.to_string())?;
+        let findings = json
+            .get("findings")
+            .and_then(|v| v.as_array())
+            .ok_or("missing findings")?;
+        let finding = findings
+            .iter()
+            .find(|finding| {
+                finding.pointer("/probe/file").and_then(|v| v.as_str()) == Some("src/pricing.ts")
+                    && finding
+                        .pointer("/probe/owner")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|owner| owner.ends_with("::discountRate"))
+            })
+            .ok_or_else(|| format!("{config}: missing changed owner: {json}"))?;
+        let related = finding
+            .get("related_tests")
+            .and_then(|v| v.as_array())
+            .is_some_and(|rows| {
+                rows.iter().any(|row| {
+                    row.get("file").and_then(|v| v.as_str()) == Some("test/pricing.test.ts")
+                })
+            });
+        if finding.get("classification").and_then(|v| v.as_str()) != Some("exposed") || !related {
+            return Err(format!(
+                "{config}: expected linked aliased test credit: {finding}"
+            ));
         }
     }
     Ok(())

@@ -604,21 +604,20 @@ impl TsAliasMap {
         if let Some(ext) = Path::new(candidate)
             .extension()
             .and_then(|ext| ext.to_str())
-        {
-            if !matches!(
+            && !matches!(
                 ext,
                 "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs"
-            ) {
-                match std::fs::symlink_metadata(self.root.join(candidate)) {
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    _ => return None,
-                }
-                let (stem, _) = candidate.rsplit_once('.')?;
-                let declaration = self.root.join(format!("{stem}.d.{ext}.ts"));
-                match std::fs::symlink_metadata(declaration) {
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                    _ => return None,
-                }
+            )
+        {
+            match std::fs::symlink_metadata(self.root.join(candidate)) {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                _ => return None,
+            }
+            let (stem, _) = candidate.rsplit_once('.')?;
+            let declaration = self.root.join(format!("{stem}.d.{ext}.ts"));
+            match std::fs::symlink_metadata(declaration) {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                _ => return None,
             }
         }
         let (stem, extensions, declarations): (&str, &[&str], &[&str]) =
