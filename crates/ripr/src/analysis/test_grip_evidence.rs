@@ -627,6 +627,10 @@ fn refuses_other_function_oracle(
 /// the same way. A predicate boundary in the owner (`wait < 5` in `consume`)
 /// is refused alike (#12434). `ripr check` refuses the same assertion per
 /// assertion (RIPR-SPEC-0094, #11552); the repo seam must agree.
+///
+/// Owner reach is a reverse graph walk plus a lazy unbounded closure. Build it
+/// once per call and pass the whole related set: ranking must not rebuild it
+/// with a one-element slice per related test (#12478).
 fn credited_related_tests<'a>(
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
@@ -634,7 +638,13 @@ fn credited_related_tests<'a>(
     refuse_other_function_oracle: bool,
 ) -> Vec<std::borrow::Cow<'a, TestSummary>> {
     let owner_reach = refuse_other_function_oracle
-        .then(|| owner_fn.map(|owner| context.transitive_reach.owner_reach(&owner.name)))
+        .then(|| {
+            owner_fn.map(|owner| {
+                #[cfg(test)]
+                CREDITED_OWNER_REACH_BUILDS.with(|count| count.set(count.get() + 1));
+                context.transitive_reach.owner_reach(&owner.name)
+            })
+        })
         .flatten();
     related
         .iter()
@@ -978,6 +988,8 @@ fn is_should_panic(test: &TestSummary) -> bool {
 thread_local! {
     /// Times the masked-source memo was built on this thread (#10701 work pin).
     static MASK_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Times credited-view owner reach was built on this thread (#12478).
+    static CREDITED_OWNER_REACH_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether the owner's signature or the changed expression may name a type
@@ -4196,7 +4208,11 @@ fn discriminate_evidence(
     let mut contradictions: Vec<String> = Vec::new();
     for test in related {
         for oracle in &test.assertions {
-            if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
+            // The same two gates `best_oracle` applies, so this stage and the
+            // related-test record cannot disagree about one assertion (#12733).
+            if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
+                || !error_pin_can_see_return_value(seam, oracle)
+            {
                 continue;
             }
             // A statically contradicted exact-value assertion keeps at most
@@ -4524,6 +4540,14 @@ fn error_pin_can_see_return_value(seam: &RepoSeam, oracle: &OracleFact) -> bool 
     seam.kind() != SeamKind::ReturnValue
         || !matches!(oracle.kind, OracleKind::ExactErrorVariant)
         || exact_err_return_matches_error_pin(seam, &oracle.text)
+}
+
+/// An exact error-variant assertion published at no strength is the one
+/// `error_pin_can_see_return_value` withholds: it pins the owner's `Err` arm,
+/// not the value the returned-value seam produces (#12722, #12734). No other
+/// producer path yields that pair.
+pub(crate) fn pins_other_arm(kind: &OracleKind, strength: &OracleStrength) -> bool {
+    matches!(kind, OracleKind::ExactErrorVariant) && matches!(strength, OracleStrength::None)
 }
 
 fn oracle_discriminates_seam(seam: &RepoSeam, oracle: &super::facts::OracleFact) -> bool {
@@ -5153,6 +5177,14 @@ fn oracle_semantics_by_kind(
     strength: &OracleStrength,
     seam_kind: SeamKind,
 ) -> OracleSemantics {
+    if pins_other_arm(kind, strength) {
+        return OracleSemantics {
+            observes: "an exact error variant, on a different arm than this seam's returned value"
+                .to_string(),
+            missing: "an observable discriminator for this seam".to_string(),
+            upgrade_suggestion: Some(upgrade_suggestion_for_seam(seam_kind).to_string()),
+        };
+    }
     if matches!(strength, OracleStrength::None) {
         return OracleSemantics {
             observes: "no recognized test oracle".to_string(),
@@ -5262,6 +5294,9 @@ fn related_test_grip<'a>(
 ) -> RelatedTestGrip {
     let summary = if let Some(contradiction) = contradiction {
         contradiction
+    } else if pins_other_arm(&kind, &strength) {
+        "exact error-variant assertion on a different arm than this seam's returned value"
+            .to_string()
     } else if matches!(strength, OracleStrength::None) {
         "no oracle in test body".to_string()
     } else {
@@ -5363,10 +5398,13 @@ fn best_oracle(
     let mut best_matching_kind = OracleKind::Unknown;
     let mut best_matching_strength = OracleStrength::None;
     let mut best_matching_contradiction = None;
+    let mut skipped_error_pin = false;
     for oracle in &test.assertions {
-        if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax)
-            || !error_pin_can_see_return_value(seam, oracle)
-        {
+        if !collection_assertion_admitted(seam, oracle, test, index, pin_syntax) {
+            continue;
+        }
+        if !error_pin_can_see_return_value(seam, oracle) {
+            skipped_error_pin = true;
             continue;
         }
         let (strength, contradiction) =
@@ -5397,6 +5435,10 @@ fn best_oracle(
             best_matching_strength,
             best_matching_contradiction,
         )
+    } else if skipped_error_pin && matches!(best_strength, OracleStrength::None) {
+        // #12734: the test does assert an exact error variant, on an arm this
+        // returned-value seam does not return. Publish that, not "no oracle".
+        (OracleKind::ExactErrorVariant, OracleStrength::None, None)
     } else {
         (best_kind, best_strength, best_contradiction)
     }

@@ -197,10 +197,13 @@ fn error_variant_change_starts_the_changed_branch_check_recommends() -> Result<(
     assert_starts_check_recommendation(&repo, "error-variant-weak")
 }
 
-/// Guard (passes with or without the narrowing): check names no start for the change (it reads `unknown`), so
-/// repair keeps asking; nothing is picked by position.
+/// #12849: check reads one finding as noticed (the returned value is pinned)
+/// and the other as unknown, and offers no start. Bare repair agrees: it lists
+/// no start, says why for both spots, and starts no attempt. Without a diff
+/// scope the same change still lists two starts (the discriminating contrast).
 #[test]
-fn a_change_check_offers_no_start_for_keeps_the_selection() -> Result<(), String> {
+fn a_change_check_reads_as_noticed_and_unknown_lists_no_start() -> Result<(), String> {
+    assert_several_eligible_without_scope("flip", FLIP_BASE, FLIP_NEW, FLIP_TEST)?;
     let repo = repo("flip", FLIP_BASE, FLIP_NEW, FLIP_TEST, true)?;
     let root = &repo.root;
     if let Some(id) = check_start_id(root)? {
@@ -210,11 +213,18 @@ fn a_change_check_offers_no_start_for_keeps_the_selection() -> Result<(), String
     }
     let repair = ripr(root, &["repair"])?;
     let err = text(&repair.stderr);
-    if repair.status.code() != Some(3) || !err.contains("code=several_eligible_seams") {
-        return Err(format!("must keep the selection prompt:\n{err}"));
+    if repair.status.code() != Some(3)
+        || !err.contains("code=no_eligible_seam")
+        || err.contains("several_eligible_seams")
+        || err.contains("Pick one")
+    {
+        return Err(format!("must refuse without listing starts:\n{err}"));
+    }
+    if !err.contains("already noticed by a test") || !err.contains("cannot tell from reading") {
+        return Err(format!("must say why for both spots:\n{err}"));
     }
     if attempts(root) != 0 {
-        return Err("no attempt may start without a selection".to_string());
+        return Err("no attempt may start".to_string());
     }
     Ok(())
 }
@@ -239,6 +249,46 @@ fn an_unscoped_change_keeps_the_selection() -> Result<(), String> {
     }
     if attempts(root) != 0 {
         return Err("no attempt may start without a selection".to_string());
+    }
+    Ok(())
+}
+
+const FIELD_BASE: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 3,\n        verbose: false,\n    }\n}\n";
+const FIELD_NEW: &str = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 5,\n        verbose: false,\n    }\n}\n";
+const FIELD_TEST: &str = "use fx::default_config;\n\n#[test]\nfn default_config_is_quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n";
+
+/// #12861: a scoped change with open spots that cannot start closes on the
+/// per-spot reasons, not on a repository tour that sends the reader back to
+/// check. The unscoped no-tests refusal keeps the repository route.
+#[test]
+fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String> {
+    let scoped = repo("nx-scoped", FLIP_BASE, FLIP_NEW, FLIP_TEST, true)?;
+    let repair = ripr(&scoped.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3)
+        || !err.contains("Next: each changed spot below says what it still needs")
+        || err.contains("explores the whole repository")
+        || !err.contains("code=no_eligible_seam")
+    {
+        return Err(format!("scoped refusal must close on the reasons:\n{err}"));
+    }
+    let unscoped = repo("nx-unscoped", FLIP_BASE, FLIP_NEW, FLIP_TEST, false)?;
+    let repair = ripr(&unscoped.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3) || err.contains("each changed spot below says") {
+        return Err(format!("unscoped read must not use the new step:\n{err}"));
+    }
+    // The unscoped FLIP fixture lists starts instead of refusing, so the
+    // old-route contrast uses a refusing fixture read without a diff scope.
+    let field = repo("nx-field", FIELD_BASE, FIELD_NEW, FIELD_TEST, false)?;
+    let repair = ripr(&field.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3)
+        || !err.contains("code=no_eligible_seam")
+        || !err.contains("explores the whole repository")
+        || err.contains("each changed spot below says")
+    {
+        return Err(format!("unscoped refusal keeps the old route:\n{err}"));
     }
     Ok(())
 }

@@ -1060,7 +1060,21 @@ fn recommendation_for(
     };
     let nearest_test_to_imitate =
         nearest_strong_test_to_imitate(entry.seam.kind(), &entry.evidence)
-            .or_else(|| entry.evidence.related_tests.first().map(AsRef::as_ref))
+            .or_else(|| {
+                // A test whose only assertion pins a different arm shows the
+                // reader nothing to imitate for this seam (#12734).
+                entry
+                    .evidence
+                    .related_tests
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .find(|test| {
+                        !crate::analysis::test_grip_evidence::pins_other_arm(
+                            &test.oracle_kind,
+                            &test.oracle_strength,
+                        )
+                    })
+            })
             .map(|test| related_test_record(test, entry.seam.kind()));
 
     EvidenceRecordRecommendation {
@@ -3421,6 +3435,45 @@ mod tests {
         assert_eq!(
             json["static_limitations"][0]["repair_route"],
             "analysis/static-limitation-taxonomy"
+        );
+    }
+
+    #[test]
+    fn a_test_pinning_a_different_arm_is_not_offered_to_imitate() {
+        // #12734: an exact error-variant assertion that cannot see this seam's
+        // returned value shows the reader nothing to imitate for the seam.
+        let mut entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        let template = (*entry.evidence.related_tests[0]).clone();
+        let mut other_arm = template.clone();
+        other_arm.test_name = "pins_the_err_arm".to_string();
+        other_arm.oracle_kind = crate::domain::OracleKind::ExactErrorVariant;
+        other_arm.oracle_strength = crate::domain::OracleStrength::None;
+        let mut weak = template;
+        weak.test_name = "reads_the_value_loosely".to_string();
+        weak.oracle_kind = crate::domain::OracleKind::RelationalCheck;
+        weak.oracle_strength = crate::domain::OracleStrength::Weak;
+
+        entry.evidence.related_tests = vec![
+            std::sync::Arc::new(other_arm.clone()),
+            std::sync::Arc::new(weak),
+        ];
+        let record = evidence_record_for(&entry, None);
+        assert_eq!(
+            record
+                .recommendation
+                .nearest_test_to_imitate
+                .as_ref()
+                .map(|test| test.name.as_str()),
+            Some("reads_the_value_loosely"),
+            "the different-arm pin is skipped for the next related test"
+        );
+
+        entry.evidence.related_tests = vec![std::sync::Arc::new(other_arm)];
+        let record = evidence_record_for(&entry, None);
+        assert!(
+            record.recommendation.nearest_test_to_imitate.is_none(),
+            "a lone different-arm pin is not offered: {:?}",
+            record.recommendation.nearest_test_to_imitate
         );
     }
 

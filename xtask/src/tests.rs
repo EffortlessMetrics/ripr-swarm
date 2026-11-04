@@ -9641,8 +9641,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Check out trusted admission bundle for the review recheck",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Check out trusted admission bundle for the review recheck",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -30844,7 +30844,7 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
         "check-tool-capabilities [--as-of YYYY-MM-DD] [--registry <path>]"
     )?);
     assert!(ci_enforced("markdown-links")?);
-    assert!(!ci_enforced("goldens bless <name> --reason <reason>")?);
+    assert!(ci_enforced("goldens bless <name> --reason <reason>")?);
     assert!(!ci_enforced("check-supply-chain")?);
     Ok(())
 }

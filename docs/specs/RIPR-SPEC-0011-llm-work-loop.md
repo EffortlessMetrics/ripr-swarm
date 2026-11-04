@@ -760,13 +760,35 @@ never picks by position or recency. When check prints no start, prints one for
 a seam that is not eligible, cannot run, or the change cannot be scoped to
 changed lines, the selection prompt (`several_eligible_seams`) is unchanged.
 
+## Amendment (#12849): bare repair drops starts check cannot offer
+
+When several seams are eligible on the changed lines and `ripr check` names no
+single start, a seam whose bound check finding (the shared `finding_for_seam`
+join) is exposed or static-limited (`finding_is_static_limited`) is not offered: check reads it as noticed or
+cannot judge it, and offers no start for it. The refusal says so in plain words
+for each such spot; if none remain, bare repair refuses (`no_eligible_seam`)
+instead of listing starts. When exactly one seam survives and check recommended none, it is not started on its own; the refusal gives its `ripr repair <id>` command. A single eligible seam and an unscoped change keep
+their earlier behavior.
+
+## Amendment (#12861): refusal closing step for open spots on the change
+
+A bare-repair refusal for a scoped change that still has open spots which
+cannot start a repair (or whose candidates check closed) ends its lead with
+"each changed spot below says what it still needs; write that test by hand",
+naming `ripr check` for detail, instead of the repository-wide `ripr pilot`
+route. When every candidate was dropped as already noticed, the outcome is the nothing-to-do one instead. Without a diff scope the repository route is kept. Eligibility and the
+`no_eligible_seam` code are unchanged.
+
 ## Test Mapping
 
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve` (agent group help, the missing-`--seam-id` refusal and the workflow catalog agree that `--phase before` resolves `ripr check` finding IDs)
 - `crates/ripr/tests/repair_check_recommended_start.rs::boundary_change_starts_the_seam_check_recommends` (#12831)
 - `crates/ripr/tests/repair_check_recommended_start.rs::error_variant_change_starts_the_changed_branch_check_recommends` (#12831)
-- `crates/ripr/tests/repair_check_recommended_start.rs::a_change_check_offers_no_start_for_keeps_the_selection` (#12831)
+- `crates/ripr/tests/repair_check_recommended_start.rs::a_change_check_reads_as_noticed_and_unknown_lists_no_start` (#12831)
 - `crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection` (#12831)
+- `crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons` (#12861)
+- `crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed` (#12861)
+- `crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour` (#12861)
 - `crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run` (#12831)
 - `crates/ripr/src/app/task_first.rs::tests::check_pick_narrows_only_when_eligible_and_committed` (#12831)
 - `crates/ripr/tests/cli_smoke/repair_orderfile.rs::repair_completes_despite_user_orderfile`

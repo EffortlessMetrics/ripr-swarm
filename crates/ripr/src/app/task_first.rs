@@ -72,7 +72,11 @@ pub(crate) enum NoEligibleChange {
     AlreadyChecked,
     /// The changed Rust lines touch no code a repair can start on.
     NoRepairableCode,
-    /// An open spot on the change cannot start, or no diff was read.
+    /// A spot on the changed lines is still open but cannot start a repair;
+    /// each reason says what it needs, so the next step is to write that test
+    /// by hand (#12861).
+    OpenOnChange,
+    /// No diff was read, so nothing can be said about the change.
     Other,
 }
 
@@ -997,10 +1001,12 @@ pub(crate) fn resolve_repair_start(
     let all_changed_checked = matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && gripped_on_change > 0
         && open_on_change == 0;
-    let change = if all_changed_checked {
+    let mut change = if all_changed_checked {
         NoEligibleChange::AlreadyChecked
     } else if matches!(scope, Some(ChangeScope::TouchesNoSeam(_))) {
         NoEligibleChange::NoRepairableCode
+    } else if matches!(scope, Some(ChangeScope::TouchesSeams(_))) && open_on_change > 0 {
+        NoEligibleChange::OpenOnChange
     } else {
         NoEligibleChange::Other
     };
@@ -1108,19 +1114,70 @@ pub(crate) fn resolve_repair_start(
     if let Some(note) = unscoped_diff_note(diff.as_deref(), base) {
         refusal_reasons.insert(0, note);
     }
-    let (reasons, reasons_total) =
-        collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
-    // #12831: several eligible seams on the change, but `ripr check` names
-    // one repair start for it. Check's choice is the recommendation, so the
-    // bare start takes it instead of asking the user to repeat it. Only a
-    // seam among the eligible ones is taken; no first or newest pick.
+    // #12831: several eligible seams on the change. `ripr check` is the
+    // authority on the change, so its single recommended start wins; failing
+    // that, a seam whose check finding is already noticed, or which check
+    // cannot judge (and so offers no start for), is no start here either
+    // (#12849). Only a seam among the eligible ones is taken; no first or
+    // newest pick.
     if candidates.len() > 1
         && matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && let Some(output) = check_run.get()
-        && let Some(chosen) = check_recommended_start(root, &config, output, &candidates)
     {
-        candidates.retain(|(id, _)| *id == chosen);
+        if let Some(chosen) = check_recommended_start(root, &config, output, &candidates) {
+            candidates.retain(|(id, _)| *id == chosen);
+        } else {
+            let before = candidates.len();
+            let mut left_open = false;
+            let mut kept = Vec::new();
+            for (id, note) in std::mem::take(&mut candidates) {
+                let closed = classified
+                    .iter()
+                    .find(|entry| entry.seam.id().as_str() == id)
+                    .and_then(|entry| {
+                        let gap_id = repair_packet_eligibility(entry).readiness.canonical_gap_id;
+                        super::repair_card_handoff::finding_for_seam(
+                            &output.findings,
+                            entry,
+                            gap_id.as_deref(),
+                            &classified,
+                        )
+                        .map(|finding| (entry, finding))
+                    })
+                    .and_then(|(entry, finding)| {
+                        if finding.class == crate::domain::ExposureClass::Exposed {
+                            Some(format!("{}: {CHECK_NOTICED_REASON}", seam_label(entry)))
+                        } else if super::gap_bound_repair::finding_is_static_limited(finding) {
+                            Some(format!("{}: {CHECK_UNKNOWN_REASON}", seam_label(entry)))
+                        } else {
+                            None
+                        }
+                    });
+                match closed {
+                    Some(reason) => {
+                        left_open |= reason.ends_with(CHECK_UNKNOWN_REASON);
+                        refusal_reasons.push(reason);
+                    }
+                    None => kept.push((id, note)),
+                }
+            }
+            // Check recommended none of the rest. A lone survivor of a
+            // narrowing would otherwise read as the only choice and start on
+            // its own; it is offered by id instead.
+            if kept.len() == 1 && kept.len() < before {
+                let (_, note) = kept.remove(0);
+                left_open = true;
+                refusal_reasons.push(format!(
+                    "the code at {} `{}`: `ripr check` recommends no repair start for this change; to repair it anyway, run `{}`",
+                    note.location, note.code, note.command
+                ));
+            }
+            candidates = kept;
+            change = change_after_closure(change, !candidates.is_empty(), left_open, before > 0);
+        }
     }
+    let (reasons, reasons_total) =
+        collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
     let (eligible_ids, candidate_notes): (Vec<String>, Vec<RepairCandidateNote>) =
         candidates.into_iter().unzip();
     let head = current_git_head(root).ok();
@@ -1140,6 +1197,23 @@ pub(crate) fn resolve_repair_start(
         start_spec: spec.as_ref(),
         change,
     })
+}
+
+/// The outcome after check's closure dropped candidates (#12861). Only a spot
+/// check cannot judge, or a survivor check did not recommend, leaves something
+/// to write by hand; when every candidate was dropped as already noticed there
+/// is nothing to do. Outcomes other than `Other` are already decided.
+fn change_after_closure(
+    change: NoEligibleChange,
+    candidates_left: bool,
+    left_open: bool,
+    dropped_any: bool,
+) -> NoEligibleChange {
+    match change {
+        NoEligibleChange::Other if candidates_left || left_open => NoEligibleChange::OpenOnChange,
+        NoEligibleChange::Other if dropped_any => NoEligibleChange::AlreadyChecked,
+        other => other,
+    }
 }
 
 /// Runs `run` at most once and shares its result.
@@ -1191,6 +1265,10 @@ fn recommended_seam(
         _ => None,
     }
 }
+
+/// Why a changed spot has no repair start when `ripr check` cannot judge it
+/// (#12849): check offers none for a static-limited finding.
+const CHECK_UNKNOWN_REASON: &str = "`ripr check` cannot tell from reading the code whether tests would notice this and offers no repair start for it, so inspect it by hand before adding a test";
 
 /// Why a changed spot needs no repair when `ripr check` already reads it as
 /// noticed by a test (#11401). It speaks to the changed code itself, unlike
@@ -4221,6 +4299,28 @@ pub(crate) mod tests {
             || counted(Some(Vec::new())),
         );
         assert_eq!(runs.get(), 2);
+    }
+
+    /// #12861: all candidates dropped as already noticed is nothing to do, not
+    /// "write that test by hand".
+    #[test]
+    fn closure_outcome_says_nothing_to_do_when_everything_was_noticed() {
+        use NoEligibleChange::*;
+        assert_eq!(
+            change_after_closure(Other, false, false, true),
+            AlreadyChecked
+        );
+        assert_eq!(change_after_closure(Other, false, true, true), OpenOnChange);
+        assert_eq!(change_after_closure(Other, true, false, true), OpenOnChange);
+        assert_eq!(change_after_closure(Other, false, false, false), Other);
+        assert_eq!(
+            change_after_closure(OpenOnChange, false, false, true),
+            OpenOnChange
+        );
+        assert_eq!(
+            change_after_closure(AlreadyChecked, false, false, true),
+            AlreadyChecked
+        );
     }
 
     /// #12831: the noticed-by-check screen and the recommended-start
