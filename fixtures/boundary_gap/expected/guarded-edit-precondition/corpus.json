@@ -75,6 +75,7 @@
           "end_character": 24
         },
         "original_source_text": "assert_eq!(total, 50);",
+        "document_version": 3,
         "exact_replacement_text": "assert_eq!(total, discount_threshold);",
         "parse_validation_status": "passed",
         "format_validation_status": "passed",
@@ -102,7 +103,7 @@
         "test_selector": "tests/pricing.rs::boundary_equality",
         "test_file": "tests/pricing.rs",
         "exact_replacement_text": "assert_eq!(total, discount_threshold);",
-        "edit_instruction_id": "edit-instruction:95d57931ed9e3e43",
+        "edit_instruction_id": "edit-instruction:b0aad19c46de8d3e",
         "original_source_digest": "sha256:9cfb7c3b1b3931522e0c4cd3afb97d74fc3a5a850adba6fec1421a9ab21da141"
       }
     },

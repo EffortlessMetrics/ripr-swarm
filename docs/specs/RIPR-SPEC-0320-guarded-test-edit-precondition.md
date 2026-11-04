@@ -64,8 +64,11 @@ or mutated value is held to the builder's rules:
   `original_digest` (the SHA-256 of the original text), `replacement`, `range`
   (`sl:sc-el:ec`). An absent optional input hashes as `none`, a present one as
   `some:<value>`. `validate` recomputes it, so a changed input under a minted id
-  is rejected. The corpus holds the expected ids as literals derived by an
-  independent reference of this paragraph, not copied from the builder.
+  is rejected. The corpus holds the expected ids as literals derived by a
+  transliteration of this paragraph, not copied from the builder; it checks
+  fidelity to the paragraph and is not an independent oracle. A precondition
+  without a `document_version` still mints but can never verify:
+  `verify_document_version` refuses absent versions.
 - **Validation evidence.** Parse and format validation must both be `passed`.
   `failed` names `parse_validation_failed` / `format_validation_failed`;
   `not_run`, including an omitted field, is `source_precondition_missing`.

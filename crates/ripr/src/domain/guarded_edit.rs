@@ -902,8 +902,8 @@ mod tests {
                         .ok_or_else(|| format!("{id}: missing precondition"))?;
                     let built_value = serde_json::to_value(&built)
                         .map_err(|error| format!("{id}: encode built: {error}"))?;
-                    // The expected identity and digest are literals derived by an
-                    // independent reference (RIPR-SPEC-0320), never copied from
+                    // The expected identity and digest are literals derived by a
+                    // transliteration of RIPR-SPEC-0320, never copied from
                     // this build's output, so a hash that stops binding an input
                     // shows up as drift.
                     for key in [
