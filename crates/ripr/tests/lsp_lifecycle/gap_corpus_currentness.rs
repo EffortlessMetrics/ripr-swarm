@@ -2301,7 +2301,7 @@ fn genuine_python_unavailable_repair_card_remains_admitted_advisory_without_acti
                 .as_str()
                 .is_some_and(|detail| {
                     detail.contains("no repair card")
-                        && detail.contains("no concrete missing discriminator")
+                        && detail.contains("no concrete missing check")
                 })
             && record["verification_commands"] == json!([])
             && record["receipt_command"].is_null()
