@@ -4379,6 +4379,8 @@ fn changed_range_requires_an_unchanged_old_body_and_catches_old_wrappers() -> Re
     for (signature, call, exposed) in [
         ("n, unused", "3", false),
         ("n, unused", "3, 0", true),
+        ("n, unused", "3, missing_name", false),
+        ("n=3", "", true),
         ("n, *, unused", "3", false),
         ("n, *, unused", "3, unused=0", true),
         ("n, /", "n=3", false),

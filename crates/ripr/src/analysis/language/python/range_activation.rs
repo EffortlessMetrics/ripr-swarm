@@ -56,7 +56,18 @@ pub(super) fn changed_range_limit(
                             .collect();
                         range_sum(&values?)
                     };
-                    let modeled = |row: &CallRow| read(new, row).zip(read(old, row));
+                    let modeled = |row: &CallRow| {
+                        let skip = receiver_skip(owner)?;
+                        if !owner
+                            .parameters
+                            .get(skip..)?
+                            .iter()
+                            .all(|parameter| row.bindings.contains_key(&parameter.name))
+                        {
+                            return None;
+                        }
+                        read(new, row).zip(read(old, row))
+                    };
                     closed_test_body(owner, test, row, &rows, |row| modeled(row).is_some())
                         && matches!(modeled(row), Some((new, old))
                             if new != old && (expected == new || expected == old))
@@ -179,14 +190,8 @@ fn direct_integer_pin(
 /// The shared binding reader inventories values, but deliberately tolerates
 /// unmatched arguments. The range model needs a call that actually binds.
 fn valid_owner_call(owner: &PythonOwner, call: &rustpython_parser::ast::ExprCall) -> bool {
-    use crate::domain::OwnerKind;
-    let skip = match owner.owner_kind {
-        Some(OwnerKind::Method) => 1,
-        Some(OwnerKind::ClassMethod) => {
-            usize::from(!owner.decorators.iter().any(|d| d.ends_with("staticmethod")))
-        }
-        Some(OwnerKind::Function) => 0,
-        _ => return false,
+    let Some(skip) = receiver_skip(owner) else {
+        return false;
     };
     let Some(parameters) = owner.parameters.get(skip..) else {
         return false;
@@ -221,6 +226,18 @@ fn valid_owner_call(owner: &PythonOwner, call: &rustpython_parser::ast::ExprCall
     parameters
         .iter()
         .all(|p| bound.contains(p.name.as_str()) || p.default.is_some())
+}
+
+fn receiver_skip(owner: &PythonOwner) -> Option<usize> {
+    use crate::domain::OwnerKind;
+    match owner.owner_kind {
+        Some(OwnerKind::Method) => Some(1),
+        Some(OwnerKind::ClassMethod) => Some(usize::from(
+            !owner.decorators.iter().any(|d| d.ends_with("staticmethod")),
+        )),
+        Some(OwnerKind::Function) => Some(0),
+        _ => None,
+    }
 }
 
 fn plain_argument(value: &rustpython_parser::ast::Expr) -> bool {
