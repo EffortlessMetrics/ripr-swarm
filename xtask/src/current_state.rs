@@ -61,26 +61,41 @@ fn scan_deleted_commands(section: &str) -> Vec<String> {
     hits.into_iter().collect()
 }
 
-fn read_crate_version(root: &Path) -> Result<String, String> {
-    let body = fs::read_to_string(root.join("Cargo.toml"))
-        .map_err(|error| format!("read workspace Cargo.toml: {error}"))?;
+/// Value of `key = "..."` inside the `[workspace.package]` table only, so an
+/// earlier `version = ` in another table (a dependency, a profile) is never read.
+fn workspace_package_value(body: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key} = ");
+    let mut in_table = false;
     for line in body.lines() {
-        if let Some(rest) = line.strip_prefix("version = ") {
-            return Ok(rest.trim_matches('"').to_string());
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_table = trimmed == "[workspace.package]";
+            continue;
+        }
+        if in_table && let Some(rest) = trimmed.strip_prefix(prefix.as_str()) {
+            let value = rest.trim().trim_matches('"');
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
         }
     }
-    Err("workspace Cargo.toml is missing version".to_string())
+    None
+}
+
+fn read_workspace_manifest(root: &Path) -> Result<String, String> {
+    fs::read_to_string(root.join("Cargo.toml"))
+        .map_err(|error| format!("read workspace Cargo.toml: {error}"))
+}
+
+fn read_crate_version(root: &Path) -> Result<String, String> {
+    workspace_package_value(&read_workspace_manifest(root)?, "version")
+        .ok_or_else(|| "workspace Cargo.toml is missing [workspace.package] version".to_string())
 }
 
 fn read_msrv(root: &Path) -> Result<String, String> {
-    let body = fs::read_to_string(root.join("Cargo.toml"))
-        .map_err(|error| format!("read workspace Cargo.toml: {error}"))?;
-    for line in body.lines() {
-        if let Some(rest) = line.strip_prefix("rust-version = ") {
-            return Ok(rest.trim_matches('"').to_string());
-        }
-    }
-    Err("workspace Cargo.toml is missing rust-version (MSRV)".to_string())
+    workspace_package_value(&read_workspace_manifest(root)?, "rust-version").ok_or_else(|| {
+        "workspace Cargo.toml is missing [workspace.package] rust-version (MSRV)".to_string()
+    })
 }
 
 pub(crate) fn produce_current_state(root: &Path) -> Result<CurrentStateInventoryV1, String> {
@@ -187,5 +202,26 @@ mod tests {
     #[test]
     fn current_state_check_passes_on_committed_roadmap() -> Result<(), String> {
         check_current_state(&workspace_root())
+    }
+
+    #[test]
+    fn workspace_package_value_ignores_version_lines_in_other_tables() {
+        let body = "[workspace.dependencies]\nserde = { version = \"1\" }\nversion = \"9.9.9\"\n\n\
+                    [workspace.package]\nversion = \"0.11.0\"\nrust-version = \"1.95\"\n\n\
+                    [profile.dev]\nversion = \"7\"\n";
+        assert_eq!(
+            workspace_package_value(body, "version").as_deref(),
+            Some("0.11.0")
+        );
+        assert_eq!(
+            workspace_package_value(body, "rust-version").as_deref(),
+            Some("1.95")
+        );
+    }
+
+    #[test]
+    fn workspace_package_value_is_none_without_the_table() {
+        let body = "[package]\nversion = \"1.0.0\"\n";
+        assert_eq!(workspace_package_value(body, "version"), None);
     }
 }
