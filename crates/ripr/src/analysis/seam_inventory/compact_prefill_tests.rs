@@ -1,6 +1,5 @@
 use super::super::tests::{make_tempdir, write_file};
 use super::*;
-use crate::output::repo_exposure::render_repo_exposure_summary_json;
 
 fn fixture(label: &str) -> Result<PathBuf, String> {
     let root = make_tempdir(label)?;
@@ -133,8 +132,8 @@ fn compact_windows_full_cold_run_populates_complete_summary_cache() -> Result<()
     }
     let warm = inventory_compact_classified_seams_at_with_config(&root, &config)?;
     assert_eq!(
-        render_repo_exposure_summary_json(&warm, &root, None, "draft"),
-        render_repo_exposure_summary_json(&baseline, &root, None, "draft")
+        serde_json::to_value(&warm).map_err(|e| e.to_string())?,
+        serde_json::to_value(&baseline).map_err(|e| e.to_string())?
     );
     cache.store_compact_classified_seams_with_limit(&key, &[], 1)?;
     assert!(
