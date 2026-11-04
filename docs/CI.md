@@ -2745,9 +2745,13 @@ enforce RustSec advisories, license policy, banned crates, and approved
 dependency sources. Duplicate dependency findings are warnings while the
 `ra_ap_syntax` dependency graph is being baselined.
 
-Pull requests also run GitHub Dependency Review for high-severity vulnerability
-alerts and denied license families. Dependency Graph is enabled for the
-repository, so Dependency Review is a blocking security gate.
+Explicit PR requests also run GitHub Dependency Review for high-severity
+vulnerability alerts and denied license families. The staged workflow runs
+both checks for merge-group requests too. The pinned action's
+[ref resolver](https://github.com/actions/dependency-review-action/blob/2031cfc080254a8a887f58cffee85186f0e49e48/src/git-refs.ts)
+reads the merge-group base and head when no refs are supplied. This remains a
+separate security workflow: whether its result is required by live enforcement
+and whether GitHub can supply the queued dependency snapshot remain unverified.
 
 ## GitHub Actions Runtime Policy
 

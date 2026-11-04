@@ -4,3 +4,4 @@
 - Bind Python wheel queue qualification to the actual squash composition and admitted head, and require its result (#4987).
 - Inventory workflow event subscriptions with a fail-closed queue cutover check (#4987).
 - Bind queued feature and cross-platform printed-command proof to the admitted squash and aggregate their results (#4987).
+- Run the existing security advisory checks for merge-group requests without changing their permissions (#4987).
