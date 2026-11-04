@@ -28,7 +28,7 @@
 use ripr::app::check_workspace_with_config;
 use ripr::config::RiprConfig;
 use ripr::domain::LanguageId;
-use ripr::{CheckInput, ExposureClass, Finding};
+use ripr::{CheckInput, ExposureClass, Finding, ProbeFamily};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -94,6 +94,14 @@ struct Seed {
     comment: &'static str,
     /// Expression text of the intended changed probe.
     expression: &'static str,
+    /// Probe family of the intended changed probe.
+    family: ProbeFamily,
+    /// Whether the smoke shape must be graded strictly below the exact
+    /// shape. False only where the exact oracle is itself orthogonal.
+    strict_oracle: bool,
+    /// Oracle alignment the baseline finding must report (`None` for
+    /// languages that do not report one).
+    alignment: Option<&'static str>,
     /// Class the baseline exact-oracle shape must produce.
     baseline_class: ExposureClass,
     render: fn(&Shape) -> String,
@@ -198,14 +206,27 @@ fn run(seed: &Seed, shape: &Shape) -> Result<Finding, String> {
         &config,
     )?;
     drop(scratch);
+    let all: Vec<String> = output
+        .findings
+        .iter()
+        .map(|f| {
+            format!(
+                "{:?}|{}|{}|{:?}",
+                f.probe.family,
+                f.probe.expression,
+                f.class.as_str(),
+                f.language
+            )
+        })
+        .collect();
     let mut matching: Vec<Finding> = output
         .findings
         .into_iter()
-        .filter(|f| f.probe.expression == seed.expression)
+        .filter(|f| f.probe.family == seed.family && f.probe.expression.trim() == seed.expression)
         .collect();
     if matching.len() != 1 {
         return Err(format!(
-            "{}: expected exactly one finding for `{}`, got {}",
+            "{}: expected exactly one finding for `{}`, got {}; all findings: {all:?}",
             seed.name,
             seed.expression,
             matching.len()
@@ -234,6 +255,12 @@ fn baseline(seed: &Seed) -> Result<Finding, String> {
         seed.name
     );
     assert_eq!(finding.language.as_ref(), Some(&seed.language));
+    assert_eq!(
+        finding.oracle_alignment.as_deref(),
+        seed.alignment,
+        "{}: baseline oracle alignment",
+        seed.name
+    );
     assert_eq!(finding.id, finding.probe.id.0, "{}: identity", seed.name);
     Ok(finding)
 }
@@ -275,6 +302,14 @@ fn check_local_rename(seed: &Seed) -> Result<(), String> {
         },
     )?;
     assert_eq!(plain.class, renamed.class, "{}: class", seed.name);
+    // The sink-token alignment is the part of the verdict a rename can move
+    // without moving the class (a substring match on the new name would credit
+    // `changed_sink_token`), so it is part of the relation.
+    assert_eq!(
+        plain.oracle_alignment, renamed.oracle_alignment,
+        "{}: oracle alignment",
+        seed.name
+    );
     Ok(())
 }
 
@@ -332,7 +367,7 @@ fn check_oracle_strength(seed: &Seed) -> Result<(), String> {
     // Discrimination: the smoke shape must genuinely be weaker, otherwise the
     // monotonic check above would hold vacuously for an oracle-blind analysis.
     assert!(
-        smoke_rank < exact_rank,
+        !seed.strict_oracle || smoke_rank < exact_rank,
         "{}: smoke oracle was not graded below exact ({:?} vs {:?})",
         seed.name,
         smoke.class,
@@ -414,7 +449,7 @@ mod rust_seeds {
         };
         let l = shape.local;
         let oracle = match shape.oracle {
-            Oracle::Exact => format!("assert_eq!({l}, Err(\"zero port\".to_string()));"),
+            Oracle::Exact => format!("assert_eq!({l}, Err(PortError::Zero));"),
             Oracle::Smoke => format!("assert!({l}.is_err());"),
         };
         let primary = format!(
@@ -422,9 +457,9 @@ mod rust_seeds {
         );
         let unrelated = "#[test]\nfn doubles_unrelated_input() {\n    let got = unrelated_double(4);\n    assert_eq!(got, 8);\n}\n".to_string();
         let header = if shape.comments {
-            "// header comment\n\n\nuse seed_rs::{parse_port, unrelated_double};\n"
+            "// header comment\n\n\nuse seed_rs::{PortError, parse_port, unrelated_double};\n"
         } else {
-            "use seed_rs::{parse_port, unrelated_double};\n"
+            "use seed_rs::{PortError, parse_port, unrelated_double};\n"
         };
         format!("{header}\n{}", join_blocks(shape, "//", primary, unrelated))
     }
@@ -444,6 +479,9 @@ mod rust_seeds {
                 renamed_local: "admitted",
                 comment: "//",
                 expression: "age >= 18",
+                family: ProbeFamily::Predicate,
+                strict_oracle: true,
+                alignment: None,
                 baseline_class: ExposureClass::Exposed,
                 render: boundary,
             },
@@ -452,14 +490,17 @@ mod rust_seeds {
                 language: LanguageId::Rust,
                 config: "[languages]\nenabled = [\"rust\"]\n",
                 owner_path: "src/lib.rs",
-                owner_before: "pub fn parse_port(text: &str) -> Result<u16, String> {\n    let n: u16 = text.parse().map_err(|_| \"bad port\".to_string())?;\n    if n == 0 {\n        return Err(\"port zero\".to_string());\n    }\n    Ok(n)\n}\n\npub fn unrelated_double(n: u32) -> u32 {\n    n * 2\n}\n",
-                owner_after: "pub fn parse_port(text: &str) -> Result<u16, String> {\n    let n: u16 = text.parse().map_err(|_| \"bad port\".to_string())?;\n    if n == 0 {\n        return Err(\"zero port\".to_string());\n    }\n    Ok(n)\n}\n\npub fn unrelated_double(n: u32) -> u32 {\n    n * 2\n}\n",
+                owner_before: "#[derive(Debug, PartialEq)]\npub enum PortError {\n    Zero,\n    Invalid,\n}\n\npub fn parse_port(text: &str) -> Result<u16, PortError> {\n    let n: u16 = text.parse().map_err(|_| PortError::Invalid)?;\n    if n == 0 {\n        return Err(PortError::Invalid);\n    }\n    Ok(n)\n}\n\npub fn unrelated_double(n: u32) -> u32 {\n    n * 2\n}\n",
+                owner_after: "#[derive(Debug, PartialEq)]\npub enum PortError {\n    Zero,\n    Invalid,\n}\n\npub fn parse_port(text: &str) -> Result<u16, PortError> {\n    let n: u16 = text.parse().map_err(|_| PortError::Invalid)?;\n    if n == 0 {\n        return Err(PortError::Zero);\n    }\n    Ok(n)\n}\n\npub fn unrelated_double(n: u32) -> u32 {\n    n * 2\n}\n",
                 test_path: "tests/seed.rs",
                 manifest: Some(MANIFEST),
                 local: "observed",
                 renamed_local: "rejected",
                 comment: "//",
-                expression: "return Err(\"zero port\".to_string());",
+                expression: "return Err(PortError::Zero)",
+                family: ProbeFamily::ErrorPath,
+                strict_oracle: true,
+                alignment: None,
                 baseline_class: ExposureClass::Exposed,
                 render: error_path,
             },
@@ -473,6 +514,38 @@ mod python_seeds {
 
     fn boundary(shape: &Shape) -> String {
         let note = if shape.comments {
+            "    # observe the admitted value  \n"
+        } else {
+            ""
+        };
+        let l = shape.local;
+        let oracle = match shape.oracle {
+            Oracle::Exact => format!("assert {l} == 18"),
+            Oracle::Smoke => format!("assert {l}"),
+        };
+        let primary = format!(
+            "def test_admits_the_boundary_age():\n    {l} = admit(18)\n{note}    {oracle}\n"
+        );
+        let unrelated =
+            "def test_unrelated_double():\n    got = unrelated_double(4)\n    assert got == 8\n"
+                .to_string();
+        let header = if shape.comments {
+            "# header comment\n\n\nfrom src.gate import admit, unrelated_double\n"
+        } else {
+            "from src.gate import admit, unrelated_double\n"
+        };
+        format!(
+            "{header}\n\n{}",
+            join_blocks(shape, "#", primary, unrelated)
+        )
+    }
+
+    fn sink_token(shape: &Shape) -> String {
+        pack_test(shape, true)
+    }
+
+    fn pack_test(shape: &Shape, sliced: bool) -> String {
+        let note = if shape.comments {
             "    # observe the packed value  \n"
         } else {
             ""
@@ -485,9 +558,13 @@ mod python_seeds {
             Oracle::Exact => format!("assert {l} == [1, 2]"),
             Oracle::Smoke => format!("assert {l}"),
         };
-        let primary = format!(
-            "def test_pack_returns_list():\n    {l} = list(pack([1, 2], 5)[:2])\n{note}    {oracle}\n"
-        );
+        let call = if sliced {
+            "list(pack([1, 2], 5)[:2])"
+        } else {
+            "pack([1, 2], 2)"
+        };
+        let primary =
+            format!("def test_pack_returns_list():\n    {l} = {call}\n{note}    {oracle}\n");
         let unrelated =
             "def test_unrelated_double():\n    got = unrelated_double(4)\n    assert got == 8\n"
                 .to_string();
@@ -510,7 +587,7 @@ mod python_seeds {
         };
         let l = shape.local;
         let raises = match shape.oracle {
-            Oracle::Exact => "KeyError",
+            Oracle::Exact => "KeyError, match=\"empty\"",
             Oracle::Smoke => "Exception",
         };
         let primary = format!(
@@ -536,6 +613,25 @@ mod python_seeds {
                 name: "python_boundary",
                 language: LanguageId::Python,
                 config: "[languages]\nenabled = [\"python\"]\n",
+                owner_path: "src/gate.py",
+                owner_before: "def admit(age):\n    if age > 18:\n        return age\n    raise ValueError(\"minor\")\n\n\ndef unrelated_double(n):\n    return n * 2\n",
+                owner_after: "def admit(age):\n    if age >= 18:\n        return age\n    raise ValueError(\"minor\")\n\n\ndef unrelated_double(n):\n    return n * 2\n",
+                test_path: "tests/test_gate.py",
+                manifest: None,
+                local: "admitted",
+                renamed_local: "granted",
+                comment: "#",
+                expression: "if age >= 18:",
+                family: ProbeFamily::Predicate,
+                strict_oracle: true,
+                alignment: Some("direct"),
+                baseline_class: ExposureClass::Exposed,
+                render: boundary,
+            },
+            Seed {
+                name: "python_sink_token",
+                language: LanguageId::Python,
+                config: "[languages]\nenabled = [\"python\"]\n",
                 owner_path: "src/pack.py",
                 owner_before: "def pack(items, limit):\n    buffer = list(items)\n    if len(buffer) < limit:\n        return buffer\n    return buffer[:limit]\n\n\ndef unrelated_double(n):\n    return n * 2\n",
                 owner_after: "def pack(items, limit):\n    buffer = list(items)\n    if len(buffer) <= limit:\n        return buffer\n    return buffer[:limit]\n\n\ndef unrelated_double(n):\n    return n * 2\n",
@@ -545,8 +641,11 @@ mod python_seeds {
                 renamed_local: "buffered_output",
                 comment: "#",
                 expression: "if len(buffer) <= limit:",
+                family: ProbeFamily::Predicate,
+                strict_oracle: false,
+                alignment: Some("orthogonal"),
                 baseline_class: ExposureClass::WeaklyExposed,
-                render: boundary,
+                render: sink_token,
             },
             Seed {
                 name: "python_error_path",
@@ -561,6 +660,9 @@ mod python_seeds {
                 renamed_local: "failure",
                 comment: "#",
                 expression: "raise KeyError(\"empty\")",
+                family: ProbeFamily::ErrorPath,
+                strict_oracle: true,
+                alignment: Some("direct"),
                 baseline_class: ExposureClass::Exposed,
                 render: error_path,
             },
@@ -633,6 +735,9 @@ mod typescript_seeds {
                 renamed_local: "admitted",
                 comment: "//",
                 expression: "if (age >= 18) {",
+                family: ProbeFamily::Predicate,
+                strict_oracle: true,
+                alignment: None,
                 baseline_class: ExposureClass::Exposed,
                 render: boundary,
             },
@@ -649,6 +754,9 @@ mod typescript_seeds {
                 renamed_local: "call",
                 comment: "//",
                 expression: "throw new Error('empty text');",
+                family: ProbeFamily::ErrorPath,
+                strict_oracle: true,
+                alignment: None,
                 baseline_class: ExposureClass::Exposed,
                 render: error_path,
             },
@@ -708,14 +816,27 @@ fn oracle_strength_is_monotonic_in_class_rank() -> Result<(), String> {
 }
 
 #[test]
-fn every_enabled_language_runs_two_seeds() {
+fn every_enabled_language_runs_a_boundary_and_an_error_path_seed() {
     let seeds = all_seeds();
-    let count = |lang: LanguageId| seeds.iter().filter(|s| s.language == lang).count();
+    let has = |lang: LanguageId, family: ProbeFamily| {
+        seeds
+            .iter()
+            .any(|s| s.language == lang && s.family == family)
+    };
     #[cfg(feature = "lang-rust")]
-    assert_eq!(count(LanguageId::Rust), 2);
+    {
+        assert!(has(LanguageId::Rust, ProbeFamily::Predicate));
+        assert!(has(LanguageId::Rust, ProbeFamily::ErrorPath));
+    }
     #[cfg(feature = "lang-python")]
-    assert_eq!(count(LanguageId::Python), 2);
+    {
+        assert!(has(LanguageId::Python, ProbeFamily::Predicate));
+        assert!(has(LanguageId::Python, ProbeFamily::ErrorPath));
+    }
     #[cfg(feature = "lang-typescript")]
-    assert_eq!(count(LanguageId::TypeScript), 2);
-    let _ = count;
+    {
+        assert!(has(LanguageId::TypeScript, ProbeFamily::Predicate));
+        assert!(has(LanguageId::TypeScript, ProbeFamily::ErrorPath));
+    }
+    let _ = has;
 }
