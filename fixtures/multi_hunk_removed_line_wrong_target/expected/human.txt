@@ -35,6 +35,7 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/multi_hunk_removed_line_wrong_target/input --diff <cwd>/fixtures/multi_hunk_removed_line_wrong_target/diff.patch --mode fast probe:src_lib.rs:static_unknown:17e03c34
   ripr context --root <cwd>/fixtures/multi_hunk_removed_line_wrong_target/input --diff <cwd>/fixtures/multi_hunk_removed_line_wrong_target/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:17e03c34
   no repair start offered: ripr found 2 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above

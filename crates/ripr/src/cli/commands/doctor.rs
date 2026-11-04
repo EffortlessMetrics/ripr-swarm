@@ -3107,6 +3107,14 @@ fn preemptive_artifact_ignore(
 /// when git positively reports the artifact root unignored; a covered root,
 /// a missing repository or an unavailable git yield `None`. The default root
 /// is probed; a relocated cache dir is `doctor`'s to report.
+///
+/// #12432: when the artifact roots are not only unignored but ALREADY
+/// tracked, the ignore line alone cannot cure the trap — adding it silences
+/// this note while `git add -A` keeps refreshing committed files. The note
+/// then also names the exact bound untrack command, and only when the
+/// tracking probe positively reports `Tracked`: on a first run with nothing
+/// committed the command would fail with "did not match any files", and a
+/// wrong actionable repair signal is worse than a missed advisory.
 pub(crate) fn first_check_artifact_ignore_note(root: &Path) -> Option<String> {
     use output::doctor::DoctorArtifactIgnore;
     let roots = analysis::ripr_artifact_roots(root, &root.join("target/ripr/cache"), None);
@@ -3115,8 +3123,26 @@ pub(crate) fn first_check_artifact_ignore_note(root: &Path) -> Option<String> {
         verdict => verdict,
     };
     match verdict {
-        DoctorArtifactIgnore::Unignored { warning } => Some(warning),
+        DoctorArtifactIgnore::Unignored { warning } => Some(note_with_tracking_probe(
+            warning,
+            probe_artifact_tracking(root, &roots),
+            root,
+        )),
         _ => None,
+    }
+}
+
+/// One clause on the unignored note when the tracked condition holds
+/// (#12432). `Untracked` keeps the note byte-identical; `NotChecked` keeps
+/// the entry advice without claiming a cure git could not establish.
+fn note_with_tracking_probe(warning: String, probe: ArtifactTrackingProbe, root: &Path) -> String {
+    match probe {
+        ArtifactTrackingProbe::Tracked(tracked_roots) => format!(
+            "{warning} These files are already tracked by git, so adding the line alone \
+             will not remove them; untrack them with: {}",
+            analysis::untrack_artifacts_command(root, &tracked_roots),
+        ),
+        ArtifactTrackingProbe::Untracked | ArtifactTrackingProbe::NotChecked => warning,
     }
 }
 
@@ -3133,6 +3159,41 @@ fn ripr_artifact_tracking(
     artifact_roots: &[PathBuf],
 ) -> output::doctor::DoctorArtifactTracking {
     use output::doctor::DoctorArtifactTracking;
+    match probe_artifact_tracking(root, artifact_roots) {
+        ArtifactTrackingProbe::NotChecked => DoctorArtifactTracking::NotChecked,
+        ArtifactTrackingProbe::Untracked => DoctorArtifactTracking::Untracked,
+        ArtifactTrackingProbe::Tracked(tracked_roots) => {
+            let untrack = analysis::untrack_artifacts_command(root, &tracked_roots);
+            DoctorArtifactTracking::Tracked {
+                warning: format!(
+                    "~ ripr artifacts under {} are tracked by git; `git add -A` keeps \
+                     refreshing them and `ripr check` diffs them. Untrack them with: {untrack}",
+                    artifact_roots_display(
+                        &tracked_roots
+                            .iter()
+                            .map(|root| analysis::artifact_root_pathspec(root))
+                            .collect::<Vec<_>>()
+                    )
+                ),
+            }
+        }
+    }
+}
+
+/// What git's index establishes about files under ripr's artifact roots.
+/// `Tracked` carries only the roots the index actually names, so the cure
+/// built from them cannot fail with "did not match any files" (PR #8901
+/// review, devin #4). Shared by doctor's tracking fact and the
+/// first-`check` ignore note (#12432) so both surfaces answer from one
+/// probe.
+enum ArtifactTrackingProbe {
+    Tracked(Vec<PathBuf>),
+    Untracked,
+    NotChecked,
+}
+
+fn probe_artifact_tracking(root: &Path, artifact_roots: &[PathBuf]) -> ArtifactTrackingProbe {
+    use ArtifactTrackingProbe::*;
     // The index can name tracked files whose directory was deleted from the
     // worktree, so this probe does not depend on any artifact root existing.
     // Configured roots are literal paths, never git pathspec globs: a root
@@ -3166,13 +3227,13 @@ fn ripr_artifact_tracking(
         1024 * 1024,
     ) {
         Ok(probe) => probe,
-        Err(_) => return DoctorArtifactTracking::NotChecked,
+        Err(_) => return NotChecked,
     };
     if !probe.status.success() {
-        return DoctorArtifactTracking::NotChecked;
+        return NotChecked;
     }
     if probe.stdout.is_empty() {
-        return DoctorArtifactTracking::Untracked;
+        return Untracked;
     }
     // Keep only the roots the index actually names: `git rm --cached`
     // rejects a pathspec with no indexed matches, so an untracked default
@@ -3193,19 +3254,7 @@ fn ripr_artifact_tracking(
     if tracked_roots.is_empty() {
         tracked_roots = artifact_roots.to_vec();
     }
-    let untrack = untrack_artifacts_command(root, &tracked_roots);
-    DoctorArtifactTracking::Tracked {
-        warning: format!(
-            "~ ripr artifacts under {} are tracked by git; `git add -A` keeps \
-             refreshing them and `ripr check` diffs them. Untrack them with: {untrack}",
-            artifact_roots_display(
-                &tracked_roots
-                    .iter()
-                    .map(|root| analysis::artifact_root_pathspec(root))
-                    .collect::<Vec<_>>()
-            )
-        ),
-    }
+    Tracked(tracked_roots)
 }
 
 /// How the warning names the artifact roots: `a and b` for two, comma
@@ -3220,34 +3269,10 @@ fn artifact_roots_display(roots: &[String]) -> String {
     }
 }
 
-/// The untrack command doctor prints, bound to the selected root: pasted from
-/// another directory, a bare `git rm --cached` would untrack files in whatever
-/// repository the shell happens to be in (#8301 review). The default `.` root
-/// keeps the short form. The command pins the global `--literal-pathspecs`
-/// switch and passes each root PLAIN: shell quoting only protects the
-/// argument from the shell, while git pathspec magic (`*`, `?`, `[`)
-/// would otherwise wildcard-match a configured root like `build/cache*`
-/// against `build/cache1` (PR #8901 review, graphite finding) — and the
-/// earlier glob-escaped form (`build/cache\*`) does not match the
-/// literal-star directory's indexed descendants at all (verified against
-/// git 2.47; the escaped form fails both with and without
-/// `--literal-pathspecs`). Plain roots under `--literal-pathspecs` match
-/// literal-star directories and glob-free roots alike.
-fn untrack_artifacts_command(root: &Path, artifact_roots: &[PathBuf]) -> String {
-    let pathspecs = artifact_roots
-        .iter()
-        .map(|root| crate::agent::loop_commands::shell_arg(&analysis::artifact_root_pathspec(root)))
-        .collect::<Vec<_>>()
-        .join(" ");
-    if root == Path::new(".") {
-        format!("git --literal-pathspecs rm --cached -r -- {pathspecs}")
-    } else {
-        format!(
-            "git -C {} --literal-pathspecs rm --cached -r -- {pathspecs}",
-            crate::agent::loop_commands::shell_arg(&output::path::human_path(root))
-        )
-    }
-}
+// The untrack command doctor prints is the shared artifact-surface builder
+// `analysis::untrack_artifacts_command` (#12432): doctor's tracking fact,
+// the first-`check` ignore note, and the tracked-cache-base advisory spell
+// one cure through one owner.
 
 /// Why a cache entry could not be created under `cache_dir`, or `None` when
 /// one could. For every directory a production cache writes entries into,
@@ -5595,6 +5620,13 @@ mod tests {
         }
         let note = first_check_artifact_ignore_note(&root).ok_or("expected a note")?;
         assert!(note.contains("/target/ripr/"), "{note}");
+        // Nothing under the roots is tracked here, so the note must not name
+        // a cure whose command would fail with "did not match any files"
+        // (#12432 wrong-repair-signal control).
+        assert!(
+            !note.contains("rm --cached"),
+            "untracked artifacts must not get the untrack clause: {note}"
+        );
         std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
             .map_err(|error| error.to_string())?;
         assert_eq!(first_check_artifact_ignore_note(&root), None);
@@ -5604,6 +5636,129 @@ mod tests {
         assert_eq!(first_check_artifact_ignore_note(&bare), None);
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&bare);
+        Ok(())
+    }
+
+    /// A minimal Cargo scratch repository whose ignore rules cover nothing;
+    /// `commit_target` decides whether the index already holds a file under
+    /// `target/` — the trap's committed state (#12432).
+    fn cargo_scratch_repo(label: &str, commit_target: bool) -> Result<PathBuf, String> {
+        let root = unique_command_test_dir(label);
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("target/ripr/cache"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("target/ripr/cache/committed-entry.json"), "{}")
+            .map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init", "-b", "main"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        crate::git::run_git(&root, &["add", "Cargo.toml", "src/lib.rs"])
+            .map_err(|error| error.to_string())?;
+        if commit_target {
+            crate::git::run_git(&root, &["add", "--", "target"])
+                .map_err(|error| error.to_string())?;
+        }
+        crate::git::run_git(&root, &["commit", "-q", "-m", "base"])
+            .map_err(|error| error.to_string())?;
+        Ok(root)
+    }
+
+    /// #12432 red/green: with a file under `target/` already committed, the
+    /// first-`check` note keeps the entry advice AND names the exact bound
+    /// untrack command — adding the ignore line alone cannot cure the trap.
+    /// The shared builder's `--literal-pathspecs` + `--` shape is pinned here
+    /// because a bare `git rm -r --cached target` pasted from another
+    /// directory untracks the wrong repository (#8301).
+    #[test]
+    fn first_check_note_names_the_untrack_cure_once_artifacts_are_tracked() -> Result<(), String> {
+        let root = cargo_scratch_repo("artifact-first-check-tracked", true)?;
+        let note = first_check_artifact_ignore_note(&root).ok_or("expected a note")?;
+        assert!(
+            note.contains("Add this line to .gitignore: /target/"),
+            "{note}"
+        );
+        assert!(
+            note.contains("git -C ")
+                && note.contains("--literal-pathspecs rm --cached -r -- target/ripr"),
+            "{note}"
+        );
+        assert!(note.contains("already tracked by git"), "{note}");
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #12432 control: the same setup without the committed target file
+    /// keeps today's note — no untrack command, because on a first run
+    /// nothing is committed and the command would fail.
+    #[test]
+    fn first_check_note_without_tracked_artifacts_has_no_untrack_clause() -> Result<(), String> {
+        let root = cargo_scratch_repo("artifact-first-check-untracked", false)?;
+        let note = first_check_artifact_ignore_note(&root).ok_or("expected a note")?;
+        assert!(
+            note.contains("Add this line to .gitignore: /target/"),
+            "{note}"
+        );
+        assert!(
+            !note.contains("rm --cached"),
+            "untracked artifacts must not get the untrack clause: {note}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #12432 control matrix for the clause builder itself: only a positive
+    /// `Tracked` probe adds the cure; `Untracked` and `NotChecked` keep the
+    /// entry advice without claiming a fact the probe did not establish.
+    #[test]
+    fn note_cure_clause_follows_the_tracking_verdict() -> Result<(), String> {
+        let warning = "warning text".to_string();
+        assert_eq!(
+            note_with_tracking_probe(
+                warning.clone(),
+                ArtifactTrackingProbe::Tracked(vec![PathBuf::from("target")]),
+                Path::new("."),
+            ),
+            format!(
+                "{warning} These files are already tracked by git, so adding the line alone \
+                 will not remove them; untrack them with: git --literal-pathspecs rm \
+                 --cached -r -- target"
+            )
+        );
+        assert_eq!(
+            note_with_tracking_probe(
+                warning.clone(),
+                ArtifactTrackingProbe::Untracked,
+                Path::new("."),
+            ),
+            warning
+        );
+        assert_eq!(
+            note_with_tracking_probe(
+                warning.clone(),
+                ArtifactTrackingProbe::NotChecked,
+                Path::new("."),
+            ),
+            warning
+        );
         Ok(())
     }
 
@@ -5807,16 +5962,16 @@ mod tests {
         // The default root keeps the short form: there is no other repository
         // to confuse it with.
         assert_eq!(
-            untrack_artifacts_command(Path::new("."), &default_roots),
+            analysis::untrack_artifacts_command(Path::new("."), &default_roots),
             "git --literal-pathspecs rm --cached -r -- target/ripr"
         );
         // Any other root is named, so the command cannot act elsewhere.
         assert_eq!(
-            untrack_artifacts_command(Path::new("other-repo"), &default_roots),
+            analysis::untrack_artifacts_command(Path::new("other-repo"), &default_roots),
             "git -C other-repo --literal-pathspecs rm --cached -r -- target/ripr"
         );
         // A root with spaces must stay one shell word.
-        let spaced = untrack_artifacts_command(Path::new("my repo"), &default_roots);
+        let spaced = analysis::untrack_artifacts_command(Path::new("my repo"), &default_roots);
         assert!(
             spaced.starts_with("git -C ") && !spaced.starts_with("git -C my repo "),
             "{spaced}"
@@ -5831,14 +5986,15 @@ mod tests {
             PathBuf::from(".ripr-cache"),
         ];
         assert_eq!(
-            untrack_artifacts_command(Path::new("."), &relocated),
+            analysis::untrack_artifacts_command(Path::new("."), &relocated),
             "git --literal-pathspecs rm --cached -r -- target/ripr .ripr-cache"
         );
         // PR #8901 security review (devin #9): shell metacharacters in a
         // configured root must stay inside one quoted shell word, so pasting
         // the printed remedy cannot execute injected text.
         let hostile = "build/cache;touch ripr-pwned";
-        let hostile_command = untrack_artifacts_command(Path::new("."), &[PathBuf::from(hostile)]);
+        let hostile_command =
+            analysis::untrack_artifacts_command(Path::new("."), &[PathBuf::from(hostile)]);
         let raw_suffix = format!("-- {hostile}");
         assert!(
             !hostile_command.ends_with(raw_suffix.as_str()),

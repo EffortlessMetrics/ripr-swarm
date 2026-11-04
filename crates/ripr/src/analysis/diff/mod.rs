@@ -43,5 +43,5 @@ pub(crate) use parse::{
 pub(crate) use path::diff_path_identity_key_with;
 pub(crate) use path::{
     artifact_root_gitignore_entry, artifact_root_pathspec, diff_path_identity_key,
-    is_ripr_artifact_path_under, ripr_artifact_roots,
+    is_ripr_artifact_path_under, ripr_artifact_roots, untrack_artifacts_command,
 };
