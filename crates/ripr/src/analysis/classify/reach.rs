@@ -710,8 +710,8 @@ fn count_namings_for_owner(source: &str, owner: &FunctionSummary) -> usize {
 /// Whether a mention of `ident` at byte `at` inside a comment or string reads
 /// as a reference to a function rather than prose: it is followed by `(`, `)`,
 /// `,`, `;`, `}`, `]`, `:` or `as` (a doctest call, fn pointer or
-/// `use .. as` alias), or it is the whole path of a quoted string
-/// (`#[serde(default = "kb")]`, `"defaults::kb"`), which names a function by
+/// `use .. as` alias), or it is the whole path of a quoted string assigned with `=`
+/// (`#[serde(default = "kb")]`, `with = "defaults::kb"`), which names a function by
 /// string. `"4.1 kb"` is prose: it has a space before the name.
 fn reference_shaped_outside_code(source: &str, at: usize, ident: &str) -> bool {
     let after = &source[at + ident.len()..];
@@ -728,7 +728,12 @@ fn reference_shaped_outside_code(source: &str, at: usize, ident: &str) -> bool {
     let path_start = source[..at]
         .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_' || c == ':')
         .len();
-    after.starts_with('"') && source[..path_start].ends_with('"')
+    // The opening quote must follow `=` (`default = "kb"`, `with = "m::kb"`):
+    // a quoted word in a call argument (`assert_eq!("kb", ..)`) is a label.
+    after.starts_with('"')
+        && source[..path_start]
+            .strip_suffix('"')
+            .is_some_and(|before| before.trim_end().ends_with('='))
 }
 
 /// The identifiers of `source` (see [`identifiers_outside_fn_definition`])
@@ -1743,6 +1748,11 @@ mod tests {
         ));
         assert!(verdict(
             &format!("{free}/// use bytesize::kb as k;\n/// assert_eq!(k(4), 4000);\n"),
+            true
+        ));
+        // A quoted unit label in a call argument is not a path reference.
+        assert!(!verdict(
+            &format!("{free}fn t() {{ assert_eq!(\"kb\", \"kb\"); }}\n"),
             true
         ));
         // The same `Type::kb` mention keeps a non-free (or unestablished) owner
