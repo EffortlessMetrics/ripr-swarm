@@ -1019,7 +1019,7 @@ impl<'a> Index<'a> {
         let info = self.module(module).ok_or("outside_workspace")?;
         if self.mode == GuardMode::Enforce {
             if info.refusal.is_some() {
-                return Err("guard_refused_file");
+                return Err("file_guarded");
             }
             // Same-file rebinding the workspace-wide writes do not see:
             // `global helper; helper = f` or `Page.render = other`.
