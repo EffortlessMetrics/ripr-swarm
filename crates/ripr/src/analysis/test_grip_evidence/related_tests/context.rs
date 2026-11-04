@@ -7,6 +7,16 @@ use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
 use ra_ap_syntax::{AstNode, ast, ast::HasName};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
+/// Outcome of the bounded generic-shadow helper graph. `Legacy` means this
+/// targeted rule did not find a graph path and leaves prior behavior intact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::analysis::test_grip_evidence) enum HelperPathOutcome {
+    Legacy,
+    Proven,
+    Blocked,
+    Unsettled,
+}
+
 /// Precomputed per-test facts for repo seam evidence consumers. This
 /// avoids repeatedly tokenizing the same test assertions and import
 /// lines while classifying every seam in a workspace.
@@ -43,7 +53,7 @@ pub(crate) struct CompactGripContext<'a> {
     name_module_candidates: NameModuleCandidateIndex,
     inherent_helper_reach: Mutex<BTreeMap<(usize, String), bool>>,
     free_helper_alias_reach: Mutex<BTreeMap<(PathBuf, usize, String, String), bool>>,
-    free_helper_shadow: Mutex<BTreeMap<(PathBuf, usize, String, String), bool>>,
+    free_helper_shadow: Mutex<BTreeMap<(PathBuf, usize, String, String), HelperPathOutcome>>,
     direct_helper_edges: HelperOwnerCallsByFile,
     direct_helper_files: BTreeMap<String, BTreeSet<PathBuf>>,
     owner_named_cache: Mutex<BTreeMap<String, Vec<usize>>>,
@@ -727,11 +737,11 @@ impl<'a> CompactGripContext<'a> {
         answer
     }
 
-    pub(in crate::analysis::test_grip_evidence) fn generic_shadow_blocks_owner(
+    pub(in crate::analysis::test_grip_evidence) fn generic_shadow_path_outcome(
         &self,
         test: &TestSummary,
         owner: &FunctionSummary,
-    ) -> bool {
+    ) -> HelperPathOutcome {
         let key = (
             test.file.clone(),
             test.start_line,
@@ -741,18 +751,22 @@ impl<'a> CompactGripContext<'a> {
         if let Some(answer) = memo(&self.free_helper_shadow).get(&key) {
             return *answer;
         }
-        let answer = !self.renamed_helper_reaches_owner(test, owner)
-            && crate::analysis::classify::shared_owner_call_identity(self.index, owner)
-                .is_some_and(|identity| {
-                    generic_shadow_blocks_graph_paths(
-                        test,
-                        owner,
-                        &identity,
-                        self.index,
-                        &self.direct_helper_edges,
-                        &self.direct_helper_files,
-                    )
-                });
+        let answer = if self.renamed_helper_reaches_owner(test, owner) {
+            HelperPathOutcome::Proven
+        } else if let Some(identity) =
+            crate::analysis::classify::shared_owner_call_identity(self.index, owner)
+        {
+            generic_shadow_graph_path_outcome(
+                test,
+                owner,
+                &identity,
+                self.index,
+                &self.direct_helper_edges,
+                &self.direct_helper_files,
+            )
+        } else {
+            HelperPathOutcome::Legacy
+        };
         memo(&self.free_helper_shadow).insert(key, answer);
         answer
     }
@@ -1707,23 +1721,30 @@ fn call_executes_in_function(call: &ast::CallExpr, function: &ast::Fn) -> bool {
 /// Decide only paths represented by the unclosed helper-name graph. The
 /// name graph supplies candidate edges; executable syntax and owner identity
 /// decide each edge. Unknown paths retain the prior candidate.
-fn generic_shadow_blocks_graph_paths(
+fn generic_shadow_graph_path_outcome(
     test: &TestSummary,
     owner: &FunctionSummary,
     identity: &crate::analysis::classify::OwnerCallIdentity,
     index: &RustIndex,
     direct: &HelperOwnerCallsByFile,
     direct_files: &BTreeMap<String, BTreeSet<PathBuf>>,
-) -> bool {
+) -> HelperPathOutcome {
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum PathResult {
         None,
         Blocked,
+        Unsettled,
+        BlockedUnsettled,
         Possible,
     }
     fn merge(left: PathResult, right: PathResult) -> PathResult {
         match (left, right) {
             (PathResult::Possible, _) | (_, PathResult::Possible) => PathResult::Possible,
+            (PathResult::BlockedUnsettled, _)
+            | (_, PathResult::BlockedUnsettled)
+            | (PathResult::Blocked, PathResult::Unsettled)
+            | (PathResult::Unsettled, PathResult::Blocked) => PathResult::BlockedUnsettled,
+            (PathResult::Unsettled, _) | (_, PathResult::Unsettled) => PathResult::Unsettled,
             (PathResult::Blocked, _) | (_, PathResult::Blocked) => PathResult::Blocked,
             _ => PathResult::None,
         }
@@ -1828,7 +1849,12 @@ fn generic_shadow_blocks_graph_paths(
         match target {
             CallTarget::Owner => child,
             CallTarget::Other => PathResult::None,
-            CallTarget::Unsettled if child != PathResult::None => PathResult::Possible,
+            CallTarget::Unsettled
+                if child == PathResult::Blocked || child == PathResult::BlockedUnsettled =>
+            {
+                PathResult::BlockedUnsettled
+            }
+            CallTarget::Unsettled if child != PathResult::None => PathResult::Unsettled,
             CallTarget::Unsettled => PathResult::None,
         }
     }
@@ -1843,11 +1869,11 @@ fn generic_shadow_blocks_graph_paths(
         visited: &mut BTreeSet<(PathBuf, usize, String)>,
     ) -> PathResult {
         if remaining == 0 {
-            return PathResult::Possible;
+            return PathResult::Unsettled;
         }
         let key = (helper.file.clone(), helper.start_line, helper.name.clone());
         if !visited.insert(key.clone()) {
-            return PathResult::Possible;
+            return PathResult::Unsettled;
         }
         let Some(edges) = direct
             .get(&helper.file)
@@ -1858,39 +1884,43 @@ fn generic_shadow_blocks_graph_paths(
         };
         let Some(facts) = index.files().get(&helper.file) else {
             visited.remove(&key);
-            return PathResult::Possible;
+            return PathResult::Unsettled;
         };
         let caller = helper_call_view(helper);
         let mut result = PathResult::None;
         // A renamed import may be an additional path to the target even if
         // the terminal-name graph cannot attribute it to this call.
         let imports = direct_function_import_aliases(&facts.source);
-        if helper.calls.iter().any(|call| {
-            imports
+        for call in &helper.calls {
+            if imports
                 .get(&call.name)
                 .and_then(|binding| binding.binding_at(call.line))
-                .is_some_and(|binding| {
-                    binding.name == owner.name
-                        && crate::analysis::classify::resolve_renamed_owner_call(
-                            index, owner, &caller, &call.name, call.line,
-                        ) != CallTarget::Other
-                })
-        }) {
-            result = PathResult::Possible;
+                .is_some_and(|binding| binding.name == owner.name)
+            {
+                let candidate = match crate::analysis::classify::resolve_renamed_owner_call(
+                    index, owner, &caller, &call.name, call.line,
+                ) {
+                    CallTarget::Owner => PathResult::Possible,
+                    CallTarget::Other => PathResult::None,
+                    CallTarget::Unsettled => PathResult::Unsettled,
+                };
+                result = merge(result, candidate);
+            }
         }
         if edges.contains(&owner.name) {
             let Some(parse) = parse_clean_source_file(&helper.body) else {
                 visited.remove(&key);
-                return PathResult::Possible;
+                return PathResult::Unsettled;
             };
             let Some(item) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
                 visited.remove(&key);
-                return PathResult::Possible;
+                return PathResult::Unsettled;
             };
             let params = crate::analysis::syntax::function_type_param_names(&item);
             let found = std::cell::Cell::new(false);
             let shadowed = std::cell::Cell::new(false);
             let possible = std::cell::Cell::new(false);
+            let unsettled = std::cell::Cell::new(false);
             crate::analysis::classify::executable_call_probe(&caller, index, &|node, _| {
                 let Some(call) = ast::CallExpr::cast(node) else {
                     return false;
@@ -1922,17 +1952,25 @@ fn generic_shadow_blocks_graph_paths(
                     .collect();
                 if segments.first().is_some_and(|root| params.contains(root)) {
                     shadowed.set(true);
-                } else if identity.resolve_call(&caller, index, &segments) != CallTarget::Other {
-                    possible.set(true);
+                } else {
+                    match identity.resolve_call(&caller, index, &segments) {
+                        CallTarget::Owner => possible.set(true),
+                        CallTarget::Unsettled => unsettled.set(true),
+                        CallTarget::Other => {}
+                    }
                 }
                 false
             });
             result = merge(
                 result,
-                if !found.get() || possible.get() || !shadowed.get() {
+                if possible.get() {
                     PathResult::Possible
-                } else {
+                } else if shadowed.get() && unsettled.get() {
+                    PathResult::BlockedUnsettled
+                } else if shadowed.get() {
                     PathResult::Blocked
+                } else {
+                    PathResult::Unsettled
                 },
             );
         }
@@ -1943,7 +1981,7 @@ fn generic_shadow_blocks_graph_paths(
             if let Some(files) = direct_files.get(name) {
                 for file in files.iter().filter(|file| *file != &helper.file) {
                     let Some(other_facts) = index.files().get(file) else {
-                        result = PathResult::Possible;
+                        result = merge(result, PathResult::Unsettled);
                         continue;
                     };
                     for other in other_facts.functions.iter().filter(|f| f.name == *name) {
@@ -1968,7 +2006,7 @@ fn generic_shadow_blocks_graph_paths(
             let matches: Vec<_> = facts.functions.iter().filter(|f| f.name == *name).collect();
             if matches.len() != 1 {
                 if matches.len() > 1 {
-                    result = PathResult::Possible;
+                    result = merge(result, PathResult::Unsettled);
                 }
                 continue;
             }
@@ -1991,7 +2029,7 @@ fn generic_shadow_blocks_graph_paths(
                 if free_helper_call_resolves(&caller, next, index) {
                     child
                 } else {
-                    PathResult::Possible
+                    follow(child, CallTarget::Unsettled)
                 },
             );
         }
@@ -1999,7 +2037,7 @@ fn generic_shadow_blocks_graph_paths(
         result
     }
     let Some(facts) = index.files().get(&test.file) else {
-        return false;
+        return HelperPathOutcome::Legacy;
     };
     let mut result = PathResult::None;
     let test_imports = direct_function_import_aliases(&facts.source);
@@ -2008,17 +2046,20 @@ fn generic_shadow_blocks_graph_paths(
             .get(&call.name)
             .and_then(|binding| binding.binding_at(call.line))
         {
-            if import.name == owner.name
-                && crate::analysis::classify::resolve_renamed_owner_call(
+            if import.name == owner.name {
+                let candidate = match crate::analysis::classify::resolve_renamed_owner_call(
                     index, owner, test, &call.name, call.line,
-                ) != CallTarget::Other
-            {
-                result = PathResult::Possible;
+                ) {
+                    CallTarget::Owner => PathResult::Possible,
+                    CallTarget::Other => PathResult::None,
+                    CallTarget::Unsettled => PathResult::Unsettled,
+                };
+                result = merge(result, candidate);
             }
             if let Some(files) = direct_files.get(&import.name) {
                 for file in files {
                     let Some(import_facts) = index.files().get(file) else {
-                        result = PathResult::Possible;
+                        result = merge(result, PathResult::Unsettled);
                         continue;
                     };
                     for target in import_facts
@@ -2052,7 +2093,7 @@ fn generic_shadow_blocks_graph_paths(
         if let Some(files) = direct_files.get(&call.name) {
             for file in files.iter().filter(|file| *file != &test.file) {
                 let Some(other_facts) = index.files().get(file) else {
-                    result = PathResult::Possible;
+                    result = merge(result, PathResult::Unsettled);
                     continue;
                 };
                 for other in other_facts.functions.iter().filter(|f| f.name == call.name) {
@@ -2084,7 +2125,8 @@ fn generic_shadow_blocks_graph_paths(
             })
             .collect();
         if matches.len() != 1 {
-            return false;
+            result = merge(result, PathResult::Unsettled);
+            continue;
         }
         let helper = matches[0];
         let child = visit(
@@ -2105,11 +2147,16 @@ fn generic_shadow_blocks_graph_paths(
             if free_helper_call_resolves(test, helper, index) {
                 child
             } else {
-                PathResult::Possible
+                follow(child, CallTarget::Unsettled)
             },
         );
     }
-    result == PathResult::Blocked
+    match result {
+        PathResult::None => HelperPathOutcome::Legacy,
+        PathResult::Blocked => HelperPathOutcome::Blocked,
+        PathResult::Unsettled | PathResult::BlockedUnsettled => HelperPathOutcome::Unsettled,
+        PathResult::Possible => HelperPathOutcome::Proven,
+    }
 }
 
 /// Prove a same-file helper chain ending in a bare renamed import of this

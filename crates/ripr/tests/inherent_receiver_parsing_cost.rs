@@ -500,10 +500,35 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
         "mod other { pub fn read_as_object() -> Option<u32> { Some(7) } }\ntrait Foreign",
     );
     let local_shadowed_import = unrelated.replace("trait Foreign", "use crate::helpers::read_as_object as unrelated;\ntrait Foreign").replace("    let _ = other::read_as_object(); helpers::read_as_object()", "    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()");
+    let unsettled_alias = local_shadowed_import.replace("trait Foreign", "macro_rules! maybe_bind { () => {} }\ntrait Foreign").replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    maybe_bind!(); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()");
+    let unsettled_with_proven = unsettled_alias.replace(
+        "let _ = unrelated(); helpers::read_as_object()",
+        "let _ = unrelated(); let _ = crate::helpers::read_as_object(); helpers::read_as_object()",
+    );
+    let unsettled_with_nearby = unsettled_alias.replace(
+        "#[test] fn decoy()",
+        "#[test] fn nearby() { assert_eq!(1, 1); }\n    #[test] fn decoy()",
+    );
     let if_let_shadow = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    let _ = other::read_as_object(); if let Some(unrelated) = Some(|| Some(7)) { let _ = unrelated(); } helpers::read_as_object()");
     let match_shadow = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    let _ = other::read_as_object(); match Some(|| Some(7)) { Some(unrelated) => { let _ = unrelated(); }, None => {} } helpers::read_as_object()");
     let for_shadow = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    let _ = other::read_as_object(); for unrelated in [|| Some(7)] { let _ = unrelated(); } helpers::read_as_object()");
     let while_shadow = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    let _ = other::read_as_object(); while let Some(unrelated) = Some(|| Some(7)) { let _ = unrelated(); break; } helpers::read_as_object()");
+    let match_expired = match_shadow.replace(
+        "helpers::read_as_object()\n}",
+        "\n    let _ = unrelated();\n    helpers::read_as_object()\n}",
+    );
+    let for_expired = for_shadow.replace(
+        "helpers::read_as_object()\n}",
+        "\n    let _ = unrelated();\n    helpers::read_as_object()\n}",
+    );
+    let while_expired = while_shadow.replace(
+        "helpers::read_as_object()\n}",
+        "\n    let _ = unrelated();\n    helpers::read_as_object()\n}",
+    );
+    let match_same_line = match_shadow.replace(
+        "helpers::read_as_object()\n}",
+        "let _ = unrelated(); helpers::read_as_object()\n}",
+    );
     let nested_fn_shadow = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    fn unrelated() -> Option<u32> { Some(7) } let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()");
     let expired_shadow_import = local_shadowed_import.replace("    let unrelated = || Some(7); let _ = other::read_as_object(); let _ = unrelated(); helpers::read_as_object()", "    { let unrelated = || Some(7); let _ = unrelated(); }\n    let _ = unrelated(); helpers::read_as_object()");
     let alias_shadow = alias
@@ -567,6 +592,15 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
             "benign(); assert_eq!(route_read_as_object::<Fake>()",
         );
     let alternate_real = unrelated.replace("#[cfg(test)]", "fn real_read_as_object() -> Option<u32> { crate::helpers::read_as_object() }\n#[cfg(test)]").replace("assert_eq!(route_read_as_object::<Fake>()", "assert_eq!(real_read_as_object(), Some(7)); assert_eq!(route_read_as_object::<Fake>()");
+    let proven_then_ambiguous = alternate_real
+        .replace(
+            "#[cfg(test)]",
+            "mod a { pub fn duplicate() {} } mod b { pub fn duplicate() {} }\n#[cfg(test)]",
+        )
+        .replace(
+            "assert_eq!(route_read_as_object::<Fake>()",
+            "a::duplicate(); assert_eq!(route_read_as_object::<Fake>()",
+        );
     let macro_positive = source.replace(
         "    helpers::read_as_object()",
         "    assert_eq!(crate::helpers::read_as_object(), Some(7)); helpers::read_as_object()",
@@ -619,6 +653,7 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
             "unrelated(); assert_eq!(route_read_as_object::<Fake>()",
         );
     let helper_file = "use super::JsonValue;\npub fn read_as_object() -> Option<u32> { let value = JsonValue::Object(7); value.as_object() }\n";
+    let mut failures = Vec::new();
     for (case, src, expected, extra) in [
         ("shadow", &source, false, None),
         ("module", &module, true, None),
@@ -626,10 +661,17 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
         ("mixed", &mixed, true, None),
         ("unrelated", &unrelated, false, None),
         ("local_shadowed_import", &local_shadowed_import, false, None),
+        ("unsettled_alias", &unsettled_alias, false, None),
+        ("unsettled_with_nearby", &unsettled_with_nearby, false, None),
+        ("unsettled_with_proven", &unsettled_with_proven, true, None),
         ("if_let_shadow", &if_let_shadow, false, None),
         ("match_shadow", &match_shadow, false, None),
         ("for_shadow", &for_shadow, false, None),
         ("while_shadow", &while_shadow, false, None),
+        ("match_expired", &match_expired, true, None),
+        ("for_expired", &for_expired, true, None),
+        ("while_expired", &while_expired, true, None),
+        ("match_same_line", &match_same_line, true, None),
         ("nested_fn_shadow", &nested_fn_shadow, false, None),
         ("expired_shadow_import", &expired_shadow_import, true, None),
         ("sibling_rival", &sibling_rival, false, None),
@@ -647,6 +689,7 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
         ("extra_helper_nested", &extra_helper_nested, false, None),
         ("extra_helper_external", &extra_helper_external, false, None),
         ("alternate_real", &alternate_real, true, None),
+        ("proven_then_ambiguous", &proven_then_ambiguous, true, None),
         ("macro_positive", &macro_positive, true, None),
         ("macro_discard", &macro_discard, false, None),
         ("macro_message", &macro_message, false, None),
@@ -741,34 +784,61 @@ fn generic_module_shadow_keeps_full_and_compact_exposure_honest() -> Result<(), 
                     && s["expression"] == "value.as_object()"
             })
             .ok_or("missing module helper seam")?;
-        assert_eq!(
-            seam["evidence"]["reach"] == "yes",
-            expected,
-            "{case}: {seam}"
-        );
-        assert_eq!(
-            seam["grip_class"] == "strongly_gripped",
-            expected,
-            "{case}: {seam}"
-        );
+        if case == "unsettled_alias" || case == "unsettled_with_nearby" {
+            if seam["evidence"]["reach"] == "no" {
+                failures.push(format!("{case}: unsettled reach was no"));
+            }
+            for stage in ["activate", "propagate", "observe", "discriminate"] {
+                if seam["evidence"][stage] == "yes" {
+                    failures.push(format!("{case}: unsettled {stage} was yes"));
+                }
+            }
+            if !seam["related_tests"].as_array().is_some_and(|tests| {
+                tests.iter().all(|test| {
+                    test["relation_reason"] != "helper_owner_call"
+                        || test["relation_confidence"] != "high"
+                })
+            }) {
+                failures.push(format!(
+                    "{case}: unsettled helper relation was high confidence"
+                ));
+            }
+        }
+        if (seam["evidence"]["reach"] == "yes") != expected {
+            failures.push(format!(
+                "{case}: reach={}, expected yes={expected}",
+                seam["evidence"]["reach"]
+            ));
+        }
+        if (seam["grip_class"] == "strongly_gripped") != expected {
+            failures.push(format!(
+                "{case}: grip={}, expected strong={expected}",
+                seam["grip_class"]
+            ));
+        }
         if case == "alias_rival" {
             let other = seams
                 .iter()
                 .find(|s| s["owner"] == "src/lib.rs::other::read_as_object")
                 .ok_or("missing rival seam")?;
-            assert_ne!(
-                other["evidence"]["reach"], "yes",
-                "alias must not credit rival: {other}"
-            );
+            if other["evidence"]["reach"] == "yes" {
+                failures.push(format!("{case}: alias credited rival"));
+            }
         }
         for (class, count) in compact["metrics"]["grip_class"]
             .as_object()
             .ok_or("missing compact counts")?
         {
-            assert_eq!(full["metrics"][class], *count, "{case}: {class}");
+            if full["metrics"][class] != *count {
+                failures.push(format!("{case}: full/compact mismatch for {class}"));
+            }
         }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }
 
 /// Wall-time probe for #8005. Ignored: it measures rather than asserts, so

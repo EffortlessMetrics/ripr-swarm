@@ -677,12 +677,50 @@ fn credited_related_tests<'a>(
         .collect()
 }
 
+/// A helper candidate with unresolved call identity may be listed by the
+/// graph, but it cannot lend owner-dependent evidence or a confirmed relation.
+fn owner_path_is_eligible(
+    test: &TestSummary,
+    reason: RelationReason,
+    owner: Option<&FunctionSummary>,
+    context: &CompactGripContext<'_>,
+) -> bool {
+    reason != RelationReason::HelperOwnerCall
+        || owner.is_none_or(|owner| {
+            owner.impl_context != FunctionImplContext::Free
+                || context.generic_shadow_path_outcome(test, owner)
+                    != related_tests::context::HelperPathOutcome::Unsettled
+        })
+}
+
+fn unresolved_path_stage() -> StageEvidence {
+    StageEvidence::new(
+        StageState::Unknown,
+        Confidence::Low,
+        "The related helper path has unresolved call identity; its owner-dependent evidence is withheld".to_string(),
+    )
+}
+
 fn evidence_for_seam_with_context(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
     let mut related_with_reason = find_related_tests_with_context(seam, context);
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    let all_related_reasons: Vec<(&TestSummary, RelationReason)> = related_with_reason
+        .iter()
+        .map(|(indexed, reason)| (indexed.test, *reason))
+        .collect();
+    let had_unsettled = all_related_reasons
+        .iter()
+        .any(|(test, reason)| !owner_path_is_eligible(test, *reason, owner_fn, context));
+    related_with_reason.retain(|(indexed, reason)| {
+        owner_path_is_eligible(indexed.test, *reason, owner_fn, context)
+    });
+    let only_unsettled = had_unsettled
+        && !related_with_reason
+            .iter()
+            .any(|(_, reason)| relation_establishes_reach(*reason, owner_fn.is_some()));
     let best_oracles =
         sort_related_tests_for_seam(seam, context, owner_fn, &mut related_with_reason);
     let related_indexed: Vec<&CompactTest<'_>> = related_with_reason
@@ -696,8 +734,8 @@ fn evidence_for_seam_with_context(
         .iter()
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
-    let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, observed_values, missing_discriminators) =
+    let reach = reach_evidence(seam, &all_related_reasons, owner_fn, context);
+    let (mut activate, mut observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
     let refuse = refuses_other_function_oracle(
@@ -719,9 +757,17 @@ fn evidence_for_seam_with_context(
         claims_pin.as_ref(),
     );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
-    let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
-    let observe = observe_evidence(&credited);
-    let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let mut propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let mut observe = observe_evidence(&credited);
+    let mut discriminate =
+        discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    if only_unsettled {
+        observed_values.clear();
+        activate = unresolved_path_stage();
+        propagate = unresolved_path_stage();
+        observe = unresolved_path_stage();
+        discriminate = unresolved_path_stage();
+    }
 
     // One admission per test file for this seam: the verdict depends only on
     // the (test file, seam file) pair, and a file's tests share it (#5361).
@@ -782,6 +828,9 @@ fn evidence_for_seam_with_context(
         context.index,
     ) {
         missing_discriminators.push(fact);
+    }
+    if only_unsettled {
+        missing_discriminators.clear();
     }
 
     let mut evidence = TestGripEvidence {
@@ -2497,23 +2546,43 @@ pub(crate) fn compact_evidence_for_seam(
     context: &CompactGripContext<'_>,
 ) -> TestGripEvidence {
     let ranked = find_related_tests_ranked(seam, context);
-    let related_reasons: Vec<(&TestSummary, RelationReason)> = ranked
+    let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    let all_related_reasons: Vec<(&TestSummary, RelationReason)> = ranked
         .iter()
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
-    let related_indexed: Vec<&CompactTest<'_>> = ranked
+    let had_unsettled = all_related_reasons
+        .iter()
+        .any(|(test, reason)| !owner_path_is_eligible(test, *reason, owner_fn, context));
+    let eligible: Vec<_> = ranked
+        .iter()
+        .filter(|(indexed, reason)| {
+            owner_path_is_eligible(indexed.test, *reason, owner_fn, context)
+        })
+        .copied()
+        .collect();
+    let only_unsettled = had_unsettled
+        && !eligible
+            .iter()
+            .any(|(_, reason)| relation_establishes_reach(*reason, owner_fn.is_some()));
+    let related_reasons: Vec<(&TestSummary, RelationReason)> = eligible
+        .iter()
+        .map(|(indexed, reason)| (indexed.test, *reason))
+        .collect();
+    let related_indexed: Vec<&CompactTest<'_>> = eligible
         .iter()
         .take(COMPACT_RELATED_TEST_LIMIT)
         .map(|(indexed, _reason)| *indexed)
         .collect();
     let related: Vec<&TestSummary> = related_indexed.iter().map(|indexed| indexed.test).collect();
-    let owner_fn = context.owner_function(seam.file(), seam.display_line());
-
-    let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, missing_discriminators) =
+    let reach = reach_evidence(seam, &all_related_reasons, owner_fn, context);
+    let (mut activate, mut missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
+    if only_unsettled {
+        missing_discriminators.clear();
+    }
     let pin_syntax = context.pin_syntax();
-    let limited_reasons: Vec<(&TestSummary, RelationReason)> = ranked
+    let limited_reasons: Vec<(&TestSummary, RelationReason)> = eligible
         .iter()
         .take(COMPACT_RELATED_TEST_LIMIT)
         .map(|(indexed, reason)| (indexed.test, *reason))
@@ -2539,9 +2608,16 @@ pub(crate) fn compact_evidence_for_seam(
         claims_pin.as_ref(),
     );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
-    let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
-    let observe = observe_evidence(&credited);
-    let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let mut propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let mut observe = observe_evidence(&credited);
+    let mut discriminate =
+        discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    if only_unsettled {
+        activate = unresolved_path_stage();
+        propagate = unresolved_path_stage();
+        observe = unresolved_path_stage();
+        discriminate = unresolved_path_stage();
+    }
     let statically_contradicted_related_tests = related
         .iter()
         .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
@@ -2561,7 +2637,7 @@ pub(crate) fn compact_evidence_for_seam(
         new_test_target: None,
     };
     // #8600: read over every ranked related test, before the compact cap.
-    let saturated = call_budget::any_saturated(ranked.iter().map(|(indexed, _)| indexed.test));
+    let saturated = call_budget::any_saturated(eligible.iter().map(|(indexed, _)| indexed.test));
     call_budget::withhold(&mut evidence, saturated);
     // #10703: the same named limit `check` applies to a `#[should_panic]`
     // test whose panic may be the changed code's.
@@ -2612,9 +2688,26 @@ fn reach_evidence(
     if related.is_empty() {
         return reach_limit::reach_without_related_tests(seam.owner(), owner_fn, context);
     }
+    let relation_reaches = |test: &TestSummary, reason: RelationReason| {
+        relation_establishes_reach(reason, owner_fn.is_some())
+            && owner_path_is_eligible(test, reason, owner_fn, context)
+    };
     let reaches = related
         .iter()
-        .any(|(_, reason)| relation_establishes_reach(*reason, owner_fn.is_some()));
+        .any(|(test, reason)| relation_reaches(test, *reason));
+    let unsettled_helper = related
+        .iter()
+        .any(|(test, reason)| !owner_path_is_eligible(test, *reason, owner_fn, context));
+    if !reaches && unsettled_helper {
+        return StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            format!(
+                "A helper path toward `{}` has unresolved call identity.",
+                seam.owner()
+            ),
+        );
+    }
     if !reaches {
         let shared = classify_reach_evidence(related, owner_fn, || {
             owner_fn.is_none_or(|owner| context.unseen_reach_names().may_reach_unseen(owner))
@@ -2639,7 +2732,7 @@ fn reach_evidence(
     // must not be named as reaching the owner (#5335 review round 2).
     let names: Vec<&str> = related
         .iter()
-        .filter(|(_, reason)| relation_establishes_reach(*reason, owner_fn.is_some()))
+        .filter(|(test, reason)| relation_reaches(test, *reason))
         .take(3)
         .map(|(test, _)| test.name.as_str())
         .collect();
@@ -2780,7 +2873,11 @@ fn activate_evidence(
             let free_owner = owner_fn.impl_context == FunctionImplContext::Free;
             activation_credited.iter().any(|indexed| {
                 if free_owner {
-                    let shadowed = context.generic_shadow_blocks_owner(indexed.test, owner_fn);
+                    let shadowed = matches!(
+                        context.generic_shadow_path_outcome(indexed.test, owner_fn),
+                        related_tests::context::HelperPathOutcome::Blocked
+                            | related_tests::context::HelperPathOutcome::Unsettled
+                    );
                     context.renamed_helper_reaches_owner(indexed.test, owner_fn)
                         || (!shadowed
                             && (indexed
@@ -3668,7 +3765,11 @@ fn compact_activate_evidence(
                         context.renamed_helper_reaches_owner(indexed.test, owner)
                     })
                     || (owner_fn.is_none_or(|owner| {
-                        !context.generic_shadow_blocks_owner(indexed.test, owner)
+                        !matches!(
+                            context.generic_shadow_path_outcome(indexed.test, owner),
+                            related_tests::context::HelperPathOutcome::Blocked
+                                | related_tests::context::HelperPathOutcome::Unsettled
+                        )
                     }) && (indexed
                         .free_spelling_helper_owner_call_names
                         .contains(owner_name)

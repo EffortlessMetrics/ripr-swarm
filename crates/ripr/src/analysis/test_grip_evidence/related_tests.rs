@@ -408,20 +408,21 @@ pub(super) fn match_helper_owner_call(
         if owner.free_function
             && !direct_indices.contains(test_index)
             && !owner.function.is_some_and(|function| {
-                context
-                    .tests
-                    .get(*test_index)
-                    .is_some_and(|test| context.renamed_helper_reaches_owner(test.test, function))
+                context.tests.get(*test_index).is_some_and(|test| {
+                    context.renamed_helper_reaches_owner(test.test, function)
+                        || context.generic_shadow_path_outcome(test.test, function)
+                            == context::HelperPathOutcome::Unsettled
+                })
             })
         {
             continue;
         }
         if owner.free_function
             && owner.function.is_some_and(|function| {
-                context
-                    .tests
-                    .get(*test_index)
-                    .is_some_and(|test| context.generic_shadow_blocks_owner(test.test, function))
+                context.tests.get(*test_index).is_some_and(|test| {
+                    context.generic_shadow_path_outcome(test.test, function)
+                        == context::HelperPathOutcome::Blocked
+                })
             })
         {
             continue;
@@ -473,9 +474,10 @@ pub(super) fn match_target_affinity_owner_call(
             continue;
         };
         if (owner.free_function
-            && owner
-                .function
-                .is_some_and(|function| context.generic_shadow_blocks_owner(test.test, function)))
+            && owner.function.is_some_and(|function| {
+                context.generic_shadow_path_outcome(test.test, function)
+                    == context::HelperPathOutcome::Blocked
+            }))
             || !test_assertion_mentions_any_target_token(test, target_tokens)
             || (owner.inherent_receiver
                 && !owner.inherent_owner.is_some_and(|function| {

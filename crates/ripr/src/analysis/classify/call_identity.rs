@@ -455,12 +455,14 @@ pub(in crate::analysis) fn shared_solo_owner_call_identity(
     built
 }
 
-/// Whether every bare alias call on a line is shadowed by a function
-/// parameter or an earlier `let` in an enclosing statement list. Return
-/// `None` for unsupported pattern scopes, nested functions/closures, or when
-/// the line contains calls with different binding states.
+/// Whether every bare alias call on a line is shadowed by a recognized
+/// local binding. `Some(false)` means at least one call is unshadowed;
+/// unsupported pattern scopes and nested functions/closures stay unknown.
 fn renamed_call_local_shadow(caller: &TestSummary, alias: &str, line: usize) -> Option<bool> {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    use ra_ap_syntax::{
+        AstNode, ast,
+        ast::{HasLoopBody, HasName},
+    };
     let parse = crate::analysis::syntax::parse_clean_source_file(&caller.body)?;
     let item = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
     let binds = |node: &ra_ap_syntax::SyntaxNode| {
@@ -507,12 +509,30 @@ fn renamed_call_local_shadow(caller: &TestSummary, alias: &str, line: usize) -> 
                     pat.syntax()
                         .text_range()
                         .contains_range(pattern.syntax().text_range())
-                }) && binding
-                    .syntax()
-                    .parent()
-                    .and_then(ast::IfExpr::cast)
-                    .and_then(|guard| guard.condition())
-                    .is_some_and(|condition| condition.syntax() == binding.syntax());
+                }) && binding.syntax().parent().is_some_and(|parent| {
+                    ast::IfExpr::cast(parent.clone())
+                        .and_then(|guard| guard.condition())
+                        .or_else(|| {
+                            ast::WhileExpr::cast(parent).and_then(|guard| guard.condition())
+                        })
+                        .is_some_and(|condition| condition.syntax() == binding.syntax())
+                });
+                break;
+            }
+            if let Some(arm) = ast::MatchArm::cast(ancestor.clone()) {
+                supported = arm.pat().is_some_and(|pat| {
+                    pat.syntax()
+                        .text_range()
+                        .contains_range(pattern.syntax().text_range())
+                });
+                break;
+            }
+            if let Some(loop_expr) = ast::ForExpr::cast(ancestor.clone()) {
+                supported = loop_expr.pat().is_some_and(|pat| {
+                    pat.syntax()
+                        .text_range()
+                        .contains_range(pattern.syntax().text_range())
+                });
                 break;
             }
         }
@@ -570,6 +590,47 @@ fn renamed_call_local_shadow(caller: &TestSummary, alias: &str, line: usize) -> 
                     }
                 }
             }
+            if let Some(arm) = ast::MatchArm::cast(ancestor.clone()) {
+                if arm.pat().is_some_and(|pat| binds(pat.syntax()))
+                    && (arm.expr().is_some_and(|expr| {
+                        expr.syntax()
+                            .text_range()
+                            .contains_range(call.syntax().text_range())
+                    }) || arm.guard().is_some_and(|guard| {
+                        guard
+                            .syntax()
+                            .text_range()
+                            .contains_range(call.syntax().text_range())
+                    }))
+                {
+                    shadowed = true;
+                }
+            }
+            if let Some(loop_expr) = ast::ForExpr::cast(ancestor.clone()) {
+                if loop_expr.pat().is_some_and(|pat| binds(pat.syntax()))
+                    && loop_expr.loop_body().is_some_and(|body| {
+                        body.syntax()
+                            .text_range()
+                            .contains_range(call.syntax().text_range())
+                    })
+                {
+                    shadowed = true;
+                }
+            }
+            if let Some(loop_expr) = ast::WhileExpr::cast(ancestor.clone()) {
+                if let (Some(ast::Expr::LetExpr(binding)), Some(body)) =
+                    (loop_expr.condition(), loop_expr.loop_body())
+                {
+                    if body
+                        .syntax()
+                        .text_range()
+                        .contains_range(call.syntax().text_range())
+                        && binding.pat().is_some_and(|pat| binds(pat.syntax()))
+                    {
+                        shadowed = true;
+                    }
+                }
+            }
             if let Some(list) = ast::StmtList::cast(ancestor) {
                 if list
                     .syntax()
@@ -593,10 +654,7 @@ fn renamed_call_local_shadow(caller: &TestSummary, alias: &str, line: usize) -> 
                 }
             }
         }
-        if answer.is_some_and(|previous| previous != shadowed) {
-            return None;
-        }
-        answer = Some(shadowed);
+        answer = Some(answer.map_or(shadowed, |previous| previous && shadowed));
     }
     answer
 }
