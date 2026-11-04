@@ -1,7 +1,7 @@
 use super::super::rust_index::{FunctionSummary, TestSummary, extract_literals};
 use super::activation::{
     boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
-    is_computed_value_expression, owner_input_values, returned_comparison_view,
+    is_computed_value_expression, list_or_unknown, owner_input_values, returned_comparison_view,
 };
 use super::owner_pin::short_circuit::ShortCircuitTail;
 use crate::analysis::extract::mask_comments_and_strings;
@@ -768,7 +768,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             // mismatch when nothing comparable is left.
             let (test_literals, other_kind_literals): (Vec<_>, Vec<_>) = related_tests
                 .iter()
-                .flat_map(|test| test.literals.iter().map(|literal| literal.value.clone()))
+                .flat_map(|test| test.literals.iter().map(|literal| literal.value.as_str()))
                 .partition(|literal| {
                     probe_literals
                         .iter()
@@ -793,7 +793,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             let boundary_oracle_only_literals = probe_literals
                 .iter()
                 .filter(|literal| {
-                    !input_literals.contains(literal) && test_literals.contains(literal)
+                    !input_literals.contains(literal) && test_literals.contains(&literal.as_str())
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -904,7 +904,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Medium,
                     format!(
                         "Detected test input literal matching changed boundary: {}",
-                        boundary_input_literals.join(", ")
+                        list_or_unknown(&boundary_input_literals)
                     ),
                 )
             } else if !boundary_oracle_only_literals.is_empty() {
@@ -913,7 +913,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Medium,
                     format!(
                         "Related tests contain the changed boundary literal [{}] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected",
-                        boundary_oracle_only_literals.join(", ")
+                        list_or_unknown(&boundary_oracle_only_literals)
                     ),
                 )
             } else if !test_literals.is_empty() {
@@ -922,8 +922,8 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Medium,
                     format!(
                         "Tests have literals [{}], but no detected value matches changed boundary [{}]",
-                        test_literals.join(", "),
-                        probe_literals.join(", ")
+                        list_or_unknown(&test_literals),
+                        list_or_unknown(&probe_literals)
                     ),
                 )
             } else if !other_kind_literals.is_empty() {
@@ -939,9 +939,9 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     format!(
                         "The only literals ripr reads in related tests are {} literals [{}], which ripr does not compare with the changed {} boundary [{}]; activation/infection is unknown",
                         literal_kinds_label(&other_kind_literals),
-                        other_kind_literals.join(", "),
+                        list_or_unknown(&other_kind_literals),
                         literal_kinds_label(&probe_literals),
-                        probe_literals.join(", ")
+                        list_or_unknown(&probe_literals)
                     ),
                 )
             } else {
@@ -950,7 +950,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     Confidence::Low,
                     format!(
                         "Related tests pass no literal ripr can compare with the changed boundary [{}] (inputs are strings, computed values or fixtures); activation/infection is unknown, and if a test input drives the compared value, one that sits exactly on the boundary would settle it",
-                        probe_literals.join(", ")
+                        list_or_unknown(&probe_literals)
                     ),
                 )
             }
@@ -1178,7 +1178,7 @@ fn literal_kind(literal: &str) -> (bool, bool) {
 
 /// The kinds present in `literals`, in a fixed order: `numeric`, `char`,
 /// `byte`, joined with `/`.
-fn literal_kinds_label(literals: &[String]) -> String {
+fn literal_kinds_label<T: AsRef<str>>(literals: &[T]) -> String {
     [
         ((false, false), "numeric"),
         ((true, false), "char"),
@@ -1188,7 +1188,7 @@ fn literal_kinds_label(literals: &[String]) -> String {
     .filter(|(kind, _)| {
         literals
             .iter()
-            .any(|literal| literal_kind(literal) == *kind)
+            .any(|literal| literal_kind(literal.as_ref()) == *kind)
     })
     .map(|(_, label)| *label)
     .collect::<Vec<_>>()
@@ -1278,6 +1278,74 @@ mod tests {
             evidence.summary,
             "Detected test input literal matching changed boundary: 10"
         );
+    }
+
+    #[test]
+    fn predicate_literal_summary_elides_but_matching_uses_all_values() {
+        let values: Vec<String> = (100..140).map(|i| i.to_string()).collect();
+        let refs: Vec<&str> = values.iter().map(String::as_str).collect();
+        let test = test_with_literals(&refs);
+        let missing = probe(ProbeFamily::Predicate, "value > 999");
+        let evidence = infection_evidence(&missing, &[&test], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Weak);
+        assert!(
+            evidence.summary.contains("24 values elided"),
+            "{}",
+            evidence.summary
+        );
+        assert!(
+            evidence.summary.contains("100, 101"),
+            "{}",
+            evidence.summary
+        );
+        assert!(evidence.summary.len() < 1400, "{}", evidence.summary.len());
+
+        // The boundary literal appears after the displayed window. An oracle
+        // occurrence must still be recognized and must not become an input.
+        let mut with_boundary = refs;
+        with_boundary.push("42");
+        let late = test_with_literals(&with_boundary);
+        let boundary = probe(ProbeFamily::Predicate, "value > 42");
+        let oracle_only = infection_evidence(&boundary, &[&late], &ActivationEvidence::default());
+        assert_eq!(oracle_only.state, StageState::Weak);
+        assert!(
+            oracle_only.summary.contains("only outside"),
+            "{}",
+            oracle_only.summary
+        );
+        let activation = activation_with(&[("value = 42", ValueContext::FunctionArgument)]);
+        let input = infection_evidence(&boundary, &[&late], &activation);
+        assert_eq!(input.state, StageState::Yes);
+        assert!(input.summary.contains("42"), "{}", input.summary);
+    }
+
+    #[test]
+    fn predicate_literal_summary_bounds_unicode_and_counts_unique_other_kinds() {
+        let chars: Vec<String> = ('a'..='t').map(|c| format!("'{c}'")).collect();
+        let mut refs: Vec<&str> = chars.iter().map(String::as_str).collect();
+        refs.push("'a'"); // Other-kind summaries sort and deduplicate first.
+        let test = test_with_literals(&refs);
+        let numeric = probe(ProbeFamily::Predicate, "value > 1");
+        let evidence = infection_evidence(&numeric, &[&test], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert!(
+            evidence.summary.contains("4 values elided"),
+            "{}",
+            evidence.summary
+        );
+
+        // Directly construct an oversized fact to test the byte boundary and
+        // UTF-8 handling independently of the source parser's literal grammar.
+        let huge = format!("'{}'", "é".repeat(5_000));
+        let test = test_with_literals(&[huge.as_str()]);
+        let evidence = infection_evidence(&numeric, &[&test], &ActivationEvidence::default());
+        assert_eq!(evidence.state, StageState::Unknown);
+        assert!(
+            evidence.summary.contains("1 value elided"),
+            "{}",
+            evidence.summary
+        );
+        assert!(evidence.summary.len() < 1400, "{}", evidence.summary.len());
     }
 
     #[test]
