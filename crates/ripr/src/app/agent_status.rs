@@ -5216,6 +5216,16 @@ mod tests {
         let workflow = root.join("target/ripr/workflow");
         std::fs::create_dir_all(&workflow)
             .map_err(|err| format!("create {}: {err}", workflow.display()))?;
+        // The selected external test file is pure-insertion confined (#8710),
+        // so the baseline needs it committed and clean at HEAD.
+        if !root.join("tests/target.rs").exists() {
+            write_file(&root.join("tests/target.rs"), "#[test]\nfn existing() {}\n")?;
+            run_git(root, &["add", "tests/target.rs"])?;
+            run_git(
+                root,
+                &["commit", "--no-gpg-sign", "-m", "baseline external test"],
+            )?;
+        }
         let before = workflow.join("before-status-honesty.json");
         let packet = workflow.join("packet-status-honesty.json");
         let baseline = workflow.join("baseline-status-honesty.json");
