@@ -99,12 +99,19 @@ fn spec0236_example_17_direct_assert_is_actionable_related_test_extension() -> R
         seam["grip_class"], "weakly_gripped",
         "example 17 class: {seam}"
     );
-    for stage in ["reach", "activate", "propagate", "observe", "discriminate"] {
+    for stage in ["reach", "activate", "propagate", "observe"] {
         assert_eq!(
             evidence[stage], "yes",
             "example 17 stage `{stage}`: {evidence}"
         );
     }
+    // A weakly gripped seam reaches, activates, propagates and observes but
+    // only weakly discriminates; the missing boundary discriminator below is
+    // that gap.
+    assert_eq!(
+        evidence["discriminate"], "weak",
+        "example 17 stage `discriminate`: {evidence}"
+    );
     let missing = seam["missing_discriminators"]
         .as_array()
         .ok_or_else(|| format!("example 17 missing_discriminators: {seam}"))?;
