@@ -20,6 +20,9 @@
 #[path = "seam_inventory/compact_prefill_probe.rs"]
 mod compact_prefill_probe;
 
+#[path = "seam_inventory/compact_prefill.rs"]
+mod compact_prefill;
+
 use super::classify::changed_error_variant;
 use super::generated_rust_corpus::{
     AnalyzableRustCorpus, absent_changed_rust_file_limitations, discover_analyzable_rust_corpus,
@@ -542,58 +545,82 @@ fn inventory_classified_seams_report_collect(
             &state,
             config,
             &analyzed_production_files,
-        ) {
-            Ok(pair) => {
+            |classified, limit_info, lexical_fallback_files, index, pass, total| {
                 trace_latency_phase("cold_compute", "ok", compute_started.elapsed());
-                pair
-            }
+                // Best-effort write: a write failure does not fail analysis. The
+                // result is already in memory; the next run just sees a miss again.
+                // Persist the limit_info so a warm-path load returns the correct run_status.
+                let cached_limit_info: Option<CachedSeamLimitInfo> = limit_info.map(Into::into);
+                let store_started = Instant::now();
+                trace_latency_phase(
+                    "cache_store",
+                    &format!(
+                        "start_classified_{}_limit_{}",
+                        classified.len(),
+                        store_limit
+                    ),
+                    Duration::ZERO,
+                );
+                let store_status = match cache.store_classified_seams_with_limit_and_fallback(
+                    &key,
+                    &classified,
+                    cached_limit_info.as_ref(),
+                    &lexical_fallback_files,
+                    store_limit,
+                ) {
+                    Ok(status) => {
+                        if let Some(advisory) = &status.advisory {
+                            eprintln!("ripr: {advisory}");
+                        }
+                        status.label
+                    }
+                    Err(reason) => {
+                        eprintln!("ripr: repo seam cache store ignored ({reason})");
+                        let label = cache_store_status_label(&reason);
+                        family_store_failures.record_store_failure(
+                            PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
+                            FileFactStoreError {
+                                stage: FileFactStoreStage::ClassifiedSeamStore,
+                                message: reason,
+                            },
+                        );
+                        label
+                    }
+                };
+                trace_latency_phase("cache_store", &store_status, store_started.elapsed());
+
+                let prefill_started = Instant::now();
+                let attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    compact_prefill::publish(
+                        &state,
+                        &key,
+                        &analyzed_production_files,
+                        index,
+                        pass,
+                        total,
+                        lexical_fallback_files,
+                    )
+                }));
+                let status = match attempt {
+                    Ok(Ok(status)) => status.label,
+                    Ok(Err(reason)) => {
+                        cancellation::checkpoint()?;
+                        cache_store_status_label(&reason)
+                    }
+                    Err(_) => "skipped_compact_prefill_panic".to_string(),
+                };
+                trace_latency_phase("compact_cache_prefill", &status, prefill_started.elapsed());
+                cancellation::checkpoint()?;
+                Ok(())
+            },
+        ) {
+            Ok(pair) => pair,
             Err(err) => {
                 trace_latency_phase("cold_compute", "error", compute_started.elapsed());
                 trace_latency_phase("total", "error", total_started.elapsed());
                 return Err(err);
             }
         };
-    // Best-effort write: a write failure does not fail analysis. The
-    // result is already in memory; the next run just sees a miss again.
-    // Persist the limit_info so a warm-path load returns the correct run_status.
-    let cached_limit_info: Option<CachedSeamLimitInfo> = limit_info.as_ref().map(Into::into);
-    let store_started = Instant::now();
-    trace_latency_phase(
-        "cache_store",
-        &format!(
-            "start_classified_{}_limit_{}",
-            classified.len(),
-            store_limit
-        ),
-        Duration::ZERO,
-    );
-    let store_status = match cache.store_classified_seams_with_limit_and_fallback(
-        &key,
-        &classified,
-        cached_limit_info.as_ref(),
-        &lexical_fallback_files,
-        store_limit,
-    ) {
-        Ok(status) => {
-            if let Some(advisory) = &status.advisory {
-                eprintln!("ripr: {advisory}");
-            }
-            status.label
-        }
-        Err(reason) => {
-            eprintln!("ripr: repo seam cache store ignored ({reason})");
-            let label = cache_store_status_label(&reason);
-            family_store_failures.record_store_failure(
-                PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
-                FileFactStoreError {
-                    stage: FileFactStoreStage::ClassifiedSeamStore,
-                    message: reason,
-                },
-            );
-            label
-        }
-    };
-    trace_latency_phase("cache_store", &store_status, store_started.elapsed());
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
@@ -1119,6 +1146,14 @@ fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
     production_files: &[PathBuf],
+    publish: impl FnOnce(
+        &[ClassifiedSeam],
+        Option<&SeamLimitInfo>,
+        &[PathBuf],
+        &RustIndex,
+        &test_grip_evidence::EvidencePass<'_>,
+        usize,
+    ) -> Result<(), String>,
 ) -> Result<ClassifiedSeamInventory, String> {
     let build_started = Instant::now();
     trace_latency_phase(
@@ -1182,7 +1217,8 @@ fn inventory_classified_seams_from_state_with_config(
         &format!("start_seams_{}", seams.len()),
         Duration::ZERO,
     );
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
+    let pass = test_grip_evidence::EvidencePass::new(&cached.index);
+    let evidence = pass.evidence_for(&seams);
     cancellation::checkpoint()?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
@@ -1193,6 +1229,15 @@ fn inventory_classified_seams_from_state_with_config(
     );
     cancellation::checkpoint()?;
     trace_latency_phase("classify_seams", "ok", classify_started.elapsed());
+    publish(
+        &classified,
+        limit_info.as_ref(),
+        &lexical_fallback_files,
+        &cached.index,
+        &pass,
+        bounded.total_unique,
+    )?;
+    cancellation::checkpoint()?;
     Ok((classified, limit_info, lexical_fallback_files))
 }
 
@@ -4095,6 +4140,19 @@ pub(crate) fn inventory_seams_from_index_bounded(
         eprintln!("{disclosure}");
     }
     let mut collector = BoundedSeamCollector::new(limit);
+    visit_inventory_seams(production_files, index, |seam| {
+        collector.push(seam);
+        Ok(())
+    })?;
+    Ok(collector.finish())
+}
+
+/// Shared construction authority; callers choose retention and publication.
+fn visit_inventory_seams(
+    production_files: &[PathBuf],
+    index: &RustIndex,
+    mut visit: impl FnMut(RepoSeam) -> Result<(), String>,
+) -> Result<(), String> {
     for file in production_files {
         cancellation::checkpoint()?;
         let Some(facts) = index.files().get(file) else {
@@ -4111,6 +4169,7 @@ pub(crate) fn inventory_seams_from_index_bounded(
         let arm_ranges = match_arm_source_ranges(&facts.source, &facts.probe_shapes);
         let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
         for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
+            cancellation::checkpoint()?;
             if twin {
                 continue;
             }
@@ -4123,11 +4182,11 @@ pub(crate) fn inventory_seams_from_index_bounded(
                 &crlf_pairs,
                 &arm_ranges,
             ) {
-                collector.push(seam);
+                visit(seam)?;
             }
         }
     }
-    Ok(collector.finish())
+    Ok(())
 }
 
 /// Test-only entry that feeds pre-built seams through the bounded
