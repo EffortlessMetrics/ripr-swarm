@@ -7,6 +7,12 @@ tests = [
   "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::missing_producer_registration_removes_positive_relation",
   "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::producer_and_edge_reorder_preserves_semantic_digest_on_load",
   "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::generated_artifact_cannot_cross_bind_projects",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::conflicting_edges_lose_positive_relation_and_cannot_relate_subjects",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::reversed_positive_edges_lose_positive_relation",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::over_broad_bidirectional_edge_loses_positive_relation",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::cross_bound_artifact_edges_lose_positive_relation",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::identical_duplicate_edges_stay_report_only",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::anomaly_report_cap_does_not_limit_demotion",
 ]
 fixtures = [
   "fixtures/cross-language-edge-registry-currentness-corpus/corpus.json",

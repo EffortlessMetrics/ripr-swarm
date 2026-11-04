@@ -38,9 +38,26 @@ pub fn analyze_cross_language_edge_registry_currentness(
     detect_over_broad_edges(&loaded.registry.edges, &mut anomalies);
     detect_artifact_cross_bind(&artifact_index, &mut anomalies);
 
+    // Demotion is decided from the complete anomaly set, before the report cap
+    // truncates it, so the cap bounds reporting only and never decides which
+    // edges may relate subjects.
+    let anomalous = anomalous_positive_edges(&anomalies);
+
     for edge in &loaded.registry.edges {
-        let (effective_disposition, first_unresolved_leg, positive_relation_available) =
+        let (mut effective_disposition, mut first_unresolved_leg, mut positive_relation_available) =
             effective_edge_state(loaded, edge, &mut anomalies, &mut recovery_guidance);
+        let demoted_leg = anomalous
+            .get(&edge.edge_id)
+            .filter(|_| positive_relation_available);
+        if let Some(leg) = demoted_leg {
+            effective_disposition = EdgeDispositionV1::UnresolvedLeg;
+            first_unresolved_leg = Some((*leg).into());
+            positive_relation_available = false;
+            recovery_guidance.push(format!(
+                "resolve the `{leg}` anomaly on edge `{}` before trusting its relation",
+                edge.edge_id
+            ));
+        }
         effective_edges.push(CrossLanguageEdgeEffectiveRecordV1 {
             edge_id: edge.edge_id.clone(),
             effective_disposition,
@@ -87,6 +104,34 @@ pub fn subjects_related_by_effective_registered_edge(
                     && super::validate::edge_connects_subjects(edge, left, right)
             })
     }))
+}
+
+/// Edges implicated in an anomaly that contradicts a positive relation claim.
+///
+/// Identical-content duplicates stay report-only: they restate one relation and
+/// cannot make the registry assert something it does not already assert.
+/// Conflicting, reversed, over-broad and cross-bound edges are fail-closed: every
+/// edge named by the anomaly (either side) loses its positive relation.
+fn anomalous_positive_edges(
+    anomalies: &[CrossLanguageEdgeRegistryAnomalyV1],
+) -> BTreeMap<String, &'static str> {
+    let mut demoted: BTreeMap<String, &'static str> = BTreeMap::new();
+    for anomaly in anomalies {
+        let leg = match anomaly.kind {
+            CrossLanguageEdgeRegistryAnomalyKindV1::ConflictingEdge => "conflicting_edge",
+            CrossLanguageEdgeRegistryAnomalyKindV1::ReversedEdge => "reversed_edge",
+            CrossLanguageEdgeRegistryAnomalyKindV1::OverBroadEdge => "over_broad_edge",
+            CrossLanguageEdgeRegistryAnomalyKindV1::ArtifactCrossBind => "artifact_cross_bind",
+            _ => continue,
+        };
+        for id in
+            std::iter::once(anomaly.edge_id.as_str()).chain(anomaly.related_edge_id.as_deref())
+        {
+            // Keep the first leg in anomaly order so the reported leg is stable.
+            demoted.entry(id.to_string()).or_insert(leg);
+        }
+    }
+    demoted
 }
 
 fn effective_edge_state(
@@ -279,8 +324,13 @@ fn project_scope_key(project: &CrossLanguageProjectIdentityV1) -> String {
     project.portable_key()
 }
 
+/// True only when `right` names the same endpoints as `left` with source and
+/// target exchanged. `edge_connects_subjects` accepts either orientation, so it
+/// cannot be used here: it would also match a same-direction duplicate and report
+/// it as reversed.
 fn subjects_swap(left: &CrossLanguageEdgeV1, right: &CrossLanguageEdgeV1) -> bool {
-    super::validate::edge_connects_subjects(left, &right.target, &right.source)
+    super::validate::subject_same(&left.source, &right.target)
+        && super::validate::subject_same(&left.target, &right.source)
 }
 
 fn push_anomaly(

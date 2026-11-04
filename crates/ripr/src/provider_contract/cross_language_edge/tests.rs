@@ -715,6 +715,197 @@ fn generated_artifact_cannot_cross_bind_projects() -> Result<(), String> {
     Ok(())
 }
 
+fn loaded_unvalidated(
+    registry: CrossLanguageEdgeRegistryV1,
+) -> Result<LoadedCrossLanguageEdgeRegistryV1, String> {
+    // Anomaly shapes are evaluation-only: partial or hostile head registries are
+    // analyzed without passing the load-time validator.
+    let semantic_digest = cross_language_edge_registry_semantic_digest(&registry)
+        .map_err(|error| error.to_string())?;
+    Ok(LoadedCrossLanguageEdgeRegistryV1 {
+        registry,
+        semantic_digest,
+    })
+}
+
+fn effective_record<'a>(
+    report: &'a CrossLanguageEdgeRegistryCurrentnessReportV1,
+    edge_id: &str,
+) -> Result<&'a CrossLanguageEdgeEffectiveRecordV1, String> {
+    report
+        .effective_edges
+        .iter()
+        .find(|record| record.edge_id == edge_id)
+        .ok_or_else(|| format!("missing effective record {edge_id}"))
+}
+
+fn ffi_positive(edge_id: &str) -> CrossLanguageEdgeV1 {
+    positive_edge(
+        edge_id,
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    )
+}
+
+#[test]
+fn conflicting_edges_lose_positive_relation_and_cannot_relate_subjects() -> Result<(), String> {
+    let left = ffi_positive("left");
+    let mut right = ffi_positive("right");
+    right.source = left.source.clone();
+    right.target = left.target.clone();
+    right.effective_strength = EdgeStrengthV1::PropagationLimited;
+    let (source, target) = (left.source.clone(), left.target.clone());
+    let loaded = loaded_unvalidated(base_registry(vec![left, right, ffi_positive("clean")]))?;
+    let report = analyze_cross_language_edge_registry_currentness(&loaded)
+        .map_err(|error| error.to_string())?;
+    assert!(report.anomalies.iter().any(|anomaly| {
+        anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::ConflictingEdge
+    }));
+    for id in ["left", "right"] {
+        let record = effective_record(&report, id)?;
+        assert!(!record.positive_relation_available, "{id} stays positive");
+        assert_eq!(
+            record.effective_disposition,
+            EdgeDispositionV1::UnresolvedLeg
+        );
+        assert_eq!(
+            record.first_unresolved_leg.as_deref(),
+            Some("conflicting_edge")
+        );
+    }
+    assert!(effective_record(&report, "clean")?.positive_relation_available);
+    assert!(
+        !subjects_related_by_effective_registered_edge(&source, &target, &loaded)
+            .map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+#[test]
+fn reversed_positive_edges_lose_positive_relation() -> Result<(), String> {
+    let left = ffi_positive("a-forward");
+    let mut right = ffi_positive("b-reverse");
+    right.source = left.target.clone();
+    right.target = left.source.clone();
+    let loaded = loaded_unvalidated(base_registry(vec![left, right]))?;
+    let report = analyze_cross_language_edge_registry_currentness(&loaded)
+        .map_err(|error| error.to_string())?;
+    assert!(
+        report.anomalies.iter().any(|anomaly| {
+            anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::ReversedEdge
+        })
+    );
+    for id in ["a-forward", "b-reverse"] {
+        let record = effective_record(&report, id)?;
+        assert!(!record.positive_relation_available, "{id} stays positive");
+        assert_eq!(
+            record.first_unresolved_leg.as_deref(),
+            Some("reversed_edge")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn over_broad_bidirectional_edge_loses_positive_relation() -> Result<(), String> {
+    let mut broad = ffi_positive("broad");
+    broad.direction = CrossLanguageEdgeDirectionV1::Bidirectional;
+    broad.propagation_ceiling = EdgeStrengthV1::PropagationLimited;
+    let (source, target) = (broad.source.clone(), broad.target.clone());
+    let loaded = loaded_unvalidated(base_registry(vec![broad]))?;
+    let report = analyze_cross_language_edge_registry_currentness(&loaded)
+        .map_err(|error| error.to_string())?;
+    let record = effective_record(&report, "broad")?;
+    assert!(!record.positive_relation_available);
+    assert_eq!(
+        record.first_unresolved_leg.as_deref(),
+        Some("over_broad_edge")
+    );
+    assert!(
+        !subjects_related_by_effective_registered_edge(&source, &target, &loaded)
+            .map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_bound_artifact_edges_lose_positive_relation() -> Result<(), String> {
+    let mut left = positive_edge(
+        "left",
+        BoundaryFamilyV1::GeneratedBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    let mut right = left.clone();
+    right.edge_id = "right".into();
+    right.source = subject("rust", "right.source", "project.gamma");
+    right.target = subject("typescript", "right.target", "project.delta");
+    left.generated_artifacts[0].artifact_id = "shared.ts".into();
+    right.generated_artifacts[0].artifact_id = "shared.ts".into();
+    let loaded = loaded_unvalidated(base_registry(vec![left, right]))?;
+    let report = analyze_cross_language_edge_registry_currentness(&loaded)
+        .map_err(|error| error.to_string())?;
+    for id in ["left", "right"] {
+        let record = effective_record(&report, id)?;
+        assert!(!record.positive_relation_available, "{id} stays positive");
+        assert_eq!(
+            record.first_unresolved_leg.as_deref(),
+            Some("artifact_cross_bind")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn identical_duplicate_edges_stay_report_only() -> Result<(), String> {
+    let left = ffi_positive("left");
+    let mut right = left.clone();
+    right.edge_id = "right".into();
+    let loaded = loaded_unvalidated(base_registry(vec![left, right]))?;
+    let report = analyze_cross_language_edge_registry_currentness(&loaded)
+        .map_err(|error| error.to_string())?;
+    assert!(report.anomalies.iter().any(|anomaly| {
+        anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::DuplicateSemanticEdge
+    }));
+    // A same-direction duplicate is not a reversed claim.
+    assert!(
+        !report.anomalies.iter().any(|anomaly| {
+            anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::ReversedEdge
+        })
+    );
+    for id in ["left", "right"] {
+        assert!(effective_record(&report, id)?.positive_relation_available);
+    }
+    Ok(())
+}
+
+#[test]
+fn anomaly_report_cap_does_not_limit_demotion() -> Result<(), String> {
+    // 40 independent over-broad edges produce 40 anomalies; the report keeps 32,
+    // but every edge must still lose its positive relation.
+    let edges = (0..40)
+        .map(|index| {
+            let mut edge = ffi_positive(&format!("broad-{index:02}"));
+            edge.direction = CrossLanguageEdgeDirectionV1::Bidirectional;
+            edge.propagation_ceiling = EdgeStrengthV1::PropagationLimited;
+            edge
+        })
+        .collect();
+    let loaded = loaded_unvalidated(base_registry(edges))?;
+    let report = analyze_cross_language_edge_registry_currentness(&loaded)
+        .map_err(|error| error.to_string())?;
+    assert_eq!(report.anomalies.len(), 32);
+    assert_eq!(report.effective_edges.len(), 40);
+    assert!(
+        report
+            .effective_edges
+            .iter()
+            .all(|record| !record.positive_relation_available)
+    );
+    Ok(())
+}
+
 #[test]
 fn edge_id_rename_with_same_facts_reports_unchanged_movement() -> Result<(), String> {
     let base_edge = positive_edge(

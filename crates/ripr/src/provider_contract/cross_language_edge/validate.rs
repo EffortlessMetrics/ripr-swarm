@@ -138,7 +138,7 @@ fn edge_matches_subjects(
         || (subject_same(source, right) && subject_same(target, left))
 }
 
-fn subject_same(left: &CrossLanguageSubjectV1, right: &CrossLanguageSubjectV1) -> bool {
+pub(super) fn subject_same(left: &CrossLanguageSubjectV1, right: &CrossLanguageSubjectV1) -> bool {
     left.language == right.language
         && left.subject_id == right.subject_id
         && canonical_sha256_digest(&left.subject_body_digest)

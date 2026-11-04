@@ -45,6 +45,16 @@ or missing producer facts remove the positive relation and name the first
 unresolved leg. Generated artifact identities cannot cross-bind across distinct
 project/configuration scopes with the same filename.
 
+Anomalies that contradict a positive claim are fail-closed. Every edge named by a
+conflicting, reversed, over-broad or artifact cross-bind anomaly (either side)
+loses its positive relation: `effective_disposition` becomes `unresolved_leg`,
+`first_unresolved_leg` names the anomaly kind, and
+`subjects_related_by_effective_registered_edge` returns false for it. Demotion is
+decided from the complete anomaly set before the report cap, so the cap bounds
+reporting only. Identical-content duplicate edges stay report-only because they
+restate one relation. A reversed edge means the same two endpoints with source and
+target exchanged; a same-direction duplicate is not reversed.
+
 ### Base/head movement
 
 `compare_cross_language_edge_registries` classifies edges between loaded base and
