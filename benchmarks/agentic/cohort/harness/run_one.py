@@ -25,6 +25,7 @@ CONFIGS = {
  "brief-1seam-mandatory": dict(surface="brief", use="mandatory", extra="--max-seams 1"),
  "brief-10seam-mandatory":dict(surface="brief", use="mandatory", extra="--max-seams 10"),
  "mcp-mandatory":         dict(surface="mcp", use="mandatory", extra=""),
+ "mcp-base-mandatory":    dict(surface="mcp", use="mandatory", extra="base"),
 }
 
 def tool_paragraph(c):
@@ -38,7 +39,8 @@ def tool_paragraph(c):
         cmd = f"ripr agent brief --base HEAD~1 --json {c['extra']}".strip()
         return f"\n\nThe `ripr` tool is installed. `{cmd}` prints a bounded brief for the changed behavior (seams, boundary values to try, assertion shapes), and its `next` field names the follow-up commands, including `ripr agent verify` to check that your edit closed the gap. {use}"
     if s == "mcp":
-        return f"\n\nA `ripr` MCP server is connected and exposes static test-exposure tools for this repository. {use}"
+        hint = " Pass `base` set to `HEAD~1` when you call `ripr_refresh`." if c["extra"] == "base" else ""
+        return f"\n\nA `ripr` MCP server is connected and exposes static test-exposure tools for this repository.{hint} {use}"
     raise ValueError(s)
 
 # Narrow tool grant: file tools plus only cargo test, ripr and read-only git/ls/cat in a throwaway crate.

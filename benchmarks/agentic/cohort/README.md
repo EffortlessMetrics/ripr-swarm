@@ -41,6 +41,29 @@ Three published crates already vendored in the local cargo registry (`strsim`, `
 
 So even with headroom, no config of ripr 0.11.0 beat an unaided agent in this pilot. The instrument now separates good from bad runs (escape 3 to 13), so more reps per cell can answer it.
 
+## Third result: full config matrix on `strsim` (2026-11-04, ripr 0.11.0 @ 7d04028)
+
+`strsim` has the headroom, so the whole matrix ran there: 9 configs plus an MCP variant that passes `base`, Haiku and Sonnet, 5 new runs per cell (7 for the none/check/brief cells that also had the earlier 2 runs). 100 runs, none invalid. Receipts: `receipts/strsim-matrix-main-0.11.0-2026-11-04.jsonl`; scoreboard: `scoreboard/strsim-matrix-2026-11-04.md`. Fix rate (zero escaped mutants) is near 0% in every cell, so the comparison is mean escaped-mutant rate, with a permutation test against no ripr.
+
+| Config | Haiku (none 9.0%) | Sonnet (none 17.7%) |
+|---|---|---|
+| `ripr check` | 8.1% | 22.7% (p<0.01) |
+| `ripr check --json` | 8.3% | 17.0% |
+| `ripr check --mode fast` | 18.3% (p=0.03) | 22.6% (p=0.01) |
+| `ripr agent brief` | 14.3% | 18.6% |
+| `ripr agent brief --max-seams 1` | 14.3% | 19.6% |
+| `ripr agent brief --max-seams 10` | 17.4% (p=0.05) | 25.2% (p=0.02) |
+| `ripr agent brief`, optional use | 9.1% | 30.0% (p<0.01) |
+| MCP, no `base` | 12.6% | 39.6% (p<0.01) |
+| MCP, `base: HEAD~1` | 7.0% (p=0.60) | 25.7% (p=0.03) |
+
+Reading it:
+
+- **No config reduced escapes.** Several increased them. The best Haiku configs match no ripr within noise.
+- **Noise is large.** The Sonnet brief-optional cell made zero ripr calls (it is effectively a control with an extra paragraph) and still came out 12 points worse than none. Cells have 5-7 runs; treat only the big gaps as signal, and expect individual p-values to move with more runs (about 30 comparisons were made, none corrected).
+- **MCP default base is a trap.** With no `base`, `ripr_refresh` returned a completed zero-finding `no_scope` snapshot in 10 of 10 runs (#13096). Passing `base` fixed that for Haiku and cut Sonnet from 39.6% to 25.7%, which is still above the 17.7% control.
+- **Fast mode and a large seam cap are the worst output settings;** `--json` is indistinguishable from plain `check`.
+
 ## Per-config scoreboard
 
 `harness/scoreboard.py` groups runs by ripr version, model, turn cap and config, and reports fix rate (valid tests, zero escaped mutants) with a Wilson interval, escaped mutants, tokens, wall time and ripr calls, each against the `none` control. Configs live in `CONFIGS` in `harness/run_one.py`: surface (check, brief, MCP), optional vs mandatory use, output flags (`--json`, `--mode fast`, `--max-seams`), plus model and turn cap (`COHORT_MAX_TURNS`). To re-run on a new ripr: `COHORT_RIPR_BIN=/path/to/ripr python3 sweep.py ... out.jsonl` then `python3 scoreboard.py OUT out.jsonl`.
