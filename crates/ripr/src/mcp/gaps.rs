@@ -311,6 +311,8 @@ pub(crate) struct GapItem {
     /// projection time so the limitation read re-uses the one vocabulary
     /// (`describe`/`next_step`) instead of re-deriving it.
     static_limit: Option<crate::domain::StaticLimitKind>,
+    /// `Finding::is_proof_harness_only` captured at commit time (#12921).
+    proof_harness_only: bool,
     /// The producer limit's reason as the CLI and LSP surfaces word it for this
     /// finding's probe family (`describe_for_family`), so the MCP reason cannot
     /// drift from them (#11821).
@@ -365,7 +367,7 @@ impl GapItem {
 
         let repair_readiness = RepairReadiness::from_finding(finding, root)
             .with_seam_verdict(admission.verdict(&finding.id).as_ref());
-        let list_summary = json!({
+        let mut list_summary = json!({
             "canonical_id": canonical_id,
             "class": class,
             "language": language,
@@ -374,6 +376,12 @@ impl GapItem {
             "repair_packet_ready": repair_readiness.ready,
             "repair_ineligibility": repair_readiness.ineligibility,
         });
+        // Additive (#12921): present only for a `no_static_path` item reached
+        // solely by a proof harness ripr does not evaluate. It is a disclosure,
+        // never test coverage; the class above is unchanged.
+        if finding.is_proof_harness_only() {
+            list_summary["proof_harness_only"] = json!(true);
+        }
         let list_summary_bytes = serialized_bytes(&list_summary)?;
 
         let evidence_core = gap_evidence_core(finding, &canonical_id, root, &repair_readiness)?;
@@ -394,6 +402,7 @@ impl GapItem {
             repair_readiness,
             predicate_family: finding.probe.family == crate::domain::ProbeFamily::Predicate,
             static_limit: finding.static_limit_kind,
+            proof_harness_only: finding.is_proof_harness_only(),
             static_limit_reason: finding
                 .static_limit_kind
                 .map(|kind| kind.describe_for_family(&finding.probe.family).into_owned()),
@@ -402,6 +411,12 @@ impl GapItem {
 
     pub(crate) fn class(&self) -> &str {
         &self.class
+    }
+
+    /// Whether this item is reached only by a proof harness ripr does not
+    /// evaluate (#12921); the same fact as `Finding::is_proof_harness_only`.
+    pub(crate) fn is_proof_harness_only(&self) -> bool {
+        self.proof_harness_only
     }
 
     /// The producer's typed static limit when this is an `infection_unknown`
