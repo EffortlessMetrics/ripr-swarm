@@ -1789,11 +1789,9 @@ mod tests {
             },
         );
         assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
-        let notice = notice_at
-            .get()
-            .ok_or_else(|| {
-                "default-plus-extension run must emit the extension notice".to_string()
-            })?;
+        let notice = notice_at.get().ok_or_else(|| {
+            "default-plus-extension run must emit the extension notice".to_string()
+        })?;
         assert!(
             notice <= Duration::from_millis(FIRST_MS + 20),
             "extension notice must fire at the first-phase boundary, not after the whole budget; got {notice:?}"
