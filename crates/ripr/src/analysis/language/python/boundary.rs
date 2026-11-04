@@ -2323,7 +2323,6 @@ pub(super) fn unresolved_loop_list_boundary(
     candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> bool {
-    use rustpython_parser::ast::{self, Expr, Mod, Stmt};
     let Some(old_line) = old_line else {
         return false;
     };
@@ -2355,29 +2354,75 @@ pub(super) fn unresolved_loop_list_boundary(
     {
         return false;
     }
-    let Some(previous) = source.and_then(|s| line.checked_sub(2).and_then(|i| s.lines().nth(i)))
+    // Only the complete accumulator-selection owner is understood here. An
+    // arbitrary loop can visibly return or mutate on the equality branch.
+    let Some(source) = source else { return false };
+    let [parameter] = owner.parameters.as_slice() else {
+        return false;
+    };
+    if owner.owner_kind != Some(OwnerKind::Function)
+        || left == right
+        || owner.end_line != owner.start_line + 9
+        || line != owner.start_line + 7
+    {
+        return false;
+    }
+    let lines: Vec<_> = source.lines().skip(owner.start_line - 1).take(10).collect();
+    let [
+        definition,
+        iterator,
+        try_line,
+        initial,
+        handler,
+        empty,
+        loop_line,
+        condition,
+        update,
+        result,
+    ] = lines.as_slice()
     else {
         return false;
     };
-    let Some(iteration) = previous
+    let Some(iterator_name) = iterator
         .trim()
-        .strip_prefix("for ")
-        .and_then(|s| s.strip_prefix(&left))
+        .strip_suffix(&format!(" = iter({})", parameter.name))
     else {
         return false;
     };
-    if !iteration.starts_with(" in ")
-        || !iteration.ends_with(':')
-        || super::guard_activation::leading_whitespace(previous)
-            >= super::guard_activation::leading_whitespace(line_text)
+    if iterator_name.is_empty()
+        || !iterator_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        || iterator.trim() != format!("{iterator_name} = iter({})", parameter.name)
+        || try_line.trim() != "try:"
+        || initial.trim() != format!("{right} = next({iterator_name})")
+        || handler.trim() != "except StopIteration:"
+        || empty.trim() != "return None"
+        || loop_line.trim() != format!("for {left} in {iterator_name}:")
+        || condition.trim() != line_text.trim()
+        || update.trim() != format!("{right} = {left}")
+        || result.trim() != format!("return {right}")
+    {
+        return false;
+    }
+    let indent = super::guard_activation::leading_whitespace(definition);
+    if [iterator, try_line, handler, loop_line, result]
+        .iter()
+        .any(|line| super::guard_activation::leading_whitespace(line) != indent + 4)
+        || [initial, empty, condition]
+            .iter()
+            .any(|line| super::guard_activation::leading_whitespace(line) != indent + 8)
+        || super::guard_activation::leading_whitespace(update) != indent + 12
     {
         return false;
     }
     let constants = unrebound_constants(owner, candidates);
     let (rows, gaps) = strong_owner_call_rows_with_gaps(owner, &constants, candidates, focus);
-    let [row] = rows.as_slice() else { return false };
-    if gaps
-        || !candidates.iter().any(|candidate| {
+    if gaps || rows.is_empty() {
+        return false;
+    }
+    rows.iter().all(|row| {
+        candidates.iter().any(|candidate| {
             candidate.relation.uses_oracle()
                 && candidate.test.file == row.file
                 && select_relevant_assertion(&candidate.test.assertions, Some(focus))
@@ -2386,10 +2431,12 @@ pub(super) fn unresolved_loop_list_boundary(
                         assertion.line == row.line
                             && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
                     })
-        })
-    {
-        return false;
-    }
+        }) && is_direct_integer_list_assertion(row, owner)
+    })
+}
+
+fn is_direct_integer_list_assertion(row: &CallRow, owner: &PythonOwner) -> bool {
+    use rustpython_parser::ast::{self, Expr, Mod, Stmt};
     let Ok(Mod::Module(module)) = super::source_facts::parse_module_result(
         std::path::Path::new("<loop-boundary-oracle>"),
         &row.text,

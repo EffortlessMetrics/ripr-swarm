@@ -1712,9 +1712,10 @@ adapter contributes:
 
 ### Unresolved loop-comparison boundary (#12954)
 
-For a changed adjacent relational comparison in the first statement of a
-`for` loop, an unresolved boundary observed by a single direct integer-list
-value assertion is `infection_unknown`, with an infection stop reason and no
-repair suggestion. The list alone does not establish the loop element and
-accumulator are equal during execution. This limited rule does not evaluate
-arbitrary loops or change identity-assertion classification.
+For a changed adjacent relational comparison in the closed iterator and
+accumulator selection shape (`best = next(it)` followed by `for x in it`,
+conditional `best = x`, and `return best`), an unresolved boundary observed
+only by direct integer-list value assertions is `infection_unknown`, with an
+infection stop reason and no repair suggestion. A list alone does not place
+the loop element and accumulator at the boundary. This limited rule does not
+evaluate arbitrary loops or change identity-assertion classification.

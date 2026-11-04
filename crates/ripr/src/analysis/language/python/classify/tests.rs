@@ -4082,7 +4082,7 @@ fn loop_boundary_integer_list_is_infection_unknown() -> Result<(), String> {
 #[test]
 fn loop_boundary_identity_oracle_remains_unchanged() -> Result<(), String> {
     let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
-    let tests = "from src.subject import largest\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
+    let tests = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
     let finding = classify_edit_case(
         source,
         tests,
@@ -4090,10 +4090,42 @@ fn loop_boundary_identity_oracle_remains_unchanged() -> Result<(), String> {
         "        if x > best:",
         "        if x >= best:",
     )?;
-    assert_ne!(
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_multiple_numeric_test_rows_remain_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_a():\n    assert largest([1, 5, 3]) == 5\n\ndef test_b():\n    assert largest([2, 7, 4]) == 7\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
         finding.class,
         ExposureClass::InfectionUnknown,
         "{finding:?}"
     );
+    assert_eq!(finding.related_tests.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_equality_can_distinguish_other_loop_bodies() -> Result<(), String> {
+    let source = "def select(xs):\n    best = 0\n    for x in xs:\n        if x >= best:\n            return 1\n    return 0\n";
+    let tests =
+        "from src.subject import select\n\ndef test_select():\n    assert select([0]) == 1\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
