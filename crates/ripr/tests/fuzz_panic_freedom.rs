@@ -860,8 +860,9 @@ fn output_oracle_rejects_planted_faults() {
         ),
     ];
     for (name, code, body, expected) in bad_cases {
-        let error =
-            judge_output(code, &body).expect_err(&format!("oracle accepted planted fault: {name}"));
+        let verdict = judge_output(code, &body);
+        assert!(verdict.is_err(), "oracle accepted planted fault: {name}");
+        let error = verdict.err().unwrap_or_default();
         assert!(
             error.contains(expected),
             "{name}: rejected for the wrong reason: {error}"
@@ -942,8 +943,12 @@ fn renderer_owned_pointers_resolve_and_each_one_is_judged() {
         if let Some(slot) = planted.pointer_mut(&concrete) {
             *slot = serde_json::Value::String("the mutant was killed".to_string()); // ripr-allow: static-language: planted fault
         }
-        let error = judge_output(Some(0), planted.to_string().as_bytes())
-            .expect_err("a runtime-mutation term was not rejected");
+        let verdict = judge_output(Some(0), planted.to_string().as_bytes());
+        assert!(
+            verdict.is_err(),
+            "a runtime-mutation term was not rejected under {pointer}"
+        );
+        let error = verdict.err().unwrap_or_default();
         // `classification` is also vocabulary-checked first, so it is
         // rejected for that reason instead.
         if !pointer.ends_with("/classification") {
