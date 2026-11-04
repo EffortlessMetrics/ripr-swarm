@@ -1483,7 +1483,7 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
             )
         } else {
             (
-                "static evidence names no concrete missing discriminator".to_string(),
+                "static evidence names no concrete missing check".to_string(),
                 "add or strengthen a test by hand",
             )
         }
@@ -3458,7 +3458,7 @@ mod tests {
             "{action}"
         );
         assert!(
-            !action.contains("names no concrete missing discriminator"),
+            !action.contains("names no concrete missing check"),
             "{action}"
         );
         // #10990: the unresolved-call boundary decline gets its own plain
@@ -3475,7 +3475,7 @@ mod tests {
             "{unresolved_action}"
         );
         assert!(
-            !unresolved_action.contains("names no concrete missing discriminator"),
+            !unresolved_action.contains("names no concrete missing check"),
             "{unresolved_action}"
         );
         // A weak finding without the unresolved-operand shape keeps the
@@ -3486,7 +3486,7 @@ mod tests {
         generic.language_status = Some(LanguageStatus::Preview);
         let generic_action = python_preview_safe_action(&generic, false);
         assert!(
-            generic_action.contains("static evidence names no concrete missing discriminator"),
+            generic_action.contains("static evidence names no concrete missing check"),
             "{generic_action}"
         );
     }

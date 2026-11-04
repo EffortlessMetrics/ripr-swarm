@@ -418,6 +418,7 @@ pub(crate) fn stub_kind_for_missing_evidence(item: &str) -> Option<&'static str>
         "return_value" => Some("return_value"),
         "error_variant" => Some("error_path"),
         "boundary_value" => Some("predicate"),
+        "field_value" => Some("field_construction"),
         _ => None,
     }
 }

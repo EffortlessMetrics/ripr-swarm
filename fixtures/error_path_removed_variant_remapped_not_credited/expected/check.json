@@ -46,7 +46,7 @@
         {"kind":"error_variant","text":"Result::Err(UnitError::Blank)","line":10}
       ],
       "evidence": ["Complete propagation witness reaches error variant: Result::Err(UnitError::Blank)", "No assertion found on related tests", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_unit: unknown_unit_is_rejected", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
-      "missing": ["Missing discriminator value: UnitError::Blank", "No detected assertion observes the changed value, error, field, or effect", "No exact error variant discriminator was detected", "No relevant oracle was detected"],
+      "missing": ["Missing check value: UnitError::Blank", "No detected assertion observes the changed value, error, field, or effect", "No exact error variant discriminator was detected", "No relevant oracle was detected"],
       "assertion_texts": {
         "21": "assert_eq!(parse_unit(\"q\"), Err(UnitError::Unknown));"
       },

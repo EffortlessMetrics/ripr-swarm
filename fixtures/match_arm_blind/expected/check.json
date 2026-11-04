@@ -46,7 +46,7 @@
         {"kind":"match_arm","text":"None =>","line":4}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: None =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No related test call selects arm `None =>`; observed `x` values: `Some(5)`", "Related tests appear to reach reason: some_arm_returns_incremented_value"],
-      "missing": ["Missing discriminator value: None", "No strong discriminator was detected"],
+      "missing": ["Missing check value: None", "No strong discriminator was detected"],
       "assertion_texts": {
         "5": "assert_eq!(reason(Some(5)), 6);"
       },
