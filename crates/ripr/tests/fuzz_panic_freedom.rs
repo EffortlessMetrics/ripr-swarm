@@ -935,10 +935,13 @@ fn renderer_owned_pointers_resolve_and_each_one_is_judged() {
 
         let mut planted = report.clone();
         let concrete = pointer.replace('*', "0");
-        let Some(slot) = planted.pointer_mut(&concrete) else {
-            panic!("pointer {pointer} is absent from the fixture");
-        };
-        *slot = serde_json::Value::String("the mutant was killed".to_string()); // ripr-allow: static-language: planted fault
+        assert!(
+            planted.pointer(&concrete).is_some(),
+            "pointer {pointer} is absent from the fixture"
+        );
+        if let Some(slot) = planted.pointer_mut(&concrete) {
+            *slot = serde_json::Value::String("the mutant was killed".to_string()); // ripr-allow: static-language: planted fault
+        }
         let error = judge_output(Some(0), planted.to_string().as_bytes())
             .expect_err("a runtime-mutation term was not rejected");
         // `classification` is also vocabulary-checked first, so it is
