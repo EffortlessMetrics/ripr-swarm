@@ -1422,6 +1422,76 @@ shape: scheduled-plus-dispatch triggers, serialization, timeout, repository
 guard, `issues: write` as the only write authority, the exact probe selector,
 zero-executed-test refusal, and the tracker lifecycle.
 
+### Golden Re-bless
+
+Re-blessing renderer-prose golden drift used to be a per-agent ritual: run the
+arbiter-platform check, read `golden-drift.json`, bless fixture by fixture,
+confirm clean, push, and re-request qualification — each step a hand-run
+command on the right platform
+(`docs/agent-context/validation.md`, "Golden fixtures and the blessing
+platform"). `.github/workflows/goldens-rebless.yml` (#11736, Proposal A)
+turns that ritual into one bounded `workflow_dispatch` job (`pr` input,
+optional `note`). The dispatching actor still decides *that* a PR's goldens
+should be re-blessed; the workflow owns *whether that judgment is safe*.
+
+The pipeline has four jobs so PR-authored code never shares a job with a
+write token. `prepare` (`pull-requests: write`) is pure `gh api` (no checkout,
+no PR code): the input is validated as a PR number, the PR must be open and
+unmerged on this repository (fork heads are refused — the token holds no write
+there), and it must be mergeable, because `refs/pull/N/merge` only exists
+while the PR merges cleanly. It then records its convergence claim in the
+PR_AUTOMATION.md house format and refuses while another actor's claim is
+younger than 4 hours. It refuses a head branch that is the default branch, is protected, or whose protection cannot be read. `bless` (`contents: read`, no token) checks out the
+two-parent integration tree the required merge-ready qualification already
+compiles and executes, with `persist-credentials: false` and `fetch-depth: 2`, verifies the merge commit's second parent is the preflight head (a stale merge ref is refused), restores no build cache, and runs the judge,
+the bless loop and the confirmation. It uploads only a patch and the drift
+report as artifacts.
+
+The judge is a jq gate over `golden-drift.json` (status must be `warn`, at
+least one entry, zero `check.json`-surface entries, all nine semantic arrays
+empty) plus an independent `git diff --no-index` byte compare of every
+drifted fixture's `check.json`. The byte compare is deliberately stricter than
+the classifier's normalized `formatting_only` label: a renderer PR that only
+moves finding locations inside `check.json` changes the machine contract and
+is refused here even though the classifier calls it formatting-only. The judge
+runs beside PR-authored xtask, so it is a consistency check on that tier's
+output, not the authority boundary. The bless loop runs `cargo xtask goldens
+bless` per fixture, deriving each `--reason` from that fixture's own `SPEC.md`
+id, all-or-nothing: a mixed drift set (semantic `human.txt` changes,
+`check.json` entries, contract or run errors) is refused whole, and the
+`refuse` job comments the classified drift on the PR with zero pushes.
+
+`publish` (`contents: write`) executes no PR-authored code. It checks out the
+preflight head SHA, validates the patch (fixture names match
+`^[A-Za-z0-9_][A-Za-z0-9_-]*$`, every touched path is a regular file under
+`fixtures/<judged-name>/expected/`, no renames, copies, symlinks or mode
+changes), applies it on top of that head so the bot commit has the PR head as
+its only parent (no merge of the base branch enters the PR branch), checks the
+`git ls-remote` writer guard, and pushes one bot-authored commit. The Git
+push credential is injected only in that step; the other jobs hold only the
+`GITHUB_TOKEN` scope their `gh api` calls need.
+
+Trust boundary: a `workflow_dispatch` runs the workflow file from whichever
+ref the dispatcher selects, and the job guard `github.ref ==
+'refs/heads/main'` cannot defend against a modified copy of the same file. The
+boundary this route relies on is repository write access, since a dispatcher
+can already push to any unprotected same-repository PR branch. Pinning the
+publish job to the default branch with a deployment-branch-restricted
+environment is a settings change tracked in #12855.
+
+Re-arm is a comment, not a label flip. A `GITHUB_TOKEN` push and label edit
+create no workflow runs, so the route cannot restart admission and
+qualification itself; after the push it comments the exact command (remove and
+re-apply `merge-ready`) and leaves labels untouched, so a cancelled run can
+never strand a PR without its label. Non-goals: no semantic-drift auto-bless
+ever, no bypass of the evidence-promotion honesty gates, no required-check
+authority, no Windows evidence. `xtask/tests/goldens_rebless_workflow_contract.rs` pins the route:
+the merge-ref checkout, `persist-credentials: false`, fork/conflict
+preflight, the 4h claim scan, the locked-manifest fetch list, every judge
+gate, the byte-identity witness, the SPEC-derived bless loop, the
+confirmation-before-push ordering, the job split between PR-authored code and the write token, the patch validation and head-parented push, the comment-only re-arm, and
+the allowlist budget row.
+
 ### Self-Hosted Runner Placement
 
 The everyday required Rust gate routes through `routed-rust.yml`
@@ -2709,16 +2779,16 @@ Those remain separate qualification and rollout obligations.
 The ordinary size envelope (files and changed lines) counts only what a human
 has to review. Generated files are declared once, with `linguist-generated` in
 `.gitattributes` (dependency lockfiles, blessed `expected/` rows and goldens,
-public-proof metrics, verdict-corpus producer fact packets), and their lines and files are not counted. The
+public-proof metrics, verdict-corpus producer fact packets, honesty-corpus repo-exposure captures), and their lines and files are not counted. The
 declaration is read from the PR's base commit, so a PR cannot label its own
 files; a `.gitattributes` edit is itself counted in full. Three guards keep the
 label from hiding hand-written code: only declarable shapes count (lockfiles,
 `fixtures/**/expected/**`, `fixtures/<language>-verdict-corpus/packets/**`,
-`metrics/public-proof/**`; a new family is added to
+`metrics/public-proof/**`, and the `rust-inherent-*.json` and `rust-repo-exposure-*.json` captures in `fixtures/evidence-promotion-honesty-corpus/reports/`, which `check-evidence-promotion-honesty` binds by name: each must be the `source_report` of a case that regenerates it from a Cargo subject, or a full capture pinned in `report_cache_schema_pins`, so a hand-written file cannot borrow the name; a new family is added to
 `GENERATED_DECLARATION_ALLOWED` in reviewed code, and any other declaration is
 ignored and fails admission with `generated_declaration_invalid`); only data
 file types (`.json`, `.jsonl`, `.lock`, `.md`, `.txt`, `.stdout`) are ever
-exempt (corpus packets: `.json` only), and a file must change at least one line; and the exempt lines have their
+exempt (corpus packets and honesty captures: `.json` only), and a file must change at least one line; and the exempt lines have their
 own cap of 40000 (`generated_scope_oversized`), so a regeneration is separated
 from the hand-written change. A truncated file listing exempts nothing.
 

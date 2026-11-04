@@ -22,6 +22,7 @@ mod perl_executable_tests;
 mod preview_excluded;
 mod python;
 mod toolchain_file;
+pub(crate) mod verification_contract;
 // The exclusion path authorities are pure predicates, needed by the
 // diff-scope guard's admission counting in every feature lane (mirroring the
 // always-compiled Python authorities), so the module compiles unconditionally.
@@ -46,7 +47,8 @@ pub use model::{
 };
 pub(crate) use model::{
     HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, PythonLanguageConfig, RustLanguageConfig,
-    TypescriptLanguageConfig, perl_executable_opt_in,
+    TypescriptLanguageConfig, canonical_test_harnesses_identity, perl_executable_opt_in,
+    test_harness_registration_canonical_identity,
 };
 
 pub(crate) use preview_excluded::{
@@ -343,6 +345,16 @@ pub(crate) fn load_for_root_failure(root: &Path) -> Result<RiprConfig, ConfigLoa
     // spelling (#7652).
     config.source_path = Some(path);
     config.source_text = Some(text);
+    config.verification_contract_decision = Some(
+        verification_contract::compile_repository_verification_contract(
+            verification_contract::VerificationContractCompileInput {
+                repository_root: root,
+                ripr_toml_path: config.source_path.as_deref(),
+                ripr_toml_content_digest: loaded_config_identity(&config),
+                config: &config,
+            },
+        ),
+    );
     Ok(config)
 }
 

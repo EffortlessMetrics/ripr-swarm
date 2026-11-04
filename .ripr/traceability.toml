@@ -1592,6 +1592,9 @@ tests = [
   "crates/ripr/src/output/pilot/tests.rs::timeout_summary_json_is_partial_and_points_to_retry",
   "crates/ripr/src/output/pilot/tests/timeout_retry.rs::timeout_json_retry_preserves_format_and_unknown_analysis",
   "crates/ripr/tests/cli_smoke/pilot_timeout_retry.rs::timeout_json_retry_replays_as_json_from_a_foreign_directory",
+  "crates/ripr/src/cli/commands/pilot.rs::tests::pilot_default_extension_wall_clock_stays_within_total_budget",
+  "crates/ripr/src/cli/commands/pilot.rs::tests::pilot_extension_notice_fires_at_first_phase_boundary",
+  "crates/ripr/tests/cli_smoke/pilot_wall_budget.rs::many_function_pilot_hard_timeout_exits_within_cancel_grace",
   "crates/ripr/src/output/pilot/tests.rs::timeout_summary_md_explains_partial_status_and_retry_command",
   "crates/ripr/tests/cli_smoke.rs::pilot_accepts_python_project_without_ripr_config",
   "crates/ripr/tests/cli_smoke.rs::pilot_projects_python_repair_card_for_git_diff",
@@ -1950,6 +1953,9 @@ tests = [
   "crates/ripr/tests/repair_check_recommended_start.rs::error_variant_change_starts_the_changed_branch_check_recommends",
   "crates/ripr/tests/repair_check_recommended_start.rs::a_change_check_reads_as_noticed_and_unknown_lists_no_start",
   "crates/ripr/tests/repair_check_recommended_start.rs::an_unscoped_change_keeps_the_selection",
+  "crates/ripr/tests/repair_check_recommended_start.rs::open_spots_on_the_change_close_on_the_per_spot_reasons",
+  "crates/ripr/src/app/task_first.rs::tests::closure_outcome_says_nothing_to_do_when_everything_was_noticed",
+  "crates/ripr/src/cli/commands/task_first.rs::tests::open_on_change_closes_on_the_reasons_not_the_repository_tour",
   "crates/ripr/src/app/task_first.rs::tests::both_check_consumers_share_one_check_run",
   "crates/ripr/src/app/task_first.rs::tests::check_pick_narrows_only_when_eligible_and_committed",
   "crates/ripr/tests/task_first_facade.rs::repair_same_line_candidates_are_told_apart_in_plain_words",
@@ -20439,12 +20445,19 @@ tests = [
   "crates/ripr/src/analysis/diff_scope_filter.rs::tests::bounded_flags_cap_a_long_pattern_list",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::committed_root_target_is_build_output_but_a_nested_target_module_is_not",
   "crates/ripr/tests/cli_smoke.rs::check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result",
+  "crates/ripr/src/app/navigation.rs::tests::finding_navigation_appends_path_and_exclude_from_the_run_scope",
+  "crates/ripr/src/cli/commands.rs::tests::explain_accepts_path_and_exclude_and_rejects_a_dotdot_pattern",
+  "crates/ripr/src/cli/commands/context.rs::tests::context_accepts_path_and_exclude_and_rejects_a_dotdot_pattern",
+  "crates/ripr/tests/scoped_drill_in.rs::scoped_check_prints_path_exclude_drill_ins_that_replay",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/diff_scope_filter.rs",
   "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/cli/commands/check.rs",
+  "crates/ripr/src/app/navigation.rs",
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/context.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0309-check-scope-filter-for-oversized-diffs.md",

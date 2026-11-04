@@ -1356,3 +1356,15 @@ fn unmatched_repo_witness_stays_in_repo_columns() {
     assert_eq!(row.diff_target, "absent");
     assert_eq!(row.repo_target, repo.selected_target.kind());
 }
+
+#[test]
+fn rust_shared_witness_authority_uses_existing_adapter() {
+    use super::language_projection::shared_witness_from_rust_finding;
+
+    let finding = FindingSpec::default().build();
+    let input = AdapterInput::diff_current();
+    assert_eq!(
+        from_finding_with_input(&finding, input),
+        shared_witness_from_rust_finding(&finding, input)
+    );
+}
