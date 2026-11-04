@@ -36,6 +36,8 @@
     "profile": "plan_only",
     "reads": [
       "git HEAD/tree/status (including untracked files)",
+      "git configuration key names (clean/process filter refusal)",
+      "git repository-wide index flags and modes",
       "Cargo.toml",
       "crates/ripr/Cargo.toml",
       "Cargo.lock",

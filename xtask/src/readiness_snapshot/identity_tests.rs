@@ -100,6 +100,16 @@ fn rehearsal_identity_rejects_index_masks_and_uses_committed_bytes() -> Result<(
                 .is_empty()
         );
         assert!(git_worktree_clean().is_err(), "accepted index mask {flag}");
+        std::env::set_current_dir(fixture.root.join("crates/ripr")).map_err(|e| e.to_string())?;
+        assert!(
+            git_worktree_clean().is_err(),
+            "member invocation accepted root index mask {flag}"
+        );
+        assert!(
+            super::rehearsal_plan::run(&["--sha", "HEAD", "--plan", "--json"].map(str::to_string))
+                .is_err()
+        );
+        std::env::set_current_dir(&fixture.root).map_err(|e| e.to_string())?;
         assert_eq!(
             collect_identity_inputs_for_commit(&fixture.root, &head)?,
             identity

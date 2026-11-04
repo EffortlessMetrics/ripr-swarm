@@ -60,7 +60,7 @@ pub(crate) fn git_worktree_clean() -> Result<bool, String> {
     if filters.status.code() != Some(1) || !filters.stdout.is_empty() {
         return Err("could not establish absence of clean/process filter helpers".to_string());
     }
-    let index = git_output(&["ls-files", "--stage", "-v", "-z"])?;
+    let index = git_output(&["ls-files", "--stage", "-v", "-z", "--", ":/"])?;
     if !index.status.success() {
         return Err("could not inspect source index flags and modes".to_string());
     }

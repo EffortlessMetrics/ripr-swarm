@@ -67,6 +67,8 @@ whose recursive status might invoke an unchecked nested helper. This deliberatel
 refuses filter-enabled workspaces (including global Git LFS configuration), sparse
 or assume-unchanged indexes and submodules. The shared snapshot cleanliness probe
 has the same conservative limitation; receipt schema 1.0 parsing remains supported.
+The index inventory uses a repository-root pathspec, so member-directory calls
+cannot hide masking flags or gitlinks outside the current subdirectory.
 
 Consuming schema 1.1 leaves rehearsal-derived toolchain, package/install and
 supply-chain dimensions `not_proven`. Existing independent evidence adapters

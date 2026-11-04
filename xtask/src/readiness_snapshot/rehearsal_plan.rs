@@ -121,7 +121,7 @@ pub(super) fn plan_receipt(
         plan: Some(RehearsalPlan {
             source_tree, host_os: host_os.to_string(), host_arch: host_arch.to_string(),
             profile: "plan_only".to_string(),
-            reads: ["git HEAD/tree/status (including untracked files)", "Cargo.toml", "crates/ripr/Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "editors/vscode/package.json", "editors/vscode/package-lock.json"].map(str::to_string).to_vec(),
+            reads: ["git HEAD/tree/status (including untracked files)", "git configuration key names (clean/process filter refusal)", "git repository-wide index flags and modes", "Cargo.toml", "crates/ripr/Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "editors/vscode/package.json", "editors/vscode/package-lock.json"].map(str::to_string).to_vec(),
             writes: Vec::new(), cache_roots: Vec::new(), tools: vec!["git (read-only)".to_string()],
             prohibited_operations: ["build", "install", "network", "registry/marketplace publication", "tag", "release", "deployment", "version change", "signing", "credentials", "candidate freeze"].map(str::to_string).to_vec(),
             tags_created: Vec::new(), versions_changed: false, candidate_frozen: false,
