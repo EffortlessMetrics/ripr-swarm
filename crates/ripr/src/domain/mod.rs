@@ -37,6 +37,8 @@ mod support;
 mod test_candidate_set;
 mod test_evidence_identity;
 mod test_evidence_summary;
+mod typescript_oracle_seam;
+mod typescript_preview_related_test;
 mod verification_result;
 
 pub(crate) use analysis_execution_identity::{
@@ -176,6 +178,8 @@ pub use support::{ProbeId, SourceLocation, SymbolId};
 pub use test_candidate_set::{TestCandidateNextRoute, TestCandidateRow, TestCandidateSet};
 pub(crate) use test_evidence_identity::normalize_transport_path;
 pub use test_evidence_summary::{TestEvidenceEntry, TestEvidenceSummary};
+pub(crate) use typescript_oracle_seam::ts_oracle_kind_matches_seam;
+pub(crate) use typescript_preview_related_test::typescript_script_preview_related_test;
 pub(crate) use verification_result::CommandSpecDigest;
 pub use verification_result::{
     VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION, VerificationCurrentnessV1,
