@@ -343,12 +343,13 @@ fn render_agent_seam_packets_json_with_root(
         let info = limit.info();
         let repair_route = limit.repair_route();
         limitations.push(format!(
-            "    {{\n      \"category\": \"{}\",\n      \"seams_analyzed\": {},\n      \"seams_total\": {},\n      \"limit_source\": \"{}\",\n      \"control\": \"{}\",\n      \"repair_route\": \"{}\"\n    }}",
+            "    {{\n      \"category\": \"{}\",\n      \"seams_analyzed\": {},\n      \"seams_total\": {},\n      \"limit_source\": \"{}\",\n      \"control\": \"{}\",\n      \"selection_order\": \"{}\",\n      \"repair_route\": \"{}\"\n    }}",
             limit.category(),
             info.analyzed,
             info.total,
             info.source.as_str(),
             limit.control(),
+            limit.selection_order().as_str(),
             crate::output::json::escape(repair_route)
         ));
     }
@@ -8437,6 +8438,7 @@ mod tests {
                 "seams_total": 1_000,
                 "limit_source": "configured",
                 "control": "RIPR_PILOT_SEAM_BUDGET",
+                "selection_order": "current_change_then_inventory_order_prefix",
                 "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
             }]),
             "{doc}"
@@ -8516,6 +8518,11 @@ mod tests {
                     "seams_total": 9,
                     "limit_source": source_name,
                     "control": control,
+                    "selection_order": if inventory {
+                        "canonical_seam_sort_prefix"
+                    } else {
+                        "current_change_then_inventory_order_prefix"
+                    },
                     "repair_route": route,
                 }]),
                 "{doc}"
