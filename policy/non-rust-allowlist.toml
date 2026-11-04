@@ -1081,3 +1081,30 @@ surface = "ci"
 classification = "test"
 reason = "Fake-API unittest suite for the exact-head merge guard (#11781); run through the Rust wrapper test so CI executes it."
 covered_by = ["cargo test -p xtask --test guarded_merge_selftest"]
+
+[[allow]]
+glob = "benchmarks/agentic/cohort/harness/*.py"
+kind = "benchmark_harness"
+owner = "agent-eval"
+surface = "repo"
+classification = "tooling"
+reason = "Stdlib Python harness for the with/without-ripr agent cohort (#12902): builds task crates, launches headless agents, scores hidden mutants. Opt-in, never on the default CI path."
+covered_by = ["cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/agentic/cohort/mutants/*.json"
+kind = "benchmark_fixture"
+owner = "agent-eval"
+surface = "fixtures"
+classification = "fixture"
+reason = "Filtered mechanical mutant lists (line number, replacement) for the cohort's multi-function tasks (#12902)."
+covered_by = ["cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/agentic/cohort/receipts/*.jsonl"
+kind = "benchmark_receipt"
+owner = "agent-eval"
+surface = "fixtures"
+classification = "fixture"
+reason = "Per-run records (scores, turns, tokens, cost, wall time) from the agent cohort runs (#12902)."
+covered_by = ["cargo xtask check-file-policy"]

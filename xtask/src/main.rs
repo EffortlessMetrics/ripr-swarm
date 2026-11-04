@@ -23804,6 +23804,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
         );
     }
 
+    if path.starts_with("benchmarks/agentic/cohort/harness/") && path.ends_with(".py") {
+        return Some(
+            "Opt-in agent cohort harness drives headless `claude -p` sessions and scores hidden mutants with stdlib Python; it is never on the default CI path (#12902).",
+        );
+    }
+
     if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
         return Some(
             "Portable packet consumer must run as stdlib Python 3.11+ in agent environments that have no Cargo/rustc.",
