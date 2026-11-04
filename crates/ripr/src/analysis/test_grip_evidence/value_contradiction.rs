@@ -2724,3 +2724,173 @@ mod tests {
         Ok(())
     }
 }
+
+/// Bounded #12808 witness for a direct tuple-constructor method call. Every
+/// related test must have exactly one immutable result binding and one admitted
+/// equality assertion. Unknown syntax keeps the existing reading.
+pub(in crate::analysis) fn tuple_method_invisible(
+    owner: &FunctionSummary,
+    before: &str,
+    after: &str,
+    tests: &[&TestSummary],
+    tuple_name: &str,
+    integer_type: &str,
+    admits: impl Fn(&TestSummary, &crate::analysis::facts::OracleFact) -> bool,
+) -> bool {
+    fn compact(text: &str) -> String {
+        text.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+    fn operation(text: &str) -> Option<(bool, bool)> {
+        let text = compact(text);
+        let inner = text.strip_prefix("Self(")?.strip_suffix(')')?;
+        Some(match inner {
+            "self.0+other.0" | "other.0+self.0" => (true, true),
+            "self.0-other.0" => (false, true),
+            "other.0-self.0" => (false, false),
+            _ => return None,
+        })
+    }
+    fn eval(op: (bool, bool), a: i128, b: i128, range: (i128, i128)) -> Option<i128> {
+        if !(range.0..=range.1).contains(&a) || !(range.0..=range.1).contains(&b) {
+            return None;
+        }
+        let (l, r) = if op.1 { (a, b) } else { (b, a) };
+        let value = if op.0 {
+            l.checked_add(r)?
+        } else {
+            l.checked_sub(r)?
+        };
+        (range.0..=range.1).contains(&value).then_some(value)
+    }
+    fn literal(text: &str) -> Option<i128> {
+        if text.is_empty()
+            || !text
+                .trim_start_matches('-')
+                .chars()
+                .all(|c| c.is_ascii_digit())
+        {
+            return None;
+        }
+        text.parse().ok()
+    }
+    let Some(range) = declared_integer_range(integer_type) else {
+        return false;
+    };
+    let (Some(old), Some(new)) = (operation(before), operation(after)) else {
+        return false;
+    };
+    if old == new
+        || !matches!((eval(old, 2, 3, range), eval(new, 2, 3, range)), (Some(a), Some(b)) if a != b)
+    {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(&owner.body) else {
+        return false;
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let Some(block) = function.body() else {
+        return false;
+    };
+    let Some(list) = block.stmt_list() else {
+        return false;
+    };
+    if function.attrs().next().is_some()
+        || list.statements().next().is_some()
+        || list
+            .tail_expr()
+            .is_none_or(|expr| compact(&expr.syntax().text().to_string()) != compact(after))
+    {
+        return false;
+    }
+    let sig = compact(&owner.body);
+    let expected_sig = format!("fn{}(self,other:{tuple_name})->", owner.name);
+    let Some(rest) = sig.strip_prefix(&expected_sig) else {
+        return false;
+    };
+    if !(rest.starts_with(&format!("{tuple_name}{{")) || rest.starts_with("Self{")) {
+        return false;
+    }
+    if tests.is_empty() {
+        return false;
+    }
+    for test in tests {
+        if test.generated.is_some()
+            || test.assertions.len() != 1
+            || case_row_bindings(test).is_some()
+            || test.attrs.iter().any(|attr| compact(attr) != "#[test]")
+            || !admits(test, &test.assertions[0])
+        {
+            return false;
+        }
+        let Some(parse) = parse_clean_source_file(test.body.as_str()) else {
+            return false;
+        };
+        let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+            return false;
+        };
+        let Some(block) = function.body() else {
+            return false;
+        };
+        let Some(list) = block.stmt_list() else {
+            return false;
+        };
+        let statements: Vec<_> = list.statements().collect();
+        let [ast::Stmt::LetStmt(binding), assertion] = statements.as_slice() else {
+            return false;
+        };
+        if list.tail_expr().is_some()
+            || compact(&assertion.syntax().text().to_string()).trim_end_matches(';')
+                != compact(&test.assertions[0].text).trim_end_matches(';')
+        {
+            return false;
+        }
+        let Some(ast::Pat::IdentPat(pat)) = binding.pat() else {
+            return false;
+        };
+        if pat.pat().is_some()
+            || pat.ref_token().is_some()
+            || pat.mut_token().is_some()
+            || binding.ty().is_some()
+            || binding.let_else().is_some()
+        {
+            return false;
+        }
+        let Some(name) = pat.name().map(|n| n.text().to_string()) else {
+            return false;
+        };
+        let Some((_, operands)) = equality_assertion_shape(&test.assertions[0].text) else {
+            return false;
+        };
+        if operands.len() != 2
+            || !operands.iter().any(|operand| {
+                let operand = compact(operand);
+                operand == name || operand == format!("{name}.0")
+            })
+        {
+            return false;
+        }
+        let Some(init) = binding.initializer() else {
+            return false;
+        };
+        let init = compact(&init.syntax().text().to_string());
+        let prefix = format!("{tuple_name}(");
+        let separator = format!(").{}({tuple_name}(", owner.name);
+        let Some((a, b)) = init
+            .strip_prefix(&prefix)
+            .and_then(|s| s.strip_suffix("))"))
+            .and_then(|s| s.split_once(&separator))
+        else {
+            return false;
+        };
+        let (Some(a), Some(b)) = (literal(a), literal(b)) else {
+            return false;
+        };
+        match (eval(old, a, b, range), eval(new, a, b, range)) {
+            (Some(a), Some(b)) if a == b => {}
+            _ => return false,
+        }
+    }
+    true
+}

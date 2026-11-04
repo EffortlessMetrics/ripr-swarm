@@ -695,6 +695,7 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
 #[derive(Clone, Copy, Default)]
 pub(in crate::analysis) struct OwnerInputs<'a> {
     pub(in crate::analysis) owner: Option<&'a FunctionSummary>,
+    pub(in crate::analysis) tuple_invisible: bool,
     pub(in crate::analysis) literal_length_boundary:
         Option<&'a super::literal_length_boundary::LiteralLengthBoundary>,
 }
@@ -720,6 +721,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     let OwnerInputs {
         owner,
         literal_length_boundary,
+        tuple_invisible,
     } = owner_inputs;
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
@@ -986,6 +988,12 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                     StageState::Unknown,
                     Confidence::Low,
                     "Changed value is bound to a discard pattern; it cannot infect a sink",
+                )
+            } else if tuple_invisible && !owner_has_other_callers && !assertion_macros_rebound {
+                StageEvidence::new(
+                    StageState::Weak,
+                    Confidence::Medium,
+                    "Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference",
                 )
             } else if let Some(reason) = owner
                 .zip(probe.before.as_deref())
@@ -1583,6 +1591,7 @@ mod tests {
             OwnerInputs {
                 owner: Some(&owner),
                 literal_length_boundary: None,
+                tuple_invisible: false,
             },
             true,
             false,

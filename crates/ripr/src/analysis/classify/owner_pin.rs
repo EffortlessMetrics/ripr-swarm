@@ -5157,6 +5157,38 @@ impl OwnerReturnPin {
         matches!(self.path, ReturnPathGate::FixtureReceiver(_))
     }
 
+    /// The established one-field integer tuple returned by this method.
+    pub(in crate::analysis) fn tuple_integer_type<'a>(
+        &'a self,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> Option<(&'a str, &'static str)> {
+        if !matches!(self.call, PinCall::Method { .. }) {
+            return None;
+        }
+        let name = self.tuple_projection.as_deref()?;
+        // An attribute on the impl can rewrite or remove the method. The
+        // tuple-field authority checks the enclosing modules and declaration;
+        // inspect this remaining owner boundary before evaluating its source.
+        let source = &index.files().get(&owner.file)?.source;
+        let parse = parse_clean_source_file(source)?;
+        let function = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .find(|function| function.name().is_some_and(|n| n.text() == owner.name))?;
+        let implementation = function.syntax().ancestors().find_map(ast::Impl::cast)?;
+        if implementation.attrs().next().is_some() {
+            return None;
+        }
+        Some((
+            name,
+            field_builtin_integer_of(owner, name, "0", true, index, syntax)?,
+        ))
+    }
+
     /// The test-side gates: whether `assertion` in `test` pins the owner's
     /// return value through a call that names the owner.
     /// [`owner_call_shape`], reading an `async` owner's result through one

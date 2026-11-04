@@ -478,6 +478,46 @@ impl ClassifiedProbeEvidence {
             context.index,
             &["assert", "debug_assert", "assert_eq", "assert_ne"],
         );
+        let owner_return_pin = context
+            .owner_fn
+            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+        let tuple_invisible = (!owner_has_other_callers
+            && !assertion_macros_rebound
+            && matches!(context.probe.family, ProbeFamily::ReturnValue))
+        .then_some(())
+        .and_then(|()| context.owner_fn)
+        .and_then(|owner| {
+            let before = context.probe.before.as_deref()?;
+            let pin = owner_return_pin.as_ref()?;
+            let (tuple_name, integer_type) =
+                pin.tuple_integer_type(owner, context.index, pin_syntax)?;
+            Some(crate::analysis::test_grip_evidence::tuple_method_invisible(
+                owner,
+                before,
+                &context.probe.expression,
+                &test_summaries,
+                tuple_name,
+                integer_type,
+                |test, assertion| {
+                    pin.admits(
+                        test,
+                        assertion,
+                        context.index,
+                        &|file, name| {
+                            context.index.files().get(file).is_none_or(|facts| {
+                                context.test_file_imports_foreign_callee_name(
+                                    file,
+                                    &facts.source,
+                                    name,
+                                )
+                            })
+                        },
+                        pin_syntax,
+                    )
+                },
+            ))
+        })
+        .unwrap_or(false);
         let infect = infection_evidence_for_owner(
             context.probe,
             &test_summaries,
@@ -486,6 +526,7 @@ impl ClassifiedProbeEvidence {
             OwnerInputs {
                 owner: context.owner_fn,
                 literal_length_boundary: gathered.literal_length_boundary.as_ref(),
+                tuple_invisible,
             },
             owner_has_other_callers,
             assertion_macros_rebound,
@@ -734,9 +775,6 @@ impl ClassifiedProbeEvidence {
         let sibling_exclusion_admitted = |test: &TestSummary, assertion: &OracleFact| {
             pin_syntax.admits_assertion_context(test, assertion, context.index)
         };
-        let owner_return_pin = context
-            .owner_fn
-            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
         // RIPR-SPEC-0229: which owner-call input selects a changed arm.
         // A same-named function elsewhere (a trait method on another enum
         // with the same variant names) makes a direct call ambiguous; a
