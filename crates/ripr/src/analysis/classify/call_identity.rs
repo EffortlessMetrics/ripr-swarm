@@ -5185,7 +5185,10 @@ mod tests {
         // The unknown attribute macro must be indexed, or the negative below
         // is vacuous.
         assert!(
-            index.tests().iter().any(|test| test.name == "injected_case"),
+            index
+                .tests()
+                .iter()
+                .any(|test| test.name == "injected_case"),
             "the attribute-macro case must be indexed"
         );
         assert_ne!(
