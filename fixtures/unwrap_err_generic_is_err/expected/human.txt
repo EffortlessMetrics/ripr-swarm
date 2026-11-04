@@ -34,6 +34,7 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/unwrap_err_generic_is_err/input --diff <cwd>/fixtures/unwrap_err_generic_is_err/diff.patch --mode fast probe:src_lib.rs:error_path:6b37a3bc
   ripr context --root <cwd>/fixtures/unwrap_err_generic_is_err/input --diff <cwd>/fixtures/unwrap_err_generic_is_err/diff.patch --mode fast --at probe:src_lib.rs:error_path:6b37a3bc
   no repair start offered: ripr found 7 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
@@ -42,7 +43,7 @@ Write a test for it:
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:17 (weak); kind: return_value; reason: Missing discriminator value: CalcError::Negative
+    - ./src/lib.rs:17 (weak); kind: return_value; reason: Missing check value: CalcError::Negative
   Hidden classes:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full

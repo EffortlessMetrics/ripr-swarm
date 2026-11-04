@@ -53,7 +53,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             continue;
         }
         let Some(annotation_level) = config
-            .severity()
+            .severity_for_file(&finding.probe.location.file)
             .for_exposure(&finding.class)
             .github_annotation_level()
         else {

@@ -58,5 +58,6 @@ Limitation detail
 Next step
   ripr could not read whether the assertions in `checks_weight` (tests/weight_tests.rs:4) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/owner_return_pin_rebound_test_attribute/input --diff <cwd>/fixtures/owner_return_pin_rebound_test_attribute/diff.patch --mode fast probe:src_lib.rs:return_value:6ea804bb
   ripr context --root <cwd>/fixtures/owner_return_pin_rebound_test_attribute/input --diff <cwd>/fixtures/owner_return_pin_rebound_test_attribute/diff.patch --mode fast --at probe:src_lib.rs:return_value:6ea804bb
