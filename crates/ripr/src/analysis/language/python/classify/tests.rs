@@ -3982,3 +3982,74 @@ fn object_base_class_change_pins_type_params_keywords_and_header_shapes() {
         .is_some()
     );
 }
+
+/// Producer-wide invariant: every committed Python preview finding in the
+/// fixture goldens carries a non-empty `confidence_basis` and a
+/// `confidence_why_capped` line (#12419 / RIPR-SPEC-0026).
+#[test]
+fn every_python_preview_finding_in_the_goldens_has_a_confidence_basis() -> Result<(), String> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let mut checked = 0usize;
+    let mut missing = Vec::new();
+    for entry in std::fs::read_dir(&root).map_err(|e| e.to_string())? {
+        let path = entry
+            .map_err(|e| e.to_string())?
+            .path()
+            .join("expected/check.json");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        for finding in value["findings"].as_array().into_iter().flatten() {
+            if finding["language"].as_str() != Some("python") {
+                continue;
+            }
+            checked += 1;
+            let has_basis = finding["confidence_basis"]
+                .as_array()
+                .is_some_and(|basis| !basis.is_empty());
+            if !has_basis || finding["confidence_why_capped"].as_str().is_none() {
+                missing.push(format!("{} {}", path.display(), finding["id"]));
+            }
+        }
+    }
+    assert!(
+        checked > 20,
+        "expected many Python golden findings, saw {checked}"
+    );
+    assert!(missing.is_empty(), "findings without a basis: {missing:#?}");
+    Ok(())
+}
+
+#[test]
+fn assertion_helper_field_exposed_row_carries_preview_adapter_basis_only() -> Result<(), String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/python_assertion_helper_field/expected/check.json");
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let finding = &value["findings"][0];
+    assert_eq!(finding["classification"], "exposed");
+    assert_eq!(finding["confidence"], 0.6);
+    let codes: Vec<&str> = finding["confidence_basis"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|entry| entry["code"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        codes,
+        vec![
+            "preview_stages_not_modeled",
+            "syntax_first_no_type_resolution"
+        ]
+    );
+    let why = finding["confidence_why_capped"]
+        .as_str()
+        .ok_or("missing confidence_why_capped")?;
+    assert!(
+        why.contains("infection/propagation not modeled (Python)"),
+        "{why}"
+    );
+    assert!(why.contains("not on the same scale as Rust"), "{why}");
+    Ok(())
+}

@@ -35,6 +35,7 @@ Language
 
 Static exposure
   exposed (info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `check_balance`
@@ -51,6 +52,7 @@ Weakness
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_caplog_builtin_beside_fixtures/input --diff <cwd>/fixtures/python_caplog_builtin_beside_fixtures/diff.patch --mode fast probe:audit.py:python_preview:v1-3a7c2336
   ripr context --root <cwd>/fixtures/python_caplog_builtin_beside_fixtures/input --diff <cwd>/fixtures/python_caplog_builtin_beside_fixtures/diff.patch --mode fast --at probe:audit.py:python_preview:v1-3a7c2336
 
