@@ -671,6 +671,16 @@ fn credited_related_tests<'a>(
                 if !admitted.is_empty() {
                     view.to_mut().assertions.extend(admitted);
                 }
+                // #13005: a plain `assert_eq!` whose literal the current
+                // owner provably does not return fails at baseline.
+                let withheld = pin.literal_withheld(&view, context.index, context.pin_syntax());
+                if !withheld.is_empty() {
+                    let mut position = 0;
+                    view.to_mut().assertions.retain(|_| {
+                        position += 1;
+                        !withheld.contains(&(position - 1))
+                    });
+                }
             }
             view
         })

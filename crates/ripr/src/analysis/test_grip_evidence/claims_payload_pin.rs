@@ -1,4 +1,7 @@
-//! Claims payload-equality credit shared with diff analysis (#12394 item 3).
+//! Owner-pin decisions the repo-wide audit shares with diff analysis
+//! (#12394 item 3, #13005).
+//!
+//! Claims payload equality (#12394 item 3):
 //!
 //! Extraction lists no oracle for `assert_ok_eq!(call, literal)` /
 //! `assert_some_eq!(call, literal)` (RIPR-SPEC-0120), so the repo seam stages
@@ -9,6 +12,13 @@
 //! `admits_claims_payload_eq` (verified import, direction, literal expected
 //! operand, owner identity). A refusal there leaves the statement out of the
 //! view, so the audit can only credit what the diff path credits.
+//!
+//! Plain `assert_eq!` literal check (#13005): the audit credits a plain
+//! `assert_eq!` from its extracted oracle, never asking the owner pin, so a
+//! literal the current owner provably does not return read as an exact-value
+//! oracle. `ripr check` withholds a literal neither owner version returns
+//! (#12716). The audit has one version, so it reads the current owner and
+//! drops only the assertions that check alone refuses.
 
 use super::{FunctionSummary, OracleFact, RepoSeam, RustIndex, SeamKind, TestSummary};
 use crate::analysis::classify::{
@@ -25,26 +35,43 @@ pub(super) struct ClaimsPayloadPin<'a> {
     owner: &'a FunctionSummary,
     probe: Probe,
     pin: OwnerReturnPin,
+    /// A related test mentions a claims equality macro.
+    claims: bool,
+    /// A related test mentions `assert_eq!` and the closed subset reads the
+    /// owner, so the current-owner literal check can withhold.
+    plain_eq: bool,
 }
 
 impl<'a> ClaimsPayloadPin<'a> {
     /// `None` unless this is a return-value seam, one related test mentions a
-    /// claims equality macro, and the owner pin establishes the owner. The
-    /// mention check keeps the owner-side scans off every seam without one.
+    /// claims equality macro (or `assert_eq!` over an owner the closed subset
+    /// reads), and the owner pin establishes the owner. The mention check keeps
+    /// the owner-side scans off every seam without one.
     pub(super) fn establish<'t>(
         seam: &RepoSeam,
         owner: Option<&'a FunctionSummary>,
         index: &RustIndex,
-        mut related: impl Iterator<Item = &'t TestSummary>,
+        related: impl Iterator<Item = &'t TestSummary>,
     ) -> Option<Self> {
         // The diff path nominates for the return-value family only.
         if seam.kind() != SeamKind::ReturnValue {
             return None;
         }
-        if !related.any(|test| CLAIMS_EQ_NAMES.iter().any(|name| test.body.contains(name))) {
+        let owner = owner?;
+        // A claims macro nominates the claims credit; a plain `assert_eq!`
+        // the literal check, and only when the closed subset reads the owner.
+        let (mut claims, mut plain_eq) = (false, false);
+        let literal_readable = OwnerReturnPin::owner_literal_readable(owner);
+        for test in related {
+            claims |= CLAIMS_EQ_NAMES.iter().any(|name| test.body.contains(name));
+            plain_eq |= literal_readable && test.body.contains("assert_eq!");
+            if claims && plain_eq {
+                break;
+            }
+        }
+        if !claims && !plain_eq {
             return None;
         }
-        let owner = owner?;
         if owner.file != seam.file() || owner.id.0.replace('\\', "/") != seam.owner() {
             return None;
         }
@@ -70,7 +97,13 @@ impl<'a> ClaimsPayloadPin<'a> {
         };
         let pin = OwnerReturnPin::establish(&probe, owner, index)?
             .with_current_owner_literal_check(owner);
-        Some(Self { owner, probe, pin })
+        Some(Self {
+            owner,
+            probe,
+            pin,
+            claims,
+            plain_eq,
+        })
     }
 
     /// The claims statements of `test` the owner pin admits, graded as the
@@ -82,7 +115,7 @@ impl<'a> ClaimsPayloadPin<'a> {
         syntax: &OwnerPinSyntax,
     ) -> Vec<OracleFact> {
         let candidates = claims_payload_eq_candidates(test);
-        if candidates.is_empty() {
+        if !self.claims || candidates.is_empty() {
             return Vec::new();
         }
         let context = ProbeContext::new(
@@ -115,6 +148,46 @@ impl<'a> ClaimsPayloadPin<'a> {
                 strength: OracleStrength::Strong,
                 ..candidate
             })
+            .collect()
+    }
+    /// #13005: the assertions of `test` the current-owner literal check alone
+    /// refuses: a plain `assert_eq!` whose literal the current owner provably
+    /// does not return. Empty when none, or when no related test mentions one.
+    pub(super) fn literal_withheld(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> Vec<usize> {
+        if !self.plain_eq {
+            return Vec::new();
+        }
+        let context = ProbeContext::new(
+            &self.probe,
+            Some(self.owner),
+            Vec::new(),
+            false,
+            index,
+            false,
+        );
+        test.assertions
+            .iter()
+            .enumerate()
+            .filter(|(_, assertion)| assertion.text.contains("assert_eq!"))
+            .filter(|(_, assertion)| {
+                self.pin.literal_check_withholds(
+                    test,
+                    assertion,
+                    index,
+                    &|file, name| {
+                        index.files().get(file).is_none_or(|facts| {
+                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
+                        })
+                    },
+                    syntax,
+                )
+            })
+            .map(|(position, _)| position)
             .collect()
     }
 }
