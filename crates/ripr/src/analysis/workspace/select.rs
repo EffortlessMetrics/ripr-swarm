@@ -34,8 +34,11 @@ fn select_rust_files_for_mode(
 /// package roots that reach a changed package through path dependencies, so
 /// the Draft/Fast package narrowing also indexes the tests of dependent
 /// crates instead of dropping them from scope. Expansion only ever adds
-/// packages; Instant's changed-files-only and Deep/Ready's whole-workspace
+/// packages; Instant's changed-files-only and Deep's whole-workspace
 /// selections ignore it, as does every branch without package narrowing.
+/// Ready indexes the whole workspace when the diff names at least one Rust
+/// file, and indexes nothing when it names none (#10353), matching Instant/
+/// Draft/Fast so a docs-only diff does not scan workspace Rust.
 pub(crate) fn select_rust_files_for_mode_with_dependent_packages(
     all_files: &[PathBuf],
     changed_rust_files: &[PathBuf],
@@ -47,6 +50,14 @@ pub(crate) fn select_rust_files_for_mode_with_dependent_packages(
     let changed_existing = changed_existing_files(all_files, changed_rust_files);
     if matches!(mode, AnalysisMode::Instant) || !include_unchanged_tests {
         return with_module_context_files(all_files, changed_existing);
+    }
+
+    // A docs-only (or otherwise non-Rust) diff has no analyzable Rust file.
+    // Ready must not index the workspace just to name limitations about files
+    // the run never needed (#10353). Deep keeps the whole-workspace scan even
+    // with an empty changed set.
+    if matches!(mode, AnalysisMode::Ready) && changed_rust_files.is_empty() {
+        return Vec::new();
     }
 
     if matches!(mode, AnalysisMode::Deep | AnalysisMode::Ready) {
@@ -415,6 +426,47 @@ mod tests {
         }
     }
 
+    /// #10353: Ready matches Instant/Draft/Fast when the diff names no Rust
+    /// file. Scanning the whole workspace for a docs-only diff would only
+    /// surface limitations about files the run never needed. Dependent
+    /// roots cannot revive a whole-workspace scan for an empty changed set.
+    #[test]
+    fn ready_without_changed_rust_indexes_nothing() {
+        let all = files(&["src/lib.rs", "tests/pricing.rs", "crates/other/src/lib.rs"]);
+        let selected = select_rust_files_for_mode(&all, &[], AnalysisMode::Ready, true);
+        assert!(
+            selected.is_empty(),
+            "Ready with no changed Rust must not index the workspace: {selected:?}"
+        );
+        let dependents = ["crates/other/".to_string()]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let with_dependents = select_rust_files_for_mode_with_dependent_packages(
+            &all,
+            &[],
+            AnalysisMode::Ready,
+            true,
+            &dependents,
+            &["crates/other/".to_string()],
+        );
+        assert!(
+            with_dependents.is_empty(),
+            "Ready with no changed Rust must ignore dependent roots: {with_dependents:?}"
+        );
+    }
+
+    /// Deep still indexes the whole workspace on an empty changed set. That
+    /// split is intentional: #10353 is Ready only.
+    #[test]
+    fn deep_without_changed_rust_still_indexes_workspace() {
+        let all = files(&["src/lib.rs", "tests/pricing.rs", "crates/other/src/lib.rs"]);
+        let selected = select_rust_files_for_mode(&all, &[], AnalysisMode::Deep, true);
+        assert_eq!(
+            selected,
+            files(&["crates/other/src/lib.rs", "src/lib.rs", "tests/pricing.rs"])
+        );
+    }
+
     #[test]
     fn operator_mode_tiers_are_pinned_for_defaults_first_adoption() {
         let all = files(&[
@@ -742,9 +794,10 @@ mod tests {
     }
 
     /// Modes and toggles without package narrowing ignore the dependent
-    /// roots: Instant stays changed-files-only, Deep/Ready stay
-    /// whole-workspace, and `include_unchanged_tests = false` stays
-    /// changed-files-only in every mode.
+    /// roots: Instant stays changed-files-only, Deep stays whole-workspace,
+    /// Ready stays whole-workspace when the diff names Rust, and
+    /// `include_unchanged_tests = false` stays changed-files-only in every
+    /// mode.
     #[test]
     fn dependent_roots_do_not_change_non_narrowing_selections() {
         let all = files(&["a/src/lib.rs", "b/src/lib.rs", "b/tests/b.rs"]);

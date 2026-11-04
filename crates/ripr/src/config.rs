@@ -22,8 +22,10 @@ mod override_tests;
 mod overrides;
 #[cfg(test)]
 mod perl_executable_tests;
+mod preview_excluded;
 mod python;
 mod toolchain_file;
+pub(crate) mod verification_contract;
 // The exclusion path authorities are pure predicates, needed by the
 // diff-scope guard's admission counting in every feature lane (mirroring the
 // always-compiled Python authorities), so the module compiles unconditionally.
@@ -47,10 +49,15 @@ pub use model::{
     TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
 pub(crate) use model::{
-    HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig, perl_executable_opt_in,
+    HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, PythonLanguageConfig, RustLanguageConfig,
+    TypescriptLanguageConfig, canonical_test_harnesses_identity, perl_executable_opt_in,
+    test_harness_registration_canonical_identity,
 };
 use overrides::discover_workspace_crates;
 
+pub(crate) use preview_excluded::{
+    is_probable_fixture_or_data_path, path_matches_preview_excluded_patterns,
+};
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
 pub(crate) use python::{
@@ -353,6 +360,16 @@ pub(crate) fn load_for_root_failure(root: &Path) -> Result<RiprConfig, ConfigLoa
         .map_err(|err| {
             ConfigLoadFailure::Read(config_load_parse_error_for_host(&path, &err, cfg!(windows)))
         })?;
+    config.verification_contract_decision = Some(
+        verification_contract::compile_repository_verification_contract(
+            verification_contract::VerificationContractCompileInput {
+                repository_root: root,
+                ripr_toml_path: config.source_path.as_deref(),
+                ripr_toml_content_digest: loaded_config_identity(&config),
+                config: &config,
+            },
+        ),
+    );
     Ok(config)
 }
 
@@ -1005,25 +1022,37 @@ impl RiprConfig {
                     )?;
                 }
             }
-            if let Some(python) = languages.python
-                && let Some(paths) = python.handwritten_files
-            {
-                config.languages.python.handwritten_files = parse_handwritten_files(
-                    &paths,
-                    "languages.python.handwritten_files",
-                    "a Python `.py` file",
-                    |extension| extension == "py",
-                )?;
+            if let Some(python) = languages.python {
+                if let Some(paths) = python.handwritten_files {
+                    config.languages.python.handwritten_files = parse_handwritten_files(
+                        &paths,
+                        "languages.python.handwritten_files",
+                        "a Python `.py` file",
+                        |extension| extension == "py",
+                    )?;
+                }
+                if let Some(patterns) = python.excluded_file_patterns {
+                    config.languages.python.excluded_file_patterns = parse_path_glob_patterns(
+                        "languages.python.excluded_file_patterns",
+                        &patterns,
+                    )?;
+                }
             }
-            if let Some(typescript) = languages.typescript
-                && let Some(paths) = typescript.handwritten_files
-            {
-                config.languages.typescript.handwritten_files = parse_handwritten_files(
-                    &paths,
-                    "languages.typescript.handwritten_files",
-                    "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
-                    crate::analysis::is_ts_js_source_extension,
-                )?;
+            if let Some(typescript) = languages.typescript {
+                if let Some(paths) = typescript.handwritten_files {
+                    config.languages.typescript.handwritten_files = parse_handwritten_files(
+                        &paths,
+                        "languages.typescript.handwritten_files",
+                        "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
+                        crate::analysis::is_ts_js_source_extension,
+                    )?;
+                }
+                if let Some(patterns) = typescript.excluded_file_patterns {
+                    config.languages.typescript.excluded_file_patterns = parse_path_glob_patterns(
+                        "languages.typescript.excluded_file_patterns",
+                        &patterns,
+                    )?;
+                }
             }
         }
         if let Some(profiles) = raw.profiles {
@@ -1139,28 +1168,26 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
 }
 
 fn parse_generated_file_patterns(values: &[String]) -> Result<Vec<String>, String> {
+    parse_path_glob_patterns("languages.rust.generated_file_patterns", values)
+}
+
+fn parse_path_glob_patterns(field: &str, values: &[String]) -> Result<Vec<String>, String> {
     let mut parsed = Vec::with_capacity(values.len());
     // Set membership keeps duplicate detection linear: a hostile `ripr.toml`
     // may list tens of thousands of entries (#11560).
     let mut seen = std::collections::HashSet::with_capacity(values.len());
     for value in values {
         if value.chars().any(char::is_control) {
-            return Err(
-                "languages.rust.generated_file_patterns must not contain control characters"
-                    .to_string(),
-            );
+            return Err(format!("{field} must not contain control characters"));
         }
         let trimmed = value.trim();
-        parse_relative_path("languages.rust.generated_file_patterns", trimmed)?;
+        parse_relative_path(field, trimmed)?;
         if trimmed == "." {
-            return Err(
-                "languages.rust.generated_file_patterns must identify a file pattern, not `.`"
-                    .to_string(),
-            );
+            return Err(format!("{field} must identify a file pattern, not `.`"));
         }
         if !seen.insert(trimmed) {
             return Err(format!(
-                "languages.rust.generated_file_patterns lists `{trimmed}` more than once; remove the duplicate"
+                "{field} lists `{trimmed}` more than once; remove the duplicate"
             ));
         }
         parsed.push(trimmed.to_string());
@@ -1532,12 +1559,14 @@ struct RawRustLanguageConfig {
 #[serde(deny_unknown_fields)]
 struct RawPythonLanguageConfig {
     handwritten_files: Option<Vec<String>>,
+    excluded_file_patterns: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawTypescriptLanguageConfig {
     handwritten_files: Option<Vec<String>>,
+    excluded_file_patterns: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]

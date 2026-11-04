@@ -585,10 +585,11 @@ fn binds_in_header(statement: &str, target: &str) -> bool {
 
 /// Whether the line rebinds `target` (`builtins.name`, `builtins["name"]`;
 /// whitespace already removed) as an assignment store (#12222): a plain,
-/// chained or annotated `target = f`, or a slot in a tuple, list or
-/// parenthesized target list. Each `;` statement is read on its own, a
-/// comment or string never counts, and a use inside a call, subscript key or
-/// right-hand side, a comparison and a bare annotation bind nothing.
+/// chained or annotated `target = f`, a tuple/list/parenthesized target list,
+/// or an augmented assignment to `target` (#12592). Each `;` statement is read
+/// on its own, a comment or string never counts, and a use inside a call,
+/// subscript key or right-hand side, a comparison and a bare annotation bind
+/// nothing.
 fn rebinds_target(compact: &str, target: &str) -> bool {
     split_top(strip_comment(compact), b';')
         .into_iter()
@@ -598,7 +599,21 @@ fn rebinds_target(compact: &str, target: &str) -> bool {
                 && segments[..segments.len() - 1]
                     .iter()
                     .any(|segment| is_store_slot(segment, target))
+                || augmented_rebinds_statement(statement, target)
         })
+}
+
+/// Whether `statement` aug-assigns into `target` (`+=`, `|=`, ...).
+fn augmented_rebinds_statement(statement: &str, target: &str) -> bool {
+    [
+        "+=", "-=", "*=", "/=", "//=", "%=", "@=", "&=", "|=", "^=", ">>=", "<<=", "**=",
+    ]
+    .iter()
+    .any(|op| {
+        statement
+            .split_once(op)
+            .is_some_and(|(lhs, _)| is_store_slot(lhs.trim(), target))
+    })
 }
 
 /// Whether `segment` (one assignment target) stores into `target`, directly,

@@ -1454,7 +1454,9 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
         "languages.rust.generated_file_patterns",
         "languages.rust.handwritten_files",
         "languages.python.handwritten_files",
+        "languages.python.excluded_file_patterns",
         "languages.typescript.handwritten_files",
+        "languages.typescript.excluded_file_patterns",
         "analysis.production_like_targets",
         "analysis.test_harnesses",
         "oracles.broad_error_strength",
@@ -1509,6 +1511,7 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
         "source_path",
         "source_text",
         "workspace_crates",
+        "verification_contract_decision",
     ] {
         expected.push((name, ConfigIdentityRole::Excluded));
     }
@@ -3146,5 +3149,33 @@ fn large_path_lists_parse_in_linear_time_and_still_reject_duplicates() -> Result
     .err()
     .ok_or("duplicate pattern must be rejected")?;
     assert!(error.contains("`gen17/**/*.rs` more than once"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn verification_contract_compiles_parsed_harness_registrations() -> Result<(), String> {
+    let source = r#"
+[[analysis.test_harnesses]]
+registration_id = "mimic-suite"
+target = "tests/mimic.rs"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic"
+"#;
+    let config = parse_config(source)?;
+    let decision = verification_contract::compile_repository_verification_contract(
+        verification_contract::VerificationContractCompileInput {
+            repository_root: Path::new("."),
+            ripr_toml_path: Some(Path::new("ripr.toml")),
+            ripr_toml_content_digest: Some("sha256:integration-test".to_string()),
+            config: &config,
+        },
+    );
+    if decision.contract.declarations.len() != 1 {
+        return Err(format!(
+            "expected one harness declaration, got {}",
+            decision.contract.declarations.len()
+        ));
+    }
     Ok(())
 }

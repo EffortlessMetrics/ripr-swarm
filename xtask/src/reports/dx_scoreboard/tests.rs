@@ -5166,10 +5166,14 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
             ));
         }
     }
-    // Only the over-the-walk-cap compiler row expects a partial outcome; a
-    // row that expected one by accident would admit an incomplete analysis.
+    // Only the two heavy TypeScript rows expect a partial outcome; a row that
+    // expected one by accident would admit an incomplete analysis.
     for entry in &config.corpus {
-        let expected = (entry.id == "typescript-compiler").then_some("language_scope_unsupported");
+        let expected = matches!(
+            entry.id.as_str(),
+            "typescript-compiler" | "vscode-typescript"
+        )
+        .then_some("language_scope_unsupported");
         if entry.expected_partial.as_deref() != expected {
             return Err(format!(
                 "{} expected_partial must be {expected:?}, got {:?}",

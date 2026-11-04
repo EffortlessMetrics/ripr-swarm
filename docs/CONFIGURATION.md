@@ -366,7 +366,10 @@ leaves no changed file fails with `scope_filter_matched_nothing` (exit 2). Rust
 files with a generator header (`@generated`, `Code generated ... DO NOT EDIT`,
 rust-bindgen), `cargo vendor` crates and a root `target/` directory are already
 skipped with a named limitation before the limits apply, without any flag.
-`--path` and `--exclude` do not apply to repo-scoped formats.
+`--path` and `--exclude` do not apply to repo-scoped formats. `ripr explain`
+and `ripr context` accept the same flags, and a scoped `ripr check` prints
+them on its explain, context, and `check --json` drill-in commands so a paste
+re-analyzes the same files instead of the full oversized diff.
 
 To reduce full-cache shard counts for a repo on a machine with enough headroom:
 
@@ -391,6 +394,7 @@ Renders a single finding in human format.
 
 ```text
 ripr explain [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
+             [--path GLOB] [--exclude GLOB]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH] [--quiet] <finding-id | file:line>
 ```
@@ -415,6 +419,7 @@ Emits a compact JSON context packet for one finding.
 
 ```text
 ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
+             [--path GLOB] [--exclude GLOB]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH]
              (--at | --finding) <finding-id | file:line>
@@ -1175,11 +1180,12 @@ finding-affecting config for artifact/receipt comparison. Rerun analysis after
 changing it; do not reuse an old excluded-source receipt as complete evidence.
 
 `[languages.python]` and `[languages.typescript]` configure the preview
-adapters. Each admits one override:
+adapters:
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
 | `handwritten_files` | array of exact paths | `[]` | Repository-relative files to analyze even though a path component matches the adapter's built-in excluded-directory conventions (`.git`, `target`, `node_modules`, virtualenvs, `site-packages`, caches, and build-output names such as `build/`, `dist/` and, for TypeScript, `out/`). Python declarations must name `.py` files; TypeScript declarations must name one of the routed TypeScript/JavaScript extensions (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs`, `.cjs`). Exact paths only — globs are rejected. Generated-name conventions still exclude a declared path. The override applies to diff checks; repo-scope exposure remains convention-scoped. |
+| `excluded_file_patterns` | array of strings | `[]` | Additional repository-relative globs omitted from preview-language indexing during diff checks (#5380). Uses the same `/`-separated glob dialect as `[languages.rust] generated_file_patterns`. Parse-budget refusals on paths that look like fixture or data files point here instead of advising a source rewrite. |
 
 For example, a project that keeps hand-written Python source under a `build/`
 package can admit it:
@@ -1187,6 +1193,13 @@ package can admit it:
 ```toml
 [languages.python]
 handwritten_files = ["build/lib/pipeline.py"]
+```
+
+To keep syntax-highlighted or other fixture trees out of Python preview indexing:
+
+```toml
+[languages.python]
+excluded_file_patterns = ["tests/syntax-tests/**"]
 ```
 
 When a changed file is still skipped by these conventions, the run's
