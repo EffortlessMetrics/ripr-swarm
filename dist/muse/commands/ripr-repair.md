@@ -19,7 +19,9 @@ the changed behavior); otherwise start from the first repair-ready gap.
 6. Run the focused test yourself and record the command and exit status.
    Then run the wrong-implementation control: the same test against the
    broken or pre-change behavior must fail. Restore correct behavior.
-7. `ripr_refresh` again, re-read the same gap, and report the static
+7. `ripr_refresh` with `{"source": "worktree"}` (the step 5 test edit is
+   uncommitted; a committed refresh cannot see it), re-read the same
+   gap, and report the static
    verdict (before/after class, both snapshot ids) separately from the
    executed verdict (test command, exit status, control result). Never
    call a static improvement a completed repair on its own, and never

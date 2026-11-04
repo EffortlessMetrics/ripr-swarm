@@ -63,8 +63,12 @@ instead of proceeding without evidence.
    the pre-change behavior) and confirm the new test fails. Restore the
    correct behavior afterward. A test that passes under both behaviors
    does not discriminate; say so and iterate or stop.
-8. Re-run `ripr_refresh` (with `{"source": "worktree"}` if step 2 used
-   it) and re-read the same `canonical_id` with `ripr_get_gap`. Report
+8. Re-run `ripr_refresh` and re-read the same `canonical_id` with
+   `ripr_get_gap`. The step 6 test edit is normally uncommitted, so use
+   `{"source": "worktree"}` here unless the edit was committed (or step
+   2 already used worktree source). A committed refresh cannot see an
+   uncommitted edit; its after snapshot would repeat the before class.
+   Report
    two separate verdicts, never merged:
    - Static verdict: the before/after exposure class and readiness from
      RIPR for the exact snapshot ids.
