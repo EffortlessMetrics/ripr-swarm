@@ -23,13 +23,17 @@ fn changed_range_requires_a_differing_iteration_sequence() -> Result<(), String>
         let owners = extract_owners(file, &source);
         let tests = extract_tests(Path::new("tests/test_subject.py"), &tests);
         assert_eq!(tests.len(), 1);
-        let finding = classify_change_with_source(
+        let finding = super::classify_change_with_context(
             file,
             3,
             after,
             Some(before),
             &owners,
             &tests,
+            super::PythonNoBehaviorContext {
+                sole_line_replacement: true,
+                ..Default::default()
+            },
             Some(&source),
         )
         .ok_or("range edit must produce a finding")?;
@@ -4191,13 +4195,17 @@ fn classify_range_case(
     let owners = extract_owners(file, source);
     let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
     assert_eq!(tests.len(), 1);
-    classify_change_with_source(
+    super::classify_change_with_context(
         file,
         line,
         after,
         Some(before),
         &owners,
         &tests,
+        super::PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..Default::default()
+        },
         Some(source),
     )
     .ok_or_else(|| "range edit must produce a finding".to_string())
@@ -4246,5 +4254,116 @@ fn changed_range_credits_only_the_call_in_the_exact_pin() -> Result<(), String> 
             "{body}: {finding:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn changed_range_reconciles_executed_review_cases() -> Result<(), String> {
+    for (before, after, line) in [
+        (
+            "    for i in range(1, n + 1):",
+            "    for i in range(1, n):",
+            3,
+        ),
+        (
+            "    for i in (range(1, n + 1)):",
+            "    for i in (range(1, n)):",
+            3,
+        ),
+        (
+            "    for i in iter(range(1, n + 1)):",
+            "    for i in iter(range(1, n)):",
+            3,
+        ),
+        ("        1, n + 1", "        1, n", 4),
+    ] {
+        let source = if line == 4 {
+            format!(
+                "def sum_to(n):\n    acc = 0\n    for i in range(\n{after}\n    ):\n        acc += i\n    return acc\n"
+            )
+        } else {
+            format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n")
+        };
+        for (setup, argument, expected) in [
+            ("", "0", "0"),
+            ("", "3", "42"),
+            ("", "3", "-6"),
+            ("    module.range = lambda *args: []\n", "3", "0"),
+            ("    module.range = lambda *args: []\n", "3", "6"),
+        ] {
+            let tests = format!(
+                "import src.subject as module\nfrom src.subject import sum_to\n\ndef test_sum():\n{setup}    assert sum_to({argument}) == {expected}\n"
+            );
+            let finding = classify_range_case(&source, &tests, line, before, after)?;
+            assert_ne!(
+                finding.class,
+                ExposureClass::Exposed,
+                "{before} / {tests}: {finding:?}"
+            );
+            assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+            assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_range_requires_a_test_that_can_reach_and_pass_its_pin() -> Result<(), String> {
+    let before = "    for i in range(1, n + 1):";
+    let after = "    for i in range(1, n):";
+    let source =
+        format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n");
+    for (body, exposed) in [
+        ("    assert False\n    assert sum_to(3) == 6", false),
+        ("    assert sum_to(3) == 6\n    assert False", false),
+        ("    raise RuntimeError()\n    assert sum_to(3) == 6", false),
+        ("    sum_to('bad')\n    assert sum_to(3) == 6", false),
+        ("    a, b = []\n    assert sum_to(3) == 6", false),
+        ("    value = 3\n    assert sum_to(value) == 6", true),
+        ("    assert sum_to(3) == 3", true),
+        ("    assert sum_to(3) == +6", true),
+    ] {
+        let tests = format!("from src.subject import sum_to\n\ndef test_sum():\n{body}\n");
+        let finding = classify_range_case(&source, &tests, 3, before, after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{body}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_range_requires_an_unchanged_old_body_and_catches_old_wrappers() -> Result<(), String> {
+    let after = "    for i in range(1, n):";
+    let source =
+        format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n");
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, &source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to(3) == 6\n",
+    );
+    let finding = super::classify_change_with_context(
+        file,
+        3,
+        after,
+        Some("    for i in range(1, n + 1):"),
+        &owners,
+        &tests,
+        super::PythonNoBehaviorContext::default(),
+        Some(&source),
+    )
+    .ok_or("range replacement must produce a finding")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    let wrapped_before = "    for i in iter(range(1, n + 1)):";
+    let conditional_after = "    if n > 0:";
+    let source = format!(
+        "def sum_to(n):\n    acc = 0\n{conditional_after}\n        acc += n\n    return acc\n"
+    );
+    let tests = "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to(0) == 0\n";
+    let finding = classify_range_case(&source, tests, 3, wrapped_before, conditional_after)?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
     Ok(())
 }

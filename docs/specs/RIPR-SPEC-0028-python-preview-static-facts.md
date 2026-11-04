@@ -1679,6 +1679,21 @@ integer literal by plain equality or unittest `assertEqual`. Discarded calls,
 assertion messages, nested calls and comparisons between calls do not supply
 the witness; partial or multiline row excerpts remain unresolved.
 
+The expected signed integer must equal one of the modeled old/new sums; an
+assertion that fails for both results is not a discriminator. Test-side writes
+to `range`, including dynamic or foreign attribute writes, withhold credit.
+The test body must reach its selected top-level assertion without another
+assertion or unknown effect; only inert literal bindings and modeled owner
+calls are admitted around that assertion. A preceding failing assertion,
+exceptional argument or destructuring failure cannot lend a witness.
+
+The old-body witness is the existing `sole_line_replacement` fact: the
+production file contains exactly one added line replacing one removed line at
+the same coordinate. Other production edits keep the header unresolved.
+Applicability uses the native For iterator's line span, so changed interior
+lines of multiline headers and wrapped iterators fail closed rather than
+bypassing the model. Only bare single-line range replacements are evaluated.
+
 Without that witness, the change carries `unsupported_syntax`, unknown
 infection and a non-exposed classification. Missing old text, unreadable
 inputs, zero steps, rebinding, other loop bodies and unavailable owner source

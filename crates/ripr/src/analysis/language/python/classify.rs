@@ -677,6 +677,16 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         owner_source.unwrap_or(""),
         &related_candidates,
     )
+    .or_else(|| {
+        super::range_activation::loop_context_limit(
+            owner,
+            owner_source.unwrap_or(""),
+            line,
+            line_text,
+            old_line_text,
+            no_behavior.sole_line_replacement,
+        )
+    })
     // A pinned lambda body edit or dataclass default edit is read by the
     // module-value credit, which lifts only the limit its own reading answers.
     .filter(|limit| {

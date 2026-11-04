@@ -3,6 +3,10 @@ id = "RIPR-SPEC-0028"
 name = "changed Python range headers require distinct returned sums for an exact pin"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_reconciles_executed_review_cases",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_requires_a_test_that_can_reach_and_pass_its_pin",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_requires_an_unchanged_old_body_and_catches_old_wrappers",
+  "crates/ripr/src/analysis/language/python/range_activation.rs::tests::changed_range_owner_line_count_bounds",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_credits_only_the_call_in_the_exact_pin",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_requires_a_differing_iteration_sequence",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_withholds_equal_sums_and_unreadable_shapes",
