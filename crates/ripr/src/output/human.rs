@@ -280,6 +280,35 @@ fn no_source_examined(output: &CheckOutput) -> bool {
 /// The empty-findings headline. An incomplete analysis checked less than it
 /// was asked to, so claiming it "checked no changed behavior" would contradict
 /// the `Analysis outcome` disclosure printed just above it.
+/// True when a base was compared and the range contained no changed files at
+/// all, as opposed to files that no language adapter analyzes.
+fn no_changed_files_in_range(output: &CheckOutput) -> bool {
+    output.base.is_some()
+        && output
+            .analysis_outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.counts.changed_file_count == 0)
+}
+
+/// #13036: a range with changed files but no checkable behavior is usually a
+/// tests-only diff (the agent committed its tests, then used the commit before
+/// them as the base). Say so and name the fix, without claiming which it is.
+fn no_behavior_base_hint(output: &CheckOutput) -> String {
+    use crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates;
+    let Some(base) = output.base.as_deref() else {
+        return String::new();
+    };
+    let applies = output.analysis_outcome.as_ref().is_some_and(|outcome| {
+        outcome.kind == NoBehavioralCandidates && outcome.counts.changed_file_count > 0
+    });
+    if !applies {
+        return String::new();
+    }
+    format!(
+        "Hint: if `{base}` already includes the production change (for example only tests changed after it), choose a base before that change, such as `ripr check --base <commit before the change>`.\n"
+    )
+}
+
 fn no_findings_line(output: &CheckOutput) -> &'static str {
     match &output.analysis_outcome {
         Some(outcome) if !outcome.kind.is_complete() => {
@@ -287,6 +316,11 @@ fn no_findings_line(output: &CheckOutput) -> &'static str {
         }
         // #11396: nothing in scope, or only non-source files changed, examined
         // no behavior; say what was not checked instead of "No findings".
+        // #13036: an empty diff is a different cause from "no analyzable
+        // language"; name the real one so the reader looks at the base.
+        _ if no_source_examined(output) && no_changed_files_in_range(output) => {
+            "Nothing to check: the diff against the comparison base is empty (no changed files), so ripr examined no behavior.\n"
+        }
         _ if no_source_examined(output) => {
             "Nothing to check: no changed source file in a language ripr analyzes was available, so ripr examined no behavior.\n"
         }
@@ -307,6 +341,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
 
     if output.findings.is_empty() {
         out.push_str(no_findings_line(output));
+        out.push_str(&no_behavior_base_hint(output));
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
             triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
@@ -363,6 +398,7 @@ pub(crate) fn render_full_with_config_and_navigation(
 
     if output.findings.is_empty() {
         out.push_str(no_findings_line(output));
+        out.push_str(&no_behavior_base_hint(output));
         // RIPR-SPEC-0083: disclose when no analysis scope was provided
         // (#4012: or when the established range is empty — the note then
         // names the compared base instead of claiming no scope).
