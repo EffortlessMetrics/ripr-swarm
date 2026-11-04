@@ -25,6 +25,7 @@ const RECEIPT_SCHEMA: &str = "ripr-repair-start-receipt-v1";
 const PAGE_SCHEMA: &str = "ripr-outcome-page-v1";
 const COMMAND_TIMEOUT: Duration = Duration::from_mins(2);
 const TREND_ROWS: usize = 14;
+const LANGUAGES: [&str; 3] = ["rust", "python", "typescript"];
 const USAGE: &str = "usage: cargo xtask repair-start-page [--ripr <binary>] [--date <YYYY-MM-DD>] [--receipts <dir>] [--dx-scoreboard <report.json>] [--work-dir <dir>] [--gate]
   --ripr          measure the pinned set against this binary and write a dated receipt (omit to render from existing receipts)
   --date          receipt date (default: today, UTC)
@@ -240,7 +241,7 @@ fn classes_and_action(report: &Value) -> (Vec<String>, Option<String>) {
     (classes, action)
 }
 
-fn measure_case(ripr: &Path, dir: &Path, id: &str) -> Value {
+fn measure_case(ripr: &Path, dir: &Path, id: &str, language: &str) -> Value {
     let scratch = dir.join(".outcome-scratch");
     if let Err(error) = fs::create_dir_all(&scratch) {
         return json!({"id": id, "instrument_failure": format!("scratch: {error}")});
@@ -251,7 +252,13 @@ fn measure_case(ripr: &Path, dir: &Path, id: &str) -> Value {
         dir,
         &scratch,
     );
-    let repair = run_bounded(ripr, &["repair", "--root", "."], dir, &scratch);
+    // `ripr repair` starts from Rust gaps only (it refuses Python and TypeScript by
+    // design), so those languages start through `ripr agent repair --gap-id`.
+    let repair = if language == "rust" {
+        run_bounded(ripr, &["repair", "--root", "."], dir, &scratch)
+    } else {
+        agent_repair_route(ripr, dir, &scratch, &check)
+    };
     let (check, repair) = match (check, repair) {
         (Ok(check), Ok(repair)) => (check, repair),
         (Err(error), _) | (_, Err(error)) => {
@@ -281,6 +288,7 @@ fn measure_case(ripr: &Path, dir: &Path, id: &str) -> Value {
     };
     json!({
         "id": id,
+        "language": language,
         "classes": classes,
         "next_action": action,
         "check_rc": check.code,
@@ -290,6 +298,57 @@ fn measure_case(ripr: &Path, dir: &Path, id: &str) -> Value {
         "reason": reason,
         "instrument_failure": if timed_out { Some("command timed out".to_string()) } else { failure },
     })
+}
+
+/// Try `ripr agent repair --phase before` once per distinct gap id the check
+/// reported; the case starts when any attempt exits 0. Returns the first
+/// successful run, else the last failed one (or a synthetic refusal when the
+/// check named no gap id).
+fn agent_repair_route(
+    ripr: &Path,
+    dir: &Path,
+    scratch: &Path,
+    check: &Result<Run, String>,
+) -> Result<Run, String> {
+    let Ok(check) = check else {
+        return Err("check did not run".to_string());
+    };
+    let report: Value = serde_json::from_str(&check.stdout).unwrap_or(Value::Null);
+    let mut gaps: Vec<String> = Vec::new();
+    for finding in report["findings"].as_array().into_iter().flatten() {
+        if let Some(gap) = finding["canonical_gap_id"].as_str()
+            && !gaps.iter().any(|seen| seen == gap)
+        {
+            gaps.push(gap.to_string());
+        }
+    }
+    let mut last = Run {
+        code: 1,
+        stdout: String::new(),
+        stderr: "check named no gap id to start a repair from".to_string(),
+        ms: 0.0,
+        timed_out: false,
+    };
+    for gap in &gaps {
+        let run = run_bounded(
+            ripr,
+            &[
+                "agent", "repair", "--root", ".", "--gap-id", gap, "--base", "HEAD~1", "--phase",
+                "before",
+            ],
+            dir,
+            scratch,
+        )?;
+        let done = run.code == 0 || run.timed_out;
+        last = run;
+        // The attempt writes into the worktree; restore it for the next gap.
+        let _ = git(dir, &["checkout", "-q", "--", "."]);
+        let _ = git(dir, &["clean", "-qfdx", "-e", ".outcome-scratch"]);
+        if done {
+            break;
+        }
+    }
+    Ok(last)
 }
 
 fn median(values: &mut [f64]) -> Option<f64> {
@@ -318,7 +377,8 @@ fn build_receipt(ripr: &Path, date: &str, work: &Path) -> Result<Value, String> 
         eprintln!("[{}/{}] {id}", index + 1, list.len());
         let dir = work.join(id);
         build_case(&dir, case)?;
-        rows.push(measure_case(ripr, &dir, id));
+        let language = case["language"].as_str().unwrap_or("rust");
+        rows.push(measure_case(ripr, &dir, id, language));
     }
     Ok(summarize(date, &version, &rows))
 }
@@ -342,10 +402,29 @@ fn summarize(date: &str, version: &str, rows: &[Value]) -> Value {
         .iter()
         .filter(|r| r["started"] == json!(true))
         .count();
+    let mut by_language = serde_json::Map::new();
+    for language in LANGUAGES {
+        let of_language: Vec<&Value> = rows
+            .iter()
+            .filter(|r| r["language"].as_str().unwrap_or("rust") == language)
+            .collect();
+        if of_language.is_empty() {
+            continue;
+        }
+        let language_started = of_language
+            .iter()
+            .filter(|r| r["started"] == json!(true))
+            .count();
+        by_language.insert(
+            language.to_string(),
+            json!({"cases": of_language.len(), "started": language_started}),
+        );
+    }
     json!({
         "schema_version": RECEIPT_SCHEMA,
         "date": date,
         "source": "xtask_measure",
+        "by_language": by_language,
         "ripr_version": version,
         "revision": std::env::var("GITHUB_SHA").unwrap_or_default(),
         "cases": rows.len(),
@@ -416,6 +495,18 @@ fn state(met: Option<bool>) -> &'static str {
     }
 }
 
+/// (cases, started) for one language. Receipts that predate `by_language`
+/// describe the Rust set only.
+fn language_counts(receipt: &Value, language: &str) -> Option<(u64, u64)> {
+    if let Some(entry) = receipt["by_language"].get(language) {
+        return Some((entry["cases"].as_u64()?, entry["started"].as_u64()?));
+    }
+    if language == "rust" && receipt["by_language"].is_null() {
+        return Some((receipt["cases"].as_u64()?, receipt["started"].as_u64()?));
+    }
+    None
+}
+
 struct Evaluation {
     page: Value,
     failures: Vec<String>,
@@ -431,12 +522,8 @@ fn evaluate(
         .next_back()
         .ok_or_else(|| "no repair-start receipts to render".to_string())?;
     let cases = latest["cases"].as_u64().unwrap_or(0);
-    let started = latest["started"].as_u64().unwrap_or(0);
-    let rate = (cases > 0).then(|| started as f64 / cases as f64);
     let start_bar = &bars["repair_start_rate"];
     let bar_rate = start_bar["bar"].as_f64().unwrap_or(0.8);
-    let floor = start_bar["floor_starts"].as_u64().unwrap_or(0);
-    let tolerance = start_bar["tolerance_cases"].as_u64().unwrap_or(0);
     let p50 = latest["check_ms_p50"].as_f64();
     let p50_bar = bars["first_useful_result_p50_ms"]["bar"]
         .as_f64()
@@ -481,12 +568,35 @@ fn evaluate(
             "instrument failure on {latest_date}: {instrument} of {cases} case(s) did not run (first: {listed})"
         ));
     }
-    if started + tolerance < floor {
-        failures.push(format!(
-            "repair-start regression on {latest_date}: {started}/{cases} start a repair, floor is {floor} with a tolerance of {tolerance} case(s)"
-        ));
+    let mut start_rows = Vec::new();
+    for language in LANGUAGES {
+        let gate = &start_bar["by_language"][language];
+        let Some(floor) = gate["floor_starts"].as_u64() else {
+            continue;
+        };
+        let tolerance = gate["tolerance_cases"].as_u64().unwrap_or(0);
+        let counts = language_counts(latest, language);
+        if counts.is_none() && latest["source"] == json!("xtask_measure") {
+            failures.push(format!(
+                "no {language} cases ran on {latest_date}, so its repair-start floor of {floor} is not established"
+            ));
+        }
+        if let Some((lang_cases, lang_started)) = counts
+            && lang_started + tolerance < floor
+        {
+            failures.push(format!(
+                "{language} repair-start regression on {latest_date}: {lang_started}/{lang_cases} start a repair, floor is {floor} with a tolerance of {tolerance} case(s)"
+            ));
+        }
+        let rate = counts.and_then(|(c, st)| (c > 0).then(|| st as f64 / c as f64));
+        start_rows.push(json!({
+            "language": language,
+            "started": counts.map(|c| c.1), "cases": counts.map(|c| c.0),
+            "value": rate, "met": rate.map(|r| r >= bar_rate),
+            "floor_starts": floor, "tolerance_cases": tolerance,
+            "raise_floor_to": counts.and_then(|c| (c.1 > floor).then_some(c.1)),
+        }));
     }
-    let raise_floor = started > floor;
 
     let trend: Vec<Value> = receipts
         .iter()
@@ -496,8 +606,7 @@ fn evaluate(
             json!({
                 "date": date,
                 "source": r["source"],
-                "started": r["started"],
-                "cases": r["cases"],
+                "by_language": LANGUAGES.iter().filter_map(|l| language_counts(r, l).map(|(c, st)| (l.to_string(), json!({"started": st, "cases": c})))).collect::<serde_json::Map<String, Value>>(),
                 "check_ms_p50": r["check_ms_p50"],
             })
         })
@@ -508,11 +617,7 @@ fn evaluate(
         "as_of": latest_date,
         "latest_receipt_source": latest["source"],
         "numbers": {
-            "repair_start_rate": {
-                "value": rate, "started": started, "cases": cases, "bar": bar_rate,
-                "met": rate.map(|r| r >= bar_rate),
-                "gate": {"floor_starts": floor, "tolerance_cases": tolerance, "raise_floor_to": if raise_floor { Some(started) } else { None } },
-            },
+            "repair_start_rate": {"bar": bar_rate, "by_language": start_rows},
             "first_useful_result_p50_ms": {"value": p50, "bar": p50_bar, "met": p50.map(|v| v < p50_bar), "gated": false},
             "agent_fix_success_rate": {"value": agent, "bar": agent_bar, "met": agent.map(|v| v >= agent_bar), "source": "dx-scoreboard agent.fix_success_rate"},
             "false_actionable_rate": {
@@ -524,7 +629,7 @@ fn evaluate(
         "trend": trend,
         "gate": {"status": if failures.is_empty() { "pass" } else { "fail" }, "failures": failures},
         "non_claims": [
-            "Repair start means bare `ripr repair --root .` exited 0 on a small rebuilt diff; it does not say the repair is correct.",
+            "Repair start means bare `ripr repair --root .` exited 0 (Rust) or `ripr agent repair --gap-id <gap> --phase before` exited 0 for some gap the check named (Python, TypeScript, which `ripr repair` refuses by design) on a small rebuilt diff; it does not say the repair is correct.",
             "Static movement only; no runtime mutation outcome is claimed.",
             "First-useful-result time is the wall time of `ripr check --base HEAD~1 --format json` on a tiny crate and is runner-dependent, so it is shown against its bar but never gates.",
         ],
@@ -535,7 +640,6 @@ fn evaluate(
 fn render_markdown(page: &Value) -> String {
     let n = &page["numbers"];
     let rs = &n["repair_start_rate"];
-    let rate_text = rs["value"].as_f64().map_or("not measured".to_string(), pct);
     let mut out = String::new();
     out.push_str(&format!(
         "# ripr outcome page\n\nAs of {} (receipt source: {}). Generated by `cargo xtask repair-start-page`; do not edit.\n\n",
@@ -543,11 +647,20 @@ fn render_markdown(page: &Value) -> String {
         page["latest_receipt_source"].as_str().unwrap_or("?"),
     ));
     out.push_str("| Outcome | Now | Bar | State |\n|---|---|---|---|\n");
-    out.push_str(&format!(
-        "| Repair-start rate (ripr repair starts after ripr check, 24 small diffs) | {rate_text} ({}/{}) | at least {} | {} |\n",
-        rs["started"], rs["cases"], pct(rs["bar"].as_f64().unwrap_or(0.0)),
-        state(rs["met"].as_bool()),
-    ));
+    for row in rs["by_language"].as_array().into_iter().flatten() {
+        let count = if row["cases"].is_null() {
+            String::new()
+        } else {
+            format!(" ({}/{})", row["started"], row["cases"])
+        };
+        out.push_str(&format!(
+            "| Repair-start rate, {} (a repair starts after `ripr check` on a small diff) | {}{count} | at least {} | {} |\n",
+            row["language"].as_str().unwrap_or("?"),
+            row["value"].as_f64().map_or("not measured".to_string(), pct),
+            pct(rs["bar"].as_f64().unwrap_or(0.0)),
+            state(row["met"].as_bool()),
+        ));
+    }
     let p = &n["first_useful_result_p50_ms"];
     out.push_str(&format!(
         "| First useful result, p50 of `ripr check` | {} | under {} ms | {} |\n",
@@ -577,14 +690,23 @@ fn render_markdown(page: &Value) -> String {
         ));
     }
     out.push_str(
-        "\n## Trend (newest first)\n\n| Date | Starts | p50 check | Source |\n|---|---|---|---|\n",
+        "\n## Trend (newest first)\n\n| Date | Rust | Python | TypeScript | p50 check | Source |\n|---|---|---|---|---|---|\n",
     );
     for row in page["trend"].as_array().into_iter().flatten() {
+        let cell = |language: &str| {
+            let entry = &row["by_language"][language];
+            if entry.is_null() {
+                "-".to_string()
+            } else {
+                format!("{}/{}", entry["started"], entry["cases"])
+            }
+        };
         out.push_str(&format!(
-            "| {} | {}/{} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} |\n",
             row["date"].as_str().unwrap_or("?"),
-            row["started"],
-            row["cases"],
+            cell("rust"),
+            cell("python"),
+            cell("typescript"),
             row["check_ms_p50"]
                 .as_f64()
                 .map_or("-".to_string(), |v| format!("{v:.0} ms")),
@@ -593,18 +715,28 @@ fn render_markdown(page: &Value) -> String {
     }
     let gate = &page["gate"];
     out.push_str(&format!(
-        "\n## Gate\n\nRepair-start floor: {} start(s), tolerance {} case(s). Status: **{}**.\n",
-        rs["gate"]["floor_starts"],
-        rs["gate"]["tolerance_cases"],
+        "\n## Gate\n\nStatus: **{}**. Floors (starts, tolerance in cases):",
         gate["status"].as_str().unwrap_or("?"),
     ));
+    for row in rs["by_language"].as_array().into_iter().flatten() {
+        out.push_str(&format!(
+            " {} {} (±{});",
+            row["language"].as_str().unwrap_or("?"),
+            row["floor_starts"],
+            row["tolerance_cases"],
+        ));
+    }
+    out.push('\n');
     for failure in gate["failures"].as_array().into_iter().flatten() {
         out.push_str(&format!("- {}\n", failure.as_str().unwrap_or("?")));
     }
-    if let Some(raise) = rs["gate"]["raise_floor_to"].as_u64() {
-        out.push_str(&format!(
-            "- The latest run beats the floor; raise `floor_starts` to {raise} in `{BARS_PATH}` in the change that earned it.\n"
-        ));
+    for row in rs["by_language"].as_array().into_iter().flatten() {
+        if let Some(raise) = row["raise_floor_to"].as_u64() {
+            out.push_str(&format!(
+                "- {} beats its floor; raise `floor_starts` to {raise} in `{BARS_PATH}` in the change that earned it.\n",
+                row["language"].as_str().unwrap_or("?"),
+            ));
+        }
     }
     out.push_str("\n## What this does not say\n\n");
     for line in page["non_claims"].as_array().into_iter().flatten() {
@@ -677,13 +809,16 @@ mod tests {
     fn receipt(date: &str, source: &str, started: u64, failures: Vec<&str>) -> Value {
         json!({
             "schema_version": RECEIPT_SCHEMA, "date": date, "source": source,
-            "cases": 24, "started": started, "check_ms_p50": 120.0,
+            "cases": 46, "started": started + 8, "check_ms_p50": 120.0,
+            "by_language": {"rust": {"cases": 24, "started": started}, "python": {"cases": 22, "started": 8}},
             "instrument_failures": failures,
         })
     }
 
     fn bars() -> Value {
-        json!({"repair_start_rate": {"bar": 0.8, "floor_starts": 7, "tolerance_cases": 1}})
+        json!({"repair_start_rate": {"bar": 0.8, "by_language": {
+            "rust": {"floor_starts": 7, "tolerance_cases": 1},
+            "python": {"floor_starts": 8, "tolerance_cases": 1}}}})
     }
 
     fn by_date(items: Vec<Value>) -> BTreeMap<String, Value> {
@@ -691,6 +826,35 @@ mod tests {
             .into_iter()
             .map(|r| (r["date"].as_str().unwrap_or("").to_string(), r))
             .collect()
+    }
+
+    #[test]
+    fn a_language_that_stops_starting_fails_alone() -> Result<(), String> {
+        let mut r = receipt("2026-11-04", "xtask_measure", 7, vec![]);
+        r["by_language"]["python"]["started"] = json!(6);
+        let e = evaluate(&by_date(vec![r]), &bars(), None)?;
+        assert_eq!(e.failures.len(), 1);
+        assert!(e.failures[0].contains("python repair-start regression"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_measured_receipt_missing_a_gated_language_fails() -> Result<(), String> {
+        let mut r = receipt("2026-11-04", "xtask_measure", 7, vec![]);
+        r["by_language"] = json!({"rust": {"cases": 24, "started": 7}});
+        let e = evaluate(&by_date(vec![r]), &bars(), None)?;
+        assert!(e.failures.iter().any(|f| f.contains("no python cases ran")));
+        Ok(())
+    }
+
+    #[test]
+    fn manual_seed_without_by_language_counts_as_rust_only() -> Result<(), String> {
+        let seed = json!({"schema_version": RECEIPT_SCHEMA, "date": "2026-11-02", "source": "manual_harness", "cases": 24, "started": 7, "instrument_failures": []});
+        assert_eq!(language_counts(&seed, "rust"), Some((24, 7)));
+        assert_eq!(language_counts(&seed, "python"), None);
+        let e = evaluate(&by_date(vec![seed]), &bars(), None)?;
+        assert!(e.failures.is_empty());
+        Ok(())
     }
 
     #[test]
@@ -754,7 +918,7 @@ mod tests {
         assert!(e.failures.is_empty());
         assert_eq!(e.page["trend"][0]["date"], json!("2026-11-03"));
         assert_eq!(
-            e.page["numbers"]["repair_start_rate"]["gate"]["raise_floor_to"],
+            e.page["numbers"]["repair_start_rate"]["by_language"][0]["raise_floor_to"],
             json!(8)
         );
         Ok(())
@@ -812,7 +976,7 @@ mod tests {
         let loaded = load_receipts(&[live.clone(), seed.clone()]);
         let _ = fs::remove_dir_all(&dir);
         let loaded = loaded?;
-        assert_eq!(loaded["2026-11-02"]["started"], json!(8));
+        assert_eq!(loaded["2026-11-02"]["started"], json!(16));
         Ok(())
     }
 
@@ -838,7 +1002,16 @@ mod tests {
         let cases = read_json(&root.join(CASES_PATH));
         let cases = cases?;
         let list = cases["cases"].as_array().map_or(0, Vec::len);
-        assert_eq!(list, 24);
+        assert_eq!(list, 68);
+        let of = |language: &str| {
+            cases["cases"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|c| c["language"] == json!(language))
+                .count()
+        };
+        assert_eq!((of("rust"), of("python"), of("typescript")), (24, 22, 22));
         for case in cases["cases"].as_array().into_iter().flatten() {
             assert!(case["base"].as_object().is_some_and(|m| !m.is_empty()));
             assert_ne!(
@@ -848,7 +1021,7 @@ mod tests {
             );
         }
         let bars = read_json(&root.join(BARS_PATH));
-        assert!(matches!(bars, Ok(b) if b["repair_start_rate"]["floor_starts"].is_u64()));
+        assert!(matches!(bars, Ok(b) if b["repair_start_rate"]["by_language"]["typescript"]["floor_starts"].is_u64()));
         Ok(())
     }
 }

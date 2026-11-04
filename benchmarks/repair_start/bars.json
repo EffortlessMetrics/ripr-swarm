@@ -3,9 +3,21 @@
   "basis": "Working bars from strategy/master-scoreboard-2026-11-04.md (80% repair start, p50 check under 1 s, 97% precision). They are placeholders until the four product calls are answered; changing one is a bar change, not a regression fix.",
   "repair_start_rate": {
     "bar": 0.8,
-    "floor_starts": 7,
-    "tolerance_cases": 1,
-    "note": "floor_starts is the gate: the nightly fails when fewer than floor_starts - tolerance_cases of the 24 cases start a repair. Raise the floor in the change that earns a gain; never lower it. 7/24 was the 2026-11-02 manual harness result (#11402)."
+    "note": "Per language, the gate is floor_starts: the nightly fails when fewer than floor_starts - tolerance_cases of that language's cases start a repair. Raise a floor in the change that earned a gain; never lower it. Rust 7/24 was the 2026-11-02 manual harness result (#11402). Python and TypeScript start through `ripr agent repair --gap-id` because `ripr repair` refuses them by design.",
+    "by_language": {
+      "rust": {
+        "floor_starts": 7,
+        "tolerance_cases": 1
+      },
+      "python": {
+        "floor_starts": 8,
+        "tolerance_cases": 1
+      },
+      "typescript": {
+        "floor_starts": 6,
+        "tolerance_cases": 1
+      }
+    }
   },
   "first_useful_result_p50_ms": {
     "bar": 1000,

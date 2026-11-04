@@ -1085,7 +1085,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/outcome-page.{md,json} and repair-start-<date>.json",
             false,
             true,
-            "Measures the pinned 24-diff repair-start set against a built ripr binary, writes one dated receipt, and renders the outcome page (repair-start rate, first useful result, agent fix success, false-actionable rate) with trend and bars; --gate fails on a repair-start regression beyond tolerance or a broken instrument.",
+            "Measures the pinned 68-diff (Rust, Python, TypeScript) repair-start set against a built ripr binary, writes one dated receipt, and renders the outcome page (repair-start rate, first useful result, agent fix success, false-actionable rate) with trend and bars; --gate fails on a repair-start regression beyond tolerance or a broken instrument.",
         ),
         command_entry(
             "repair-funnel-report",
