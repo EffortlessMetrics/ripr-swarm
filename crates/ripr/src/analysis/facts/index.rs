@@ -183,6 +183,8 @@ pub struct RustIndex {
     /// serialized provider receipt. Rebuilt together with property registration.
     pub(super) proptest_metadata_failures:
         BTreeMap<(PathBuf, usize, String), super::proptest::ProptestMetadataFailure>,
+    /// Transient VP3R resource edges; rebuilt during index construction (#5171).
+    pub(crate) resource_dependencies: super::resource_dependencies::ResourceDependencyFacts,
     pub(super) bolero_receipts: BTreeMap<(PathBuf, usize, String), super::bolero::BoleroReceipt>,
 }
 
