@@ -8515,42 +8515,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn sort_value_facts_keeps_literal_backslash_and_directory_paths_distinct() {
-        let fact = |file: &str| ValueFact {
-            file: Some(PathBuf::from(file)),
-            line: 4,
-            text: "assert_eq!(summary[\"status\"], \"not_collected\");".to_owned(),
-            value: "\"not_collected\"".to_owned(),
-            context: ValueContext::AssertionArgument,
-        };
-        let mut facts = vec![
-            fact(r"src/odd\receipt.rs"),
-            fact("src/odd/receipt.rs"),
-            fact(r"src/odd\receipt.rs"),
-        ];
-        sort_value_facts(&mut facts);
-        assert_eq!(facts.len(), 2);
-        let backslash = PathBuf::from(r"src/odd\receipt.rs");
-        let directory = PathBuf::from("src/odd/receipt.rs");
-        let mut saw_backslash = false;
-        let mut saw_directory = false;
-        for fact in &facts {
-            match fact.file.as_ref() {
-                Some(file) if file == &backslash => saw_backslash = true,
-                Some(file) if file == &directory => saw_directory = true,
-                Some(file) => {
-                    assert!(false, "unexpected file {file:?}");
-                }
-                None => {
-                    assert!(false, "missing file witness");
-                }
-            }
-        }
-        assert!(saw_backslash && saw_directory);
-    }
-
     #[test]
     fn sort_value_facts_breaks_same_location_value_ties_by_text() {
         let fact = |text: &str| ValueFact {

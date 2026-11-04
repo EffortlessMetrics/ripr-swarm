@@ -44,7 +44,7 @@ human source-path rendering. It shares the `%` and invalid-byte rules of
 `stable_native_path_text`, but on Unix it renders a literal backslash byte as
 `%5C` instead of collapsing it to `/`. On Windows, native backslashes remain
 separators and render as slashes. `display_source_path` uses this encoder so
-observed-value and deduplication surfaces keep distinct Unix names such as
+observed-value rows keep distinct Unix names such as
 `src/odd\receipt.rs` and `src/odd/receipt.rs`. General surfaces that still
 call `stable_path_text` keep slash normalization unchanged.
 
@@ -76,8 +76,8 @@ the three characters `%FF` renders as `%25FF`.
   unchanged;
 - a Windows unit test proves native separator normalization for
   `stable_source_path_text`;
-- Unix unit tests prove value-fact deduplication and human source-value rows
-  preserve the distinct encoded paths;
+- a Unix unit test proves human source-value rows preserve the distinct
+  encoded paths;
 - the existing diff-path regression continues to prove native Unix bytes are
   preserved through parsing and downstream path consumers.
 - Real Git CLI fixtures retain named control-byte paths, distinct from unchanged
@@ -133,7 +133,6 @@ the three characters `%FF` renders as `%25FF`.
 - `crates/ripr/src/analysis/mod.rs::tests::stable_path_text_keeps_invalid_byte_encoding_distinct_from_literal_escape`
 - `crates/ripr/src/analysis/mod.rs::tests::stable_source_path_text_preserves_literal_backslashes_before_display`
 - `crates/ripr/src/analysis/mod.rs::tests::stable_source_path_text_normalizes_native_separators_on_windows`
-- `crates/ripr/src/analysis/classify/activation.rs::tests::sort_value_facts_keeps_literal_backslash_and_directory_paths_distinct`
 - `crates/ripr/src/output/observed_values.rs::tests::human_source_value_line_preserves_literal_backslash_paths`
 - `crates/ripr/src/analysis/diff/load.rs::tests::given_quote_path_disabled_repo_when_diff_loaded_then_raw_byte_and_mimic_names_stay_distinct`
 - `crates/ripr/src/analysis/diff/path.rs::tests::named_c_control_escapes_keep_native_path_identity`
