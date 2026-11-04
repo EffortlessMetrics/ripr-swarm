@@ -9644,6 +9644,9 @@ spec = "docs/specs/RIPR-SPEC-0170-stable-cross-platform-path-text.md"
 tests = [
   "crates/ripr/src/analysis/mod.rs::tests::stable_path_text_escapes_reserved_percent_on_every_platform",
   "crates/ripr/src/analysis/mod.rs::tests::stable_path_text_keeps_invalid_byte_encoding_distinct_from_literal_escape",
+  "crates/ripr/src/analysis/mod.rs::tests::stable_source_path_text_preserves_literal_backslashes_before_display",
+  "crates/ripr/src/analysis/mod.rs::tests::stable_source_path_text_normalizes_native_separators_on_windows",
+  "crates/ripr/src/output/observed_values.rs::tests::human_source_value_line_preserves_literal_backslash_paths",
   "crates/ripr/src/analysis/diff/load.rs::tests::given_quote_path_disabled_repo_when_diff_loaded_then_raw_byte_and_mimic_names_stay_distinct",
   "crates/ripr/src/analysis/diff/path.rs::tests::named_c_control_escapes_keep_native_path_identity",
   "crates/ripr/src/analysis/diff/path.rs::tests::quoted_whitespace_old_headers_keep_plain_file_sections_separate",
@@ -9670,6 +9673,7 @@ code = [
   "crates/ripr/src/analysis/language/rust/mod.rs",
   "crates/ripr/src/analysis/probes/ids.rs",
   "crates/ripr/src/output/path.rs",
+  "crates/ripr/src/output/observed_values.rs",
 ]
 outputs = []
 metrics = [
