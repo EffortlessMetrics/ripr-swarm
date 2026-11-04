@@ -295,24 +295,40 @@ mod tests {
         }
     }
 
-    /// Adding a variant fails to compile here until it is handled, and the
-    /// assertion then fails until `ALL` lists it.
+    /// Declaration index of each variant. The exhaustive match makes a new
+    /// variant a compile error here; the new arm takes the next index.
+    fn declaration_index(class: &ExposureClass) -> usize {
+        match class {
+            ExposureClass::Exposed => 0,
+            ExposureClass::WeaklyExposed => 1,
+            ExposureClass::ReachableUnrevealed => 2,
+            ExposureClass::NoStaticPath => 3,
+            ExposureClass::InfectionUnknown => 4,
+            ExposureClass::PropagationUnknown => 5,
+            ExposureClass::StaticUnknown => 6,
+        }
+    }
+
+    /// The last declared variant. A new variant is appended here together
+    /// with its `declaration_index` arm, which makes the expected count grow
+    /// and fails this test until `ALL` lists the new entry.
+    const LAST_DECLARED: ExposureClass = ExposureClass::StaticUnknown;
+
     #[test]
     fn all_lists_every_variant() {
-        let mut seen = HashSet::new();
-        for class in ExposureClass::ALL.iter() {
-            let index = match class {
-                ExposureClass::Exposed => 0,
-                ExposureClass::WeaklyExposed => 1,
-                ExposureClass::ReachableUnrevealed => 2,
-                ExposureClass::NoStaticPath => 3,
-                ExposureClass::InfectionUnknown => 4,
-                ExposureClass::PropagationUnknown => 5,
-                ExposureClass::StaticUnknown => 6,
-            };
-            assert!(seen.insert(index), "duplicate class in ALL");
+        let expected = declaration_index(&LAST_DECLARED) + 1;
+        assert_eq!(
+            ExposureClass::ALL.len(),
+            expected,
+            "ALL must list every declared variant"
+        );
+        let seen: HashSet<usize> = ExposureClass::ALL.iter().map(declaration_index).collect();
+        for index in 0..expected {
+            assert!(
+                seen.contains(&index),
+                "ALL is missing variant index {index}"
+            );
         }
-        assert_eq!(seen.len(), 7);
     }
 
     #[test]

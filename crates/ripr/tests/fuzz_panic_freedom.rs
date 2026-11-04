@@ -864,3 +864,50 @@ fn output_oracle_ignores_echoed_source() {
     let echoed = good_report().replace("echoed", "survived"); // ripr-allow: static-language: echoed source fixture
     assert_eq!(judge_output(Some(0), echoed.as_bytes()), Ok(()));
 }
+
+/// A report shaped like real `ripr check` output with every renderer-owned
+/// pointer populated, so a mistyped pointer cannot silently scan nothing.
+fn full_report() -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "0.2", "tool": "ripr", "mode": "ready", "root": ".",
+        "summary": {},
+        "analysis_outcome": {"outcome": {"kind": "complete_with_findings", "claim_boundary": "static only"}},
+        "canonical_next_action": {"action_class": "unsupported_or_limited", "non_claim": "advisory"},
+        "findings": [{
+            "classification": "static_unknown", "severity": "note",
+            "oracle_kind": "unknown", "oracle_strength": "none",
+            "recommended_next_step": "add an assertion",
+            "suggested_next_action": "add an assertion",
+            "stop_reasons": ["opaque"]
+        }]
+    })
+}
+
+#[test]
+fn renderer_owned_pointers_resolve_and_each_one_is_judged() {
+    let report = full_report();
+    assert_eq!(judge_output(Some(0), report.to_string().as_bytes()), Ok(()));
+    for pointer in RENDERER_OWNED_VALUES {
+        let path: Vec<&str> = pointer.split('/').skip(1).collect();
+        let mut values = Vec::new();
+        collect_strings(&report, &path, &mut values);
+        assert!(!values.is_empty(), "pointer {pointer} resolves to nothing");
+
+        let mut planted = report.clone();
+        let concrete = pointer.replace('*', "0");
+        let Some(slot) = planted.pointer_mut(&concrete) else {
+            panic!("pointer {pointer} is absent from the fixture");
+        };
+        *slot = serde_json::Value::String("the mutant was killed".to_string()); // ripr-allow: static-language: planted fault
+        let error = judge_output(Some(0), planted.to_string().as_bytes())
+            .expect_err("a runtime-mutation term was not rejected");
+        // `classification` is also vocabulary-checked first, so it is
+        // rejected for that reason instead.
+        if !pointer.ends_with("/classification") {
+            assert!(
+                error.contains(pointer),
+                "rejected for the wrong reason under {pointer}: {error}"
+            );
+        }
+    }
+}
