@@ -37,6 +37,14 @@ const PLATFORMS: [&str; 5] = [
 /// A cell is one of these; `known_gap` is a documented unavailable combination,
 /// `broken` an installed package that does not start.
 const CELL_STATUSES: [&str; 4] = ["works", "known_gap", "broken", "failed"];
+/// Channels outside the matrix that the checked-in dispositions must each account for.
+const OTHER_CHANNELS: [&str; 5] = [
+    "archive",
+    "binstall",
+    "vscode_extension",
+    "ci_init",
+    "homebrew",
+];
 const DISPOSITION_STATUSES: [&str; 3] = ["tested_elsewhere", "not_tested", "not_shipped"];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +82,12 @@ pub(crate) fn install_receipt(args: &[String]) -> Result<(), String> {
             write,
         } => {
             let root = Path::new(".");
+            if write && run_id.as_deref().is_none_or(str::is_empty) {
+                return Err(
+                    "--write needs --run-id <matrix run id> so the receipt names its source"
+                        .to_string(),
+                );
+            }
             let cells = read_cells(&cells)?;
             let dispositions = read_dispositions(&root.join(DISPOSITIONS))?;
             let receipt = build_receipt(&cells, &dispositions, run_id.as_deref())?;
@@ -240,6 +254,15 @@ pub(super) fn parse_dispositions(text: &str, origin: &str) -> Result<Vec<Disposi
                 "{origin}: channel `{channel}`: unknown status `{status}`"
             ));
         }
+        if !OTHER_CHANNELS.contains(&channel.as_str()) {
+            return Err(format!(
+                "{origin}: channel `{channel}` is not an out-of-matrix channel ({})",
+                OTHER_CHANNELS.join(", ")
+            ));
+        }
+        if out.iter().any(|seen: &Disposition| seen.channel == channel) {
+            return Err(format!("{origin}: channel `{channel}` listed twice"));
+        }
         let reason = string_field(item, "reason", origin)?;
         if reason.trim().is_empty() {
             return Err(format!("{origin}: channel `{channel}`: empty reason"));
@@ -259,7 +282,16 @@ pub(super) fn parse_dispositions(text: &str, origin: &str) -> Result<Vec<Disposi
 fn read_dispositions(path: &Path) -> Result<Vec<Disposition>, String> {
     let text =
         fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    parse_dispositions(&text, &path.display().to_string())
+    let origin = path.display().to_string();
+    let parsed = parse_dispositions(&text, &origin)?;
+    for channel in OTHER_CHANNELS {
+        if !parsed.iter().any(|item| item.channel == channel) {
+            return Err(format!(
+                "{origin}: no disposition for channel `{channel}`; every shipped channel needs one"
+            ));
+        }
+    }
+    Ok(parsed)
 }
 
 /// Merge matrix cells with channel dispositions into the receipt value.
@@ -433,8 +465,17 @@ pub(super) fn check_receipt(root: &Path) -> Result<(), String> {
         .to_string();
         cells.push(parse_cell(&text, RECEIPT)?);
     }
+    let run_id = value["source_run_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| format!("{RECEIPT}: source_run_id must name the matrix run"))?;
+    if value["threshold_seconds"] != json!(THRESHOLD_SECONDS) {
+        return Err(format!(
+            "{RECEIPT}: threshold_seconds must be {THRESHOLD_SECONDS}"
+        ));
+    }
     let dispositions = read_dispositions(&root.join(DISPOSITIONS))?;
-    let rebuilt = build_receipt(&cells, &dispositions, value["source_run_id"].as_str())?;
+    let rebuilt = build_receipt(&cells, &dispositions, Some(run_id))?;
     if rebuilt["r0_install"] != value["r0_install"] {
         return Err(format!(
             "{RECEIPT}: recorded r0_install {} does not match the verdict its rows and {DISPOSITIONS} give ({})",
@@ -444,6 +485,14 @@ pub(super) fn check_receipt(root: &Path) -> Result<(), String> {
     if rebuilt["channel_dispositions"] != value["channel_dispositions"] {
         return Err(format!(
             "{RECEIPT}: channel_dispositions are stale against {DISPOSITIONS}; re-run install-receipt --write"
+        ));
+    }
+    let markdown_path = root.join(RECEIPT_MD);
+    let markdown = fs::read_to_string(&markdown_path)
+        .map_err(|error| format!("read {}: {error}", markdown_path.display()))?;
+    if markdown != render_markdown(&rebuilt) {
+        return Err(format!(
+            "{RECEIPT_MD} does not match {RECEIPT}; re-run install-receipt --write"
         ));
     }
     println!(

@@ -171,6 +171,13 @@ fn dispositions_need_a_known_status_and_a_reason() -> Result<(), String> {
     let good =
         r#"{"channels":[{"channel":"homebrew","status":"not_shipped","reason":"no tap yet"}]}"#;
     assert_eq!(parse_dispositions(good, "d.json")?.len(), 1);
+    let doubled = good.replace(
+        "]}",
+        ",{\"channel\":\"homebrew\",\"status\":\"not_shipped\",\"reason\":\"again\"}]}",
+    );
+    assert!(parse_dispositions(&doubled, "d.json").err().is_some());
+    let matrix_name = good.replace("homebrew", "cargo");
+    assert!(parse_dispositions(&matrix_name, "d.json").err().is_some());
     let bad = good.replace("not_shipped", "maybe");
     assert!(parse_dispositions(&bad, "d.json").err().is_some());
     let empty = good.replace("no tap yet", "  ");
@@ -222,4 +229,123 @@ fn arguments_select_check_or_build_and_reject_the_rest() {
             .err()
             .is_some()
     );
+}
+
+fn all_dispositions() -> Vec<Disposition> {
+    super::OTHER_CHANNELS
+        .iter()
+        .map(|channel| Disposition {
+            channel: (*channel).to_string(),
+            status: "not_shipped".to_string(),
+            reason: "stated in the test".to_string(),
+        })
+        .collect()
+}
+
+/// Write a consistent receipt tree into a fresh temp directory.
+fn receipt_tree(name: &str, seconds: f64) -> Result<std::path::PathBuf, String> {
+    let root = std::env::temp_dir().join(format!(
+        "ripr-install-receipt-{name}-{}",
+        std::process::id()
+    ));
+    let dir = root.join("metrics/install");
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let dispositions = all_dispositions();
+    let list: Vec<serde_json::Value> = dispositions
+        .iter()
+        .map(|d| serde_json::json!({"channel": d.channel, "status": d.status, "reason": d.reason}))
+        .collect();
+    let text = serde_json::json!({ "channels": list }).to_string();
+    std::fs::write(root.join(super::DISPOSITIONS), text).map_err(|error| error.to_string())?;
+    let receipt = build_receipt(&full_matrix(seconds), &dispositions, Some("42"))?;
+    std::fs::write(
+        root.join(super::RECEIPT),
+        serde_json::to_string_pretty(&receipt).map_err(|e| e.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join(super::RECEIPT_MD), render_markdown(&receipt))
+        .map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+fn edit(root: &std::path::Path, file: &str, from: &str, to: &str) -> Result<(), String> {
+    let path = root.join(file);
+    let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    if !text.contains(from) {
+        return Err(format!("fixture edit `{from}` not found in {file}"));
+    }
+    std::fs::write(&path, text.replacen(from, to, 1)).map_err(|error| error.to_string())
+}
+
+#[test]
+fn check_accepts_a_receipt_its_rows_support() -> Result<(), String> {
+    let root = receipt_tree("ok", 10.0)?;
+    let result = super::check_receipt(&root);
+    let _ = std::fs::remove_dir_all(&root);
+    result
+}
+
+#[test]
+fn check_refuses_a_verdict_its_rows_do_not_support() -> Result<(), String> {
+    let root = receipt_tree("verdict", 400.0)?;
+    edit(&root, super::RECEIPT, "\"not_established\"", "\"met\"")
+        .or_else(|_| edit(&root, super::RECEIPT, "\"not_met\"", "\"met\""))?;
+    let result = super::check_receipt(&root);
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(result.err().is_some_and(|e| e.contains("r0_install")));
+    Ok(())
+}
+
+#[test]
+fn check_refuses_an_edited_threshold_missing_run_or_stale_markdown() -> Result<(), String> {
+    for (name, file, from, to, expect) in [
+        (
+            "threshold",
+            super::RECEIPT,
+            "\"threshold_seconds\": 300.0",
+            "\"threshold_seconds\": 9999.0",
+            "threshold_seconds",
+        ),
+        (
+            "run",
+            super::RECEIPT,
+            "\"source_run_id\": \"42\"",
+            "\"source_run_id\": null",
+            "source_run_id",
+        ),
+        (
+            "markdown",
+            super::RECEIPT_MD,
+            "R0 install row",
+            "R0 install row (edited)",
+            "does not match",
+        ),
+        (
+            "dispositions",
+            super::DISPOSITIONS,
+            "stated in the test",
+            "changed",
+            "stale",
+        ),
+    ] {
+        let root = receipt_tree(name, 10.0)?;
+        edit(&root, file, from, to)?;
+        let result = super::check_receipt(&root);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            result.err().is_some_and(|e| e.contains(expect)),
+            "{name} edit was not refused"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn dispositions_file_must_account_for_every_other_channel() -> Result<(), String> {
+    let root = receipt_tree("missing", 10.0)?;
+    edit(&root, super::DISPOSITIONS, "\"homebrew\"", "\"archive\"")?;
+    let result = super::read_dispositions(&root.join(super::DISPOSITIONS));
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(result.err().is_some());
+    Ok(())
 }

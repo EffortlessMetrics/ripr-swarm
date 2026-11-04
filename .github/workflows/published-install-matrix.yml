@@ -133,11 +133,15 @@ jobs:
             INSTALLED*) status=broken ;;
             *) status=failed ;;
           esac
+          if [ "$status" = works ] && [ -z "${SECONDS_TO_INSTALL:-}" ]; then
+            echo "::error::$CELL has no install timing"
+            status=failed
+          fi
           safe_version=$(printf '%s' "${VERSION:-}" | tr -cd '0-9A-Za-z.+ -')
           mkdir -p "$RUNNER_TEMP/cell"
           if [ "$status" = works ]; then
             printf '{"channel":"%s","os":"%s","status":"%s","version":"%s","install_seconds":%s}\n' \
-              "$CHANNEL" "$RUNNER_OS_LABEL" "$status" "$safe_version" "${SECONDS_TO_INSTALL:-0}" > "$RUNNER_TEMP/cell/cell.json"
+              "$CHANNEL" "$RUNNER_OS_LABEL" "$status" "$safe_version" "$SECONDS_TO_INSTALL" > "$RUNNER_TEMP/cell/cell.json"
           else
             printf '{"channel":"%s","os":"%s","status":"%s"}\n' \
               "$CHANNEL" "$RUNNER_OS_LABEL" "$status" > "$RUNNER_TEMP/cell/cell.json"
