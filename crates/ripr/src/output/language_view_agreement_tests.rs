@@ -281,6 +281,8 @@ pub(crate) fn check_output(
         suppression: None,
         analysis_outcome: Some(outcome),
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     }
 }

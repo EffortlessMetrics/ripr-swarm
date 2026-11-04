@@ -1508,6 +1508,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -1562,6 +1564,8 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: base.map(|base| crate::analysis::AnalyzedRevisions {
                 base_ref: base.to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
@@ -1808,6 +1812,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let loaded = RiprConfig {
@@ -1854,6 +1860,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             };
 
@@ -1886,6 +1894,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: vec![
                 "src/new.rs".to_string(),
@@ -1940,6 +1950,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: vec!["src/\u{1b}[31mevil.rs".to_string()],
             ignored_working_tree_source_paths: Vec::new(),
@@ -1979,6 +1991,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: Vec::new(),
@@ -2019,6 +2033,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: false,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: Vec::new(),
             ignored_working_tree_source_paths: vec![
@@ -2068,6 +2084,8 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
             untracked_working_tree_source_paths: vec!["src/new.rs".to_string()],
             ignored_working_tree_source_paths: vec!["src/ignored_gen.rs".to_string()],
@@ -2126,6 +2144,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2193,6 +2213,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2243,6 +2265,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2342,6 +2366,8 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -2614,6 +2640,8 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }
@@ -2690,6 +2718,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let config = crate::config::RiprConfig::default();
@@ -2850,6 +2880,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -2898,6 +2930,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let config = crate::config::RiprConfig::default();
@@ -3331,6 +3365,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             };
             let rendered = render(&output);
@@ -3379,6 +3415,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -3427,6 +3465,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4099,6 +4139,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4147,6 +4189,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4220,6 +4264,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4275,6 +4321,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4308,6 +4356,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -4475,6 +4525,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: Some(crate::analysis::AnalyzedRevisions {
                 base_ref: "main".to_string(),
                 base_commit: Some("1a2b3c4d5e6f".to_string()),
@@ -4669,6 +4721,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -5611,6 +5665,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -5716,6 +5772,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -5765,6 +5823,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -5885,6 +5945,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -5958,6 +6020,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6015,6 +6079,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6090,6 +6156,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         unbound_repo_root(super::render_full_with_config_and_navigation(
@@ -6204,6 +6272,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6255,6 +6325,8 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6303,6 +6375,8 @@ mod tests {
                 whole_diff_budgets: None,
                 partition_identity: "c".repeat(64),
             }),
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -6394,6 +6468,8 @@ mod tests {
                 whole_diff_budgets: None,
                 partition_identity: "c".repeat(64),
             }),
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -6506,6 +6582,8 @@ mod tests {
                 whole_diff_budgets: None,
                 partition_identity: "c".repeat(64),
             }),
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -8675,6 +8753,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -8843,6 +8923,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -8890,6 +8972,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -8941,6 +9025,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -8985,6 +9071,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9027,6 +9115,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9122,6 +9212,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9199,6 +9291,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let rendered = render(&output);
@@ -9274,6 +9368,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9330,6 +9426,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9371,6 +9469,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9414,6 +9514,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9460,6 +9562,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9511,6 +9615,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }
@@ -9665,6 +9771,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
         let flat = |output: &CheckOutput| {
@@ -9731,6 +9839,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9789,6 +9899,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9851,6 +9963,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9945,6 +10059,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -9992,6 +10108,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10033,6 +10151,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10071,6 +10191,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10106,6 +10228,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10146,6 +10270,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10185,6 +10311,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10235,6 +10363,8 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         };
 
@@ -10302,6 +10432,8 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             })
         };

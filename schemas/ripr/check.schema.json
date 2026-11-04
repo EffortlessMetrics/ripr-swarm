@@ -77,6 +77,53 @@
         }
       }
     },
+    "file_fact_cache": {
+      "description": "Verbose-only (`-v`/`--verbose`) bounded Rust file-fact cache receipt (#4975). Names hits (reused), misses (recomputed), corrupt entries ignored, stores, and capped store-failure rows. Absent from default JSON.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "hits",
+            "misses",
+            "invalidated",
+            "corrupt_ignored",
+            "stores",
+            "store_errors",
+            "store_failures",
+            "store_failures_dropped"
+          ],
+          "properties": {
+            "schema_version": { "const": "0.1" },
+            "hits": { "type": "integer", "minimum": 0 },
+            "misses": { "type": "integer", "minimum": 0 },
+            "invalidated": { "type": "integer", "minimum": 0 },
+            "corrupt_ignored": { "type": "integer", "minimum": 0 },
+            "stores": { "type": "integer", "minimum": 0 },
+            "store_errors": { "type": "integer", "minimum": 0 },
+            "store_failures": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["path", "stage", "error"],
+                "properties": {
+                  "path": { "type": ["string", "null"] },
+                  "stage": { "type": "string" },
+                  "error": { "type": "string" }
+                }
+              }
+            },
+            "store_failures_dropped": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "file_fact_cache_limitation": {
+      "description": "Verbose-only reason `file_fact_cache` is null (#4975).",
+      "enum": ["not_observed", "zero_work"]
+    },
     "scope_disclosures": {
       "type": "array",
       "items": { "type": "object" }

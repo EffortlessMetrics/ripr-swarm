@@ -2003,6 +2003,8 @@ fn happy_path_passes() {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         }
     }

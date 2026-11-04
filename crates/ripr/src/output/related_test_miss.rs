@@ -1090,6 +1090,8 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 unlinked_python_tests: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             }
         }
@@ -1341,6 +1343,8 @@ mod tests {
                 analysis_outcome: None,
                 partial_scope: None,
                 unlinked_python_tests: None,
+                file_fact_cache: None,
+
                 analyzed_revisions: None,
             }
         }

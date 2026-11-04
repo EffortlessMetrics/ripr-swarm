@@ -2452,10 +2452,7 @@ impl RustAdapter {
                 &options.test_harnesses,
             )?,
         };
-        #[cfg(test)]
-        {
-            rust_consumed_sources.file_fact_cache = cached.file_fact_cache.clone();
-        }
+        rust_consumed_sources.file_fact_cache = Some(cached.file_fact_cache.clone());
         let mut index = cached.index;
         if let Some(disclosure) = rust_index::include_resolution_disclosure(&index) {
             eprintln!("{disclosure}");

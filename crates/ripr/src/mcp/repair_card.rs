@@ -883,6 +883,8 @@ mod tests {
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
+            file_fact_cache: None,
+
             analyzed_revisions: None,
         })
     }

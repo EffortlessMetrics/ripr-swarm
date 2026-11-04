@@ -11,6 +11,7 @@ pub(crate) mod badge;
 pub(crate) mod baseline;
 pub(crate) mod baseline_delta;
 pub(crate) mod baseline_update;
+pub(crate) mod check_file_fact_cache;
 pub(crate) mod ci_summary;
 pub(crate) mod count_noun;
 pub(crate) mod coverage_grip_frontier;

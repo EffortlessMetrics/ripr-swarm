@@ -2955,6 +2955,26 @@ impl FileFactCacheStats {
         }
     }
 
+    /// Merge another stats snapshot into this one, preserving the bounded
+    /// `store_failures` row cap across concatenation (#4975).
+    pub(crate) fn merge_from(&mut self, source: &Self) {
+        self.hits += source.hits;
+        self.misses += source.misses;
+        self.corrupt_ignored += source.corrupt_ignored;
+        self.stores += source.stores;
+        self.store_errors += source.store_errors;
+        for failure in source.store_failures.iter().cloned() {
+            if self.store_failures.len() < MAX_STORE_FAILURE_ROWS {
+                self.store_failures.push(failure);
+            } else {
+                self.store_failures_dropped += 1;
+            }
+        }
+        self.store_failures_dropped += source.store_failures_dropped;
+        self.invalidated_files
+            .extend(source.invalidated_files.iter().cloned());
+    }
+
     pub(crate) fn status_label(&self) -> String {
         format!(
             "hits_{}_misses_{}_corrupt_{}_store_errors_{}",
@@ -2993,6 +3013,19 @@ impl FileFactCacheStats {
             ));
         }
         Some(message)
+    }
+
+    /// Whether this run performed observable file-fact cache work (#4975). The
+    /// explicit [`Self::zero_work`] state and a stats object that never
+    /// touched the cache both return `false`, so verbose consumers stay silent
+    /// instead of printing misleading all-zero passes.
+    pub(crate) fn did_work(&self) -> bool {
+        self.hits > 0
+            || self.misses > 0
+            || self.corrupt_ignored > 0
+            || self.stores > 0
+            || self.store_errors > 0
+            || !self.invalidated_files.is_empty()
     }
 }
 

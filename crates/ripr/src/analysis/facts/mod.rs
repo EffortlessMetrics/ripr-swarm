@@ -302,20 +302,7 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
         let stats = index_phase("index_cached_parse", || {
             build::extend_index_from_loaded_files_with_cache(&mut cached.index, root, &extras)
         })?;
-        cached.file_fact_cache.hits += stats.hits;
-        cached.file_fact_cache.misses += stats.misses;
-        cached.file_fact_cache.corrupt_ignored += stats.corrupt_ignored;
-        cached.file_fact_cache.stores += stats.stores;
-        cached.file_fact_cache.store_errors += stats.store_errors;
-        cached
-            .file_fact_cache
-            .invalidated_files
-            .extend(stats.invalidated_files);
-        cached
-            .file_fact_cache
-            .store_failures
-            .extend(stats.store_failures);
-        cached.file_fact_cache.store_failures_dropped += stats.store_failures_dropped;
+        cached.file_fact_cache.merge_from(&stats);
         // An added file that makes module composition unknowable (lexical
         // fallback emits no `mod` declarations; an unknown `#[path]` target
         // may compile any file) flips workspace-wide `outside_module_tree`
