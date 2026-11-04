@@ -2708,7 +2708,7 @@ current workspace can produce coverage and JUnit artifacts. The jobs still run
 only on pull requests, pushes to `main`/`master`, and manual dispatches, and
 Codecov upload remains non-blocking.
 
-Future Clippy also runs on `ubuntu-latest` with installation and invocation
+The `future-clippy` job runs on `ubuntu-latest` with installation and invocation
 pinned to Rust `1.95.0`. Selected lint findings remain advisory warnings. A
 missing component, compilation failure, failed log capture, or absent Cargo
 artifact/completion evidence fails that job instead of appearing as a completed
@@ -2718,6 +2718,13 @@ scan completion. The summary rejects evidence from another SHA, run, or attempt.
 This advisory lane has no new branch-protection requirement. Completion shows
 that the scan ran; planned lints still have the support/configuration limits
 recorded in [Clippy policy](CLIPPY_POLICY.md).
+
+The same workflow's separate `stable-repo-policy` job checks the small policy
+package on the moving stable channel with matching LLVM tools. It records the
+compiler and LLVM identities, runs genuine coverage-profile controls, and checks
+strict Clippy for that package. Failures stay visible in this advisory job;
+the repository pin, MSRV and required merge gates are unchanged. See the
+[focused toolchain-upgrade recipe](ci/coverage.md#validate-locally).
 
 It installs `cargo-deny` as a normal command-line binary before running the
 check, so self-hosted runners do not need Docker just to execute the security

@@ -45,6 +45,99 @@ fn pinned_component_and_failure_evidence_are_wired() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn stable_compatibility_requires_matching_tools_and_focused_commands() -> Result<(), String> {
+    const SETUP: &str = "      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable\n        with:\n          toolchain: stable\n          components: clippy, llvm-tools-preview\n";
+    const TESTS: &str =
+        "cargo +stable test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture";
+    const CLIPPY: &str =
+        "cargo +stable clippy --locked -p repo-policy --all-targets -- -D warnings";
+    let job = |text: &str, name: &str| {
+        text.split_once(&format!("\n  {name}:\n")).map(|(_, tail)| {
+            tail.lines()
+                .take_while(|line| {
+                    line.is_empty()
+                        || line.starts_with("    ")
+                        || line.trim_start().starts_with('#')
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+    };
+    let prepared = |text: &str| {
+        let (Some(stable), Some(pinned)) =
+            (job(text, "stable-repo-policy"), job(text, "future-clippy"))
+        else {
+            return false;
+        };
+        let pinned_guard = pinned.lines().find(|line| line.starts_with("    if:"));
+        if pinned_guard.is_none()
+            || stable.lines().find(|line| line.starts_with("    if:")) != pinned_guard
+            || !stable.contains("    env:\n      RUSTUP_TOOLCHAIN: stable\n")
+            || stable
+                .lines()
+                .filter(|line| line.trim_start().starts_with("RUSTUP_TOOLCHAIN:"))
+                .count()
+                != 1
+            || !stable.lines().any(|line| line == "    runs-on: ubuntu-latest")
+            || !stable.lines().any(|line| line == "    timeout-minutes: 15")
+            || stable.lines().any(|line| {
+                line.starts_with("        if:")
+                    || line.starts_with("      - if:")
+                    || line.trim_start().starts_with("continue-on-error:")
+            })
+        {
+            return false;
+        }
+        let Some((before, after)) = stable.split_once(SETUP) else {
+            return false;
+        };
+        if !repo_policy::extract_workflow_run_blocks(before).is_empty() {
+            return false;
+        }
+        let blocks = repo_policy::extract_workflow_run_blocks(after);
+        matches!(blocks.as_slice(), [identity, tests, clippy]
+            if identity.text.contains("compiler=$(rustc -vV)")
+                && identity.text.contains("\"$profdata\" --version")
+                && tests.text.trim() == TESTS
+                && clippy.text.trim() == CLIPPY)
+    };
+    let text = workflow()?;
+    assert!(prepared(&text), "stable compatibility proof must be wired");
+    for (label, from, to) in [
+        (
+            "missing LLVM component",
+            "components: clippy, llvm-tools-preview",
+            "components: clippy",
+        ),
+        ("wrong toolchain", "toolchain: stable", "toolchain: 1.95.0"),
+        (
+            "wrong fixture activation",
+            "RUSTUP_TOOLCHAIN: stable",
+            "RUSTUP_TOOLCHAIN: 1.95.0",
+        ),
+        (
+            "conditional tool preparation",
+            "          components: clippy, llvm-tools-preview\n",
+            "          components: clippy, llvm-tools-preview\n        if: false\n",
+        ),
+        (
+            "ignored failures",
+            "    name: stable-repo-policy\n",
+            "    name: stable-repo-policy\n    continue-on-error: true\n",
+        ),
+        ("omitted diagnostics", TESTS, "echo diagnostics omitted"),
+        ("omitted Clippy", CLIPPY, "echo Clippy omitted"),
+    ] {
+        let changed = text.replace(from, to);
+        assert_ne!(changed, text, "{label} must change the real workflow");
+        assert!(!prepared(&changed), "{label} must reject");
+    }
+    let late_setup = text.replacen(SETUP, "", 1) + SETUP;
+    assert!(!prepared(&late_setup), "tools must precede proof commands");
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 mod behavior {
     use std::fs;
@@ -133,6 +226,68 @@ echo '    Finished dev profile' >&2
                 eprintln!("retain fixture {}: {e}", self.0.display());
             }
         }
+    }
+
+    #[test]
+    fn stable_identity_uses_matching_llvm_and_preserves_tool_failures() -> Result<(), String> {
+        const RUSTC: &str = r#"#!/bin/bash
+case "$*" in
+  -vV)
+    [[ "$SCAN_CASE" != compiler ]] || exit 65
+    echo 'rustc fixture identity'
+    [[ "$SCAN_CASE" == host ]] || echo 'host: fixture-host'
+    ;;
+  '--print sysroot')
+    [[ "$SCAN_CASE" != sysroot ]] || exit 67
+    printf '%s/selected toolchain\n' "$PWD"
+    ;;
+  *) exit 68 ;;
+esac
+"#;
+        const LLVM: &str = r#"#!/bin/bash
+[[ "$*" == --version ]] || exit 69
+[[ "$SCAN_CASE" != llvm ]] || exit 70
+echo 'LLVM fixture identity'
+"#;
+        for (case, status) in [
+            ("success", 0),
+            ("compiler", 65),
+            ("sysroot", 67),
+            ("host", 1),
+            ("llvm", 70),
+            ("missing-llvm", 127),
+        ] {
+            let fixture = Fixture::new(case)?;
+            fixture.executable("rustc", RUSTC)?;
+            fixture.executable(
+                "llvm-profdata",
+                "#!/bin/bash\necho 'wrong LLVM from PATH'\nexit 77\n",
+            )?;
+            let bin = fixture
+                .0
+                .join("selected toolchain/lib/rustlib/fixture-host/bin");
+            fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
+            let profdata = bin.join("llvm-profdata");
+            if case != "missing-llvm" {
+                fs::write(&profdata, LLVM).map_err(|e| e.to_string())?;
+                fs::set_permissions(&profdata, fs::Permissions::from_mode(0o755))
+                    .map_err(|e| e.to_string())?;
+            }
+            let output = fixture.run("Record stable compiler and LLVM identity", case, "unused")?;
+            assert_eq!(output.status.code(), Some(status), "{case}: {output:?}");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(!stdout.contains("wrong LLVM from PATH"), "{stdout}");
+            if status == 0 {
+                for evidence in [
+                    "rustc fixture identity".to_string(),
+                    format!("llvm-profdata={}", profdata.display()),
+                    "LLVM fixture identity".to_string(),
+                ] {
+                    assert!(stdout.contains(&evidence), "missing {evidence}: {stdout}");
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]

@@ -56,6 +56,13 @@ Expected artifacts after a coverage run:
   The required Linux LLVM replay test fails if Rust or matching LLVM discovery
   fails; unsupported platforms exercise the adapter refusal control.
 
+The failure manifest accepts LLVM raw64 little-endian profile versions 10 and
+11 for binary-ID extraction. Version 10 has a 128-byte header; version 11 has a
+152-byte header. The ID block starts after that version's complete header, and
+available or partial ID results report `llvm_raw64_le_v10` or
+`llvm_raw64_le_v11`. Other versions, variant flags and magic values remain
+explicitly unsupported; accepting an ID does not validate the rest of a profile.
+
 The failure manifest also associates supported raw-profile binary IDs with GNU
 build IDs in instrumented Linux ELF files found only as direct entries in the
 coverage target's `debug`, `debug/deps`, `release`, and `release/deps`
@@ -85,6 +92,44 @@ generate `lcov.info` and upload the `rust-lcov` artifact, but skip Codecov
 upload because repository secrets are unavailable.
 
 ### Validate locally
+
+On Linux, before adopting a newer Rust toolchain, run the small diagnostics package with
+both the repository pin and stable. Install matching LLVM tools for each
+selected compiler; a system `llvm-profdata` from another LLVM release is not a
+substitute for the tool in that compiler's sysroot.
+
+```bash
+rustup component add --toolchain 1.95.0 clippy llvm-tools-preview
+rustup update stable
+rustup component add --toolchain stable clippy llvm-tools-preview
+rustc +stable -vV
+ripr_stable_sysroot="$(rustc +stable --print sysroot)"
+ripr_stable_host="$(rustc +stable -vV | sed -n 's/^host: //p')"
+"$ripr_stable_sysroot/lib/rustlib/$ripr_stable_host/bin/llvm-profdata" --version
+RUSTUP_TOOLCHAIN=1.95.0 cargo test --locked -p repo-policy --lib coverage_diagnostics
+RUSTUP_TOOLCHAIN=stable cargo test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
+RUSTUP_TOOLCHAIN=stable cargo test --locked -p repo-policy --test frontdoor
+RUSTUP_TOOLCHAIN=stable cargo clippy --locked -p repo-policy --all-targets -- -D warnings
+```
+
+`rustup update stable` refreshes an already installed channel; adding components
+alone does not establish that its compiler is current. Retain the compiler and
+LLVM identities and the test's reported raw version/layout with the results.
+Use rustup's command proxies on `PATH` and keep any explicit `RUSTC` setting
+consistent with the selected toolchain. `RUSTUP_TOOLCHAIN` follows subprocesses
+into temporary fixture repositories, where a directory-local override alone
+does not apply. This keeps the policy helper's build-time and runtime compiler
+identities aligned. The checks retain their compiler-identity refusals.
+
+The `stable-repo-policy` job in the existing advisory Future Clippy workflow
+runs the focused diagnostic tests and Clippy on the moving stable channel with
+matching `llvm-tools-preview`. It records the actual compiler and LLVM tool
+versions. It follows that workflow's existing main-push, manual-dispatch and
+`clippy-future`/`full-ci` plus `merge-ready` PR routing. A failure stays visible;
+the job does not become a required merge gate or run full workspace coverage.
+The existing future-Clippy job continues to inspect deferred lints on Rust
+1.95.0. This stable compatibility check does not change the repository pin or
+MSRV.
 
 To generate coverage and inspect artifacts locally:
 

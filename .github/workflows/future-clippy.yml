@@ -99,3 +99,41 @@ jobs:
             target/future-clippy.log
             target/future-clippy-status.txt
           if-no-files-found: error
+
+  stable-repo-policy:
+    name: stable-repo-policy
+    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'clippy-future') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Keep compiler selection consistent inside isolated fixture directories.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy, llvm-tools-preview
+
+      - name: Record stable compiler and LLVM identity
+        shell: bash
+        run: |
+          compiler=$(rustc -vV)
+          printf '%s\n' "$compiler"
+          sysroot=$(rustc --print sysroot)
+          host=$(sed -n 's/^host: //p' <<< "$compiler")
+          test -n "$sysroot"
+          test -n "$host"
+          profdata="$sysroot/lib/rustlib/$host/bin/llvm-profdata"
+          printf 'llvm-profdata=%s\n' "$profdata"
+          "$profdata" --version
+
+      - name: Check stable coverage diagnostics
+        run: cargo +stable test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
+
+      - name: Check stable repo-policy Clippy
+        run: cargo +stable clippy --locked -p repo-policy --all-targets -- -D warnings

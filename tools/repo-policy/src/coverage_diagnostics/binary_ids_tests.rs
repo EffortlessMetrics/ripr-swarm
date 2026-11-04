@@ -31,24 +31,18 @@ fn put16(bytes: &mut [u8], at: usize, value: u16) {
     bytes[at..at + 2].copy_from_slice(&value.to_le_bytes());
 }
 fn raw(id: &[u8]) -> Vec<u8> {
-    let block = (8 + id.len() + 7) & !7;
-    let mut bytes = vec![0; HEADER_BYTES + block];
-    bytes[..8].copy_from_slice(&[0x81, 0x72, 0x66, 0x6f, 0x72, 0x70, 0x6c, 0xff]);
-    put64(&mut bytes, 8, 10);
-    put64(&mut bytes, 16, block as u64);
-    put64(&mut bytes, 24, 1000);
-    put64(&mut bytes, 120, 2);
-    put64(&mut bytes, 128, id.len() as u64);
-    bytes[136..136 + id.len()].copy_from_slice(id);
-    bytes
+    raw_ids(10, 128, &[id.to_vec()])
 }
-fn raw_ids(ids: &[Vec<u8>]) -> Vec<u8> {
+// Explicit fixture offsets are independent of the production layout selector.
+fn raw_ids(version: u64, header_bytes: usize, ids: &[Vec<u8>]) -> Vec<u8> {
     let block_len = ids.iter().map(|id| (8 + id.len() + 7) & !7).sum::<usize>();
-    let mut bytes = vec![0; HEADER_BYTES + block_len];
+    let mut bytes = vec![0; header_bytes + block_len];
     bytes[..8].copy_from_slice(&[0x81, 0x72, 0x66, 0x6f, 0x72, 0x70, 0x6c, 0xff]);
-    put64(&mut bytes, 8, 10);
+    put64(&mut bytes, 8, version);
     put64(&mut bytes, 16, block_len as u64);
-    let mut at = HEADER_BYTES;
+    put64(&mut bytes, 24, 1000);
+    put64(&mut bytes, header_bytes - 8, 2);
+    let mut at = header_bytes;
     for id in ids {
         put64(&mut bytes, at, id.len() as u64);
         at += 8;
@@ -222,61 +216,165 @@ fn retained_october_14_header_maps_only_instrumented_exact_id_and_preserves_fail
 #[test]
 fn raw_binary_ids_are_exact_and_unknown_layouts_are_explicit() {
     let id = [0xab; 20];
-    let bytes = raw(&id);
-    assert_eq!(profile_ids(&bytes)["ids"], json!([hex(&id)]));
-    for (name, bad) in [
-        ("short", vec![0; 24]),
-        ("magic", vec![0; 160]),
-        ("version", {
-            let mut b = bytes.clone();
-            put64(&mut b, 8, 11);
-            b
-        }),
-        ("large", {
-            let mut b = bytes.clone();
-            put64(&mut b, 16, u64::MAX);
-            b
-        }),
-        ("zero_id", {
-            let mut b = bytes.clone();
-            put64(&mut b, 128, 0);
-            b
-        }),
-        ("short_id", bytes[..bytes.len() - 1].to_vec()),
+    for (version, header_bytes, layout) in [
+        (10, 128, "llvm_raw64_le_v10"),
+        (11, 152, "llvm_raw64_le_v11"),
     ] {
-        assert_eq!(profile_ids(&bad)["status"], "unavailable", "{name}");
+        let bytes = raw_ids(version, header_bytes, &[id.to_vec()]);
+        assert_eq!(
+            profile_ids(&bytes),
+            json!({"status": "available", "ids": [hex(&id)], "layout": layout})
+        );
+        for unsupported in [0, 9, 12, 10 | (1_u64 << 56), 11 | (1_u64 << 56)] {
+            let mut bad = bytes.clone();
+            put64(&mut bad, 8, unsupported);
+            let parsed = profile_ids(&bad);
+            assert_eq!(parsed["status"], "unavailable", "version {unsupported}");
+            assert_eq!(parsed["reason"], "unsupported_raw_version");
+            assert_eq!(parsed["ids"], json!([]));
+        }
+        let mut bad = bytes;
+        bad[..8].reverse();
+        let parsed = profile_ids(&bad);
+        assert_eq!(parsed["status"], "unavailable");
+        assert_eq!(parsed["reason"], "unsupported_magic");
+        assert_eq!(parsed["ids"], json!([]));
+    }
+}
+#[test]
+fn raw_v11_ids_start_after_the_extended_header() {
+    let id = [0xab; 20];
+    let mut bytes = raw_ids(11, 152, &[id.to_vec()]);
+    // The old offset now holds NumVTables, VNamesSize and ValueKindLast.
+    // These form two plausible ID records if a v11 reader wrongly starts at 128.
+    put64(&mut bytes, 128, 8);
+    put64(&mut bytes, 136, 0x1122_3344_5566_7788);
+    assert_eq!(
+        profile_ids(&bytes),
+        json!({"status": "available", "ids": [hex(&id)], "layout": "llvm_raw64_le_v11"})
+    );
+}
+#[test]
+fn raw_supported_headers_are_required_even_without_ids() {
+    for (version, header_bytes, layout) in [
+        (10, 128, "llvm_raw64_le_v10"),
+        (11, 152, "llvm_raw64_le_v11"),
+    ] {
+        let bytes = raw_ids(version, header_bytes, &[]);
+        for end in 0..header_bytes {
+            let parsed = profile_ids(&bytes[..end]);
+            assert_eq!(parsed["status"], "unavailable", "v{version} at {end}");
+            assert_eq!(parsed["reason"], "truncated_header");
+            assert_eq!(parsed["ids"], json!([]));
+        }
+        assert_eq!(
+            profile_ids(&bytes),
+            json!({"status": "available", "ids": [], "layout": layout})
+        );
+    }
+}
+#[test]
+fn raw_id_block_and_length_limits_remain_bounded() {
+    for (version, header_bytes) in [(10, 128), (11, 152)] {
+        let bytes = raw_ids(version, header_bytes, &[vec![0xab; 128]]);
+        assert_eq!(profile_ids(&bytes)["status"], "available");
+        assert_eq!(profile_ids(&bytes)["ids"], json!([hex(&[0xab; 128])]));
+        for size in [8193, u64::MAX] {
+            let mut bad = bytes.clone();
+            put64(&mut bad, 16, size);
+            let parsed = profile_ids(&bad);
+            assert_eq!(parsed["status"], "unavailable");
+            assert_eq!(parsed["reason"], "id_block_limit");
+            assert_eq!(parsed["truncated"], true);
+            assert_eq!(parsed["ids"], json!([]));
+        }
+        for size in [0, 129, u64::MAX] {
+            let mut bad = bytes.clone();
+            put64(&mut bad, header_bytes, size);
+            let parsed = profile_ids(&bad);
+            assert_eq!(parsed["status"], "unavailable");
+            assert_eq!(parsed["reason"], "invalid_id_length");
+            assert_eq!(parsed["ids"], json!([]));
+        }
+    }
+}
+#[test]
+fn raw_id_truncation_preserves_only_valid_prefixes() {
+    let id = vec![0xab; 20];
+    for (version, header_bytes, layout) in [
+        (10, 128, "llvm_raw64_le_v10"),
+        (11, 152, "llvm_raw64_le_v11"),
+    ] {
+        let bytes = raw_ids(version, header_bytes, std::slice::from_ref(&id));
+        let short = profile_ids(&bytes[..bytes.len() - 1]);
+        assert_eq!(short["status"], "unavailable");
+        assert_eq!(short["reason"], "truncated_id_block");
+        assert_eq!(short["ids"], json!([]));
+        for (size, reason, status, expected_ids) in [
+            (7, "invalid_id_length", "unavailable", json!([])),
+            (27, "truncated_id", "unavailable", json!([])),
+            (28, "truncated_id_padding", "partial", json!([hex(&id)])),
+        ] {
+            let mut bad = bytes[..header_bytes + size].to_vec();
+            put64(&mut bad, 16, size as u64);
+            let parsed = profile_ids(&bad);
+            assert_eq!(parsed["status"], status, "v{version}: {reason}");
+            assert_eq!(parsed["reason"], reason);
+            assert_eq!(parsed["ids"], expected_ids);
+            if status == "partial" {
+                assert_eq!(parsed["layout"], layout);
+                assert_eq!(parsed["truncated"], true);
+            }
+        }
+        let mut partial = raw_ids(version, header_bytes, &[id.clone(), vec![0xcd; 20]]);
+        put64(&mut partial, header_bytes + 32, u64::MAX);
+        assert_eq!(
+            profile_ids(&partial),
+            json!({"status": "partial", "reason": "invalid_id_length", "ids": [hex(&id)],
+                "truncated": false, "layout": layout})
+        );
     }
 }
 #[test]
 fn profile_id_count_limit_keeps_the_valid_prefix_and_marks_mapping_partial() -> Result<()> {
     let f = fixture()?;
     let valid_ids = (1..=33).map(|n| vec![n; 20]).collect::<Vec<_>>();
-    let parsed = profile_ids(&raw_ids(&valid_ids));
-    assert_eq!(parsed["status"], "partial");
-    assert_eq!(parsed["reason"], "id_count_limit");
-    assert_eq!(parsed["truncated"], true);
-    assert_eq!(parsed["ids"].as_array().map(Vec::len), Some(32));
     write_executable(
         &f.0.join("debug/deps/first"),
         &elf_bytes(&valid_ids[0], true),
     )?;
-    let report = associate(&f.0, &[json!({"binary_ids": parsed})]);
-    assert_eq!(report["candidates"].as_array().map(Vec::len), Some(1));
-    assert_eq!(report["ids"][0]["status"], "matched");
-    assert_eq!(
-        report["ids"][1]["status"],
-        "unavailable_within_partial_scope"
-    );
-    assert_eq!(report["profile_ids_incomplete"], true);
-    assert_eq!(report["profile_ids_truncated"], false);
-    assert_eq!(report["status"], "partial");
+    for (version, header_bytes, layout) in [
+        (10, 128, "llvm_raw64_le_v10"),
+        (11, 152, "llvm_raw64_le_v11"),
+    ] {
+        let complete = profile_ids(&raw_ids(version, header_bytes, &valid_ids[..32]));
+        assert_eq!(complete["status"], "available");
+        assert_eq!(complete["ids"].as_array().map(Vec::len), Some(32));
+        assert_eq!(complete["layout"], layout);
+        let parsed = profile_ids(&raw_ids(version, header_bytes, &valid_ids));
+        assert_eq!(parsed["status"], "partial");
+        assert_eq!(parsed["reason"], "id_count_limit");
+        assert_eq!(parsed["truncated"], true);
+        assert_eq!(parsed["ids"].as_array().map(Vec::len), Some(32));
+        assert_eq!(parsed["layout"], layout);
+        let report = associate(&f.0, &[json!({"binary_ids": parsed})]);
+        assert_eq!(report["candidates"].as_array().map(Vec::len), Some(1));
+        assert_eq!(report["ids"][0]["status"], "matched");
+        assert_eq!(
+            report["ids"][1]["status"],
+            "unavailable_within_partial_scope"
+        );
+        assert_eq!(report["profile_ids_incomplete"], true);
+        assert_eq!(report["profile_ids_truncated"], false);
+        assert_eq!(report["status"], "partial");
+    }
     Ok(())
 }
 #[test]
 fn unavailable_profile_id_input_prevents_a_definitive_negative_mapping() -> Result<()> {
     let f = fixture()?;
     let known = profile_ids(&raw(&[0x42; 20]));
-    let unsupported = profile_ids(&[0; HEADER_BYTES]);
+    let unsupported = profile_ids(&[0; 128]);
     let report = associate(
         &f.0,
         &[
@@ -556,9 +654,15 @@ fn real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata() -> Result
     ])?;
     assert_eq!(run["exit"], 0);
     let full_bytes = super::super::read_prefix(&full, super::super::PREFIX_BYTES)?;
+    let raw_version = u64le(&full_bytes, 8)?;
     let observed = profile_ids(&full_bytes);
-    assert_eq!(observed["status"], "available");
+    assert_eq!(
+        observed["status"], "available",
+        "raw version {raw_version}: {observed}"
+    );
     assert_eq!(observed["ids"].as_array().map(Vec::len), Some(1));
+    let (header_bytes, layout) = raw_layout(raw_version)?;
+    assert_eq!(observed["layout"], layout);
     let id = observed["ids"][0]
         .as_str()
         .ok_or("real profile id missing")?;
@@ -583,9 +687,11 @@ fn real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata() -> Result
     assert_eq!(show["exit"], 0, "{show}");
     assert!(field(&show, "stdout").contains(id));
     let short = f.0.join("worker-123-456_0.profraw");
-    let kept =
-        HEADER_BYTES + usize::try_from(u64le(&full_bytes, 16)?).map_err(|e| e.to_string())?;
-    fs::write(&short, &full_bytes[..kept]).map_err(|e| e.to_string())?;
+    let kept = header_bytes
+        .checked_add(usize::try_from(u64le(&full_bytes, 16)?).map_err(|e| e.to_string())?)
+        .ok_or("real profile id block overflow")?;
+    let retained = full_bytes.get(..kept).ok_or("real profile id block truncated")?;
+    fs::write(&short, retained).map_err(|e| e.to_string())?;
     let list = f.0.join("ripr-swarm-profraw-list");
     fs::write(&list, format!("{}\n", short.display())).map_err(|e| e.to_string())?;
     let report = capture(&f.0, &list, &f.0.join("evidence"), tool)?;
@@ -609,7 +715,7 @@ fn real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata() -> Result
         full_bytes
     );
     eprintln!(
-        "real LLVM association: build-id={id}, retained={kept}, mapping={}, original=failure, replay=1",
+        "real LLVM association: raw_version={raw_version}, layout={layout}, build-id={id}, retained={kept}, mapping={}, original=failure, replay=1",
         report["executable_mapping"]["ids"][0]["status"]
     );
     Ok(())
