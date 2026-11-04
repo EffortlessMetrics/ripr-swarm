@@ -6,7 +6,7 @@ fn sample_input() -> CheckInput {
     let diff_file = manifest_dir.join("examples/library.diff");
 
     CheckInput {
-        root: manifest_dir,
+        root: manifest_dir.join("examples/sample"),
         diff_file: Some(diff_file),
         format: OutputFormat::Json,
         ..CheckInput::default()

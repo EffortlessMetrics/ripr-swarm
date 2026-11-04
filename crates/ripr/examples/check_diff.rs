@@ -6,7 +6,7 @@ fn sample_input() -> CheckInput {
     let diff_file = manifest_dir.join("examples/library.diff");
 
     CheckInput {
-        root: manifest_dir,
+        root: manifest_dir.join("examples/sample"),
         diff_file: Some(diff_file),
         format: OutputFormat::Json,
         ..CheckInput::default()
@@ -15,6 +15,10 @@ fn sample_input() -> CheckInput {
 
 fn main() -> Result<(), String> {
     let output = check_workspace(sample_input())?;
+
+    let json = ripr::render_check(&output, &OutputFormat::Json)?;
+    let report: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    eprintln!("analysis outcome: {}", report["analysis_outcome"]);
 
     println!("schema: {}", output.schema_version);
     println!("findings: {}", output.findings.len());
