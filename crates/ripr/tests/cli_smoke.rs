@@ -1186,6 +1186,23 @@ fn normalize_agent_verify_fixture(text: &str) -> Result<String, Box<dyn std::err
 
 fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::error::Error>> {
     let mut value: serde_json::Value = serde_json::from_str(text)?;
+    // Unavailable-outcome guidance repeats the machine-bound path and OS
+    // error. Normalize that exact detail, preserving the recovery instruction.
+    if let Some(error) = value
+        .get("analysis_outcome_error")
+        .and_then(serde_json::Value::as_str)
+        .filter(|error| !error.is_empty())
+        .map(str::to_string)
+    {
+        for pointer in [
+            "/summary/next_action/recommended_action",
+            "/summary/next_recommendation",
+        ] {
+            if let Some(serde_json::Value::String(guidance)) = value.pointer_mut(pointer) {
+                *guidance = guidance.replace(&error, "<analysis_outcome_error>");
+            }
+        }
+    }
     if let Some(provenance) = value
         .get_mut("provenance")
         .and_then(serde_json::Value::as_object_mut)
@@ -1328,6 +1345,37 @@ fn normalize_agent_receipt_fixture_rejects_non_object_json() -> Result<(), Strin
             return Err(format!("non-object fixture should be rejected: {fixture}"));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn normalize_agent_receipt_fixture_preserves_unavailable_outcome_guidance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let receipt = |error: &str, recovery: &str| {
+        serde_json::json!({
+            "analysis_outcome_error": error,
+            "summary": {
+                "next_action": { "recommended_action": format!("Unavailable ({error}); {recovery}") },
+                "next_recommendation": format!("Unavailable ({error}); {recovery}")
+            }
+        })
+        .to_string()
+    };
+    let linux = receipt("/workspace/outcome.json: os error 2", "regenerate outcome");
+    let windows = receipt(
+        "C:\\work\\outcome.json: file not found",
+        "regenerate outcome",
+    );
+    let normalized = normalize_agent_receipt_fixture(&linux)?;
+    assert_eq!(normalized, normalize_agent_receipt_fixture(&windows)?);
+    assert!(normalized.contains("Unavailable (<analysis_outcome_error>); regenerate outcome"));
+    assert_ne!(
+        normalized,
+        normalize_agent_receipt_fixture(&receipt(
+            "/workspace/outcome.json: os error 2",
+            "incorrect recovery"
+        ))?
+    );
     Ok(())
 }
 

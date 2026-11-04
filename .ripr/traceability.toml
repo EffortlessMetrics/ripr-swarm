@@ -578,6 +578,7 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::exact_helper_graph_counts_declaration_edges_at_its_boundary",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::helper_initializer_binding_distinguishes_expression_and_statement_macros",
   "crates/ripr/src/analysis/syntax/name_scope.rs::helper_initializer_query_preserves_statement_macro_shadow_refusal",
+  "crates/ripr/tests/cli_smoke.rs::normalize_agent_receipt_fixture_preserves_unavailable_outcome_guidance",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::integration_function_local_helper_import_uses_enclosing_module_binding",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::blanket_generic_helper_competition_uses_cross_file_nominal_identity",
   "crates/ripr/src/analysis/test_grip_evidence/tests/helper_scope.rs::qualified_and_imported_entries_select_the_exact_duplicate_helper",

@@ -7,6 +7,9 @@ repo-exposure producer at corpus generation 1.157, then regenerate their native
 verify and receipt artifacts. Apply the existing CLI fixture normalization for
 machine-bound provenance. Weak grip, unchanged movement and incomplete receipt
 status remain unchanged.
+The captures include the producer's dirty-source flags, optional guidance note
+and verification non-claims. Normalize the repeated unavailable-outcome error
+inside receipt recommendations without removing their recovery instructions.
 
 ## Pending — proposed repair-target projection (#3162)
 
