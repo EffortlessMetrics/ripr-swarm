@@ -231,6 +231,8 @@ const BODY_PRESERVING_ATTRIBUTE_PATHS: &[&str] = &[
     "inline",
     "track_caller",
     "must_use",
+    "deprecated",
+    "rustfmt::skip",
     "case",
     "serial",
     "serial_test::serial",
@@ -245,11 +247,19 @@ pub(crate) fn attributes_preserve_body<'attribute>(
     attributes.into_iter().all(|attribute| {
         normalized_test_attribute_path(attribute)
             .as_deref()
+            .map(attribute_name_without_value)
             .is_some_and(|path| {
                 is_test_attribute_path(path) || BODY_PRESERVING_ATTRIBUTE_PATHS.contains(&path)
             })
             || cfg_predicates::attribute_introduces_only_test(attribute)
     })
+}
+
+/// `doc="x"` / `must_use="x"` name-value forms carry the path before the `=`.
+/// Only the body-preservation check strips it: `normalized_test_attribute_path`
+/// is shared with `attributes_define_test`, which must keep rejecting `test="x"`.
+fn attribute_name_without_value(path: &str) -> &str {
+    path.split('=').next().unwrap_or(path)
 }
 
 /// Whether any attribute is `#[crate::test]` / `#[self::test]` and the file's
