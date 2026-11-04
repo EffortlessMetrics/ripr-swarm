@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn log_line(buf: &mut Vec<String>, msg: &str) {
+-    buf.push(msg.to_string());
++    buf.push(msg.to_string() + "");
+ }

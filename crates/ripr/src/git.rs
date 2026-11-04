@@ -316,6 +316,11 @@ fn windows_overlong_working_directory(is_windows: bool, dir: &Path) -> Option<us
 /// archive or a planted nested repository can.
 pub(crate) const UNTRUSTED_REPOSITORY_CONFIG: [&str; 2] = ["-c", "core.fsmonitor=false"];
 
+/// Git's null device spelling for `-c` overrides (`NUL` on Windows, `/dev/null` elsewhere).
+fn git_null_device_path() -> &'static str {
+    if cfg!(windows) { "NUL" } else { "/dev/null" }
+}
+
 fn git_command(root: &Path, args: &[&str]) -> Command {
     let mut command = Command::new("git");
     // Several callers read Git's stderr for a known cause (dubious ownership,
@@ -326,7 +331,7 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
     // an index write fires the repository's `post-index-change` hook. ripr's
     // analysis is read-only, so no optional lock (and no index write) is taken.
     command.env("GIT_OPTIONAL_LOCKS", "0");
-    let null_device = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let null_device = git_null_device_path();
     command
         .current_dir(root)
         .args(UNTRUSTED_REPOSITORY_CONFIG)
@@ -336,7 +341,8 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
         // #6837: even status and path-only diff inventories can read the
         // user's orderfile. A stale path must not abort repair/currentness;
         // an empty value still tries to open a file, so use Git's null device.
-        .args(["-c", "diff.orderFile=/dev/null"])
+        // #9375: match `hooksPath` and use `NUL` on native Windows git builds.
+        .args(["-c", &format!("diff.orderFile={null_device}")])
         .args(args);
     command
 }
@@ -2263,6 +2269,23 @@ To add an exception for this directory, call:\n\n\tgit config --global --add saf
             "a short relative spelling can still name a directory past MAX_PATH"
         );
         Ok(())
+    }
+
+    /// #9375: `diff.orderFile` must use the same platform null device as `core.hooksPath`.
+    #[test]
+    fn git_command_pins_orderfile_to_platform_null_device() {
+        let null = git_null_device_path();
+        let command = git_command(Path::new("."), &["status"]);
+        let rendered = format!("{command:?}");
+        assert!(
+            rendered.contains(&format!("diff.orderFile={null}")),
+            "expected diff.orderFile={null} in {rendered}"
+        );
+        #[cfg(windows)]
+        assert!(
+            !rendered.contains("diff.orderFile=/dev/null"),
+            "native Windows git must not receive a hardcoded /dev/null orderFile (#9375)"
+        );
     }
 
     #[test]

@@ -576,3 +576,330 @@ fn inside_destructuring_target(body: &str, at: usize) -> bool {
     }
     false
 }
+
+/// #7418 / RIPR-SPEC-0248: when `term` is `callee(args)` and `callee` is a
+/// same-module function whose body is `return cond ? a : b;` or
+/// `if (cond) { return a; } return b;`, bind `callee`'s parameters from the
+/// call arguments and fold the selected branch. Anything unreadable fails closed.
+pub(crate) fn ts_fold_same_module_call_term(
+    term: &str,
+    owner: &TypeScriptOwner,
+    outer_bindings: &[(String, f64)],
+    workspace_root: Option<&Path>,
+) -> Option<f64> {
+    let (callee, arguments) = parse_simple_call(term)?;
+    let module = owner_module_source(owner, workspace_root, &callee)?;
+    let function = same_module_function_source(&module, &callee)?;
+    if !same_module_call_body_is_readable(&function, &callee, &owner.name) {
+        return None;
+    }
+    let params = function_parameter_names(&function)?;
+    if params.len() != arguments.len() {
+        return None;
+    }
+    let source = format!("function {callee}{function}");
+    if params
+        .iter()
+        .any(|name| !ts_parameter_is_stable(&source, name))
+    {
+        return None;
+    }
+    let mut bindings = outer_bindings.to_vec();
+    for (name, argument) in params.iter().zip(arguments.iter()) {
+        let value = fold_numeric_expression(argument, &bindings)?;
+        bindings.push((name.clone(), value));
+    }
+    for word in bindings_for_constant_operands(&function) {
+        if bindings.iter().any(|(name, _)| name == &word) {
+            continue;
+        }
+        let value = ts_owner_module_constant_value(&word, owner, workspace_root)?
+            .parse::<f64>()
+            .ok()?;
+        bindings.push((word, value));
+    }
+    let (condition, when_true, when_false) = conditional_return_branches(&function)?;
+    let holds = condition_holds(&condition, &bindings)?;
+    let branch = if holds { when_true } else { when_false };
+    fold_numeric_expression(&branch, &bindings)
+}
+
+fn owner_module_source(
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+    callee: &str,
+) -> Option<String> {
+    if let Some(root) = workspace_root
+        && let Ok(Some(bytes)) =
+            crate::analysis::committed_source::read_source_bytes(root, &owner.file)
+        && let Ok(text) = String::from_utf8(bytes)
+        && same_module_function_source(&text, callee).is_some()
+    {
+        return Some(text);
+    }
+    owner.source_text.as_deref().and_then(|source| {
+        same_module_function_source(source, callee)
+            .is_some()
+            .then(|| source.to_string())
+    })
+}
+
+fn parse_simple_call(term: &str) -> Option<(String, Vec<String>)> {
+    let trimmed = term.trim();
+    let open = trimmed.find('(')?;
+    let callee = trimmed[..open].trim();
+    if callee.is_empty() || callee.contains('.') {
+        return None;
+    }
+    let close = trimmed.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let arguments = split_top_level_commas(trimmed.get(open + 1..close)?);
+    Some((callee.to_string(), arguments))
+}
+
+fn split_top_level_commas(text: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0usize;
+    for (index, c) in text.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(text[start..index].trim().to_string());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(text[start..].trim().to_string());
+    parts
+}
+
+fn same_module_function_source(module: &str, name: &str) -> Option<String> {
+    let masked = ts_mask_literals_and_comments(module);
+    let mut depth = 0i64;
+    let mut start_line = None;
+    for (index, line) in masked.lines().enumerate() {
+        let trimmed = line.trim();
+        if depth == 0 && starts_function_decl(trimmed, name) {
+            start_line = Some(index);
+        }
+        if start_line.is_some() {
+            depth += trimmed.matches('{').count() as i64;
+            depth -= trimmed.matches('}').count() as i64;
+            if depth == 0 && trimmed.contains('}') {
+                let lines: Vec<&str> = module.lines().collect();
+                let start = start_line?;
+                let header = lines[start];
+                let open = header.find('(')?;
+                let close = header[open + 1..].find(')')? + open + 1;
+                let params = &header[open..=close];
+                let body: String = lines[start..=index].join("\n");
+                let body = body.find('{').map(|at| &body[at..]).unwrap_or("");
+                return Some(format!("{params} {body}"));
+            }
+        }
+    }
+    None
+}
+
+fn starts_function_decl(line: &str, name: &str) -> bool {
+    let trimmed = line.trim_start();
+    for prefix in ["function ", "export function ", "export async function "] {
+        let Some(rest) = trimmed.strip_prefix(prefix) else {
+            continue;
+        };
+        if !rest.starts_with(name) {
+            continue;
+        }
+        let after = rest[name.len()..].chars().next();
+        if !matches!(after, None | Some('(') | Some('<') | Some(' ')) {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
+fn if_then_return_branches(body: &str) -> Option<(String, String, String)> {
+    let lines: Vec<&str> = body.lines().map(str::trim).collect();
+    let start = lines
+        .iter()
+        .position(|line| line.starts_with("if (") || line.starts_with("if("))?;
+    let header = lines[start];
+    if header.contains("else") {
+        return None;
+    }
+    let condition = if header.contains('{') {
+        header
+            .trim_start_matches("if")
+            .trim()
+            .strip_prefix('(')?
+            .split_once('{')
+            .map(|(head, _)| head.strip_suffix(')').unwrap_or(head).trim())?
+            .to_string()
+    } else {
+        header
+            .trim_start_matches("if")
+            .trim()
+            .strip_prefix('(')?
+            .strip_suffix(')')?
+            .trim()
+            .to_string()
+    };
+    let mut depth = 0i32;
+    let mut true_expr = None;
+    for line in lines.iter().skip(start) {
+        depth += line.matches('{').count() as i32;
+        depth -= line.matches('}').count() as i32;
+        if depth == 1 {
+            if let Some(expression) = return_statement_expression(line) {
+                true_expr = Some(expression.to_string());
+            } else if !line.is_empty() && *line != "{" {
+                return None;
+            }
+        }
+        if depth == 0 && line.contains('}') {
+            break;
+        }
+    }
+    let false_expr = lines
+        .iter()
+        .skip(start + 1)
+        .find_map(|line| return_statement_expression(line).map(str::to_string))?;
+    Some((condition, true_expr?, false_expr))
+}
+
+fn function_parameter_names(function: &str) -> Option<Vec<String>> {
+    let open = function.find('(')?;
+    let close = function[open + 1..].find(')')? + open + 1;
+    let params = function[open + 1..close].trim();
+    if params.is_empty() {
+        return Some(Vec::new());
+    }
+    Some(
+        params
+            .split(',')
+            .filter_map(|param| Some(param.split(':').next()?.trim().to_string()))
+            .collect(),
+    )
+}
+
+fn same_module_call_body_is_readable(function: &str, callee: &str, owner_name: &str) -> bool {
+    let Some(body) = masked_owner_body(&format!("function x{function}")) else {
+        return false;
+    };
+    if body.contains("=>") || !identifier_offsets(&body, "function").is_empty() {
+        return false;
+    }
+    let call_needle = format!("{callee}(");
+    if body.matches(&call_needle).count() > 0 {
+        return false;
+    }
+    let owner_call = format!("{owner_name}(");
+    !body.contains(&owner_call)
+}
+
+fn bindings_for_constant_operands(function: &str) -> Vec<String> {
+    let Some(body) = masked_owner_body(&format!("function x{function}")) else {
+        return Vec::new();
+    };
+    body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        .filter(|word| is_constant_shaped_operand(word))
+        .map(str::to_string)
+        .collect()
+}
+
+fn conditional_return_branches(function: &str) -> Option<(String, String, String)> {
+    let body = masked_owner_body(&format!("function x{function}"))?;
+    if let Some((condition, when_true, when_false)) = ternary_return_branches(&body) {
+        return Some((condition, when_true, when_false));
+    }
+    if_then_return_branches(&body)
+}
+
+fn ternary_return_branches(body: &str) -> Option<(String, String, String)> {
+    let line = body
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("return ") && line.contains('?'))?;
+    let expression = line.strip_prefix("return ")?.trim_end_matches(';').trim();
+    let masked = ts_mask_literals_and_comments(expression);
+    if masked.len() != expression.len() {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut question = None;
+    let mut colon = None;
+    for (at, c) in masked.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            '?' if depth == 0 => {
+                if question.is_some() {
+                    return None;
+                }
+                question = Some(at);
+            }
+            ':' if depth == 0 && question.is_some() => {
+                if colon.is_some() {
+                    return None;
+                }
+                colon = Some(at);
+            }
+            _ => {}
+        }
+    }
+    let (question, colon) = (question?, colon?);
+    let condition = expression.get(..question)?.trim().to_string();
+    let when_true = expression.get(question + 1..colon)?.trim().to_string();
+    let when_false = expression.get(colon + 1..)?.trim().to_string();
+    Some((condition, when_true, when_false))
+}
+
+fn return_statement_expression(trimmed: &str) -> Option<&str> {
+    let expression = trimmed.strip_prefix("return ")?.strip_suffix(';')?.trim();
+    (!expression.is_empty()).then_some(expression)
+}
+
+fn condition_holds(condition: &str, bindings: &[(String, f64)]) -> Option<bool> {
+    const OPERATORS: [&str; 8] = [">=", "<=", "===", "!==", "==", "!=", ">", "<"];
+    let without = condition.replace("!==", "  ").replace("!=", "  ");
+    if without.contains(['&', '|', '!', '(', ')', '?']) {
+        return None;
+    }
+    let (left, operator, right) = OPERATORS.iter().find_map(|operator| {
+        condition
+            .split_once(operator)
+            .map(|(left, right)| (left.trim(), *operator, right.trim()))
+    })?;
+    let lhs = operand_numeric_value(left, bindings)?;
+    let rhs = operand_numeric_value(right, bindings)?;
+    comparison_holds(operator, lhs, rhs)
+}
+
+fn operand_numeric_value(operand: &str, bindings: &[(String, f64)]) -> Option<f64> {
+    if let Some(value) = numeric_literal_value(operand).and_then(|v| v.parse::<f64>().ok()) {
+        return Some(value);
+    }
+    bindings
+        .iter()
+        .find(|(name, _)| name == operand)
+        .map(|(_, value)| *value)
+}
+
+fn comparison_holds(operator: &str, lhs: f64, rhs: f64) -> Option<bool> {
+    let epsilon = 1e-9 * lhs.abs().max(rhs.abs()).max(1.0);
+    Some(match operator {
+        "===" | "==" => (lhs - rhs).abs() <= epsilon,
+        "!==" | "!=" => (lhs - rhs).abs() > epsilon,
+        ">=" => lhs - rhs >= -epsilon,
+        ">" => lhs - rhs > epsilon,
+        "<=" => rhs - lhs >= -epsilon,
+        "<" => rhs - lhs > epsilon,
+        _ => return None,
+    })
+}
