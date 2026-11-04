@@ -211,9 +211,9 @@ Common options:
                     this directory.
   --quiet           Suppress stderr progress; known seam totals as processed_n_of_total.
                     Unknown totals show no percentage or ETA, and progress makes no speed claim.
-  --timeout SECS    Wall-clock analysis budget (600s default; 0 disables;
-                    excludes the repo-wide formats). On analysis_timeout,
-                    raise/disable it or narrow the diff; re-run.
+  --timeout SECS    Analysis-worker budget (600s default; 0 off; repo formats skip).
+                    Pre-worker git/post-run rendering outside; in-worker git diff
+                    load counts against it (each git call has its own timeout). Raise/disable on analysis_timeout.
 
 Exit status: 0 for a completed run, including findings that are `exposed` or weak.
 `unsupported_input` reports exit 2, as do usage errors. Do not build
@@ -383,15 +383,17 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
-  --timeout SECS           Wall-clock budget in seconds for the whole
-                           diff or worktree analysis (not the repo-wide
-                           repo-exposure and seam formats). When it runs
-                           out, check stops and refuses with
-                           analysis_timeout: no findings
-                           are produced and the result is never a clean
-                           pass. 0 disables the budget. Default: 600 (10
-                           minutes). Also settable via RIPR_CHECK_TIMEOUT
-                           env var.
+  --timeout SECS           Analysis-worker wall-clock budget in seconds (not
+                           the repo-wide repo-exposure and seam formats).
+                           Pre-analysis git work and post-analysis rendering
+                           are outside this budget; git-backed diff loading
+                           inside the worker counts against it, and each git
+                           invocation is bounded separately by RIPR_GIT_TIMEOUT.
+                           When the analysis worker exceeds it, check stops and
+                           refuses with analysis_timeout: no findings are
+                           produced and the result is never a clean pass. 0
+                           disables the budget. Default: 600 (10 minutes). Also
+                           settable via RIPR_CHECK_TIMEOUT env var.
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
