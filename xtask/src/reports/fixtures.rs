@@ -604,11 +604,23 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
         return Err(message);
     }
     let run = run_fixture_outputs(&fixture)?;
+    let body = bless_fixture_outputs(name, reason, &fixture, &run)?;
+    write_report("goldens-bless.md", &body)
+}
 
+/// The command's publication boundary: every integrity check precedes every
+/// expected-file write. Kept separate from analyzer execution for isolated
+/// regression controls over the actual write path.
+fn bless_fixture_outputs(
+    name: &str,
+    reason: &str,
+    fixture: &Path,
+    run: &FixtureRun,
+) -> Result<String, String> {
     // Integrity guards (#2410): validate the run output BEFORE copying it
     // over the expected files. A regression that produces empty/garbage
     // output must not be silently blessed as the new golden.
-    validate_bless_output(&run, &fixture)?;
+    validate_bless_output(run, fixture)?;
 
     let expected = fixture.join("expected");
     fs::create_dir_all(&expected)
@@ -671,9 +683,9 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
     updated_outputs.push_str(&format!("- `{}`\n", normalize_path(&changelog)));
     let body = format!(
         "# ripr goldens bless report\n\nStatus: pass\n\nFixture:\n- `{}`\n\nReason:\n```text\n{reason}\n```\n\nActual outputs:\n{actual_outputs}\nUpdated:\n{updated_outputs}",
-        normalize_path(&fixture)
+        normalize_path(fixture)
     );
-    write_report("goldens-bless.md", &body)
+    Ok(body)
 }
 
 /// Unique heading for the next appended pending changelog entry.
@@ -3485,6 +3497,80 @@ mod tests {
         assert!(spec_line_cites_real_id(
             "Spec: RIPR-SPEC-0062, RIPR-SPEC-0063"
         ));
+    }
+
+    #[test]
+    fn expected_classes_bless_publication_refuses_mismatch_without_writes() -> Result<(), String> {
+        let root = unique_temp_path("12928-bless-publication");
+        fs::create_dir_all(root.join("expected")).map_err(|err| err.to_string())?;
+        fs::create_dir_all(root.join("actual")).map_err(|err| err.to_string())?;
+        let good = r#"{"findings":[{"id":"a","classification":"weakly_exposed"}]}"#;
+        fs::write(
+            root.join("SPEC.md"),
+            "```expected-classes\n[[\"a\",\"weakly_exposed\"]]\n```\n",
+        )
+        .map_err(|err| err.to_string())?;
+        let originals = [
+            ("check.json", good),
+            ("human.txt", "original human"),
+            ("human-full.txt", "original full human"),
+            ("CHANGELOG.md", "# Original changelog\n"),
+        ];
+        for (name, bytes) in originals {
+            fs::write(root.join("expected").join(name), bytes).map_err(|err| err.to_string())?;
+        }
+        let run = FixtureRun {
+            name: "sample".to_string(),
+            actual_dir: root.join("actual"),
+            check_json: root.join("actual/check.json"),
+            human_txt: root.join("actual/human.txt"),
+            human_full_txt: root.join("actual/human-full.txt"),
+            comparisons: Vec::new(),
+        };
+        fs::write(&run.check_json, good.replace("weakly_exposed", "exposed"))
+            .map_err(|err| err.to_string())?;
+        fs::write(&run.human_txt, "fresh human").map_err(|err| err.to_string())?;
+        fs::write(&run.human_full_txt, "fresh full human").map_err(|err| err.to_string())?;
+        let outcome = (|| {
+            let error = bless_fixture_outputs("sample", "controlled class test", &root, &run)
+                .err()
+                .ok_or("mismatched class reached golden publication")?;
+            if !error.contains("expected-classes mismatch") {
+                return Err(format!("unexpected refusal: {error}"));
+            }
+            for (name, original) in originals {
+                if fs::read(root.join("expected").join(name)).map_err(|err| err.to_string())?
+                    != original.as_bytes()
+                {
+                    return Err(format!("mismatch modified expected/{name}"));
+                }
+            }
+            fs::write(&run.check_json, good).map_err(|err| err.to_string())?;
+            let report = bless_fixture_outputs("sample", "controlled class test", &root, &run)?;
+            if !report.contains("Status: pass") {
+                return Err(format!("missing publication report: {report}"));
+            }
+            for (name, expected) in [
+                ("check.json", good),
+                ("human.txt", "fresh human"),
+                ("human-full.txt", "fresh full human"),
+            ] {
+                if fs::read(root.join("expected").join(name)).map_err(|err| err.to_string())?
+                    != expected.as_bytes()
+                {
+                    return Err(format!("valid output did not update expected/{name}"));
+                }
+            }
+            let changelog = fs::read_to_string(root.join("expected/CHANGELOG.md"))
+                .map_err(|err| err.to_string())?;
+            if !changelog.contains("controlled class test") {
+                return Err("valid publication did not record its reason".to_string());
+            }
+            Ok(())
+        })();
+        let cleanup = fs::remove_dir_all(&root).map_err(|err| err.to_string());
+        outcome?;
+        cleanup
     }
 
     #[test]

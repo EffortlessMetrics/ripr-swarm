@@ -200,6 +200,57 @@ mod tests {
         assert!(validate("```expected-classes\n[]\n```", GOOD, true).is_err());
     }
     #[test]
+    fn expected_classes_inventory_counts_declarations_and_enforces_floor() -> Result<(), String> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| err.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-12928-inventory-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).map_err(|err| err.to_string())?;
+        let outcome = (|| {
+            fs::create_dir_all(root.join("policy")).map_err(|err| err.to_string())?;
+            let ratchet = root.join("policy/fixture_expected_classes.json");
+            fs::write(&ratchet, r#"{"rust":1}"#).map_err(|err| err.to_string())?;
+            let output = r#"{"summary":{"changed_files_by_language":[{"language":"rust","files":1}]},"findings":[{"id":"a","classification":"weakly_exposed"}]}"#;
+            for (name, spec) in [("sample", SPEC), ("uncontracted", "")] {
+                let fixture = root.join("fixtures").join(name);
+                fs::create_dir_all(fixture.join("expected")).map_err(|err| err.to_string())?;
+                fs::write(fixture.join("SPEC.md"), spec).map_err(|err| err.to_string())?;
+                fs::write(fixture.join("expected/check.json"), output)
+                    .map_err(|err| err.to_string())?;
+            }
+            let counts = inventory(&root)?;
+            if counts.get("rust") != Some(&[1, 1]) {
+                return Err(format!(
+                    "incorrect authored/uncontracted ledger: {counts:?}"
+                ));
+            }
+            fs::write(root.join("fixtures/sample/SPEC.md"), "").map_err(|err| err.to_string())?;
+            let error = inventory(&root)
+                .err()
+                .ok_or("coverage floor accepted removal of a declaration")?;
+            if !error.contains("expected-classes rust ratchet: 0 < 1") {
+                return Err(format!("wrong underflow refusal: {error}"));
+            }
+            fs::write(root.join("fixtures/sample/SPEC.md"), SPEC).map_err(|err| err.to_string())?;
+            fs::write(&ratchet, r#"{"rust":1,"python":1}"#).map_err(|err| err.to_string())?;
+            let error = inventory(&root)
+                .err()
+                .ok_or("absent language bypassed its coverage floor")?;
+            if !error.contains("expected-classes python ratchet: 0 < 1") {
+                return Err(format!("wrong absent-language refusal: {error}"));
+            }
+            Ok(())
+        })();
+        let cleanup = fs::remove_dir_all(&root).map_err(|err| err.to_string());
+        outcome?;
+        cleanup
+    }
+
+    #[test]
     fn mandatory_name_families() {
         for name in [
             "python_adversarial_sink",
