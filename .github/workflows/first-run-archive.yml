@@ -56,7 +56,9 @@ jobs:
           pin=$(sed -nE 's/^v=([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' snippet.sh | head -n1)
           winpin=$(sed -nE "s/^\\\$v='([0-9]+\.[0-9]+\.[0-9]+)'.*/\1/p" snippet.ps1 | head -n1)
           [ -n "$pin" ] && [ "$pin" = "$winpin" ] || { echo "QUICKSTART snippets pin different versions: unix=$pin windows=$winpin"; exit 1; }
-          echo "version=${INPUT_VERSION:-$pin}" >> "$GITHUB_OUTPUT"
+          v=${INPUT_VERSION:-$pin}
+          [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad version: $v"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Install with the documented snippet (Linux and macOS)
         if: runner.os != 'Windows'
