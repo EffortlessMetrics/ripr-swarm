@@ -20,6 +20,8 @@ pub(crate) use super::extract::{
 use super::facts::ModulePathTarget;
 #[cfg(test)]
 pub(crate) use super::facts::build_index_from_loaded_files_with_cache_and_test_harnesses;
+#[cfg(test)]
+pub(crate) use super::facts::reuse_cached_index_with_loaded_files;
 pub(crate) use super::facts::validated_file_wide_harness_targets;
 #[cfg(test)]
 pub use super::facts::{CallFact, FileFacts, LiteralFact, ReturnFact};
@@ -29,8 +31,7 @@ pub use super::facts::{
 };
 pub(crate) use super::facts::{
     build_analysis_index_from_loaded_files, build_index_from_paths_with_cache_and_test_harnesses,
-    build_index_from_paths_with_cache_and_test_harnesses_and_consumed,
-    reuse_cached_index_with_loaded_files,
+    build_index_from_paths_with_cache_and_test_harnesses_and_consumed, reuse_cached_index_in_run,
 };
 #[cfg(test)]
 use super::syntax::LexicalRustSyntaxAdapter;
