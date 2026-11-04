@@ -180,7 +180,9 @@ shadowing, opaque expansions, and compiler/configuration overrides retain
 ordinary analysis. This is not general Rust name resolution: a trait or
 function merely named `Arbitrary` or `arbitrary` establishes no generator role.
 Removed-only subjects, method boundary lines, shared production lines, and
-nested production helpers retain ordinary analysis.
+nested production helpers retain ordinary analysis. Repo-wide analysis omits
+unambiguous generator evidence from the production subject inventory; adjacent
+production subjects remain eligible.
 
 For the existing workspace wrapper-macro alias rule, a direct automatic
 `src/bin/<name>.rs` target uses its own root alias for `#[crate::test]`
@@ -478,7 +480,8 @@ provider/target/configuration identity refusal, lookalikes, nested helpers,
 and shared/boundary-line ownership (#11545).
 `tests/quickcheck_generator_rendered.rs` exercises the public analysis
 pipeline and JSON/human rendering for a verified generator, a local trait
-lookalike, and an ordinary function named `arbitrary`.
+lookalike, and an ordinary function named `arbitrary`. The Rust adapter repo-mode
+control pins generator omission and the adjacent production gap.
 
 `analysis/workspace/source_role.rs` unit tests pin the layout rules,
 Cargo-autodiscovery shapes, override priority, windows normalization,

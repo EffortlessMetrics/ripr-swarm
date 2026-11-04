@@ -180,15 +180,7 @@ impl RustAdapter {
                     path,
                     pre_cap_syntax_only,
                 );
-                // Verified generator stimulus is not a canonical product-test gap.
-                if finding.static_limit_kind.is_none()
-                    && !(probe.after.is_some()
-                        && crate::analysis::facts::is_generator_subject(
-                            &index,
-                            path,
-                            probe.location.line,
-                        ))
-                {
+                if finding.static_limit_kind.is_none() {
                     finding.canonical_gap = probe_shape::canonical_rust_gap_for(
                         path,
                         probe.owner.as_ref(),

@@ -1,6 +1,7 @@
 [[extend]]
 id = "RIPR-SPEC-0153"
 tests = [
+  "crates/ripr/src/analysis/language/rust/mod.rs::repo_omits_generator_stimulus_but_keeps_product_gap",
   "crates/ripr/src/analysis/facts/quickcheck_generator_tests.rs::quickcheck_generator_closing_line_cannot_absorb_a_production_initializer",
   "crates/ripr/src/analysis/facts/quickcheck_generator_tests.rs::quickcheck_generator_dependency_library_collision_is_not_provider_identity",
   "crates/ripr/src/analysis/facts/quickcheck_generator_tests.rs::quickcheck_generator_sharing_a_production_line_cannot_hide_its_gap",

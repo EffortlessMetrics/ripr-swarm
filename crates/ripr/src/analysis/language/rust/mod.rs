@@ -4005,7 +4005,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_generator_stimulus_does_not_receive_a_product_gap() -> Result<(), String> {
+    fn repo_omits_generator_stimulus_but_keeps_product_gap() -> Result<(), String> {
         let root = temp_root("generator-repo-gap")?;
         write(
             &root.join("Cargo.toml"),
@@ -4016,23 +4016,10 @@ mod tests {
             "use quickcheck::Arbitrary;\nstruct Pair(u8);\nimpl quickcheck::Arbitrary for Pair {\n    fn arbitrary(g: &mut quickcheck::Gen) -> Self {\n        Pair(u8::arbitrary(g).wrapping_add(2))\n    }\n}\npub fn product(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
         )?;
         let result = RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
-        let generator: Vec<_> = result
-            .findings
-            .iter()
-            .filter(|f| f.probe.location.line == 5)
-            .collect();
         assert!(
-            !generator.is_empty(),
-            "generator subject must be seeded: {:?}",
+            result.findings.iter().all(|f| f.probe.location.line != 5),
+            "generator evidence is not a repo-wide production subject: {:?}",
             result.findings
-        );
-        assert!(
-            generator
-                .iter()
-                .all(|f| f.class == ExposureClass::StaticUnknown
-                    && f.canonical_gap.is_none()
-                    && f.related_tests.is_empty()),
-            "generator stimulus must not receive product gap or reach: {generator:?}"
         );
         let product: Vec<_> = result
             .findings
