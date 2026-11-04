@@ -11,8 +11,8 @@ use super::bool_operands::{
 use super::pattern_admission::{LocalDecls, pattern_assertion_classification_in};
 use super::patterns::{
     PatternPolarity, contains_negated_pattern, deciding_disjunction_conjunct_rest,
-    err_constructor_is_not_directly_credited, has_deciding_disjunction,
-    has_top_level_exact_equality, inequality_has_struct_literal_operand, is_broad_error_assertion,
+    err_constructor_feeds_value_adapter, has_deciding_disjunction, has_top_level_exact_equality,
+    inequality_has_struct_literal_operand, is_broad_error_assertion,
     is_clear_exact_custom_assertion_helper, is_comparison_shaped_custom_assertion,
     is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
     is_effect_observer_subject_assertion, is_exact_error_variant_assertion,
@@ -310,11 +310,10 @@ fn classify_whole_condition(
         return classification;
     }
     // #12610: an `Err(..)` the test hands to a value-supplying adapter (`or`,
-    // `ok_or`, `map_err`, ..) or wraps itself (#12474) is the test's own
-    // value, so equality with it passes whatever the owner returns. It pins no
-    // variant (#12359) and no value either, so no other kind may read it as
-    // exact.
-    if err_constructor_is_not_directly_credited(line) {
+    // `ok_or`, `map_err`, ..) is the test's own value, so equality with it
+    // passes whatever the owner returns. It pins no variant (#12359) and no
+    // value either, so no other kind may read it as exact.
+    if err_constructor_feeds_value_adapter(line) {
         return RELATION;
     }
     // RIPR-SPEC-0231 rule 1 (#7558): a boolean assertion decided by an `||`

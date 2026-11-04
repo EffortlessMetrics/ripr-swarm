@@ -140,10 +140,43 @@ const ALLOWED_ERR_ENCLOSING_CALLEES: &[&str] = &[
     "eq",
 ];
 
+/// Value-supplying adapters: each returns its argument when the receiver does
+/// not already hold the success or error the caller wants. An `Err(V)` handed
+/// to one of them is written by the test itself, so equality with `V` can pass
+/// whatever the owner returns (#12359).
+const VALUE_SUPPLYING_ADAPTERS: &[&str] = &[
+    "or",
+    "or_else",
+    "and",
+    "and_then",
+    "ok_or",
+    "ok_or_else",
+    "unwrap_or",
+    "unwrap_or_else",
+    "map_err",
+    "map_or",
+    "map_or_else",
+];
+
+/// True when an `Err(..)` constructor is an argument of a value-supplying
+/// adapter call, in method or UFCS spelling, grouped or not. Other enclosing
+/// calls (`Some(..)`, `Result::eq(..)`, the assertion macro) keep their reading.
+/// The classifier reads this denylist (#12610); only the exact-variant credit
+/// uses the positive allowlist below (#12474), so an unrelated wrapper such as
+/// a helper assertion keeps its other kinds.
+pub(super) fn err_constructor_feeds_value_adapter(line: &str) -> bool {
+    let masked = strip_turbofish(&mask_comments_and_strings(line));
+    masked.match_indices("Err").any(|(index, _)| {
+        is_err_constructor_token(&masked, index)
+            && enclosing_call_site(&masked[..index])
+                .is_some_and(|(name, _)| VALUE_SUPPLYING_ADAPTERS.contains(&name))
+    })
+}
+
 /// True when an `Err(..)` on the line must not count as an exact error-variant
 /// pin: disallowed enclosing calls, a test-built `Some`/`Ok` wrapper followed by
 /// a method call, or an `Err(..)` read through `.unwrap_err()` / `.expect_err`.
-pub(super) fn err_constructor_is_not_directly_credited(line: &str) -> bool {
+fn err_constructor_is_not_directly_credited(line: &str) -> bool {
     let masked = strip_turbofish(&mask_comments_and_strings(line));
     masked.match_indices("Err").any(|(index, _)| {
         if !is_err_constructor_token(&masked, index) {
@@ -171,13 +204,27 @@ fn is_err_constructor_token(masked: &str, index: usize) -> bool {
 /// on the allowlist.
 fn err_constructor_enclosing_chain_is_allowed(masked: &str, err_index: usize) -> bool {
     let mut scan_end = err_index;
-    while let Some((callee, open_paren)) = enclosing_call_site(&masked[..scan_end]) {
-        if !is_allowed_err_enclosing_callee(callee) {
+    while let Some((callee, open_paren, is_macro)) = enclosing_frame(&masked[..scan_end]) {
+        if is_macro {
+            // An `Err(..)` after the comma of `matches!` / `assert_matches!` is
+            // a pattern, not a value the test built, and the call yields a
+            // bool, so nothing outside it can supply the error (#12474).
+            if is_matches_family(callee) && has_top_level_comma(&masked[open_paren + 1..scan_end]) {
+                return true;
+            }
+        } else if !is_allowed_err_enclosing_callee(callee) {
             return false;
         }
         scan_end = open_paren;
     }
     true
+}
+
+fn is_matches_family(callee: &str) -> bool {
+    matches!(
+        callee,
+        "matches!" | "matches" | "assert_matches!" | "assert_matches"
+    )
 }
 
 fn is_allowed_err_enclosing_callee(name: &str) -> bool {
@@ -207,6 +254,12 @@ fn err_in_some_or_ok_is_followed_by_method_call(masked: &str, err_index: usize) 
     if callee != "Some" && callee != "Ok" {
         return false;
     }
+    // Only a wrapper the test builds around the `Err(..)` itself: an `Err`
+    // nested in a larger expression (`Some(r == Err(V)).unwrap()`) is compared
+    // with the owner's value, not supplied as the error.
+    if !masked[open_paren + 1..err_index].trim().is_empty() {
+        return false;
+    }
     let Some(close) = group_end(masked, open_paren) else {
         return false;
     };
@@ -216,6 +269,22 @@ fn err_in_some_or_ok_is_followed_by_method_call(masked: &str, err_index: usize) 
 /// Returns the callee name and `(` index for the call whose argument list
 /// contains the end of `prefix`, looking through grouping parentheses.
 fn enclosing_call_site(prefix: &str) -> Option<(&str, usize)> {
+    // Macro invocations are transparent here: only a real call can supply or
+    // adapt the error, so keep walking outward past `assert_eq!(` and friends.
+    let mut end = prefix.len();
+    while let Some((name, open, is_macro)) = enclosing_frame(&prefix[..end]) {
+        if !is_macro {
+            return Some((name, open));
+        }
+        end = open;
+    }
+    None
+}
+
+/// The innermost enclosing argument list of `prefix`: its callee or macro name,
+/// the index of its `(`, and whether it is a macro invocation. Grouping
+/// parentheses have no callee and are walked through.
+fn enclosing_frame(prefix: &str) -> Option<(&str, usize, bool)> {
     let mut depth = 0usize;
     for (offset, ch) in prefix.char_indices().rev() {
         match ch {
@@ -223,6 +292,8 @@ fn enclosing_call_site(prefix: &str) -> Option<(&str, usize)> {
             '(' if depth > 0 => depth -= 1,
             '(' => {
                 let head = prefix[..offset].trim_end();
+                let is_macro = head.ends_with('!');
+                let head = head.strip_suffix('!').unwrap_or(head);
                 let start = head
                     .char_indices()
                     .rev()
@@ -232,7 +303,7 @@ fn enclosing_call_site(prefix: &str) -> Option<(&str, usize)> {
                 // A grouping parenthesis has no callee: keep walking outward to
                 // the real call whose argument list holds it.
                 if !name.is_empty() {
-                    return Some((name, offset));
+                    return Some((name, offset, is_macro));
                 }
             }
             _ => {}
