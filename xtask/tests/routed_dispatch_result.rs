@@ -1256,8 +1256,16 @@ fn history_sync_skip_qualifies_only_for_a_history_sync_admission_of_the_same_hea
     // authorization/composition outcome, and full non-docs qualification.
     // A successful job with a missing or downgraded authority cannot confer it.
     for (name, value, reason) in [
-        ("ADMISSION_HISTORY_SYNC", "", "consistent exact-head admission"),
-        ("ADMISSION_HISTORY_SYNC", "rejected", "consistent exact-head admission"),
+        (
+            "ADMISSION_HISTORY_SYNC",
+            "",
+            "consistent exact-head admission",
+        ),
+        (
+            "ADMISSION_HISTORY_SYNC",
+            "rejected",
+            "consistent exact-head admission",
+        ),
         ("DOCS_ONLY", "true", "full product scope"),
         (
             "HISTORY_SYNC_LIVE_RESULT",

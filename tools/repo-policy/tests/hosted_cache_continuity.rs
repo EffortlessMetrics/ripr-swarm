@@ -55,8 +55,9 @@ fn continuity_findings(caller: &str, producer: &str) -> Vec<&'static str> {
         || !scope.contains("pull_request:admitted:history_sync_admitted:validated")
         || !scope.contains("echo \"docs_only=$DOCS_ONLY\" >> \"$GITHUB_OUTPUT\"")
     {
-        findings
-            .push("admission scope no longer preserves the main-push hosted cache writer opportunity");
+        findings.push(
+            "admission scope no longer preserves the main-push hosted cache writer opportunity",
+        );
     }
     for required in [
         "    needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]\n",
