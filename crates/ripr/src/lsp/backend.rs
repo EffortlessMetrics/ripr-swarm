@@ -41,10 +41,10 @@ use super::refresh_scheduler::{
 };
 use super::state::{
     AnalysisAttemptState, AnalysisFailure, AnalysisFailureKind, AnalysisHealth, AnalysisSnapshot,
-    ConfigPullCoordinator, ConfigPullState, DocumentStalenessReason, DocumentState,
-    QuarantineLedger, QuarantineTransition, WorkspaceFolderEntry, WorkspaceFolderEventRejection,
-    WorkspaceFolderSelection, WorkspaceFolderSet, WorkspaceRootAuthority, WorkspaceRootState,
-    content_digest, format_duration,
+    CommittedDiagnostics, ConfigPullCoordinator, ConfigPullState, DocumentStalenessReason,
+    DocumentState, QuarantineLedger, QuarantineTransition, WorkspaceFolderEntry,
+    WorkspaceFolderEventRejection, WorkspaceFolderSelection, WorkspaceFolderSet,
+    WorkspaceRootAuthority, WorkspaceRootState, content_digest, format_duration,
 };
 use super::uri::{
     CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uris_match,
@@ -319,7 +319,7 @@ struct DiagnosticsInputWatch {
 pub(super) struct RefreshTransaction {
     pub(super) plan: DiagnosticRefreshPlan,
     pub(super) snapshot: AnalysisSnapshot,
-    pub(super) previous_diagnostics: BTreeMap<Uri, Vec<Diagnostic>>,
+    pub(super) previous_diagnostics: CommittedDiagnostics,
     /// The analyzed saved-content identity this transaction would record
     /// for each open document, computed at prepare time from the persisted
     /// bytes the analysis read (#1970). Applied to the document store only
@@ -1313,6 +1313,7 @@ impl Backend {
         Some(RefreshTransaction {
             plan,
             snapshot,
+            // Arc clone of the previous generation plus its sparse overlay.
             previous_diagnostics: last_diagnostics.clone(),
             pending_analyzed,
             pending_entered,
@@ -1373,18 +1374,23 @@ impl Backend {
         // the client receives a quarantine marker. When quarantine lifts, the
         // next plan re-publishes the full saved-state set instead of diffing
         // against findings the client was not shown as line-local diagnostics
-        // (#1970/#7771).
-        let mut committed_diagnostics = snapshot.diagnostics_by_uri.clone();
-        for (uri, diagnostics) in committed_diagnostics.iter_mut() {
-            if documents
-                .state_for_uri(uri)
-                .is_some_and(|state| state.is_quarantined())
-            {
-                diagnostics.clear();
-            }
-        }
+        // (#1970/#7771). Overlay only the quarantined URIs; the generation
+        // itself stays shared with the snapshot (#4998).
+        let cleared = snapshot
+            .diagnostics_by_uri
+            .keys()
+            .filter(|uri| {
+                documents
+                    .state_for_uri(uri)
+                    .is_some_and(DocumentState::is_quarantined)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         drop(documents);
-        *last_diagnostics = committed_diagnostics;
+        *last_diagnostics = CommittedDiagnostics::from_generation_with_cleared(
+            snapshot.diagnostics_by_uri.clone(),
+            cleared,
+        );
         *last_diagnostic_uris = plan.current_uris.clone();
         *latest_analysis = Some(snapshot);
         *stored_result_ids = Some(diagnostic_result_ids);
@@ -1393,7 +1399,7 @@ impl Backend {
 
     async fn rollback_refresh_transaction(
         &self,
-        previous_diagnostics: &BTreeMap<Uri, Vec<Diagnostic>>,
+        previous_diagnostics: &CommittedDiagnostics,
         plan: &DiagnosticRefreshPlan,
     ) {
         if self.pull_diagnostics_enabled() {
@@ -1407,10 +1413,7 @@ impl Backend {
         if self.refresh_scheduler.is_stopping() {
             return;
         }
-        let mut uris = previous_diagnostics
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>();
+        let mut uris = previous_diagnostics.uris();
         uris.extend(plan.current_uris.iter().cloned());
         let previous_selection = self
             .latest_analysis
@@ -1424,10 +1427,7 @@ impl Backend {
         for uri in uris {
             let diagnostics = rollback_push_diagnostics(
                 &uri,
-                previous_diagnostics
-                    .get(&uri)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]),
+                previous_diagnostics.get(&uri).unwrap_or(&[]),
                 previous_selection.as_deref(),
                 previous_omissions.get(uri.as_str()),
                 self.document_quarantine(&uri).is_some(),
@@ -1446,7 +1446,7 @@ impl Backend {
     async fn rollback_refresh_transaction_if_authority_is_current(
         &self,
         request: &RefreshRequest,
-        previous_diagnostics: &BTreeMap<Uri, Vec<Diagnostic>>,
+        previous_diagnostics: &CommittedDiagnostics,
         plan: &DiagnosticRefreshPlan,
     ) {
         if self.refresh_authority_is_unchanged(request) {
@@ -1937,7 +1937,36 @@ impl Backend {
             .lock()
             .ok()?
             .get(uri)
-            .cloned()
+            .map(<[Diagnostic]>::to_vec)
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_diagnostics_generation_for_test(
+        &self,
+    ) -> Option<super::state::DiagnosticsGeneration> {
+        self.quarantine
+            .last_diagnostics
+            .lock()
+            .ok()
+            .map(|last| last.generation().clone())
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_diagnostics_overlay_uris_for_test(&self) -> Vec<Uri> {
+        self.quarantine
+            .last_diagnostics
+            .lock()
+            .map(|last| last.overlay_uris())
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_diagnostics_overlay_clears_uri_for_test(&self, uri: &Uri) -> bool {
+        self.quarantine
+            .last_diagnostics
+            .lock()
+            .ok()
+            .is_some_and(|last| last.overlay_contains_empty(uri))
     }
 
     fn analysis_health_snapshot(&self) -> AnalysisHealth {
@@ -2479,11 +2508,7 @@ impl Backend {
     /// screen, so a user who opened a second repository learns why it has no
     /// evidence.
     async fn disclose_kept_root(&self, root: &Path, others: &[PathBuf]) {
-        let listed = others
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let listed = super::workspace_folder_bounds::bounded_path_list_phrase(others);
         let message = format!(
             "ripr keeps analyzing {}. Not analyzed by this server: {listed}. ripr analyzes one workspace root per server; open another repository in its own editor session to analyze it.",
             root.display()
@@ -2722,6 +2747,8 @@ impl Backend {
         } else {
             None
         };
+        let (candidate_roots_listed, candidate_roots_omitted) =
+            super::workspace_folder_bounds::bounded_path_list_entries(&root.candidate_roots);
         serde_json::json!({
             "schema_version": "0.1",
             "tool": "ripr",
@@ -2788,11 +2815,8 @@ impl Backend {
                 .effective_root
                 .as_ref()
                 .map(|path| path.to_string_lossy().to_string()),
-            "candidate_roots": root
-                .candidate_roots
-                .iter()
-                .map(|path| path.to_string_lossy().to_string())
-                .collect::<Vec<_>>(),
+            "candidate_roots": candidate_roots_listed,
+            "candidate_roots_omitted_count": candidate_roots_omitted,
             "root_input_identity": root.input_identity(),
             "root_detail": root.detail,
             "root_recovery_route": root_recovery_route(&root.state),
@@ -5746,12 +5770,14 @@ pub(super) fn diagnostics_by_uri_from_batches(
 }
 
 fn snapshot_id_for_generation(generation: u64) -> String {
-    format!("snapshot:{generation}")
+    crate::domain::AnalysisAttemptId::from_refresh_generation(generation)
+        .as_str()
+        .to_string()
 }
 
 fn bind_seam_evidence_identity(snapshot: &mut AnalysisSnapshot, batches: &mut [DiagnosticBatch]) {
     let evidence_identity = snapshot.evidence_identity();
-    for diagnostics in snapshot.diagnostics_by_uri.values_mut() {
+    for diagnostics in snapshot.diagnostics_by_uri.to_mut().values_mut() {
         for diagnostic in diagnostics {
             bind_seam_diagnostic_identity(diagnostic, &evidence_identity);
         }
@@ -5819,12 +5845,8 @@ fn blocked_root_message(root: &WorkspaceRootAuthority) -> Option<String> {
     let folders = if root.candidate_roots.is_empty() {
         String::new()
     } else {
-        let listed = root
-            .candidate_roots
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let listed =
+            super::workspace_folder_bounds::bounded_path_list_phrase(&root.candidate_roots);
         // Removed and changed roots carry the previous root, not the
         // folders the client sent.
         let label = match root.state {
@@ -6395,8 +6417,9 @@ impl LanguageServer for Backend {
         // Retain the canonical workspace-folder set (#2036, RIPR-SPEC-0139)
         // so `didChangeWorkspaceFolders` deltas apply to stored state
         // instead of being discarded. The root resolution is unchanged.
+        let (folder_set, folder_rejection) = workspace_folder_set_from_initialize_params(&params);
         if let Ok(mut set) = self.workspace_folders.lock() {
-            *set = workspace_folder_set_from_initialize_params(&params);
+            *set = folder_set;
         }
         let (repo_config, config_error) = match &resolution {
             WorkspaceRootResolution::Selected(root) if root.is_dir() => {
@@ -6418,6 +6441,11 @@ impl LanguageServer for Backend {
             "initial workspace root resolution pending",
         ));
         self.apply_workspace_root_resolution(resolution).await;
+        if let Some(rejection) = folder_rejection {
+            let previous = self.workspace_root_authority();
+            self.reject_workspace_folder_update(rejection).await;
+            self.disclose_blocked_root_transition(&previous).await;
+        }
         if let Some(error) = config_error {
             // Commit the owning config failure before the optional client
             // disclosures (#3802): the state transition must not depend on a
@@ -8278,7 +8306,9 @@ fn withheld_static_gap_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'sta
     let withheld =
         super::diagnostics::withheld_gap_findings(snapshot.diagnostic_profile, &snapshot.findings)
             .into_iter()
-            .filter(|finding| !super::diagnostics::finding_is_withheld_preview_gap(finding))
+            .filter(|finding| {
+                !super::diagnostics::finding_is_withheld_preview_profile_finding(finding)
+            })
             .collect::<Vec<_>>();
     let classes = withheld
         .iter()
@@ -9688,7 +9718,7 @@ mod top_limitation_selection_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri: BTreeMap::new(),
+            diagnostics_by_uri: BTreeMap::new().into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -11634,7 +11664,7 @@ mod delivery_selection_parity_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -12792,7 +12822,7 @@ mod list_actionable_items_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri: BTreeMap::new(),
+            diagnostics_by_uri: BTreeMap::new().into(),
             diagnostic_uri_index: None,
             delivery_selection: selection.map(Arc::new),
             seams_deferred: false,
@@ -13934,7 +13964,7 @@ mod pull_disclosure_dedup_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: crate::lsp::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri,
+            diagnostics_by_uri: diagnostics_by_uri.into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,

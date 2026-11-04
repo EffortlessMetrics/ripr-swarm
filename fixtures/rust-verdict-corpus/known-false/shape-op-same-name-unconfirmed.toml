@@ -1,4 +1,0 @@
-case = "shape-op-same-name-unconfirmed"
-issue = 10581
-accepted_growth = 10581
-reason = "shape-op-same-name-unconfirmed: same-named inline-module `.add(` leaves the Self(..) body unconfirmed; ripr reports weakly_exposed while runtime mutants fail (RIPR-SPEC-0240 gap). Corpus documents the false_actionable row until analyzer credits match operator_call_credit (#10581)."

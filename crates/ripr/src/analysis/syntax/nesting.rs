@@ -44,6 +44,47 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
     (error_count == 0).then_some(parse)
 }
 
+/// [`parse_clean_source_file`] memoized per thread for small texts.
+///
+/// The shadow checks re-read one test body once per (seam, naming test,
+/// oracle) triple, and every read re-parsed the same text: the large-workspace
+/// cold pilot spent most of its time there (#10167 regression). Rowan trees
+/// are cheap to clone (an `Arc`), so the memo keeps the parse by full text. It is
+/// capped at 512 entries of at most 16 KiB each: about 8 MiB of keys, plus
+/// trees that are a small multiple of that, per worker thread, cleared when full.
+pub(crate) fn parse_clean_source_file_memoized(text: &str) -> Option<Parse<SourceFile>> {
+    const MAX_ENTRIES: usize = 512;
+    const MAX_TEXT_BYTES: usize = 16 * 1024;
+    if text.len() > MAX_TEXT_BYTES {
+        return parse_clean_source_file(text);
+    }
+    CLEAN_PARSE_MEMO.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if let Some(hit) = memo.get(text) {
+            return hit.clone();
+        }
+        #[cfg(test)]
+        CLEAN_PARSE_MISSES.with(|n| n.set(n.get() + 1));
+        let parsed = parse_clean_source_file(text);
+        if memo.len() >= MAX_ENTRIES {
+            memo.clear();
+        }
+        memo.insert(text.to_string(), parsed.clone());
+        parsed
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    static CLEAN_PARSE_MISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
+    static CLEAN_PARSE_MEMO: std::cell::RefCell<
+        std::collections::HashMap<String, Option<Parse<SourceFile>>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 /// Parse with the current edition, retrying as Rust 2021 when that fails.
 /// ripr does not read each crate's edition, and 2024 reserves `gen`, so a
 /// 2021 crate's `fn arbitrary(gen: &mut Gen)` is a syntax error under the
@@ -1363,6 +1404,56 @@ mod tests {
         assert_eq!(
             block_comment_only_lines("x = '/'; /* c */\n/* d */\n").len(),
             1
+        );
+    }
+}
+
+#[cfg(test)]
+mod memoized_parse_tests {
+    use super::{parse_clean_source_file, parse_clean_source_file_memoized};
+
+    #[test]
+    fn memoized_parse_matches_the_direct_parse_for_clean_and_broken_text() {
+        let clean = "fn a() { let x = 1; }";
+        let broken = "fn a( {";
+        for _ in 0..2 {
+            let memo = parse_clean_source_file_memoized(clean).map(|p| p.syntax_node().to_string());
+            let direct = parse_clean_source_file(clean).map(|p| p.syntax_node().to_string());
+            assert_eq!(memo, direct);
+            assert!(memo.is_some());
+            assert!(parse_clean_source_file_memoized(broken).is_none());
+        }
+    }
+
+    #[test]
+    fn a_repeated_read_of_the_same_text_reuses_one_parse() {
+        let text = "fn reuse_probe() { let a = 1; }";
+        let before = super::CLEAN_PARSE_MISSES.with(std::cell::Cell::get);
+        for _ in 0..3 {
+            assert!(parse_clean_source_file_memoized(text).is_some());
+        }
+        let misses = super::CLEAN_PARSE_MISSES.with(std::cell::Cell::get) - before;
+        assert_eq!(misses, 1, "three reads of one text parse it once");
+    }
+
+    #[test]
+    fn same_length_different_text_is_not_confused() {
+        let one = "fn probe_a() { let a = 1; }";
+        let two = "fn probe_b() { let a = 1; }";
+        assert_eq!(one.len(), two.len());
+        let first = parse_clean_source_file_memoized(one).map(|p| p.syntax_node().to_string());
+        let second = parse_clean_source_file_memoized(two).map(|p| p.syntax_node().to_string());
+        assert_eq!(first.as_deref(), Some(one));
+        assert_eq!(second.as_deref(), Some(two));
+    }
+
+    #[test]
+    fn oversized_text_bypasses_the_memo_but_still_parses() {
+        let body = format!("fn big() {{ {} }}", "let a = 1; ".repeat(2 * 1024));
+        assert!(body.len() > 16 * 1024);
+        assert_eq!(
+            parse_clean_source_file_memoized(&body).map(|p| p.syntax_node().to_string()),
+            parse_clean_source_file(&body).map(|p| p.syntax_node().to_string()),
         );
     }
 }
