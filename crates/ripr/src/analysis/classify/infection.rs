@@ -1073,7 +1073,7 @@ fn conditional_literal_results(initializer: &str) -> Vec<String> {
     )) else {
         return Vec::new();
     };
-    let Some(ast::Expr::IfExpr(mut branch)) = parse
+    let Some(ast::Expr::IfExpr(branch)) = parse
         .tree()
         .syntax()
         .descendants()
@@ -1082,31 +1082,69 @@ fn conditional_literal_results(initializer: &str) -> Vec<String> {
     else {
         return Vec::new();
     };
-    fn add_block(block: ast::BlockExpr, literals: &mut Vec<String>) {
+    fn add_block(block: ast::BlockExpr, literals: &mut Vec<String>, depth: usize) {
         let Some(list) = block.stmt_list() else {
             return;
         };
-        if list.statements().next().is_some() {
+        if depth == 0 || list.statements().next().is_some() {
             return;
         }
-        if let Some(ast::Expr::Literal(literal)) = list.tail_expr() {
-            literals.extend(extract_literals(&literal.syntax().text().to_string()));
+        if let Some(expr) = list.tail_expr() {
+            add_expr(expr, literals, depth - 1);
+        }
+    }
+    fn add_if(branch: ast::IfExpr, literals: &mut Vec<String>, depth: usize) {
+        if depth == 0 {
+            return;
+        }
+        if let Some(block) = branch.then_branch() {
+            add_block(block, literals, depth - 1);
+        }
+        match branch.else_branch() {
+            Some(ast::ElseBranch::Block(block)) => add_block(block, literals, depth - 1),
+            Some(ast::ElseBranch::IfExpr(next)) => add_if(next, literals, depth - 1),
+            None => {}
+        }
+    }
+    fn add_expr(expr: ast::Expr, literals: &mut Vec<String>, depth: usize) {
+        if depth == 0 {
+            return;
+        }
+        match expr {
+            ast::Expr::Literal(literal) => {
+                literals.extend(extract_literals(&literal.syntax().text().to_string()))
+            }
+            ast::Expr::ParenExpr(paren) => {
+                if let Some(inner) = paren.expr() {
+                    add_expr(inner, literals, depth - 1);
+                }
+            }
+            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Neg) => {
+                let mut inner = prefix.expr();
+                for _ in 0..depth {
+                    match inner {
+                        Some(ast::Expr::ParenExpr(paren)) => inner = paren.expr(),
+                        Some(ast::Expr::Literal(literal))
+                            if matches!(
+                                literal.kind(),
+                                ast::LiteralKind::IntNumber(_) | ast::LiteralKind::FloatNumber(_)
+                            ) =>
+                        {
+                            literals
+                                .extend(extract_literals(&format!("-{}", literal.syntax().text())));
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            ast::Expr::BlockExpr(block) => add_block(block, literals, depth - 1),
+            ast::Expr::IfExpr(branch) => add_if(branch, literals, depth - 1),
+            _ => {}
         }
     }
     let mut literals = Vec::new();
-    loop {
-        if let Some(block) = branch.then_branch() {
-            add_block(block, &mut literals);
-        }
-        match branch.else_branch() {
-            Some(ast::ElseBranch::Block(block)) => {
-                add_block(block, &mut literals);
-                break;
-            }
-            Some(ast::ElseBranch::IfExpr(next)) => branch = next,
-            None => break,
-        }
-    }
+    add_if(branch, &mut literals, 32);
     literals
 }
 
@@ -1689,6 +1727,11 @@ mod tests {
             let evidence = local_predicate_evidence(owner, "val < unit", 3, operand);
             assert_ne!(evidence.state, StageState::Yes, "{}", evidence.summary);
             assert!(evidence.summary.contains("1024"), "{}", evidence.summary);
+        }
+        let signed = "fn pick(val: i32, qty: i32) -> bool {\n    let unit = if qty + 1 > 3 { (-5) } else { ((1024)) };\n    val < unit\n}\n";
+        for literal in ["-5", "1024"] {
+            let evidence = local_predicate_evidence(signed, "val < unit", 3, literal);
+            assert_eq!(evidence.state, StageState::Yes, "{}", evidence.summary);
         }
     }
 
