@@ -482,7 +482,12 @@ fn helper_credit_keeps_exact_static_associated_terminal_owner() -> Result<(), St
     for (generics, call, arguments, credited) in [
         ("", "Real::leaf_value()", "", true),
         ("<Real: Foreign>", "Real::leaf_value()", "::<Fake>", false),
-        ("<Real: Foreign>", "crate::Real::leaf_value()", "::<Fake>", true),
+        (
+            "<Real: Foreign>",
+            "crate::Real::leaf_value()",
+            "::<Fake>",
+            true,
+        ),
     ] {
         let source = format!(
             "struct Real;\nimpl Real {{ fn leaf_value() -> Option<u32> {{ Some(7) }} }}\n\

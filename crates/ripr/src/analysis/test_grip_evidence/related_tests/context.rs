@@ -1834,11 +1834,7 @@ fn expand_bound_helper_edges(rows: &mut BTreeMap<usize, BoundHelperEdges>, index
                 let Some(next) = previous.get(target) else {
                     continue;
                 };
-                let before = (
-                    row.any_names.len(),
-                    row.free_names.len(),
-                    row.targets.len(),
-                );
+                let before = (row.any_names.len(), row.free_names.len(), row.targets.len());
                 row.any_names.extend(
                     next.any_names
                         .iter()
@@ -1857,12 +1853,7 @@ fn expand_bound_helper_edges(rows: &mut BTreeMap<usize, BoundHelperEdges>, index
                         .filter(|target| *target != position)
                         .copied(),
                 );
-                changed |= before
-                    != (
-                        row.any_names.len(),
-                        row.free_names.len(),
-                        row.targets.len(),
-                    );
+                changed |= before != (row.any_names.len(), row.free_names.len(), row.targets.len());
             }
         }
         if !changed {
@@ -4375,7 +4366,8 @@ pub(in crate::analysis::test_grip_evidence) fn inherent_helper_path_reaches_owne
         if crate::analysis::classify::function_declaration_is_async(helper, index) != Some(false) {
             continue;
         }
-        let entry_resolves = if matches!(helper.item.container, FunctionContainer::Inherent { .. }) {
+        let entry_resolves = if matches!(helper.item.container, FunctionContainer::Inherent { .. })
+        {
             inherent_helper_call_resolves(caller, helper, index)
         } else {
             free_helper_call_resolves(caller, helper, index)

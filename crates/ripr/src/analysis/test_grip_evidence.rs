@@ -2745,8 +2745,11 @@ fn activate_evidence(
     let helper_value_insensitive_owner_call = !owner_name.is_empty()
         && !requires_concrete_activation_values(seam)
         && owner_fn.is_some_and(|owner_fn| {
-            let bound_owner = matches!(owner_fn.item.container,
-                crate::analysis::facts::FunctionContainer::Free | crate::analysis::facts::FunctionContainer::Inherent { .. });
+            let bound_owner = matches!(
+                owner_fn.item.container,
+                crate::analysis::facts::FunctionContainer::Free
+                    | crate::analysis::facts::FunctionContainer::Inherent { .. }
+            );
             activation_credited.iter().any(|indexed| {
                 if bound_owner {
                     indexed.has_bound_helper_owner(owner_fn)
@@ -3633,12 +3636,20 @@ fn compact_activate_evidence(
                             owner_name,
                             target_affinity_tokens.as_ref(),
                         ))
-            } else if owner_fn.is_some_and(|owner| matches!(owner.item.container,
-                crate::analysis::facts::FunctionContainer::Inherent { .. })) {
+            } else if owner_fn.is_some_and(|owner| {
+                matches!(
+                    owner.item.container,
+                    crate::analysis::facts::FunctionContainer::Inherent { .. }
+                )
+            }) {
                 indexed.call_names.contains(owner_name)
                     || owner_fn.is_some_and(|owner| indexed.has_bound_helper_owner(owner))
                     || (owner_fn.is_some_and(|owner| indexed.has_bound_affinity_owner(owner))
-                        && has_owner_call_via_target_affinity(indexed, owner_name, target_affinity_tokens.as_ref()))
+                        && has_owner_call_via_target_affinity(
+                            indexed,
+                            owner_name,
+                            target_affinity_tokens.as_ref(),
+                        ))
             } else {
                 indexed.call_names.contains(owner_name)
                     || indexed.helper_owner_call_names.contains(owner_name)
