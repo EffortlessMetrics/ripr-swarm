@@ -272,15 +272,23 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
     {
         return Err(format!("scoped refusal must close on the reasons:\n{err}"));
     }
-    let unscoped = repo("nx-unscoped", FIELD_BASE, FIELD_NEW, FIELD_TEST, false)?;
+    let unscoped = repo("nx-unscoped", FLIP_BASE, FLIP_NEW, FLIP_TEST, false)?;
     let repair = ripr(&unscoped.root, &["repair"])?;
     let err = text(&repair.stderr);
-    if !err.contains("explores the whole repository")
+    if repair.status.code() != Some(3) || err.contains("each changed spot below says") {
+        return Err(format!("unscoped read must not use the new step:\n{err}"));
+    }
+    // The unscoped FLIP fixture lists starts instead of refusing, so the
+    // old-route contrast uses a refusing fixture read without a diff scope.
+    let field = repo("nx-field", FIELD_BASE, FIELD_NEW, FIELD_TEST, false)?;
+    let repair = ripr(&field.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3)
+        || !err.contains("code=no_eligible_seam")
+        || !err.contains("explores the whole repository")
         || err.contains("each changed spot below says")
     {
-        return Err(format!(
-            "unscoped refusal keeps the repository route:\n{err}"
-        ));
+        return Err(format!("unscoped refusal keeps the old route:\n{err}"));
     }
     Ok(())
 }

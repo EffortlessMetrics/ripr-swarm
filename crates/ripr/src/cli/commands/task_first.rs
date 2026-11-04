@@ -1491,6 +1491,35 @@ mod tests {
     /// the limitation outcome, pluralizes the noun, and carries the named
     /// reasons only when there are some.
     #[test]
+    fn open_on_change_closes_on_the_reasons_not_the_repository_tour() -> Result<(), String> {
+        use crate::app::task_first::NoEligibleChange;
+        let root = Path::new("/ripr-task-first-root");
+        let reasons = ["the code at src/lib.rs:2 `x`: repair route not ready".to_string()];
+        let open =
+            no_eligible_seam_message(root, None, NoEligibleChange::OpenOnChange, 2, &reasons, 1);
+        let other = no_eligible_seam_message(root, None, NoEligibleChange::Other, 2, &reasons, 1);
+        let checked =
+            no_eligible_seam_message(root, None, NoEligibleChange::AlreadyChecked, 2, &reasons, 1);
+        if !open.contains("Next: each changed spot below says what it still needs; write that test by hand (`ripr check --root ")
+            || open.contains("explores the whole repository")
+            || !open.contains("\n  - the code at src/lib.rs:2")
+        {
+            return Err(format!("OpenOnChange wording:\n{open}"));
+        }
+        if !other.contains("explores the whole repository")
+            || other.contains("each changed spot below")
+        {
+            return Err(format!("Other keeps the repository route:\n{other}"));
+        }
+        if !checked.contains("Nothing to do for this change")
+            || checked.contains("each changed spot below")
+        {
+            return Err(format!("AlreadyChecked keeps nothing-to-do:\n{checked}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn no_eligible_seam_message_separates_setup_from_limitation() -> Result<(), String> {
         let root = Path::new("/ripr-task-first-root");
         let setup = no_eligible_seam_message(
