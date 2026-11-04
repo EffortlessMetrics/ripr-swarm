@@ -907,7 +907,7 @@ fn capture_repository_state(
                 .allowed_edit_surface
                 .iter()
                 .any(|rule| rule.matches(&path));
-        let exact_ignored = expected_write
+        let exact_ignored = (expected_write && !is_attempt_store_path(&path))
             || policy.selected_target.matches(&path)
             || policy
                 .allowed_edit_surface
@@ -1014,10 +1014,11 @@ fn capture_repository_state(
             &mut remaining_work_bytes,
             ignored_paths.contains(path.as_str()),
             ignored_paths.contains(path.as_str())
-                && (policy
-                    .expected_operational_writes
-                    .iter()
-                    .any(|rule| rule.matches(path))
+                && ((!is_attempt_store_path(path)
+                    && policy
+                        .expected_operational_writes
+                        .iter()
+                        .any(|rule| rule.matches(path)))
                     || policy.selected_target.matches(path)
                     || policy
                         .allowed_edit_surface
@@ -2086,6 +2087,17 @@ fn eol_normalized_file_digest(bytes: &[u8]) -> Option<String> {
     }
     normalized.extend_from_slice(rest);
     Some(format!("{:x}", Sha256::digest(&normalized)))
+}
+
+/// Retained repair-attempt artifacts (`target/ripr/repair-attempts/**`) are
+/// operational output that grows with every attempt (about 9 MB each on a
+/// repository with ~1000 seams). Hashing every retained byte exactly spent the
+/// shared capture budget, so after a handful of attempts every new baseline
+/// came back ambiguous and the attempt could not be scored. They get the same
+/// bounded identity as other ignored files, decided by path alone so the
+/// baseline and after captures treat each file identically.
+fn is_attempt_store_path(path: &str) -> bool {
+    path.starts_with("target/ripr/repair-attempts/")
 }
 
 fn worktree_identity(
@@ -5085,6 +5097,38 @@ mod tests {
             fs::read_to_string(&external_file)
                 .map_err(|err| format!("read external hardlink target: {err}"))?,
             "outside-after\n"
+        );
+        Ok(())
+    }
+
+    /// Retained repair-attempt artifacts accumulate (about 9 MB per attempt on
+    /// a ~1000-seam repository). Their total size must not spend the exact
+    /// content budget and make every later baseline ambiguous.
+    #[test]
+    fn retained_attempt_store_larger_than_the_capture_budget_is_not_ambiguous() -> Result<(), String>
+    {
+        let fixture = git_fixture("retained-attempt-store-budget")?;
+        commit_target_ignore(&fixture)?;
+        let store = fixture
+            .root
+            .join("target/ripr/repair-attempts/repair-attempt-old/artifacts");
+        fs::create_dir_all(&store).map_err(|err| format!("create attempt store: {err}"))?;
+        let chunk = vec![b'x'; (MAX_CAPTURE_FILE_BYTES / 2) as usize];
+        let files = (MAX_CAPTURE_TOTAL_FILE_BYTES / chunk.len() as u64) + 2;
+        for index in 0..files {
+            fs::write(store.join(format!("before.{index}.json")), &chunk)
+                .map_err(|err| format!("write retained artifact: {err}"))?;
+        }
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        assert!(
+            !baseline.is_ambiguous(),
+            "retained attempt artifacts beyond the exact-capture budget must not make the baseline ambiguous"
+        );
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        assert_eq!(
+            evaluate_repository_edit_cage(&baseline)?.status,
+            EditCageVerdictStatus::Compliant
         );
         Ok(())
     }
