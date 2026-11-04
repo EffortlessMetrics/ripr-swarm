@@ -4303,6 +4303,20 @@ fn changed_range_reconciles_executed_review_cases() -> Result<(), String> {
             assert_eq!(finding.ripr.infect.state, StageState::Unknown);
             assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
         }
+        for write in [
+            "module.range = lambda *args: []",
+            "setattr(module, 'range', lambda *args: [])",
+        ] {
+            let tests = format!(
+                "import src.subject as module\nfrom src.subject import sum_to\n{write}\n\ndef test_sum():\n    assert sum_to(3) == 6\n"
+            );
+            let finding = classify_range_case(&source, &tests, line, before, after)?;
+            assert_ne!(
+                finding.class,
+                ExposureClass::Exposed,
+                "module write {write}: {finding:?}"
+            );
+        }
     }
     Ok(())
 }
