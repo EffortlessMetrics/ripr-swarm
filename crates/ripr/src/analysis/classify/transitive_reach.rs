@@ -3499,8 +3499,16 @@ fn blanket_impl_type_param(header: &str) -> Option<String> {
     if param.is_empty() || !param.bytes().all(is_ascii_ident_byte) {
         return None;
     }
-    let trait_part = header.rsplit_once(" for ")?.0;
-    let generic = trait_part.split('<').nth(1)?.split('>').next()?;
+    // Only the generics that directly lead the header (after an optional
+    // `impl`) are impl generics; a `<...>` after the trait path is the trait's
+    // type arguments, so `Add<Num> for Num` is a concrete impl, not a blanket
+    // one. A blanket impl's Self is a bare generic parameter of the impl.
+    let trait_part = header.rsplit_once(" for ")?.0.trim_start();
+    let trait_part = trait_part
+        .strip_prefix("impl")
+        .unwrap_or(trait_part)
+        .trim_start();
+    let generic = trait_part.strip_prefix('<')?.split('>').next()?;
     let names_generic_param = generic.split(',').any(|chunk| {
         chunk
             .split(':')
@@ -6357,6 +6365,22 @@ fn real() {}
             vec!["Render".to_string(), "Clone".to_string()]
         );
         assert!(blanket_impl_type_param("impl Render for f64").is_none());
+        // A concrete impl whose trait type argument equals the self type has
+        // no impl generics, so it is not blanket.
+        assert!(blanket_impl_type_param("Add<Num> for Num").is_none());
+        assert!(blanket_impl_type_param("impl Add<Num> for Num").is_none());
+        assert!(blanket_impl_type_param("impl Add<Num> for &Num").is_none());
+        // Generics that do not name the self type are not blanket either.
+        assert!(blanket_impl_type_param("<T> Add<T> for Num").is_none());
+        // Positive: leading generics, with or without a leading `impl`.
+        assert_eq!(
+            blanket_impl_type_param("impl<T: Render> ToText for T").as_deref(),
+            Some("T")
+        );
+        assert_eq!(
+            blanket_impl_type_param("<T: Render> From<T> for T").as_deref(),
+            Some("T")
+        );
 
         let blanket_id = "src/lib.rs::impl <T: Render> ToText for T::to_text";
         assert_eq!(
@@ -6403,6 +6427,38 @@ fn real() {}
             &render_f64,
             &index,
         ));
+    }
+
+    #[test]
+    fn a_concrete_impl_with_a_trait_argument_equal_to_its_self_type_keeps_its_receiver() {
+        // `impl Add<Num> for Num` has no impl generics: it is concrete, so the
+        // entry's receiver type stays `Num` instead of being dropped as blanket.
+        let add = make_impl_fn(
+            "add",
+            "impl Add<Num> for Num",
+            vec![("scale", "self.scale()")],
+        );
+        let index = index_with(vec![add], Vec::new());
+        let graph = ReachGraph::build(&index);
+        let receivers = graph.entry_receiver_types("add", &HashSet::new(), "scale");
+        assert!(
+            receivers.is_some_and(|types| types.by_identifier.contains("Num")),
+            "concrete self type must be kept"
+        );
+        // Discriminating: a real blanket impl naming the same type parameter
+        // contributes no receiver of its own.
+        let blanket = make_impl_fn(
+            "add",
+            "impl <Num: Scale> Add<Num> for Num",
+            vec![("scale", "self.scale()")],
+        );
+        let index = index_with(vec![blanket], Vec::new());
+        let graph = ReachGraph::build(&index);
+        assert!(
+            graph
+                .entry_receiver_types("add", &HashSet::new(), "scale")
+                .is_none()
+        );
     }
 
     #[test]
