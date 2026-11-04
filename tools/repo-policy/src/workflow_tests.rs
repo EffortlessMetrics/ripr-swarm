@@ -1426,7 +1426,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "the selection's admitted head and labels",
-            "          HEAD_SHA: ${{ needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "          HEAD_SHA: ${{ github.event.merge_group.head_sha || needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
             "          HEAD_SHA: ${{ github.sha }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
             "classify the admitted head and labels",
         ),

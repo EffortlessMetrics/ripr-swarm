@@ -958,6 +958,59 @@ fn actual_result_block_fails_a_pull_request_whose_selected_extension_e2e_did_not
 }
 
 #[test]
+fn merge_group_result_requires_its_extension_verdict() -> TestResult {
+    let select = job("vscode-select")?;
+    let (_, verdict) = job("result")?
+        .split_once("      - name: Require the extension e2e result for the admitted head\n")
+        .ok_or("extension verdict step")?;
+    let (verdict, _) = verdict
+        .split_once("      - name: Summarize routed result\n")
+        .ok_or("summary follows verdict")?;
+    let required_guard = "if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))";
+    for source in [select, verdict] {
+        assert!(
+            source.contains(required_guard),
+            "queue event must reach the admitted extension check"
+        );
+        assert!(
+            !source
+                .replace("github.event_name == 'merge_group' || ", "")
+                .contains(required_guard),
+            "guard-removal control"
+        );
+    }
+    assert!(
+        select.contains("github.event.merge_group.base_sha || github.event.pull_request.base.sha")
+    );
+    assert!(select.contains("github.event.merge_group.head_sha || needs.admission.outputs.head"));
+    let fixture = Fixture::new()?;
+    for outcome in ["failure", "cancelled", "skipped"] {
+        assert!(
+            !routed_result_with_vscode(
+                &fixture,
+                "merge_group",
+                "success",
+                "true",
+                "success",
+                "skipped",
+                ("success", "admitted", outcome),
+            )?,
+            "merge-group extension verdict {outcome} must fail the result"
+        );
+    }
+    assert!(routed_result_with_vscode(
+        &fixture,
+        "merge_group",
+        "success",
+        "true",
+        "success",
+        "skipped",
+        ("success", "admitted", "success"),
+    )?);
+    Ok(())
+}
+
+#[test]
 fn actual_result_block_requires_successful_detection_and_selected_proof() -> TestResult {
     let fixture = Fixture::new()?;
     assert!(routed_result(
@@ -1092,6 +1145,25 @@ fn vscode_select(fixture: &Fixture, base: &str, head: &str, labels: &str) -> Tes
         .collect::<Vec<_>>();
     assert_eq!(values.len(), 1, "exactly one selection output: {outputs}");
     Ok(values[0].to_owned())
+}
+
+#[test]
+fn extension_selection_uses_combined_queue_tree_not_the_pr_head() -> TestResult {
+    let fixture = Fixture::new()?;
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    fixture.write("docs/only.md", "ordinary change\n")?;
+    let head = fixture.commit()?;
+    fixture.write("editors/vscode/queue-only.ts", "export const q = true;\n")?;
+    fixture.commit()?;
+    let tree = fixture.git(&["rev-parse", "HEAD^{tree}"])?;
+    let group = fixture.git(&["commit-tree", &tree, "-p", &base, "-m", "queue composition"])?;
+    assert_ne!(
+        head, group,
+        "the queued subject must differ from the PR head"
+    );
+    assert_eq!(vscode_select(&fixture, &base, &head, "")?, "false");
+    assert_eq!(vscode_select(&fixture, &base, &group, "")?, "true");
+    Ok(())
 }
 
 #[test]

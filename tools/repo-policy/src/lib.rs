@@ -1372,7 +1372,7 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         ),
         (
             "classify the admitted head and labels in the extension selection (#12252)",
-            "          HEAD_SHA: ${{ needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
+            "          HEAD_SHA: ${{ github.event.merge_group.head_sha || needs.admission.outputs.head }}\n          LABELS: ${{ needs.admission.outputs.labels }}\n",
         ),
         (
             "make the Result depend on the extension selection and e2e jobs (#12252)",
