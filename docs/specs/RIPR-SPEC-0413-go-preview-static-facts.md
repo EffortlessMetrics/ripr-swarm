@@ -271,9 +271,10 @@ shared vocabulary cannot express the stop:
 | `go_excluded_by_context` | Changed file excluded by the configured build context |
 | `go_transitive_helper_unresolved` | Helper chain beyond the bounded depth |
 
-Shared output metadata in RIPR-SPEC-0026 does not yet list `go` or these tokens.
-A later additive schema change (#5535) extends the shared vocabulary before the
-adapter emits them; until then this spec is the normative contract only.
+Shared output metadata in RIPR-SPEC-0026 lists `go` as an allowed `language`
+value but does not yet list these tokens. A later additive schema change
+(#5535) extends the shared vocabulary with them before the adapter emits them;
+until then this spec is the normative contract for the tokens only.
 
 ### Capability and authority boundary
 
