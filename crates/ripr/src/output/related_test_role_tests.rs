@@ -322,7 +322,7 @@ fn miss_reading_closures(source: &str) -> Vec<String> {
 
 /// Documented explanation-only readers and producers allowed to name the miss
 /// inside such a closure: `(path suffix, snippet fragment)`.
-const MISS_CLOSURE_ALLOWLIST: [(&str, &str); 4] = [
+const MISS_CLOSURE_ALLOWLIST: [(&str, &str); 6] = [
     // Tracked RIPR-SPEC-0224 gap: the exact-oracle next step still excludes
     // `missing_exact_assertion` rows after the role check; eligibility itself
     // is the role.
@@ -339,6 +339,19 @@ const MISS_CLOSURE_ALLOWLIST: [(&str, &str); 4] = [
     (
         "analysis/classifier/finding.rs",
         ".filter(|test| test.miss.is_none())",
+    ),
+    // #5446: the split of `assertion_not_credited` into inert / admission
+    // unproven. These two reads were already `== AssertionNotCredited`
+    // comparisons; they now accept every typed assertion-refusal value so the
+    // split does not change which rows reveal and the Rust oracle pass treat
+    // as a judged refusal (#7089). They read the typed refusal, not eligibility.
+    (
+        "analysis/classify/reveal.rs",
+        ".is_some_and(RelatedTestMiss::is_assertion_refusal_miss)",
+    ),
+    (
+        "analysis/language/rust/oracles.rs",
+        ".is_some_and(crate::domain::RelatedTestMiss::is_assertion_refusal_miss)",
     ),
     // Producers rewriting a miss value (an `Option<RelatedTestMiss>` filter,
     // not a row filter): proc-macro strip and `restore_reveal_misses`.

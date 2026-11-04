@@ -284,18 +284,25 @@ pub(crate) fn render_finding_digest_with_config(
         // #5344: say why the named test misses, so the reader can open it
         // and disagree without re-deriving the analysis. Borrow the typed
         // refusal only when it names this headline row (#6541).
-        let why = (matches!(test.miss, Some(RelatedTestMiss::AssertionNotCredited))
-            .then(|| {
-                let entry = crate::domain::assertion_not_credited_entry_for_test(
-                    &finding.evidence,
-                    &test.name,
-                )?;
-                let body = entry.strip_prefix(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
-                let reason = body.rsplit_once(": ").map(|(_, reason)| reason.trim())?;
-                crate::domain::guard_refusal_kind(reason)?;
-                Some(format!(" ({entry})"))
-            })
-            .flatten())
+        let why = (matches!(
+            test.miss,
+            Some(
+                RelatedTestMiss::AssertionNotCredited
+                    | RelatedTestMiss::AssertionInert
+                    | RelatedTestMiss::AssertionAdmissionUnproven
+            )
+        )
+        .then(|| {
+            let entry = crate::domain::assertion_not_credited_entry_for_test(
+                &finding.evidence,
+                &test.name,
+            )?;
+            let body = entry.strip_prefix(crate::domain::ASSERTION_NOT_CREDITED_PREFIX)?;
+            let reason = body.rsplit_once(": ").map(|(_, reason)| reason.trim())?;
+            crate::domain::guard_refusal_kind(reason)?;
+            Some(format!(" ({entry})"))
+        })
+        .flatten())
         .or_else(|| {
             crate::output::related_test_miss::related_test_miss_reason(test, &finding.probe.family)
                 .map(|why| format!(" ({why})"))
