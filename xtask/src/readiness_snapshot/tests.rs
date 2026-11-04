@@ -40,6 +40,7 @@ fn fixture_receipt(name: &str) -> Result<RehearsalReceipt, String> {
 
 #[test]
 fn rehearsal_plan_round_trip_is_deterministic_and_legacy_stays_compatible() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let legacy = fixture_receipt("rehearsal-receipt.complete.json")?;
     assert!(legacy.plan.is_none());
     assert!(
@@ -78,6 +79,7 @@ fn rehearsal_plan_round_trip_is_deterministic_and_legacy_stays_compatible() -> R
 
 #[test]
 fn rehearsal_plan_rejects_mutation_execution_and_unknown_metadata() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let text =
         fs::read_to_string(fixture("rehearsal-receipt.plan.json")).map_err(|e| e.to_string())?;
     let original: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
@@ -157,6 +159,7 @@ fn rehearsal_plan_rejects_mutation_execution_and_unknown_metadata() -> Result<()
 
 #[test]
 fn rehearsal_plan_cannot_satisfy_snapshot_readiness() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let (path, head) = head_bound_receipt_fixture("rehearsal-receipt.plan.json")?;
     let snapshot = build_snapshot(&BuildInput {
         root: &repo_root(),
@@ -227,6 +230,7 @@ fn head_bound_receipt_fixture(name: &str) -> Result<(PathBuf, String), String> {
 
 #[test]
 fn readiness_snapshot_artifacts_populates_only_proven_dimensions() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let (receipt_path, head) = head_bound_receipt_fixture("rehearsal-receipt.complete.json")?;
     let snapshot = build_snapshot(&BuildInput {
@@ -252,6 +256,7 @@ fn readiness_snapshot_artifacts_populates_only_proven_dimensions() -> Result<(),
 
 #[test]
 fn readiness_snapshot_artifacts_rejects_mixed_source_receipt() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let subject = super::identity::git_rev_parse("HEAD")?;
     let snapshot = build_snapshot(&BuildInput {
@@ -279,6 +284,7 @@ fn readiness_snapshot_artifacts_rejects_mixed_source_receipt() -> Result<(), Str
 
 #[test]
 fn readiness_snapshot_artifacts_fail_closed_on_missing_digest() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let mut receipt: RehearsalReceipt = serde_json::from_str(
         &fs::read_to_string(fixture("rehearsal-receipt.complete.json"))
             .map_err(|err| format!("read complete fixture: {err}"))?,
@@ -309,6 +315,7 @@ fn readiness_snapshot_artifacts_fail_closed_on_missing_digest() -> Result<(), St
 
 #[test]
 fn readiness_snapshot_artifacts_keeps_supply_chain_records_distinct() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let (receipt_path, head) = head_bound_receipt_fixture("rehearsal-receipt.supply-chain.json")?;
     let snapshot = build_snapshot(&BuildInput {
@@ -339,6 +346,7 @@ fn readiness_snapshot_artifacts_keeps_supply_chain_records_distinct() -> Result<
 
 #[test]
 fn readiness_snapshot_artifacts_partial_package_receipt_is_limited() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let mut receipt: RehearsalReceipt = serde_json::from_str(
         &fs::read_to_string(fixture("rehearsal-receipt.complete.json"))
             .map_err(|err| format!("read complete fixture: {err}"))?,
@@ -355,6 +363,7 @@ fn readiness_snapshot_artifacts_partial_package_receipt_is_limited() -> Result<(
 
 #[test]
 fn readiness_snapshot_json_and_markdown_agree() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let (receipt_path, head) = head_bound_receipt_fixture("rehearsal-receipt.complete.json")?;
     let snapshot = build_snapshot(&BuildInput {
@@ -378,6 +387,7 @@ fn readiness_snapshot_json_and_markdown_agree() -> Result<(), String> {
 
 #[test]
 fn readiness_snapshot_semantic_identity_ignores_generated_at() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let mut snapshot = build_snapshot(&BuildInput {
         root: &root,
@@ -396,6 +406,7 @@ fn readiness_snapshot_semantic_identity_ignores_generated_at() -> Result<(), Str
 
 #[test]
 fn readiness_snapshot_fixture_receipt_matches_current_identity_or_skips() -> Result<(), String> {
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     let root = repo_root();
     let path = fixture("rehearsal-receipt.complete.json");
     if !path.is_file() {

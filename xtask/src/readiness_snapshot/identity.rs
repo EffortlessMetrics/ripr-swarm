@@ -4,6 +4,21 @@ use std::process::Command;
 
 use super::model::IdentityInputs;
 
+// No probe may execute an inherited fsmonitor, fetch objects or use replace refs.
+fn git_output(args: &[&str]) -> Result<std::process::Output, String> {
+    Command::new("git")
+        .args(["-c", "core.fsmonitor=false", "-c", "protocol.allow=never"])
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_ALLOW_PROTOCOL", "")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_PAGER", "")
+        .args(args)
+        .output()
+        .map_err(|err| format!("failed to run read-only git probe: {err}"))
+}
+
 pub(crate) fn git_rev_parse(rev: &str) -> Result<String, String> {
     git_object(rev, "commit")
 }
@@ -13,10 +28,12 @@ pub(crate) fn git_source_tree(rev: &str) -> Result<String, String> {
 }
 
 fn git_object(rev: &str, object_kind: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--verify", &format!("{rev}^{{{object_kind}}}")])
-        .output()
-        .map_err(|err| format!("failed to run git rev-parse: {err}"))?;
+    let output = git_output(&[
+        "rev-parse",
+        "--verify",
+        "--end-of-options",
+        &format!("{rev}^{{{object_kind}}}"),
+    ])?;
     if !output.status.success() {
         return Err(format!(
             "git rev-parse {rev} failed: {}",
@@ -27,16 +44,41 @@ fn git_object(rev: &str, object_kind: &str) -> Result<String, String> {
 }
 
 pub(crate) fn git_worktree_clean() -> Result<bool, String> {
-    let output = Command::new("git")
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .args([
-            "status",
-            "--porcelain",
-            "--untracked-files=all",
-            "--ignore-submodules=none",
-        ])
-        .output()
-        .map_err(|err| format!("failed to run git status: {err}"))?;
+    // Status can invoke clean/process filters. Reject their configuration before
+    // asking it to inspect files, including globally configured but unused filters.
+    let filters = git_output(&[
+        "config",
+        "--name-only",
+        "--get-regexp",
+        r"^filter\..*\.(clean|process)$",
+    ])?;
+    if filters.status.success() {
+        return Err(
+            "source inspection refuses configured clean/process filter helpers".to_string(),
+        );
+    }
+    if filters.status.code() != Some(1) || !filters.stdout.is_empty() {
+        return Err("could not establish absence of clean/process filter helpers".to_string());
+    }
+    let index = git_output(&["ls-files", "--stage", "-v", "-z"])?;
+    if !index.status.success() {
+        return Err("could not inspect source index flags and modes".to_string());
+    }
+    if index.stdout.split(|byte| *byte == 0).any(|entry| {
+        !entry.is_empty()
+            && (entry.first() != Some(&b'H')
+                || !matches!(entry.get(2..8), Some(b"100644" | b"100755" | b"120000")))
+    }) {
+        return Err(
+            "source index masks changes or contains an unsupported gitlink/mode".to_string(),
+        );
+    }
+    let output = git_output(&[
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+    ])?;
     if !output.status.success() {
         return Err(format!(
             "git status failed: {}",
@@ -47,10 +89,7 @@ pub(crate) fn git_worktree_clean() -> Result<bool, String> {
 }
 
 pub(crate) fn git_toplevel() -> Result<PathBuf, String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .map_err(|err| format!("failed to run git rev-parse --show-toplevel: {err}"))?;
+    let output = git_output(&["rev-parse", "--show-toplevel"])?;
     if !output.status.success() {
         return Err(format!(
             "git rev-parse --show-toplevel failed: {}",
@@ -71,13 +110,10 @@ pub(crate) fn tree_clean_for_subject(source_sha: &str) -> Result<bool, String> {
 }
 
 pub(crate) fn collect_identity_inputs_for_commit(
-    root: &Path,
+    _root: &Path,
     commit: &str,
 ) -> Result<IdentityInputs, String> {
-    let head = git_rev_parse("HEAD")?;
-    if head == commit {
-        return collect_identity_inputs(root);
-    }
+    // Even current-HEAD identities come from immutable objects, never live disk.
     let workspace_toml = git_blob_text(commit, "Cargo.toml")?;
     Ok(IdentityInputs {
         cargo_lock_digest: git_blob_digest_optional(commit, "Cargo.lock")?,
@@ -98,10 +134,7 @@ fn git_blob_text(rev: &str, path: &str) -> Result<Option<String>, String> {
 
 fn git_blob_bytes(rev: &str, path: &str) -> Result<Option<Vec<u8>>, String> {
     let spec = format!("{rev}:{path}");
-    let output = Command::new("git")
-        .args(["show", &spec])
-        .output()
-        .map_err(|err| format!("failed to run git show {spec}: {err}"))?;
+    let output = git_output(&["show", &spec])?;
     if output.status.success() {
         return Ok(Some(output.stdout));
     }
@@ -212,55 +245,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(bytes);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-pub(crate) fn collect_identity_inputs(root: &Path) -> Result<IdentityInputs, String> {
-    let cargo_lock = root.join("Cargo.lock");
-    let package_lock = root.join("editors/vscode/package-lock.json");
-    let rust_toolchain = root.join("rust-toolchain.toml");
-    let ripr_cargo = root.join("crates/ripr/Cargo.toml");
-    let vscode_package = root.join("editors/vscode/package.json");
-
-    Ok(IdentityInputs {
-        cargo_lock_digest: digest_optional(&cargo_lock)?,
-        package_lock_digest: digest_optional(&package_lock)?,
-        rust_toolchain_digest: digest_optional(&rust_toolchain)?,
-        crate_version: read_toml_version(&ripr_cargo)?,
-        extension_version: read_json_version(&vscode_package)?,
-    })
-}
-
-fn digest_optional(path: &Path) -> Result<Option<String>, String> {
-    if path.is_file() {
-        digest_file(path).map(Some)
-    } else {
-        Ok(None)
-    }
-}
-
-fn read_toml_version(path: &Path) -> Result<Option<String>, String> {
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let text = fs::read_to_string(path)
-        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-    let workspace_text = path
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .map(|p| p.join("Cargo.toml"))
-        .filter(|p| p.is_file())
-        .and_then(|p| fs::read_to_string(p).ok());
-    read_toml_version_from_text(&text, workspace_text.as_deref())
-}
-
-fn read_json_version(path: &Path) -> Result<Option<String>, String> {
-    if !path.is_file() {
-        return Ok(None);
-    }
-    let text = fs::read_to_string(path)
-        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-    read_json_version_from_text(&text)
 }
 
 pub(crate) fn rehearsal_receipt_path(root: &Path, override_path: Option<&Path>) -> PathBuf {

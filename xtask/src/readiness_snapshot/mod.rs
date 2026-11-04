@@ -43,3 +43,6 @@ pub(crate) fn validate_readiness_snapshot_fixture_corpus(violations: &mut Vec<St
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod identity_tests;

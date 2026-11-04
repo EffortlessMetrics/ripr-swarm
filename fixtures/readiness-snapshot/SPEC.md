@@ -59,6 +59,15 @@ inside tracked/untracked source before invocation makes the cleanliness check
 refuse. The two cleanliness observations do not lock out concurrent writers;
 run in an exclusively owned checkout. No generated timestamp enters the receipt.
 
+Identity inputs come from immutable commit blobs even for current HEAD. All Git
+probes disable replacement objects, fsmonitor, lazy fetching, transports, prompts
+and paging; missing objects fail closed. Before status, source inspection rejects
+configured clean/process filters, index flags that can mask changes, and gitlinks
+whose recursive status might invoke an unchecked nested helper. This deliberately
+refuses filter-enabled workspaces (including global Git LFS configuration), sparse
+or assume-unchanged indexes and submodules. The shared snapshot cleanliness probe
+has the same conservative limitation; receipt schema 1.0 parsing remains supported.
+
 Consuming schema 1.1 leaves rehearsal-derived toolchain, package/install and
 supply-chain dimensions `not_proven`. Existing independent evidence adapters
 retain their own authorities. Plan-only receipt data cannot promote readiness,
