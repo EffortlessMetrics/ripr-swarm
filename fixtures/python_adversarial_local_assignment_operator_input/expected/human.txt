@@ -24,7 +24,7 @@ Start here:
   Missing check: A strong Python oracle reaches `compute`, but its assertion does not observe the
     changed owner's output; static evidence cannot confirm the changed behavior is discriminated.
     Add an assertion on the changed owner's output
-  Related test: tests/test_calc.py:4 test_base_unchanged (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_calc.py:4 test_base_unchanged
   Suggested test file: tests/test_calc.py
   Suggested test: test_base_unchanged
   Test node: tests/test_calc.py::test_base_unchanged
