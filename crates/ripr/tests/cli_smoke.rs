@@ -1191,6 +1191,7 @@ fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::er
     if let Some(error) = value
         .get("analysis_outcome_error")
         .and_then(serde_json::Value::as_str)
+        .map(|error| error.trim_end_matches('.'))
         .filter(|error| !error.is_empty())
         .map(str::to_string)
     {
@@ -1352,16 +1353,17 @@ fn normalize_agent_receipt_fixture_rejects_non_object_json() -> Result<(), Strin
 fn normalize_agent_receipt_fixture_preserves_unavailable_outcome_guidance()
 -> Result<(), Box<dyn std::error::Error>> {
     let receipt = |error: &str, recovery: &str| {
+        let guidance_error = error.trim_end_matches('.');
         serde_json::json!({
             "analysis_outcome_error": error,
             "summary": {
-                "next_action": { "recommended_action": format!("Unavailable ({error}); {recovery}") },
-                "next_recommendation": format!("Unavailable ({error}); {recovery}")
+                "next_action": { "recommended_action": format!("Unavailable ({guidance_error}); {recovery}") },
+                "next_recommendation": format!("Unavailable ({guidance_error}); {recovery}")
             }
         })
         .to_string()
     };
-    let linux = receipt("/workspace/outcome.json: os error 2", "regenerate outcome");
+    let linux = receipt("/workspace/outcome.json: os error 2.", "regenerate outcome");
     let windows = receipt(
         "C:\\work\\outcome.json: file not found",
         "regenerate outcome",
