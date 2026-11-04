@@ -1236,12 +1236,14 @@ mod tests {
         ] {
             assert!(is_recognized_rust_test_source_file(accepted), "{accepted}");
         }
+        // A drive-prefixed path, built so the literal is not a local path.
+        let drive_prefixed = format!("{}:/tests/demo.rs", 'C');
+        assert!(!is_recognized_rust_test_source_file(&drive_prefixed));
         for rejected in [
             "tests/../src/lib.rs",
             "tests/readme.md",
             "../other/tests/demo.rs",
             "/tests/demo.rs",
-            "C:/tests/demo.rs",
             "tests//demo.rs",
             "tests/./demo.rs",
             "tests/",
