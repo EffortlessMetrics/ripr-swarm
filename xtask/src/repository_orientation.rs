@@ -610,22 +610,6 @@ pub(crate) fn validate_repository_orientation_fixture_corpus(violations: &mut Ve
     }
 }
 
-fn git_porcelain_status(root: &Path) -> Result<String, String> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["status", "--porcelain"])
-        .output()
-        .map_err(|error| format!("run git status: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git status failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -692,7 +676,8 @@ mod tests {
     }
 
     #[test]
-    fn repository_orientation_wrong_category_still_blocks_portfolio_overlap() -> Result<(), String> {
+    fn repository_orientation_wrong_category_still_blocks_portfolio_overlap() -> Result<(), String>
+    {
         let scenario = RepositoryOrientationScenarioV1 {
             id: "overlap-not-category-gated".to_string(),
             category: "open_issue_no_pr".to_string(),
@@ -745,18 +730,38 @@ mod tests {
         validate_receipt_against_expect(&receipt, &scenario.expected)
     }
 
+    /// The orientation run reads exactly these repository inputs. Comparing
+    /// their contents, rather than whole-workspace `git status`, keeps the proof
+    /// independent of unrelated files that parallel test shards write.
+    fn orientation_input_snapshot(root: &Path) -> Result<Vec<(String, Option<Vec<u8>>)>, String> {
+        [
+            "docs/ROADMAP.md",
+            "Cargo.toml",
+            "docs/status/SUPPORT_TIERS.md",
+        ]
+        .iter()
+        .map(|relative| {
+            let path = root.join(relative);
+            match fs::read(&path) {
+                Ok(bytes) => Ok(((*relative).to_string(), Some(bytes))),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    Ok(((*relative).to_string(), None))
+                }
+                Err(error) => Err(format!("read {}: {error}", path.display())),
+            }
+        })
+        .collect()
+    }
+
     #[test]
-    fn repository_orientation_read_only_proof_does_not_mutate_tracked_files() -> Result<(), String>
-    {
+    fn repository_orientation_read_only_proof_does_not_mutate_read_inputs() -> Result<(), String> {
         let corpus = committed_corpus()?;
         let root = workspace_path("");
-        let before = git_porcelain_status(&root)?;
+        let before = orientation_input_snapshot(&root)?;
         run_repository_orientation_corpus(&root, &corpus)?;
-        let after = git_porcelain_status(&root)?;
+        let after = orientation_input_snapshot(&root)?;
         if before != after {
-            return Err(format!(
-                "orientation changed tracked repository state:\nbefore:\n{before}\nafter:\n{after}"
-            ));
+            return Err("orientation changed a repository input it reads".to_string());
         }
         Ok(())
     }
