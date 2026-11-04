@@ -175,6 +175,18 @@ fn two_operand_predicate(report: &serde_json::Value) -> Result<&serde_json::Valu
     if matches.next().is_some() {
         return Err("more than one two-operand predicate".into());
     }
+    let tests = finding["related_tests"]
+        .as_array()
+        .ok_or("missing related tests")?;
+    if !tests.iter().any(|test| {
+        test["name"] == "exercise"
+            && test["file"]
+                .as_str()
+                .is_some_and(|file| file.ends_with("src/lib.rs"))
+            && test["line"] == 6
+    }) {
+        return Err(format!("missing two-operand test identity: {tests:?}"));
+    }
     Ok(finding)
 }
 
@@ -182,6 +194,9 @@ fn two_operand_predicate(report: &serde_json::Value) -> Result<&serde_json::Valu
 fn each_operand_list_is_bounded_without_hiding_a_late_matching_pair() -> Result<(), String> {
     let report = two_operand_report(false)?;
     let finding = two_operand_predicate(&report)?;
+    if finding["ripr"]["infect"]["state"] != "weak" {
+        return Err(format!("expected weak infection: {finding}"));
+    }
     let facts = finding["missing_discriminators"]
         .as_array()
         .ok_or("missing discriminator facts")?;
