@@ -30,6 +30,8 @@ pub(in crate::analysis) struct SliceCounterBoundary {
     predicate_line: usize,
     counter: String,
     predicate: CounterPredicate,
+    /// Compact text of the value the owner returns when the predicate fires.
+    fire_value: String,
     rows: Vec<SliceCounterRow>,
 }
 
@@ -128,20 +130,84 @@ impl SliceCounterBoundary {
         assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
         owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     ) -> bool {
-        self.valid_for(probe, owner)
-            && self.rows.iter().any(|row| {
-                tests.iter().any(|test| {
-                    test.file == row.test_file
-                        && index.files().get(&test.file).is_some_and(|_| {
-                            test.assertions.iter().any(|assertion| {
-                                assertion_admitted(test, assertion)
-                                    && (owner_pinned(test, assertion)
-                                        || assertion.text.contains(&format!("{}(", owner.name)))
-                                    && assertion.text.contains(row.call_text.as_str())
-                            })
-                        })
-                })
-            })
+        if !self.valid_for(probe, owner) {
+            return false;
+        }
+        // The boundary is discriminated only when the tests assert the outcome
+        // of both calls straddling it: the longer call (the predicate fires)
+        // must assert the value the owner returns on firing, and the shorter
+        // call must assert something else. One asserted side, or the same
+        // outcome on both (for example an earlier `?` exit that never reaches
+        // the counter), leaves the boundary edit unnoticed.
+        let asserted = |row: &SliceCounterRow| -> Vec<String> {
+            let mut outcomes = Vec::new();
+            for test in tests {
+                if test.file != row.test_file || index.files().get(&test.file).is_none() {
+                    continue;
+                }
+                for assertion in &test.assertions {
+                    if assertion_admitted(test, assertion)
+                        && (owner_pinned(test, assertion)
+                            || assertion.text.contains(&format!("{}(", owner.name)))
+                        && let Some(expected) =
+                            asserted_outcome(&assertion.text, &row.call_text, &owner.name)
+                    {
+                        outcomes.push(expected);
+                    }
+                }
+            }
+            outcomes
+        };
+        self.rows.iter().any(|short| {
+            let Some(long) = self.rows.iter().find(|row| row.count == short.count + 1) else {
+                return false;
+            };
+            if self.predicate.fires_for_length(short.count)
+                || !self.predicate.fires_for_length(long.count)
+            {
+                return false;
+            }
+            outcomes_straddle(&asserted(short), &asserted(long), &self.fire_value)
+        })
+    }
+}
+
+/// Every asserted outcome of the shorter call differs from the firing value,
+/// every asserted outcome of the longer call is the firing value, and both
+/// calls assert something.
+fn outcomes_straddle(short: &[String], long: &[String], fire_value: &str) -> bool {
+    !short.is_empty()
+        && short.iter().all(|outcome| outcome != fire_value)
+        && !long.is_empty()
+        && long.iter().all(|outcome| outcome == fire_value)
+}
+
+/// The compact expected value of `assert_eq!(<call>, <expected>)` (either
+/// argument order) for the row's call. `call_text` is either the bare owner
+/// call or the whole assertion statement that holds it (the call fact for a
+/// call inside an assertion macro is the statement); the owner call is then
+/// the argument that starts `owner(`.
+fn asserted_outcome(assertion: &str, call_text: &str, owner: &str) -> Option<String> {
+    let arguments = super::activation::call_arguments(assertion, "assert_eq!")?;
+    let [first, second] = arguments.as_slice() else {
+        return None;
+    };
+    let (first, second) = (compact(first), compact(second));
+    let row = compact(call_text);
+    let statement = compact(assertion);
+    let same_statement = row.trim_end_matches(';') == statement.trim_end_matches(';');
+    let prefix = format!("{owner}(");
+    let is_call = |argument: &str| {
+        if same_statement {
+            argument.starts_with(&prefix)
+        } else {
+            argument == row
+        }
+    };
+    match (is_call(&first), is_call(&second)) {
+        (true, false) => Some(second),
+        (false, true) => Some(first),
+        _ => None,
     }
 }
 
@@ -184,7 +250,8 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
     {
         return None;
     }
-    let (slice_param, predicate) = per_byte_counter_shape(owner, &context.probe.expression)?;
+    let (slice_param, predicate, fire_value) =
+        per_byte_counter_shape(owner, &context.probe.expression)?;
     let counter = predicate.counter.clone();
     let slice_position = immutable_slice_parameter(owner, &slice_param)?;
     let mut rows = Vec::new();
@@ -240,6 +307,7 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
         predicate_line: context.probe.location.line,
         counter,
         predicate,
+        fire_value,
         rows,
     })
 }
@@ -251,7 +319,7 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
 fn per_byte_counter_shape(
     owner: &FunctionSummary,
     expression: &str,
-) -> Option<(String, CounterPredicate)> {
+) -> Option<(String, CounterPredicate, String)> {
     let predicate = parse_counter_predicate(expression)?;
     let counter = predicate.counter.as_str();
     let parse = parse_clean_source_file(&owner.body)?;
@@ -396,10 +464,29 @@ fn per_byte_counter_shape(
     let ast::Expr::IfExpr(check) = check.expr()? else {
         return None;
     };
-    if compact(&check.condition()?.syntax().text().to_string()) != compact(expression) {
+    if compact(&check.condition()?.syntax().text().to_string()) != compact(expression)
+        || check.else_branch().is_some()
+    {
         return None;
     }
-    Some((slice_param, predicate))
+    // The firing branch must be exactly `return <value>`, so the value a test
+    // asserts on a firing call can be compared with it.
+    let then_list = check.then_branch()?.stmt_list()?;
+    let mut then_statements = then_list.statements();
+    let fire = match (
+        then_statements.next(),
+        then_statements.next(),
+        then_list.tail_expr(),
+    ) {
+        (Some(ast::Stmt::ExprStmt(statement)), None, None) => statement.expr()?,
+        (None, None, Some(tail)) => tail,
+        _ => return None,
+    };
+    let ast::Expr::ReturnExpr(fire) = fire else {
+        return None;
+    };
+    let fire_value = compact(&fire.expr()?.syntax().text().to_string());
+    Some((slice_param, predicate, fire_value))
 }
 
 fn parse_counter_predicate(expression: &str) -> Option<CounterPredicate> {
@@ -528,6 +615,7 @@ mod tests {
             predicate_line: 15,
             counter: "count".to_string(),
             predicate: parse_counter_predicate(expression)?,
+            fire_value: "Err(ChunkError::TooLong)".to_string(),
             rows: lengths
                 .iter()
                 .map(|count| SliceCounterRow {
@@ -563,7 +651,8 @@ mod tests {
     #[test]
     fn grid_bits_owner_shape_is_recognized() -> Result<(), ()> {
         let owner = owner_body(GRID_BITS);
-        let (slice, found) = per_byte_counter_shape(&owner, "16 < count").ok_or(())?;
+        let (slice, found, fire) = per_byte_counter_shape(&owner, "16 < count").ok_or(())?;
+        assert_eq!(fire, "Err(ChunkError::TooLong)");
         assert_eq!(slice, "hex");
         assert_eq!(found.counter, "count");
         assert_eq!(immutable_slice_parameter(&owner, "hex"), Some(0));
@@ -659,5 +748,99 @@ mod tests {
         assert!(!infers_yes("count == 16", &[16, 17]));
         assert!(infers_yes("count > 15", &[15, 16]));
         assert!(!infers_yes("count != 16", &[1, 2]));
+    }
+
+    fn outcomes(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn asserted_outcome_reads_assert_eq_in_either_order() {
+        let call = "chunk_size(&[b'f'; 16])";
+        let statement = "assert_eq!(chunk_size(&[b'f'; 16]), Ok(u64::MAX));";
+        for (assertion, row, expected) in [
+            (statement, call, Some("Ok(u64::MAX)")),
+            // the call fact is the whole assertion statement
+            (statement, statement, Some("Ok(u64::MAX)")),
+            (
+                "assert_eq!(Ok(u64::MAX), chunk_size(&[b'f'; 16]))",
+                call,
+                Some("Ok(u64::MAX)"),
+            ),
+            ("assert!(chunk_size(&[b'f'; 16]).is_ok())", call, None),
+            // another length's assertion is not this row's
+            ("assert_eq!(chunk_size(&[b'f'; 17]), Ok(1))", call, None),
+            (
+                "assert_eq!(chunk_size(&[b'f'; 17]), Ok(1));",
+                statement,
+                None,
+            ),
+            (
+                "assert_eq!(chunk_size(&[b'f'; 16]), chunk_size(&[b'f'; 16]))",
+                call,
+                None,
+            ),
+        ] {
+            assert_eq!(
+                asserted_outcome(assertion, row, "chunk_size").as_deref(),
+                expected,
+                "{assertion} / {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_both_sides_asserted_with_differing_outcomes_discriminate() {
+        let fire = "Err(ChunkError::TooLong)";
+        // 16 asserts Ok, 17 asserts the firing value: pinned.
+        assert!(outcomes_straddle(
+            &outcomes(&["Ok(u64::MAX)"]),
+            &outcomes(&[fire]),
+            fire
+        ));
+        // Asserting only the 17-byte call.
+        assert!(!outcomes_straddle(&[], &outcomes(&[fire]), fire));
+        // Asserting only the 16-byte call.
+        assert!(!outcomes_straddle(&outcomes(&["Ok(u64::MAX)"]), &[], fire));
+        // BadDigit at both lengths: the loop exits at the first element, the
+        // counter is never reached, and the two outcomes are equal.
+        let bad = "Err(ChunkError::BadDigit)";
+        assert!(!outcomes_straddle(
+            &outcomes(&[bad]),
+            &outcomes(&[bad]),
+            fire
+        ));
+        // Different outcomes that are not the firing value do not count.
+        assert!(!outcomes_straddle(
+            &outcomes(&["Ok(1)"]),
+            &outcomes(&[bad]),
+            fire
+        ));
+        // Both sides assert the firing value.
+        assert!(!outcomes_straddle(
+            &outcomes(&[fire]),
+            &outcomes(&[fire]),
+            fire
+        ));
+    }
+
+    #[test]
+    fn the_firing_branch_must_be_a_single_return() {
+        for body in [
+            GRID_BITS.replace(
+                "return Err(ChunkError::TooLong);",
+                "log(count); return Err(ChunkError::TooLong);",
+            ),
+            GRID_BITS.replace("return Err(ChunkError::TooLong);", "break;"),
+            GRID_BITS.replace(
+                "        }\n        let digit",
+                "        } else {\n            log(count);\n        }\n        let digit",
+            ),
+        ] {
+            assert!(
+                per_byte_counter_shape(&owner_body(&body), "16 < count").is_none(),
+                "{body}"
+            );
+        }
     }
 }
