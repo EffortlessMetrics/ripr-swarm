@@ -121,7 +121,7 @@
           "to": "discounted + bps_of(subtotal, tax_bps)"
         },
         {
-          "id": "promo-per-line",
+          "id": "order-fallthrough",
           "from": "_ => subtotal,",
           "to": "_ => subtotal + 1,"
         }
