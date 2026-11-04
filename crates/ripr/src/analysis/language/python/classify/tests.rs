@@ -4461,12 +4461,27 @@ fn indirect_loop_boundary_mixed_identity_preserves_prior_class() -> Result<(), S
 #[test]
 fn indirect_loop_boundary_refuses_implicit_test_setup() -> Result<(), String> {
     let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
-    for prefix in [
-        "import pytest\nfrom src.subject import largest\n\n@pytest.fixture(autouse=True)\ndef replace(monkeypatch):\n    monkeypatch.setattr('src.subject.largest', lambda xs: 5)\n",
-        "from src.subject import largest\n\ndef setup_function():\n    patch_owner()\n",
+    for (prefix, callee) in [
+        (
+            "import pytest\nimport src.subject as subject\n\n@pytest.fixture(autouse=True)\ndef replace(monkeypatch):\n    monkeypatch.setattr(subject, 'largest', lambda xs: 5)\n",
+            "subject.largest",
+        ),
+        (
+            "from src.subject import largest\n\ndef setup_function():\n    patch_owner()\n",
+            "largest",
+        ),
     ] {
         let tests = format!(
-            "{prefix}\ndef test_largest():\n    result = largest([1, 5, 3])\n    assert result == 5\n"
+            "{prefix}\ndef test_largest():\n    result = {callee}([1, 5, 3])\n    assert result == 5\n"
+        );
+        let extracted = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        let row = extracted
+            .iter()
+            .find(|test| test.name == "test_largest")
+            .ok_or("test extraction failed")?;
+        assert!(
+            row.constant_rebinding.implicit_reach,
+            "implicit setup must be recorded"
         );
         let finding = classify_edit_case(
             source,
