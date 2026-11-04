@@ -436,6 +436,13 @@ currentness: first-pr retains `source_currentness_unavailable` where required,
 now with the actual limitation attached. JavaScript repair starts and no-action
 projection are outside this change.
 
+Check JSON source-subject stamps also include the source anchors of these
+retained records. Their file digests bind the observed source bytes even when
+parsing or reach is limited; they do not establish corpus currentness, a
+completed analysis, or repair authority. Existing source-file digests remain
+unchanged. The eleven affected JSON goldens retain identical findings and
+verdicts, with only this provenance added or expanded.
+
 Regression mapping:
 
 - `gap_decision_ledger::tests::check_output_typescript_family_unknown_preserves_advisory_limit`
