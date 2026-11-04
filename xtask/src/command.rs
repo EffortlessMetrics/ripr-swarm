@@ -2735,8 +2735,8 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "non_mutating_check",
             "cargo publish dry-run staging output",
             false,
-            false,
-            "Runs publish dry run without publishing.",
+            true,
+            "Rehearses the ripr/ripr-contract lockstep publish (contract dry-run, vendored packaging, packaged check) without publishing.",
         ),
         command_entry(
             "issue-intake --issue <number>",

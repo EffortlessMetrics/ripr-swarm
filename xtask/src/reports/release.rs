@@ -188,11 +188,11 @@ fn publish_dry_run_check(
 ) -> ReleaseReadinessCheck {
     release_gate_check(
         "publish-dry-run",
-        "cargo publish -p ripr --dry-run",
+        "cargo xtask publish-dry-run",
         version,
         crate_version,
         clean_tree,
-        || run_command("cargo", &["publish", "-p", "ripr", "--dry-run"]),
+        || run_command("cargo", &["xtask", "publish-dry-run"]),
     )
 }
 

@@ -463,7 +463,7 @@ implement and validate the lane-selection logic.
 | --- | --- |
 | `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
 | `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes. |
-| `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
+| `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run (lockstep rehearsal, including unlocked install resolution), and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
 | `ripr-waive` | Acknowledge a soft static exposure finding for this PR. Does not skip CI and does not apply when `full-ci` is present. |
@@ -475,8 +475,8 @@ New labels that affect CI must update this table, the PR template, and the
 budget/risk-pack policy files in the same PR.
 
 These labels are the documented target vocabulary. Today, `release-check` and
-`full-ci` activate the Rust workflow's package list, publish dry-run, unlocked
-install resolution, and release-readiness steps on pull requests. Other label effects remain target vocabulary until a later PR
+`full-ci` activate the Rust workflow's package list, publish dry-run (lockstep
+rehearsal, including unlocked install resolution), and release-readiness steps on pull requests. Other label effects remain target vocabulary until a later PR
 wires them into a PR plan or workflow condition. The GitHub Settings App
 contract in `.github/settings.yml` codifies these label names, descriptions,
 and colors so the reviewable vocabulary does not drift in the GitHub UI.
@@ -1033,29 +1033,18 @@ or `full-ci`, the same job also runs the release-surface package checks:
 
 ```bash
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run
 release_version="$(cargo pkgid -p ripr | sed 's/.*#//')"
 cargo xtask release-readiness --version "$release_version"
 ```
 
-The unlocked install resolution step builds the packaged crate the way
-`cargo install ripr` without `--locked` does: it unpacks the `.crate`, deletes
-its `Cargo.lock`, re-resolves, and checks. It catches a dependency that only
-compiles under the committed lock (#3787). The Actions Bash step uses errexit;
-each prerequisite is a separate command so its failure stops the step before
-the final check (#8330):
-
-```bash
-cargo package -p ripr --no-verify
-package_id="$(cargo pkgid -p ripr)"
-package_version="${package_id##*#}"
-test -n "$package_version"
-tar xzf "target/package/ripr-$package_version.crate" -C "$RUNNER_TEMP"
-cd "$RUNNER_TEMP/ripr-$package_version"
-rm Cargo.lock
-cargo generate-lockfile
-cargo check --target-dir "$RUNNER_TEMP/unlocked-target"
-```
+`cargo xtask publish-dry-run` is the ADR 0027 lockstep rehearsal: it dry-runs
+`ripr-contract`, packages `ripr` against a vendored source tree, then builds
+the packaged crate the way `cargo install ripr` without `--locked` does: it
+unpacks the `.crate`, deletes its `Cargo.lock`, re-resolves, and checks. It
+catches a dependency that only compiles under the committed lock (#3787). A
+bare `cargo publish -p ripr --dry-run` cannot pass before `ripr-contract`
+exists on crates.io, because `ripr` requires it with an exact version.
 
 The legacy workflow's `Rust-only feature lane` job (#4252) runs the Rust-only
 feature set (#2400, #3128) on Linux:
