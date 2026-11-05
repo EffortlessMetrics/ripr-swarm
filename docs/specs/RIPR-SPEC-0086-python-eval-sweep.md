@@ -348,8 +348,10 @@ validates and publishes.
   result stays admissible. Both findings-bound disclosure shapes remain
   `partial`, including an empty rendered prefix. Malformed output becomes a
   `crashed` analysis attempt, preserving the subject denominator and exact
-  captured bytes for the existing raw-retention/digest path. Timeout and
-  nonzero-exit precedence remain unchanged. The first-pass refusal reaches
+  captured first-pass bytes for the existing raw-retention/digest path.
+  Retention of raw output from non-complete repeats remains a separate
+  obligation tracked by #13140. Timeout and nonzero-exit precedence remain
+  unchanged. The first-pass refusal reaches
   the execution receipt's analysis limitations; a rejected repeat's reason
   reaches its stability limitation. Neither can yield a stable comparison or
   a passing summary. This consumed-field check does not replace the full
