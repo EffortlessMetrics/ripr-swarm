@@ -5,9 +5,9 @@
   "changed_seams": [],
   "inputs": {
     "after": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
-    "after_content_sha256": "sha256:3568c44103d67c2ae5ed210872d89cc516f2e8b3d8d5b46bc43ddbe3fdf0d997",
+    "after_content_sha256": "sha256:66bdc9623d78e62e8bfecf80b5366e22cff149aa2e14862d20483d9ad47101ee",
     "before": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
-    "before_content_sha256": "sha256:3568c44103d67c2ae5ed210872d89cc516f2e8b3d8d5b46bc43ddbe3fdf0d997"
+    "before_content_sha256": "sha256:66bdc9623d78e62e8bfecf80b5366e22cff149aa2e14862d20483d9ad47101ee"
   },
   "new_gaps": [],
   "resolved_gaps": [],
