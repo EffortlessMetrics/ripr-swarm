@@ -74,5 +74,11 @@
     "remaining": "11 unmerged generated gate-decision JSON files; production gate code equals destination main, but merged guidance SHA256 differs from both sides; producer regeneration pending",
     "status": "unqualified, unpublished source merge; original carrier untouched"
   },
-  "holds": "No original ref updates, PR/readiness/CI request, merge, settings, promotion or release actions."
+  "holds": "No original ref updates, PR/readiness/CI request, merge, settings, promotion or release actions.",
+  "complete_contribution_patch": {
+    "path": "12010-complete-contribution.patch",
+    "bytes": 76286,
+    "sha256": "be7f5f8e3cac98e44db7b31030e921ef7de2df379350e4098136e07ca9417c67",
+    "apply_scope": "Complete dc4771c5c..81019b736 contribution, including test witness commit; reconcile against the actual combined input, not a blind single-commit cherry-pick."
+  }
 }
