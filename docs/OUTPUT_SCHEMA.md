@@ -19493,8 +19493,10 @@ Python static-limit findings with `static_limit_kind` become report-only
 `StaticLimitation` records with `repairability = "analyzer_limitation"` and no
 agent-packet projection. Visibility-unknown presentation text and Python static
 limits remain limitations and do not become generic `static_unknown` repair
-instructions. A TypeScript preview finding whose repair packet the shared
-validator kept closed becomes a report-only `StaticLimitation` record with
+instructions. A TypeScript or JavaScript preview finding classified as
+`weakly_exposed` or `static_unknown`, with an explicitly closed repair packet
+and nonempty producer explanation, becomes a report-only `StaticLimitation`
+record preserving its language and reason, with
 `static_limit_kind = "typescript_repair_packet_not_delegatable"`, and a weakly
 exposed Python preview finding without a `python_repair_card` becomes one with
 `static_limit_kind = "python_repair_card_unavailable"`; neither carries a repair

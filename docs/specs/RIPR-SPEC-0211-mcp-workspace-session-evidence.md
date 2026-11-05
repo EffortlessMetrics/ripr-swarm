@@ -817,6 +817,12 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   — unknown-name diagnostic prefixes preserve ordinary names, disclose
   truncation and original UTF-8 byte length, and retain typed recovery for
   admitted large/escaped/multibyte keys in both protocol lifecycles (#13154).
+- `crates/ripr/src/mcp/server_tests.rs::unknown_method_names_keep_bounded_explicit_diagnostics`
+  + `crates/ripr/tests/mcp_stdio.rs::unknown_method_names_stay_bounded_and_recover`
+  — unknown methods retain bounded `-32601` errors, exact ordinary messages,
+  Unicode-safe previews and original UTF-8 byte counts. Large/escaped/multibyte
+  names remain correlated in both protocol lifecycles, preserve metadata
+  validation precedence, and allow a valid request after every refusal (#13220).
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
   hosted wire interop controls, including
   `post_initialize_ping_with_handshake_meta_returns_an_empty_result`
