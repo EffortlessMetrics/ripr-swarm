@@ -36,7 +36,9 @@ fn same_refusal(pretty: &str, compact: &str) -> Result<Value, String> {
         return Err("compact presentation changed refusal evidence or recovery".to_string());
     }
     if !compact.ends_with('\n') || compact.lines().count() != 1 || compact.len() >= pretty.len() {
-        return Err("refusal must become a smaller single JSON line with a final newline".to_string());
+        return Err(
+            "refusal must become a smaller single JSON line with a final newline".to_string(),
+        );
     }
     if actual["analysis_scope"]["downstream_consumable"] != false {
         return Err("refusal must remain non-consumable, never an all-clear".to_string());
@@ -51,7 +53,8 @@ fn json_compact_typed_refusal_keeps_identity_and_diagnostic_bytes() -> Result<()
         base: Some("review-base".to_string()),
         ..CheckInput::default()
     };
-    let error = CoreError::repository_root_unusable("missing \"workspace\"; café 雪 \\ path\nnext line");
+    let error =
+        CoreError::repository_root_unusable("missing \"workspace\"; café 雪 \\ path\nnext line");
     let pretty = document(&input, OutputFormat::Json, &error)?;
     let compact = document(&input, OutputFormat::JsonCompact, &error)?;
     let value = same_refusal(&pretty, &compact)?;
@@ -68,8 +71,16 @@ fn json_compact_typed_refusal_keeps_identity_and_diagnostic_bytes() -> Result<()
 fn json_compact_scope_guards_keep_the_frozen_envelope() -> Result<(), String> {
     let input = CheckInput::default();
     for (detail, status, scope) in [
-        ("diff_scope_oversized: too many changed lines", "diff_scope_oversized", "diff"),
-        ("repo_scope_oversized: too many source files", "repo_scope_oversized", "repo"),
+        (
+            "diff_scope_oversized: too many changed lines",
+            "diff_scope_oversized",
+            "diff",
+        ),
+        (
+            "repo_scope_oversized: too many source files",
+            "repo_scope_oversized",
+            "repo",
+        ),
     ] {
         let error = CoreError::from(detail.to_string());
         let pretty = document(&input, OutputFormat::Json, &error)?;
@@ -80,10 +91,9 @@ fn json_compact_scope_guards_keep_the_frozen_envelope() -> Result<(), String> {
         {
             return Err(format!("scope guard changed identity: {value}"));
         }
-        let legacy = crate::output::limited_check::render_diff_scope_limited_check_json(
-            &input, detail,
-        )?
-        .ok_or("scope fixture must exercise the scope-guard producer")?;
+        let legacy =
+            crate::output::limited_check::render_diff_scope_limited_check_json(&input, detail)?
+                .ok_or("scope fixture must exercise the scope-guard producer")?;
         if pretty != legacy {
             return Err("the existing JSON scope-guard bytes changed".to_string());
         }
@@ -133,7 +143,8 @@ fn timeout_document(
 }
 
 #[test]
-fn json_compact_timeout_replays_the_explicit_format_and_retains_unknown_facts() -> Result<(), String> {
+fn json_compact_timeout_replays_the_explicit_format_and_retains_unknown_facts() -> Result<(), String>
+{
     let pretty = timeout_document(OutputFormat::Json, Some("json"), None)?;
     let compact = timeout_document(OutputFormat::JsonCompact, Some("json-compact"), None)?;
     let expected = parse(&pretty)?;
@@ -141,7 +152,8 @@ fn json_compact_timeout_replays_the_explicit_format_and_retains_unknown_facts() 
     let recovery = &actual["input_context"]["recovery"];
     let command = recovery["command"].as_str().ok_or("missing bounded retry")?;
     let pretty_command = expected["input_context"]["recovery"]["command"]
-        .as_str().ok_or("missing legacy bounded retry")?;
+        .as_str()
+        .ok_or("missing legacy bounded retry")?;
     if !command.contains("--format json-compact")
         || command.contains("--json")
         || !command.contains("--worktree")
@@ -149,7 +161,9 @@ fn json_compact_timeout_replays_the_explicit_format_and_retains_unknown_facts() 
         || recovery["budget_seconds"] != 8
         || recovery["kind"] != "retry_with_larger_budget"
     {
-        return Err(format!("compact timeout changed the requested retry: {recovery}"));
+        return Err(format!(
+            "compact timeout changed the requested retry: {recovery}"
+        ));
     }
     if command.replace("--format json-compact", "--format json") != pretty_command {
         return Err("only the selected output spelling may differ in the retry".to_string());
@@ -160,11 +174,14 @@ fn json_compact_timeout_replays_the_explicit_format_and_retains_unknown_facts() 
     {
         return Err("timeout must remain the amended, non-consumable refusal".to_string());
     }
-    let resolved = actual["input_context"]["resolved"].as_object()
+    let resolved = actual["input_context"]["resolved"]
+        .as_object()
         .ok_or("timeout must retain availability-qualified facts")?;
-    if resolved.is_empty() || resolved.values().any(|fact| {
-        fact["available"] != false || fact["reason"] != "not_published_before_deadline"
-    }) {
+    if resolved.is_empty()
+        || resolved.values().any(|fact| {
+            fact["available"] != false || fact["reason"] != "not_published_before_deadline"
+        })
+    {
         return Err("an early timeout must not invent resolved input facts".to_string());
     }
     // Separate invocations deliberately carry their own retry format. Assert
@@ -189,16 +206,26 @@ fn json_compact_stdin_timeout_never_offers_a_replay_of_consumed_input() -> Resul
 }
 
 #[test]
-fn json_compact_and_json_are_distinct_but_repeated_compact_selection_is_valid() -> Result<(), String> {
+fn json_compact_and_json_are_distinct_but_repeated_compact_selection_is_valid() -> Result<(), String>
+{
     let mut selection = None;
     let mut format = OutputFormat::Human;
     for _ in 0..2 {
-        select_output_format(&mut selection, &mut format,
-            "--format json-compact".to_string(), OutputFormat::JsonCompact)?;
+        select_output_format(
+            &mut selection,
+            &mut format,
+            "--format json-compact".to_string(),
+            OutputFormat::JsonCompact,
+        )?;
     }
-    let error = select_output_format(&mut selection, &mut format,
-        "--json".to_string(), OutputFormat::Json).err()
-        .ok_or("conflicting output selections must be refused")?;
+    let error = select_output_format(
+        &mut selection,
+        &mut format,
+        "--json".to_string(),
+        OutputFormat::Json,
+    )
+    .err()
+    .ok_or("conflicting output selections must be refused")?;
     if format != OutputFormat::JsonCompact
         || !error.contains("`--format json-compact` and `--json`")
     {
