@@ -497,7 +497,7 @@ fn returned_field_constructor_identity_respects_namespace() -> Result<(), String
 
 #[test]
 fn returned_field_identity_rejects_mutation_inside_let_initializers() -> Result<(), String> {
-    let source = "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn reset(&mut self) { self.attempts=4; }\n}\n";
+    let source = "#[derive(Clone, Copy)] pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn reset(&mut self) { self.attempts=4; }\n}\n";
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,1 +4,1 @@\n-  Self { attempts:3 }\n+  Self { attempts:4 }\n";
     for (body, exposed) in [
         (
@@ -509,7 +509,7 @@ fn returned_field_identity_rejects_mutation_inside_let_initializers() -> Result<
             false,
         ),
         (
-            "let item=Builder::new(); let alias=item; assert_eq!(alias.attempts,4);",
+            "let item=Builder::new(); let _alias=item; assert_eq!(item.attempts,4);",
             true,
         ),
         (

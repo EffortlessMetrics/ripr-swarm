@@ -10,4 +10,6 @@ tests = [
   "crates/ripr/tests/return_diagnostic_confirmation.rs::persisted_effect_observer_retains_identity_without_lending_it_to_another_instance",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::established_effect_carrier_binds_the_called_instance_only",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_fields_and_builders_keep_real_identity_and_reject_replaced_values",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_field_constructor_identity_respects_namespace",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_field_identity_rejects_mutation_inside_let_initializers",
 ]
