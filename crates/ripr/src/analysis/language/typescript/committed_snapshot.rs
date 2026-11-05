@@ -213,8 +213,8 @@ struct CommittedSnapshots {
 impl CommittedSnapshots {
     /// `true` when the file stores `<key> 1` exactly once and no `<key> 2`:
     /// the assertion ran once when the file was written, and its one entry
-    /// is the one it compares with. Only parsed top-level assignment starts
-    /// count; a line in a comment or another snapshot value is not an entry.
+    /// is the one it compares with. A top-level assignment establishes the
+    /// entry; nested assignments can refuse it. Comments and values do not count.
     fn pins_only_entry(&self, key: &str) -> bool {
         let count = |starts: &[usize], counter: usize| {
             let entry = format!("exports[`{key} {counter}`] = ");
