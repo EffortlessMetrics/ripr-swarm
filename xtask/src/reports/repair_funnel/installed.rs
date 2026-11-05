@@ -39,8 +39,7 @@ fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
 fn hex_text<'a>(value: &'a Value, key: &str, width: usize) -> Result<&'a str, String> {
     let value = text(value, key)?;
     require(
-        value.len() == width
-            && value.bytes().all(|b| b.is_ascii_hexdigit()),
+        value.len() == width && value.bytes().all(|b| b.is_ascii_hexdigit()),
         "malformed source or digest identity",
     )?;
     Ok(value)
@@ -63,7 +62,7 @@ fn require(condition: bool, message: &str) -> Result<(), String> {
 
 fn relative(path: &str) -> bool {
     !path.is_empty()
-            && Path::new(path)
+        && Path::new(path)
             .components()
             .all(|c| matches!(c, Component::Normal(_)))
 }
@@ -78,20 +77,35 @@ impl Receipts {
             "bundle directory must be relative without traversal",
         )?;
         let parent = parent.canonicalize().map_err(|e| e.to_string())?;
-        let root = parent.join(&bundle.directory).canonicalize().map_err(|e| e.to_string())?;
-        require(root.starts_with(&parent), "bundle directory escapes manifest parent")?;
+        let root = parent
+            .join(&bundle.directory)
+            .canonicalize()
+            .map_err(|e| e.to_string())?;
+        require(
+            root.starts_with(&parent),
+            "bundle directory escapes manifest parent",
+        )?;
         require(bundle.files.len() <= 1024, "too many receipt files")?;
         let mut bytes = BTreeMap::new();
         let mut total = 0_u64;
         for (name, expected) in &bundle.files {
-            require(relative(name), "receipt path must be relative without traversal")?;
-            let path = root.join(name).canonicalize().map_err(|e| format!("{name}: {e}"))?;
+            require(
+                relative(name),
+                "receipt path must be relative without traversal",
+            )?;
+            let path = root
+                .join(name)
+                .canonicalize()
+                .map_err(|e| format!("{name}: {e}"))?;
             require(path.starts_with(&root), "receipt symlink escapes bundle")?;
             let size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
             total = total.checked_add(size).ok_or("receipt size overflow")?;
             require(total <= 64 * 1024 * 1024, "receipt bundle exceeds 64 MiB")?;
             let body = fs::read(path).map_err(|e| format!("{name}: {e}"))?;
-            require(digest(&body) == *expected, &format!("receipt digest mismatch: {name}"))?;
+            require(
+                digest(&body) == *expected,
+                &format!("receipt digest mismatch: {name}"),
+            )?;
             bytes.insert(name.clone(), body);
         }
         Ok(Self {
@@ -101,7 +115,10 @@ impl Receipts {
     }
 
     fn json(&self, name: &str) -> Result<Value, String> {
-        let bytes = self.bytes.get(name).ok_or_else(|| format!("missing retained receipt {name}"))?;
+        let bytes = self
+            .bytes
+            .get(name)
+            .ok_or_else(|| format!("missing retained receipt {name}"))?;
         serde_json::from_slice(bytes).map_err(|e| format!("{name}: {e}"))
     }
 
@@ -112,7 +129,9 @@ impl Receipts {
             let command = self.json(name)?;
             let result = self.json(&format!("{prefix}result.json"))?;
             for stream in ["stdout", "stderr"] {
-                let bytes = self.bytes.get(&format!("{prefix}{stream}"))
+                let bytes = self
+                    .bytes
+                    .get(&format!("{prefix}{stream}"))
                     .ok_or("missing raw command stream")?;
                 require(
                     result
@@ -122,7 +141,11 @@ impl Receipts {
                     "raw command stream digest mismatch",
                 )?;
             }
-            commands.push((command, result, self.bytes[&format!("{prefix}stdout")].clone()));
+            commands.push((
+                command,
+                result,
+                self.bytes[&format!("{prefix}stdout")].clone(),
+            ));
         }
         require(!commands.is_empty(), "no retained command evidence")?;
         Ok(commands)
@@ -130,9 +153,14 @@ impl Receipts {
 }
 
 fn clean(result: &Value) -> bool {
-    ["capture_error", "cleanup_error", "harness_stop", "wait_error"]
-        .iter()
-        .all(|key| result.get(key).is_some_and(Value::is_null))
+    [
+        "capture_error",
+        "cleanup_error",
+        "harness_stop",
+        "wait_error",
+    ]
+    .iter()
+    .all(|key| result.get(key).is_some_and(Value::is_null))
 }
 
 fn one_finding(report: &Value) -> Result<&Value, String> {
@@ -144,8 +172,14 @@ fn one_finding(report: &Value) -> Result<&Value, String> {
         report.pointer("/analysis_outcome/analysis_complete") == Some(&json!(true)),
         "incomplete retained analysis",
     )?;
-    let findings = report.get("findings").and_then(Value::as_array).ok_or("missing findings")?;
-    require(findings.len() == 1, "ordinary producer requires exactly one finding")?;
+    let findings = report
+        .get("findings")
+        .and_then(Value::as_array)
+        .ok_or("missing findings")?;
+    require(
+        findings.len() == 1,
+        "ordinary producer requires exactly one finding",
+    )?;
     let finding = findings.first().ok_or("missing finding")?;
     let gap = object(finding, "canonical_gap")?;
     let probe = object(finding, "probe")?;
@@ -166,7 +200,10 @@ fn one_finding(report: &Value) -> Result<&Value, String> {
     for field in ["id", "file", "family", "expression"] {
         text(probe, field)?;
     }
-    require(text(finding, "source_currentness")? == "candidate_current", "finding is not current")?;
+    require(
+        text(finding, "source_currentness")? == "candidate_current",
+        "finding is not current",
+    )?;
     text(finding, "classification")?;
     Ok(finding)
 }
@@ -188,7 +225,14 @@ fn bind_check(
     )?;
     let base = text(subject, "base")?;
     let expected = json!([
-        "check", "--root", root, "--base", base, "--worktree", "--format", "json"
+        "check",
+        "--root",
+        root,
+        "--base",
+        base,
+        "--worktree",
+        "--format",
+        "json"
     ]);
     let matched = commands.iter().any(|(command, result, stdout)| {
         command.get("program").and_then(Value::as_str) == Some(binary)
@@ -206,7 +250,10 @@ fn native_facts(
     commands: &[(Value, Value, Vec<u8>)],
 ) -> Result<(bool, bool), String> {
     let selector = text(native, "selector")?;
-    require(selector == "equality_boundary_discounts", "unsupported native selector")?;
+    require(
+        selector == "equality_boundary_discounts",
+        "unsupported native selector",
+    )?;
     let argv = native
         .get("command")
         .and_then(Value::as_array)
@@ -265,8 +312,14 @@ fn native_facts(
             && command.get("args") == Some(&json!(&argv[1..]))
             && clean(result)
             && result.get("native_exit_code") == native.get("native_exit_code")
-            && output.lines().filter(|l| l.starts_with("test result: ")).count() == 1
-            && output.lines().any(|l| l.starts_with("test result: ") && l.contains(&summary))
+            && output
+                .lines()
+                .filter(|l| l.starts_with("test result: "))
+                .count()
+                == 1
+            && output
+                .lines()
+                .any(|l| l.starts_with("test result: ") && l.contains(&summary))
             && output.lines().any(|l| {
                 l == format!(
                     "running {selected} {}",
@@ -299,7 +352,10 @@ fn project(receipts: &Receipts) -> Result<FunnelCaseRowV1, String> {
     let subject = receipts.json("journey/subject-before.json")?;
     let before = receipts.json("journey/before.json")?;
     let commands = receipts.commands()?;
-    require(wheel.get("schema_version") == Some(&json!(2)), "unsupported wheel receipt schema")?;
+    require(
+        wheel.get("schema_version") == Some(&json!(2)),
+        "unsupported wheel receipt schema",
+    )?;
     require(
         invocation.get("mode") == Some(&json!("installed"))
             && text(&invocation, "selector")? == SELECTOR
@@ -366,11 +422,12 @@ fn project(receipts: &Receipts) -> Result<FunnelCaseRowV1, String> {
         require(
             text(next, "canonical_gap_id")? == gap
                 && object(next, "canonical_gap")? == object(finding, "canonical_gap")?
-            && object(next, "probe")? == object(finding, "probe")?,
+                && object(next, "probe")? == object(finding, "probe")?,
             "after item/source mismatch",
         )?;
         movement = if finding.get("classification") == Some(&json!("weakly_exposed"))
-            && next.get("classification") == Some(&json!("exposed")) {
+            && next.get("classification") == Some(&json!("exposed"))
+        {
             "improved"
         } else {
             "unchanged"
@@ -378,7 +435,11 @@ fn project(receipts: &Receipts) -> Result<FunnelCaseRowV1, String> {
         after_present = true;
     }
     let (ran, passed) = if receipts.bytes.contains_key("journey/native-after.json") {
-        native_facts(&receipts.json("journey/native-after.json")?, root, &commands)?
+        native_facts(
+            &receipts.json("journey/native-after.json")?,
+            root,
+            &commands,
+        )?
     } else {
         (false, false)
     };
@@ -437,11 +498,15 @@ fn project(receipts: &Receipts) -> Result<FunnelCaseRowV1, String> {
         .cloned()
         .ok_or("stage without admitted receipt")?;
     }
-    row.identity.insert("candidate_sha".into(), candidate.into());
-    row.identity.insert("binary_sha256".into(), text(&admitted, "sha256")?.into());
+    row.identity
+        .insert("candidate_sha".into(), candidate.into());
+    row.identity
+        .insert("binary_sha256".into(), text(&admitted, "sha256")?.into());
     row.identity.insert("root".into(), root.into());
-    row.identity.insert("base".into(), text(&subject, "base")?.into());
-    row.identity.insert("head".into(), text(&subject, "head")?.into());
+    row.identity
+        .insert("base".into(), text(&subject, "base")?.into());
+    row.identity
+        .insert("head".into(), text(&subject, "head")?.into());
     row.identity.insert("item".into(), gap.into());
     row.identity.insert(
         "producer".into(),
@@ -456,7 +521,8 @@ fn project(receipts: &Receipts) -> Result<FunnelCaseRowV1, String> {
         .copied()
         .filter(|name| !row.stages.iter().any(|s| s.stage == *name))
         .collect();
-    row.identity.insert("missing_stages".into(), missing.join(", "));
+    row.identity
+        .insert("missing_stages".into(), missing.join(", "));
     for (name, hash) in &receipts.hashes {
         row.identity.insert(format!("source:{name}"), hash.clone());
     }
@@ -470,9 +536,12 @@ pub(super) fn report(path: &Path) -> Result<FirstHourRepairFunnelReportV1, Strin
 
 fn report_bytes(path: &Path, bytes: &[u8]) -> Result<FirstHourRepairFunnelReportV1, String> {
     require(bytes.len() <= 1024 * 1024, "input manifest exceeds 1 MiB")?;
-    let manifest: Manifest = serde_json::from_slice(bytes)
-        .map_err(|e| format!("input manifest: {e}"))?;
-    require(manifest.schema_version == MANIFEST_SCHEMA, "unsupported retained manifest schema")?;
+    let manifest: Manifest =
+        serde_json::from_slice(bytes).map_err(|e| format!("input manifest: {e}"))?;
+    require(
+        manifest.schema_version == MANIFEST_SCHEMA,
+        "unsupported retained manifest schema",
+    )?;
     require(
         manifest.cohort == "installed_deterministic_journey",
         "installed fixture cannot be claimed as a real cohort",
@@ -489,7 +558,10 @@ fn report_bytes(path: &Path, bytes: &[u8]) -> Result<FirstHourRepairFunnelReport
         )?)?;
         let normalized = serde_json::to_value(&row).map_err(|e| e.to_string())?;
         if let Some(previous) = seen.insert(row.case_id.clone(), normalized.clone()) {
-            require(previous == normalized, "conflicting duplicate opportunity views")?;
+            require(
+                previous == normalized,
+                "conflicting duplicate opportunity views",
+            )?;
             continue;
         }
         row.identity.insert("manifest_sha256".into(), digest(bytes));
@@ -516,10 +588,13 @@ mod tests {
 
     fn retained() -> Result<Receipts, String> {
         let path = manifest_path();
-        let manifest: Manifest = serde_json::from_slice(&fs::read(&path)
-            .map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        Receipts::load(path.parent()
-            .ok_or("manifest parent")?, manifest.bundles.first().ok_or("bundle")?)
+        let manifest: Manifest =
+            serde_json::from_slice(&fs::read(&path).map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+        Receipts::load(
+            path.parent().ok_or("manifest parent")?,
+            manifest.bundles.first().ok_or("bundle")?,
+        )
     }
 
     fn repin(receipts: &mut Receipts, name: &str, value: &Value) -> Result<(), String> {
@@ -549,7 +624,11 @@ mod tests {
     #[test]
     fn repair_funnel_required_identity_fields_cannot_disappear_in_pairs() -> Result<(), String> {
         for (left, right, field) in [
-            ("wheel-receipt.json", "runner-receipt.json", "candidate_tree"),
+            (
+                "wheel-receipt.json",
+                "runner-receipt.json",
+                "candidate_tree",
+            ),
             ("runner-receipt.json", "invocation.json", "runner_sha256"),
         ] {
             let mut receipts = retained()?;
@@ -564,7 +643,10 @@ mod tests {
             let mut receipts = retained()?;
             for (name, command) in [("journey/before.json", 1), ("journey/after.json", 11)] {
                 let mut value = receipts.json(name)?;
-                value["findings"][0].as_object_mut().ok_or("finding")?.remove(field);
+                value["findings"][0]
+                    .as_object_mut()
+                    .ok_or("finding")?
+                    .remove(field);
                 repin_check(&mut receipts, name, command, &value)?;
             }
             assert!(project(&receipts).is_err(), "missing paired {field}");
@@ -589,7 +671,11 @@ mod tests {
         repin_check(&mut receipts, "journey/after.json", 11, &after)?;
         let row = project(&receipts)?;
         assert_eq!(row.funnel_exit, "honest_static_limitation");
-        assert!(!row.stages.iter().any(|s| s.stage == "verified_improvement_or_closure"));
+        assert!(
+            !row.stages
+                .iter()
+                .any(|s| s.stage == "verified_improvement_or_closure")
+        );
         Ok(())
     }
 
@@ -608,11 +694,20 @@ mod tests {
                 || s.stage == "install_complete"
                 || s.stage == "terminal_receipt_issued"
         }));
-        assert!(row.metrics.iter().all(|m| m.state == "not_measured" && m.sample_count == 0));
+        assert!(
+            row.metrics
+                .iter()
+                .all(|m| m.state == "not_measured" && m.sample_count == 0)
+        );
         let value = serde_json::to_value(&report).map_err(|e| e.to_string())?;
         let input = super::super::repair_funnel_to_input(&value)?;
-        assert!(input["metrics"].as_array()
-            .ok_or("metrics")?.iter().all(|m| m.get("completed") == Some(&json!(false))));
+        assert!(
+            input["metrics"]
+                .as_array()
+                .ok_or("metrics")?
+                .iter()
+                .all(|m| m.get("completed") == Some(&json!(false)))
+        );
         let markdown = super::super::repair_funnel_markdown(&report);
         assert!(markdown.contains("installed_deterministic_journey"));
         assert!(markdown.contains("no real repair, personal adoption"));
@@ -622,21 +717,35 @@ mod tests {
     #[test]
     fn repair_funnel_rejects_manifest_digest_and_real_cohort_tampering() -> Result<(), String> {
         let path = manifest_path();
-        let mut value: Value = serde_json::from_slice(&fs::read(&path)
-            .map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        let mut value: Value = serde_json::from_slice(&fs::read(&path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
         value["cohort"] = json!("governed_real_repository_attempt");
-        assert!(report_bytes(&path, &serde_json::to_vec(&value)
-            .map_err(|e| e.to_string())?).is_err());
+        assert!(
+            report_bytes(
+                &path,
+                &serde_json::to_vec(&value).map_err(|e| e.to_string())?
+            )
+            .is_err()
+        );
         value["cohort"] = json!("installed_deterministic_journey");
         value["bundles"][0]["files"]["journey/before.json"] = json!("sha256:wrong");
-        assert!(report_bytes(&path, &serde_json::to_vec(&value)
-            .map_err(|e| e.to_string())?).is_err());
+        assert!(
+            report_bytes(
+                &path,
+                &serde_json::to_vec(&value).map_err(|e| e.to_string())?
+            )
+            .is_err()
+        );
         Ok(())
     }
 
     #[test]
     fn repair_funnel_rejects_repinned_identity_and_raw_stream_tampering() -> Result<(), String> {
-        for file in ["invocation.json", "journey/subject-before.json", "journey/after.json"] {
+        for file in [
+            "invocation.json",
+            "journey/subject-before.json",
+            "journey/after.json",
+        ] {
             let mut receipts = retained()?;
             let mut value = receipts.json(file)?;
             match file {
@@ -666,11 +775,19 @@ mod tests {
         ] {
             let mut receipts = retained()?;
             let bytes = receipts.bytes.get(file).ok_or("native control")?.clone();
-            receipts.hashes.insert("journey/native-after.json".into(), digest(&bytes));
-            receipts.bytes.insert("journey/native-after.json".into(), bytes);
+            receipts
+                .hashes
+                .insert("journey/native-after.json".into(), digest(&bytes));
+            receipts
+                .bytes
+                .insert("journey/native-after.json".into(), bytes);
             let row = project(&receipts)?;
             assert_eq!(row.funnel_exit, exit);
-            assert!(!row.stages.iter().any(|s| s.stage == "verified_improvement_or_closure"));
+            assert!(
+                !row.stages
+                    .iter()
+                    .any(|s| s.stage == "verified_improvement_or_closure")
+            );
         }
         let mut receipts = retained()?;
         receipts.bytes.remove("journey/native-after.json");
@@ -704,8 +821,15 @@ mod tests {
             let argv = native["command"].as_array().ok_or("native argv")?;
             raw_command["args"] = json!(&argv[1..]);
             repin(&mut receipts, "journey/native-after.json", &native)?;
-            repin(&mut receipts, "journey/command-010/command.json", &raw_command)?;
-            assert!(project(&receipts).is_err(), "repinned unsupported Cargo argv");
+            repin(
+                &mut receipts,
+                "journey/command-010/command.json",
+                &raw_command,
+            )?;
+            assert!(
+                project(&receipts).is_err(),
+                "repinned unsupported Cargo argv"
+            );
         }
         let mut receipts = retained()?;
         let mut raw_command = receipts.json("journey/command-001/command.json")?;
@@ -713,18 +837,23 @@ mod tests {
             .as_array_mut()
             .ok_or("check argv")?
             .push(json!("--quiet"));
-        repin(&mut receipts, "journey/command-001/command.json", &raw_command)?;
-        assert!(project(&receipts).is_err(), "repinned unsupported check argv");
+        repin(
+            &mut receipts,
+            "journey/command-001/command.json",
+            &raw_command,
+        )?;
+        assert!(
+            project(&receipts).is_err(),
+            "repinned unsupported check argv"
+        );
         Ok(())
     }
 
     #[test]
     fn repair_funnel_conflicting_views_reject_missing_native() -> Result<(), String> {
         let path = manifest_path();
-        let mut value: Value = serde_json::from_slice(
-            &fs::read(&path).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
+        let mut value: Value = serde_json::from_slice(&fs::read(&path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
         let mut missing_native = value["bundles"][0].clone();
         missing_native["files"]
             .as_object_mut()
@@ -748,11 +877,17 @@ mod tests {
     #[test]
     fn repair_funnel_duplicate_channel_views_count_one_opportunity() -> Result<(), String> {
         let path = manifest_path();
-        let mut value: Value = serde_json::from_slice(&fs::read(&path)
-            .map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        let mut value: Value = serde_json::from_slice(&fs::read(&path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
         let bundle = value["bundles"][0].clone();
-        value["bundles"].as_array_mut().ok_or("bundles")?.push(bundle);
-        let report = report_bytes(&path, &serde_json::to_vec(&value).map_err(|e| e.to_string())?)?;
+        value["bundles"]
+            .as_array_mut()
+            .ok_or("bundles")?
+            .push(bundle);
+        let report = report_bytes(
+            &path,
+            &serde_json::to_vec(&value).map_err(|e| e.to_string())?,
+        )?;
         assert_eq!(report.case_count, 1);
         Ok(())
     }
