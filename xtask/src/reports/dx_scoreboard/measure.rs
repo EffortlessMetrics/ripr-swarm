@@ -838,12 +838,7 @@ pub(crate) fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result
             .map_err(|err| format!("create {}: {err}", options.corpus_dir.display()))?;
         git(
             None,
-            &[
-                "clone",
-                "--quiet",
-                &entry.url,
-                &dir.display().to_string(),
-            ],
+            &["clone", "--quiet", &entry.url, &dir.display().to_string()],
         )?;
     }
     let dir = fs::canonicalize(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
@@ -923,7 +918,14 @@ fn verify_objects(dir: &Path, sha: &str, base: &str) -> Result<(), String> {
     .map_err(|err| format!("cannot resolve base {base}: {err}"))?;
     let objects = git_no_lazy(
         Some(dir),
-        &["rev-list", "--objects", "--no-walk", "--missing=print", sha, base],
+        &[
+            "rev-list",
+            "--objects",
+            "--no-walk",
+            "--missing=print",
+            sha,
+            base,
+        ],
     )?;
     if objects.lines().any(|line| line.starts_with('?')) {
         return Err("checkout is missing objects required by its pin or base".to_string());

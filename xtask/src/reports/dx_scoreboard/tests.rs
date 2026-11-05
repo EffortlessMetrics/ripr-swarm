@@ -3477,8 +3477,11 @@ fn measured_checkout_uses_the_pin_not_cached_worktree_inputs() -> Result<(), Str
     ])?;
     let base = git(&["rev-parse", "HEAD"])?;
     fs::write(source.join("subject.rs"), "pin\n").map_err(|err| err.to_string())?;
-    fs::write(source.join("ripr.toml"), "[languages]\nenabled = [\"rust\"]\n")
-        .map_err(|err| err.to_string())?;
+    fs::write(
+        source.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\"]\n",
+    )
+    .map_err(|err| err.to_string())?;
     git(&["add", "."])?;
     git(&["add", "-f", "ripr.toml"])?;
     git(&[
