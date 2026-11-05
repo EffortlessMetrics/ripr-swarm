@@ -29,6 +29,7 @@
 Cargo.lock|rust_workspace_lockfile|rust|Pinned Cargo dependency graph.
 Cargo.toml|rust_workspace_manifest|rust|Root Cargo workspace manifest.
 benchmarks/agentic/**/Cargo.toml|fixture_input|agentic-benchmarks|Controlled agentic-surface benchmark fixture input manifests (B1-B6).
+benchmarks/muse-plugin/**/Cargo.toml|fixture_input|agent/plugin|Muse plugin evaluation fixture input manifests (#13106); no dependencies.
 benchmarks/targeted_rerun_benchmark/**/Cargo.toml|fixture_input|targeted-rerun|Controlled SPEC-0123 benchmark workspace manifest.
 crates/**/Cargo.toml|rust_package_manifest|rust|Cargo package manifests.
 crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.lock|fixture_input|analysis-fixtures|Exact proptest 1.11.0 provider graph for the registered singleton property and native discrimination controls (#10839).
