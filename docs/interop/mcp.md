@@ -109,8 +109,12 @@ refresh again after edits.
 
 Initialize instructions, the refresh tool and source-schema descriptions, and
 `ripr mcp --help` name this conditional custody route before analysis. Saved
-tracked input alone never promises a repair-ready item: producer agreement and
-the ordinary per-item gates both apply. The real stdio regression
+tracked input alone never promises a repair-ready item. Established producer
+custody is necessary for a worktree card, alongside the ordinary card-admission
+checks. An admitted card may still be not ready: readiness depends on the
+per-item gates, and a not-ready card retains finding guidance. The retained
+`witness_bound_card_projects_the_shared_handoff_card` test exercises that
+distinction. The real stdio regression
 `refresh_source_worktree_serves_repair_card_and_readiness_with_established_custody`
 exercises successful saved-test edits; the custody controls for source, test
 oracle and HEAD movement retain the refusal boundary (#13194).

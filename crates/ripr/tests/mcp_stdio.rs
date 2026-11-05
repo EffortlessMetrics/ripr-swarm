@@ -1173,7 +1173,8 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
     }
     // #13194: discovery must agree with the real saved-worktree card journey
     // and the source/test-oracle/HEAD-movement custody refusal controls. Input
-    // mode alone establishes neither refusal nor readiness; keep both gates.
+    // mode alone establishes neither refusal nor readiness. Card admission
+    // requires custody, but an admitted card may still report not ready.
     for (surface, text) in [
         ("initialize", instructions),
         ("server/discover", discover_instructions),
@@ -1181,10 +1182,11 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
         ("tools/list ripr_refresh", description.as_str()),
         ("source schema", source_description),
     ] {
-        let text = normalized(text);
+        let text = normalized(text).to_ascii_lowercase();
         for required in [
-            "established producer custody and passing per-item gates",
+            "cards require established producer custody",
             "otherwise withheld with the cause",
+            "readiness depends on per-item gates",
         ] {
             if !text.contains(required) {
                 failures.push(format!(
@@ -1196,7 +1198,8 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
             "worktree repair cards/readiness are withheld",
             "with no repair cards",
             "repair cards and readiness are withheld",
-            "Worktree snapshots withhold repair cards and readiness",
+            "worktree snapshots withhold repair cards and readiness",
+            "cards and readiness require",
             "always available",
             "always ready",
             "always established",
