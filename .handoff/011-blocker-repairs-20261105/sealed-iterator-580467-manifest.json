@@ -1,0 +1,13 @@
+{
+  "base": "4e463e27746957d4746795d78c81b16abfe1be9e",
+  "candidate": "58046707fb5eb87ee24a6792d2d696a1226f7e77",
+  "tree": "fc7bf13b7610439da6c860e7ab747d854ec8c193",
+  "patch_bytes": 18867,
+  "patch_sha256": "2a7a8989277a45dee8809b7f313651683f06db2fe7b1457765879913ae9ec173",
+  "prior_result": "4e463 compiled;4native+16production pass,1tuple-positive fail; downstream stages not reached. Six factor controls keep pin unresolved even without rival and on whole-tuple equality.",
+  "repair": "Tuple-only sealed standard-prelude Iterator dispatch supplies the missing actual trait scope and withholds generic prelude interception only for that owner; aliases/disabled preludes/unknown imports/explicit std-core imports/extern aliases refuse. Generic return pins keep old behavior. Same-type inherent overrides still compete.",
+  "native_override": "An actual inherent size_hint override makes the same test pass input and before,1executed test each; new source test requires this changed trait seam remain non-exposed.",
+  "cache": "full1.169/sharded+compact0.171; refuse1.168/0.170 predecessor",
+  "current_proof": "guarded18production+4native compile active; compatibility120,owner-pin/reveal,field parity,schema/cache stages sequential, not yet established",
+  "remaining": "terminal focused qualification;ambiguous typed-return golden reconciliation;25artifact regeneration;source/policy/hosted/install/release-selection/promotion obligations"
+}

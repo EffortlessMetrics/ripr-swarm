@@ -1,0 +1,71 @@
+{
+  "rows": {
+    "input": {
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--offline",
+        "--manifest-path",
+        "/dev/shm/ripr-011-qualification/tuple-override-3pvie0r4/input/Cargo.toml",
+        "--target-dir",
+        "/workspace/011-integration-proof/golden-native-pairs/target",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "guard_stop": null,
+      "seconds": 0.604,
+      "stdout_sha256": "158a775a886c95aa3008c227b1bfea9816daad6f566ef9f9268d65ee7059a281",
+      "stderr_sha256": "111ccdca423003acb942d6e7b32464de40b86b28ca746f5d2640a9dc188dc9cf",
+      "tests": [
+        {
+          "name": "while_some_size_hint_upper_bound",
+          "status": "ok"
+        }
+      ],
+      "nonempty_test_execution": true
+    },
+    "reverse": {
+      "command": [
+        "git",
+        "apply",
+        "--reverse",
+        "--whitespace=nowarn",
+        "/workspace/ripr-011-current-main/fixtures/rust_same_method_owner_type_positive/diff.patch"
+      ],
+      "exit": 0,
+      "guard_stop": null,
+      "seconds": 0.201,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tests": [],
+      "nonempty_test_execution": false
+    },
+    "before": {
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--offline",
+        "--manifest-path",
+        "/dev/shm/ripr-011-qualification/tuple-override-3pvie0r4/input/Cargo.toml",
+        "--target-dir",
+        "/workspace/011-integration-proof/golden-native-pairs/target",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "guard_stop": null,
+      "seconds": 0.401,
+      "stdout_sha256": "158a775a886c95aa3008c227b1bfea9816daad6f566ef9f9268d65ee7059a281",
+      "stderr_sha256": "0de35cf2e2149e9c7d60f763b7a921359ce441a58ac9615a9e6499c6446456a2",
+      "tests": [
+        {
+          "name": "while_some_size_hint_upper_bound",
+          "status": "ok"
+        }
+      ],
+      "nonempty_test_execution": true
+    }
+  },
+  "claim": "Inherent size_hint shadows Iterator size_hint; the unchanged test passes both versions and must not expose the changed trait slot."
+}

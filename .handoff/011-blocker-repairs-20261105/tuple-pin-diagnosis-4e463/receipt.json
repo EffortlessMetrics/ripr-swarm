@@ -1,0 +1,66 @@
+{
+  "producer": "4e463e27746957d4746795d78c81b16abfe1be9e",
+  "rows": [
+    {
+      "case": "original",
+      "exit": 0,
+      "findings": [
+        [
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ]
+      ]
+    },
+    {
+      "case": "whole_tuple",
+      "exit": 0,
+      "findings": [
+        [
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ]
+      ]
+    },
+    {
+      "case": "no_rival",
+      "exit": 0,
+      "findings": [
+        [
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ]
+      ]
+    },
+    {
+      "case": "no_rival_whole",
+      "exit": 0,
+      "findings": [
+        [
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ]
+      ]
+    },
+    {
+      "case": "inline",
+      "exit": 0,
+      "findings": [
+        [
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ]
+      ]
+    },
+    {
+      "case": "inline_whole",
+      "exit": 0,
+      "findings": [
+        [
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ]
+      ]
+    }
+  ],
+  "claim": "Diagnostic factor controls, not qualification of altered fixtures."
+}
