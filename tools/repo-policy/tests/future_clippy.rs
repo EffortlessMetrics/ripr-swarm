@@ -163,7 +163,10 @@ fn stable_compatibility_requires_matching_tools_and_focused_commands() -> Result
     };
     let text = workflow()?;
     let document = coverage_document()?;
-    assert!(prepared(&text, &document), "native recipe proof must be wired");
+    assert!(
+        prepared(&text, &document),
+        "native recipe proof must be wired"
+    );
     for (label, from, to) in [
         (
             "missing LLVM component",
@@ -206,9 +209,15 @@ fn stable_compatibility_requires_matching_tools_and_focused_commands() -> Result
         );
     }
     let duplicate = format!("{text}\n      - name: {EXTRACT}\n        run: true\n");
-    assert!(!prepared(&duplicate, &document), "duplicate step must reject");
+    assert!(
+        !prepared(&duplicate, &document),
+        "duplicate step must reject"
+    );
     let late_setup = text.replacen(SETUP, "", 1) + SETUP;
-    assert!(!prepared(&late_setup, &document), "tools must precede proof");
+    assert!(
+        !prepared(&late_setup, &document),
+        "tools must precede proof"
+    );
     Ok(())
 }
 
@@ -387,7 +396,8 @@ esac
 
         fn executable_at(&self, relative: &str, source: &str) -> Result<(), String> {
             let path = self.0.join(relative);
-            fs::create_dir_all(path.parent().ok_or("missing parent")?).map_err(|e| e.to_string())?;
+            fs::create_dir_all(path.parent().ok_or("missing parent")?)
+                .map_err(|e| e.to_string())?;
             fs::write(&path, source).map_err(|e| e.to_string())?;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())
         }
@@ -397,7 +407,8 @@ esac
             for directory in ["docs/ci", "runner temp", "nested fixture"] {
                 fs::create_dir_all(fixture.0.join(directory)).map_err(|e| e.to_string())?;
             }
-            fs::write(fixture.0.join("docs/ci/coverage.md"), document).map_err(|e| e.to_string())?;
+            fs::write(fixture.0.join("docs/ci/coverage.md"), document)
+                .map_err(|e| e.to_string())?;
             fs::write(
                 fixture.0.join("nested fixture/rust-toolchain.toml"),
                 "[toolchain]\nchannel = \"unselected-fixture-toolchain\"\n",
@@ -410,7 +421,8 @@ esac
             for sdk in ["pinned SDK", "stable SDK"] {
                 fixture.executable_at(&format!("{sdk}/bin/rustc"), RECIPE_RUSTC)?;
                 fixture.executable_at(&format!("{sdk}/bin/cargo"), RECIPE_CARGO)?;
-                fixture.executable_at(&format!("{sdk}/bin/cargo-clippy"), "#!/bin/bash\nexit 0\n")?;
+                fixture
+                    .executable_at(&format!("{sdk}/bin/cargo-clippy"), "#!/bin/bash\nexit 0\n")?;
                 for tool in ["llvm-cov", "llvm-profdata"] {
                     fixture.executable_at(
                         &format!("{sdk}/lib/rustlib/fixture-host/bin/{tool}"),
@@ -637,8 +649,11 @@ esac
             assert_ne!(changed, document, "{case}");
             let fixture = Fixture::recipe_fixture(case, &changed)?;
             let extracted = fixture.0.join("runner temp/ripr-coverage-upgrade.sh");
-            fs::write(&extracted, "echo stale > \"$FIXTURE_ROOT/stale-executed\"\n")
-                .map_err(|e| e.to_string())?;
+            fs::write(
+                &extracted,
+                "echo stale > \"$FIXTURE_ROOT/stale-executed\"\n",
+            )
+            .map_err(|e| e.to_string())?;
             let output = fixture.recipe(case)?;
             assert!(!output.status.success(), "{case} was green: {output:?}");
             assert!(fixture.events()?.is_empty(), "{case} ran Cargo");
@@ -731,7 +746,9 @@ esac
         let completion = "recipe_completed source_sha=candidate-sha run_id=7307 run_attempt=2";
         let first = "Completed: 1.95.0 cargo test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture";
         let summary = "test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out; finished in 0.01s\n";
-        let last_summary = original.rfind(summary).ok_or("missing final test summary")?;
+        let last_summary = original
+            .rfind(summary)
+            .ok_or("missing final test summary")?;
         let mut missing_final_summary = original.clone();
         missing_final_summary.replace_range(last_summary..last_summary + summary.len(), "");
         for (case, changed) in [
@@ -774,8 +791,11 @@ esac
         }
         // A fresh partial execution must truncate even a fully successful older log.
         fs::write(fixture.0.join(relative), original).map_err(|e| e.to_string())?;
-        fs::write(fixture.0.join("runner temp/ripr-coverage-upgrade.sh"), ":\n")
-            .map_err(|e| e.to_string())?;
+        fs::write(
+            fixture.0.join("runner temp/ripr-coverage-upgrade.sh"),
+            ":\n",
+        )
+        .map_err(|e| e.to_string())?;
         let partial = fixture.run(NATIVE, "success", "unused")?;
         assert!(partial.status.success(), "{partial:?}");
         let rejected = fixture.run(VERIFY, "success", "unused")?;
