@@ -7,15 +7,18 @@
     "by_language": {
       "rust": {
         "floor_starts": 7,
-        "tolerance_cases": 1
+        "tolerance_cases": 1,
+        "expected_cases": 24
       },
       "python": {
         "floor_starts": 8,
-        "tolerance_cases": 1
+        "tolerance_cases": 1,
+        "expected_cases": 22
       },
       "typescript": {
         "floor_starts": 6,
-        "tolerance_cases": 1
+        "tolerance_cases": 1,
+        "expected_cases": 22
       }
     }
   },

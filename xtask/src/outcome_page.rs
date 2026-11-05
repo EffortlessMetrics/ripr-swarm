@@ -244,7 +244,7 @@ fn classes_and_action(report: &Value) -> (Vec<String>, Option<String>) {
 fn measure_case(ripr: &Path, dir: &Path, id: &str, language: &str) -> Value {
     let scratch = dir.join(".outcome-scratch");
     if let Err(error) = fs::create_dir_all(&scratch) {
-        return json!({"id": id, "instrument_failure": format!("scratch: {error}")});
+        return json!({"id": id, "language": language, "instrument_failure": format!("scratch: {error}")});
     }
     let check = run_bounded(
         ripr,
@@ -262,7 +262,7 @@ fn measure_case(ripr: &Path, dir: &Path, id: &str, language: &str) -> Value {
     let (check, repair) = match (check, repair) {
         (Ok(check), Ok(repair)) => (check, repair),
         (Err(error), _) | (_, Err(error)) => {
-            return json!({"id": id, "instrument_failure": error});
+            return json!({"id": id, "language": language, "instrument_failure": error});
         }
     };
     let parsed = serde_json::from_str::<Value>(&check.stdout);
@@ -605,7 +605,9 @@ fn evaluate(
     for language in LANGUAGES {
         let gate = &start_bar["by_language"][language];
         let Some(floor) = gate["floor_starts"].as_u64() else {
-            continue;
+            return Err(format!(
+                "{BARS_PATH} has no integer `floor_starts` for {language}; every language the set measures needs a floor"
+            ));
         };
         let tolerance = gate["tolerance_cases"].as_u64().unwrap_or(0);
         let counts = language_counts(latest, language);
@@ -614,8 +616,15 @@ fn evaluate(
                 "no {language} cases ran on {latest_date}, so its repair-start floor of {floor} is not established"
             ));
         }
+        if let (Some((lang_cases, _)), Some(expected)) = (counts, gate["expected_cases"].as_u64())
+            && lang_cases != expected
+        {
+            failures.push(format!(
+                "{language} ran {lang_cases} case(s) on {latest_date} but the pinned set has {expected}; a truncated set cannot establish its floor"
+            ));
+        }
         if let Some((lang_cases, lang_started)) = counts
-            && lang_started + tolerance < floor
+            && (lang_started > lang_cases || lang_started + tolerance < floor)
         {
             failures.push(format!(
                 "{language} repair-start regression on {latest_date}: {lang_started}/{lang_cases} start a repair, floor is {floor} with a tolerance of {tolerance} case(s)"
@@ -840,16 +849,17 @@ mod tests {
     fn receipt(date: &str, source: &str, started: u64, failures: Vec<&str>) -> Value {
         json!({
             "schema_version": RECEIPT_SCHEMA, "date": date, "source": source,
-            "cases": 46, "started": started + 8, "check_ms_p50": 120.0,
-            "by_language": {"rust": {"cases": 24, "started": started}, "python": {"cases": 22, "started": 8}},
+            "cases": 68, "started": started + 14, "check_ms_p50": 120.0,
+            "by_language": {"rust": {"cases": 24, "started": started}, "python": {"cases": 22, "started": 8}, "typescript": {"cases": 22, "started": 6}},
             "instrument_failures": failures,
         })
     }
 
     fn bars() -> Value {
         json!({"repair_start_rate": {"bar": 0.8, "by_language": {
-            "rust": {"floor_starts": 7, "tolerance_cases": 1},
-            "python": {"floor_starts": 8, "tolerance_cases": 1}}}})
+            "rust": {"floor_starts": 7, "tolerance_cases": 1, "expected_cases": 24},
+            "python": {"floor_starts": 8, "tolerance_cases": 1},
+            "typescript": {"floor_starts": 6, "tolerance_cases": 1}}}})
     }
 
     fn by_date(items: Vec<Value>) -> BTreeMap<String, Value> {
@@ -885,6 +895,23 @@ mod tests {
         assert_eq!(language_counts(&seed, "python"), None);
         let e = evaluate(&by_date(vec![seed]), &bars(), None)?;
         assert!(e.failures.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_truncated_case_set_fails_and_a_missing_floor_is_an_error() -> Result<(), String> {
+        let mut r = receipt("2026-11-04", "xtask_measure", 7, vec![]);
+        r["by_language"]["rust"]["cases"] = json!(10);
+        let e = evaluate(&by_date(vec![r]), &bars(), None)?;
+        assert!(e.failures.iter().any(|f| f.contains("pinned set has 24")));
+        let mut broken = bars();
+        broken["repair_start_rate"]["by_language"]["python"] = json!({"floor_start": 8});
+        let result = evaluate(
+            &by_date(vec![receipt("2026-11-04", "xtask_measure", 7, vec![])]),
+            &broken,
+            None,
+        );
+        assert!(matches!(result, Err(m) if m.contains("no integer `floor_starts` for python")));
         Ok(())
     }
 
@@ -1034,7 +1061,7 @@ mod tests {
         let loaded = load_receipts(&[live.clone(), seed.clone()]);
         let _ = fs::remove_dir_all(&dir);
         let loaded = loaded?;
-        assert_eq!(loaded["2026-11-02"]["started"], json!(16));
+        assert_eq!(loaded["2026-11-02"]["started"], json!(22));
         Ok(())
     }
 
