@@ -5,4 +5,4 @@
 - Bind optional SCIP authority to the raw source commitments captured with RustIndex; reject conflicting captures and exclude uncaptured broader documents (#8116).
 - Borrow retained call-site source from the indexed file data in both SCIP consumers, preserving its lifetime after the temporary file view is released (#8116).
 - Exclude SCIP reference and definition authority for documents whose retained coordinate text differs from committed raw source, preventing BOM-shifted call joins (#8116).
-- Bind optional SCIP definitions to the exact retained function name/range, refusing callable constants and unrelated same-file owners while preserving proven sibling-function identity (Advances #8116).
+- Bind optional SCIP definitions to the exact retained function name/range, refusing callable constants and unrelated same-file owners while preserving established sibling-function identity (Advances #8116).
