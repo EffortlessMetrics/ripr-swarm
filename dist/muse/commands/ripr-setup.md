@@ -1,6 +1,6 @@
 ---
 description: Verify the RIPR plugin wiring (binary, MCP server, workspace status) without hidden configuration
-argument-hint: [repository-root]
+argument-hint: [expected-repository-root]
 ---
 
 Verify the RIPR integration in this session, step by step. Do not write
@@ -22,13 +22,22 @@ any configuration files and do not work around a failed step.
    `ripr_get_repair_attempt`, `ripr_get_receipt_status`,
    `ripr_get_repair_card`, and `ripr_list_repair_attempts`. If the server
    is absent or approval is pending, say exactly that and stop.
-3. Call `ripr_workspace_status` (with the repository at $ARGUMENTS when
-   one is given). Report: the resolved root posture, that server edit and
-   execution authority read `none`, the current attempt state, and any
-   limitation. Never print absolute host paths the server did not return.
-4. Call `ripr_refresh` once and report the outcome kind, the snapshot id,
-   and `fresh_for_working_tree`. An empty scope is not an all-clear;
-   surface `empty_scope_hint` when present.
+3. Call `ripr_workspace_status` with no arguments. The server root is
+   resolved once from the Muse session's startup working directory.
+   $ARGUMENTS, if supplied, names an expected root for comparison, not a
+   tool argument or a request the running server can apply. If the
+   intended root differs or cannot be established, stop and start a fresh
+   Muse session from that repository; a later shell `cd` does not retarget
+   the server. Report the returned root posture and identity, server edit
+   and execution authority (`none`), attempt state, and limitations. Never
+   invent an absolute path from the returned hashed root identity.
+4. Call `ripr_refresh` once with explicit `{"source": "committed"}`, or
+   explicit `"worktree"` if the requested check includes saved edits.
+   Repeat any explicitly selected `base`; neither option is sticky.
+   Report the outcome kind, returned snapshot source/base where disclosed,
+   snapshot id, and `fresh_for_working_tree`. Do not promote a failed
+   refresh's last-known-good snapshot to a successful current check.
+   An empty scope is not an all-clear; surface `empty_scope_hint`.
 5. Finish with one line: setup is working, or the exact step that failed
    with its typed failure code. Do not claim support beyond what these
    calls just demonstrated in this session.
