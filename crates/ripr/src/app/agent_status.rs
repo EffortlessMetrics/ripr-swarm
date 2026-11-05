@@ -29,7 +29,7 @@ use crate::domain::{
 };
 use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::markdown::{
-    PowershellForm, command_shell_disclosure, powershell_form, short_command_shell_note,
+    PowershellForm, agent_status_shell_disclosure, command_shell_disclosure, powershell_form,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -2563,14 +2563,16 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         if next.runs_after_test_edit() {
             rendered.push_str(&format!("{AFTER_TEST_EDIT_NOTE}\n\n"));
         }
-        // A command that runs unchanged in PowerShell needs only the short note;
-        // the full quoting paragraph is for commands that have a second form.
+        // #13242: status is the quickstart's polling surface, so the default
+        // render carries a one-line host boundary note; the global
+        // -v/--verbose flag restores the full legacy disclosure for a reader
+        // who needs the quoting essay.
         let form = powershell_form(&next.command);
-        if matches!(form, PowershellForm::SameAsBash) {
-            rendered.push_str(short_command_shell_note());
-        } else {
-            rendered.push_str(command_shell_disclosure());
-        }
+        rendered.push_str(agent_status_shell_disclosure(
+            matches!(form, PowershellForm::SameAsBash),
+            cfg!(windows),
+            crate::is_verbose(),
+        ));
         rendered.push_str("```bash\n");
         rendered.push_str(&next.command);
         rendered.push_str("\n```\n");
@@ -5714,6 +5716,63 @@ mod tests {
         assert!(
             boundary_disclosed,
             "next command presentation must state the host shell boundary:\n{rendered}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #13242: plain `ripr status` is the quickstart's polling surface, so the
+    /// default markdown render must not repeat the full shell-quoting essay on
+    /// every poll. The one-line note keeps the host boundary claim and names
+    /// the `-v`/`--verbose` route to the full disclosure; the command fence
+    /// and its per-command PowerShell variant are unchanged.
+    #[test]
+    fn agent_status_markdown_poll_note_stays_short_and_points_at_verbose() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("markdown-poll-note");
+        write_file(
+            &root.join(WORKFLOW_AGENT_PACKET_ARTIFACT),
+            r#"{"packets":[{"seam_id":"seam-a"}]}"#,
+        )?;
+
+        let report = build_agent_status_report(&root, Path::new("repo root"));
+        let rendered = render_agent_status_markdown(&report);
+
+        // The full essay markers are gone from the default poll surface.
+        assert!(
+            !rendered.contains("WSL bash is not a drop-in substitute"),
+            "full essay must not repeat on the polling surface:\n{rendered}"
+        );
+        // The one-line note replaces them and names the verbose route.
+        let note = crate::output::markdown::status_poll_shell_note(cfg!(windows));
+        assert!(rendered.contains(note.trim_end()), "{rendered}");
+        assert!(
+            rendered.contains("`-v`/`--verbose`"),
+            "route to the full disclosure missing:\n{rendered}"
+        );
+        // Host boundary claim survives, pinned like the variant test above.
+        let boundary = if cfg!(windows) {
+            "Windows console"
+        } else {
+            "cmd.exe is not supported."
+        };
+        assert!(
+            rendered.contains(boundary),
+            "host shell boundary claim lost:\n{rendered}"
+        );
+        // The command presentation itself is untouched.
+        let next = check_repo_exposure_command(
+            &bound_root("repo root"),
+            "draft",
+            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+        );
+        assert!(
+            rendered.contains(&format!("```bash\n{next}\n```")),
+            "bash fence must survive:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("```powershell\n"),
+            "per-command PowerShell variant must survive:\n{rendered}"
         );
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
