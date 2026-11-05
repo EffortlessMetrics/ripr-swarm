@@ -154,8 +154,7 @@ pub(super) fn module_import_unshadowed(
         || module_value::extension_beside(root, file)
         || module_value::compiled_package_shadow(root, roots, file)
         || extensions.is_none_or(|names| module_value::shadowed_by_extension(names, file))
-        || (admission == ImportPathAdmission::CanonicalSrc
-            && !file.starts_with(Path::new("src")))
+        || (admission == ImportPathAdmission::CanonicalSrc && !file.starts_with(Path::new("src")))
         || !own_package_chain(root, file, sources)
     {
         return false;
@@ -238,9 +237,7 @@ fn module_route_unshadowed(
         let source = directory.with_extension("py");
         match std::fs::symlink_metadata(root.join(&source)) {
             Ok(metadata)
-                if source == own
-                    && index + 1 == parts.len()
-                    && metadata.file_type().is_file() => {}
+                if source == own && index + 1 == parts.len() && metadata.file_type().is_file() => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             _ => return false,
         }

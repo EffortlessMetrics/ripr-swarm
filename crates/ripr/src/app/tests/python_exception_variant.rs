@@ -248,8 +248,11 @@ fn check_output_python_exception_variant_admits_scanned_src_imports() -> Result<
     with_fixture(|root| {
         fs::rename(root.join("fx"), root.join("src/fx"))
             .map_err(|error| format!("move fixture into src layout: {error}"))?;
-        fs::write(root.join("diff.patch"), DIFF.replace("fx/core.py", "src/fx/core.py"))
-            .map_err(|error| format!("write src-layout diff: {error}"))?;
+        fs::write(
+            root.join("diff.patch"),
+            DIFF.replace("fx/core.py", "src/fx/core.py"),
+        )
+        .map_err(|error| format!("write src-layout diff: {error}"))?;
         fs::write(root.join("pyproject.toml"), OTHER_PATH)
             .map_err(|error| format!("write canonical src configuration: {error}"))?;
         // Both runs use the complete workspace producer; the second reads
@@ -350,14 +353,15 @@ fn check_output_python_import_identity_checks_excluded_module_sources() -> Resul
     with_fixture(|root| {
         fs::rename(root.join("fx/core.py"), root.join("src/core.py"))
             .map_err(|error| format!("move direct module into src: {error}"))?;
-        fs::write(root.join("diff.patch"), DIFF.replace("fx/core.py", "src/core.py"))
-            .map_err(|error| format!("write direct-module diff: {error}"))?;
+        fs::write(
+            root.join("diff.patch"),
+            DIFF.replace("fx/core.py", "src/core.py"),
+        )
+        .map_err(|error| format!("write direct-module diff: {error}"))?;
         fs::write(root.join("pyproject.toml"), OTHER_PATH)
             .map_err(|error| format!("write direct-module configuration: {error}"))?;
-        for (module, shadow_path) in [
-            ("core", "tests/core.py"),
-            ("src.core", "tests/src/core.py"),
-        ] {
+        for (module, shadow_path) in [("core", "tests/core.py"), ("src.core", "tests/src/core.py")]
+        {
             let test = TEST.replace("from fx.core import", &format!("from {module} import"));
             fs::write(root.join("tests/test_core.py"), test)
                 .map_err(|error| format!("write direct-module import: {error}"))?;
@@ -394,13 +398,18 @@ excluded_file_patterns = ["{shadow_path}"]
             let refused = run_check_with_config(root, &config)?;
             let finding = changed_raise(&refused)?;
             assert_no_variant_credit(finding);
-            assert_eq!(finding.canonical_gap.as_ref().map(|gap| &gap.id), Some(&gap));
-            fs::remove_file(&shadow)
-                .map_err(|error| format!("remove excluded module: {error}"))?;
+            assert_eq!(
+                finding.canonical_gap.as_ref().map(|gap| &gap.id),
+                Some(&gap)
+            );
+            fs::remove_file(&shadow).map_err(|error| format!("remove excluded module: {error}"))?;
             let restored = run_check_with_config(root, &config)?;
             let finding = changed_raise(&restored)?;
             assert_variant_credit(finding);
-            assert_eq!(finding.canonical_gap.as_ref().map(|gap| &gap.id), Some(&gap));
+            assert_eq!(
+                finding.canonical_gap.as_ref().map(|gap| &gap.id),
+                Some(&gap)
+            );
         }
         Ok(())
     })
