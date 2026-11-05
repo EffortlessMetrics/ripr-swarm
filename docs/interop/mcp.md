@@ -4,7 +4,7 @@
 [Model Context Protocol](https://modelcontextprotocol.io/): newline-delimited
 JSON-RPC on stdin and stdout. It tells an MCP client which repository root
 RIPR would use, what RIPR is and is not allowed to do there, and — after an
-explicit `ripr_refresh` — the committed analysis snapshot: a deterministically
+explicit `ripr_refresh` — the completed session snapshot: a deterministically
 bounded working set of canonical items and one complete evidence document per
 item. It never edits source, runs tests or mutation, or executes verification
 commands; `ripr_prepare_repair` only creates an in-memory transaction that
@@ -105,7 +105,17 @@ input was not observed (`not_established`, `withheld`), every item is
 cause and `ripr_get_repair_card` refuses with `incomplete_inventory`: refresh
 again once the edit settles. Untracked files stay excluded
 until `git add -N <paths>`. The server does not watch the worktree, so
-refresh again after edits. Requested and captured source are separate facts:
+refresh again after edits.
+
+Initialize instructions, the refresh tool and source-schema descriptions, and
+`ripr mcp --help` name this conditional custody route before analysis. Saved
+tracked input alone never promises a repair-ready item: producer agreement and
+the ordinary per-item gates both apply. The real stdio regression
+`refresh_source_worktree_serves_repair_card_and_readiness_with_established_custody`
+exercises successful saved-test edits; the custody controls for source, test
+oracle and HEAD movement retain the refusal boundary (#13194).
+
+Requested and captured source are separate facts:
 a failed worktree request keeps the last committed snapshot tagged
 committed, and the reverse. A commit on the default branch itself leaves an
 empty committed diff; `ripr check --worktree --format json` remains the
@@ -671,7 +681,7 @@ bounded-selection summary.
 `ripr://repair-card/{canonical_id}`) projects the bounded repair card
 for one canonical item: the same versioned `repair_card.v1` document `ripr
 agent card` and the standard language server project, assembled by the shared
-application authority from the committed snapshot — the adapter never
+application authority from the completed session snapshot — the adapter never
 re-derives readiness, identity, currentness, or route state. The analyzed
 repository head and the diff-scoped classified seam inventory (each retained
 seam owner-discriminated bound to a snapshot item, with its evidence-scope

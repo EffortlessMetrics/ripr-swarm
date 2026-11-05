@@ -1081,6 +1081,10 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
         .get("description")
         .and_then(Value::as_str)
         .ok_or_else(|| "ripr_refresh omitted its description".to_string())?;
+    let source_description = refresh
+        .pointer("/inputSchema/properties/source/description")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "ripr_refresh source omitted its description".to_string())?;
     if refresh
         .pointer("/inputSchema/properties")
         .and_then(Value::as_object)
@@ -1166,6 +1170,39 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
     }
     if description.contains("the same analysis `ripr check`") {
         failures.push("tools/list ripr_refresh promises identical CLI input".to_string());
+    }
+    // #13194: discovery must agree with the real saved-worktree card journey
+    // and the source/test-oracle/HEAD-movement custody refusal controls. Input
+    // mode alone establishes neither refusal nor readiness; keep both gates.
+    for (surface, text) in [
+        ("initialize", instructions),
+        ("server/discover", discover_instructions),
+        ("mcp --help", help.as_str()),
+        ("tools/list ripr_refresh", description.as_str()),
+        ("source schema", source_description),
+    ] {
+        let text = normalized(text);
+        for required in [
+            "established producer custody and passing per-item gates",
+            "otherwise withheld with the cause",
+        ] {
+            if !text.contains(required) {
+                failures.push(format!("{surface} omitted conditional custody: {required:?}"));
+            }
+        }
+        for forbidden in [
+            "worktree repair cards/readiness are withheld",
+            "with no repair cards",
+            "repair cards and readiness are withheld",
+            "Worktree snapshots withhold repair cards and readiness",
+            "always available",
+            "always ready",
+            "always established",
+        ] {
+            if text.contains(forbidden) {
+                failures.push(format!("{surface} overclaims worktree custody: {forbidden:?}"));
+            }
+        }
     }
     if !failures.is_empty() {
         return Err(failures.join("\n"));
