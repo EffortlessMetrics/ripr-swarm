@@ -320,3 +320,12 @@ fn the_refusal_site_names_the_glob_only_for_tests_it_reaches() {
             .is_some()
     );
 }
+
+#[test]
+fn review_macro_use_can_shadow_builtin_derive_in_ancestor() {
+    let lib = "#[macro_use] extern crate inject;\nuse rayon::prelude::*;\nmod suite;\n";
+    let suite = "#[derive(Debug)] struct Marker; mod tests;";
+    let child = "use super::*; #[test] fn weighs() { assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
+    assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)));
+}
