@@ -126,7 +126,10 @@ fn command_help_keeps_mutability_and_enforcement_details() -> Result<(), String>
 #[test]
 fn check_fast_is_discoverable_with_its_local_proof_boundary() -> Result<(), String> {
     let exhaustive = normalized(&rendered_help(&["help", "--all"])?);
-    if !exhaustive.split_whitespace().any(|word| word == "check-fast") {
+    if !exhaustive
+        .split_whitespace()
+        .any(|word| word == "check-fast")
+    {
         return Err("exhaustive help omitted the local check-fast command".to_string());
     }
     if exhaustive.contains("check-fast [CI]") {
