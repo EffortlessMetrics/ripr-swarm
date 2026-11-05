@@ -213,7 +213,10 @@ mod tests {
         std::fs::write(&source, "original").map_err(|e| e.to_string())?;
         let expected = source_identity::source_identity(&root)?;
         let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
-        assert_eq!(workspace_from_manifest(&manifest, &expected)?, canonical_root);
+        assert_eq!(
+            workspace_from_manifest(&manifest, &expected)?,
+            canonical_root
+        );
 
         let path_error = refusal(workspace_from_manifest(&other_manifest, &expected))?;
         let actual_manifest = other_manifest.canonicalize().map_err(|e| e.to_string())?;
