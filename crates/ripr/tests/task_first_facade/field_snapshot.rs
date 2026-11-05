@@ -166,11 +166,10 @@ fn pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls() -> R
                 .iter()
                 .filter(|entry| {
                     entry["kind"] == "field_construction"
-                        && entry["expression"]
-                            .as_str()
-                            .is_some_and(|text| {
-                                text.split_whitespace().eq(expression.split_whitespace())
-                            })
+                        && entry["expression"].as_str().is_some_and(|text| {
+                            let tokens = text.split_whitespace();
+                            tokens.eq(expression.split_whitespace())
+                        })
                 })
                 .collect();
             assert_eq!(matches.len(), 1, "one intended field expression {expression}");

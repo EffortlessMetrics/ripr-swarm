@@ -179,7 +179,8 @@ pub fn make_record(prefix: &str, items: &[u32]) -> Record {{
             let seam = fields
                 .iter()
                 .find(|seam| {
-                    seam.expression().split_whitespace().eq(expression.split_whitespace())
+                    let tokens = seam.expression().split_whitespace();
+                    tokens.eq(expression.split_whitespace())
                 })
                 .ok_or_else(|| format!("missing {expression} field in {construction}"))?;
             for evidence in [
