@@ -555,7 +555,9 @@ call. The wrapper walk follows indexed calls and function values iteratively,
 including an owner passed as a value in another helper; revisited definitions
 do not loop. Its 64-definition budget retains uncertainty when exhausted.
 Function-value names are read in one masked scan with the shared owner-call
-exclusions, including non-ASCII names. A real opposite-kind wrapper, an
+exclusions, including non-ASCII names and Rust's lexical whitespace. Generic
+function items retain uncertainty, and raw/plain name alternatives are both
+checked against the graph's declaration spelling. A real opposite-kind wrapper, an
 owner-path function passed as a value, a macro call, an unknown container,
 an unindexed receiver or lowercase external call, or ambiguous same-name
 dispatch retains uncertainty.
@@ -570,6 +572,7 @@ read the same refusal. Proof: `assertion_call_kind_separates_same_named_free_and
 `opposite_kind_wrapper_walk_keeps_unrelated_chains_and_cycles_separate`,
 `opposite_kind_wrapper_budget_retains_uncertainty`,
 `opposite_kind_unicode_function_values_keep_owner_uncertainty`,
+`opposite_kind_returned_function_items_keep_owner_uncertainty`,
 `opposite_kind_callback_values_keep_owner_uncertainty`,
 `assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain`,
 `same_named_call_kinds_refuse_only_wrong_owner_repo_oracles`, and

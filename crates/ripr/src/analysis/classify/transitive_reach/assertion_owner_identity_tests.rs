@@ -195,9 +195,10 @@ fn opposite_kind_wrapper_budget_retains_uncertainty() -> Result<(), String> {
 fn opposite_kind_unicode_function_values_keep_owner_uncertainty() -> Result<(), String> {
     let index = parsed_index(
         "pub fn consumé(value: u32) -> u32 { value + 1 }\n\
-         pub fn forward() -> fn(u32) -> u32 { consumé }\n\
+         type Operation = fn(u32) -> u32;\n\
+         pub fn forward() -> Operation { consumé }\n\
          pub struct Widget;\n\
-         impl Widget { pub fn consumé(&self) -> fn(u32) -> u32 { forward() } }",
+         impl Widget { pub fn consumé(&self) -> Operation { forward() } }",
     )?;
     let owner = index
         .functions()
@@ -213,6 +214,62 @@ fn opposite_kind_unicode_function_values_keep_owner_uncertainty() -> Result<(), 
             "assert_eq!(widget.consumé()(1), 2)"
         )
     );
+    Ok(())
+}
+
+#[test]
+fn opposite_kind_returned_function_items_keep_owner_uncertainty() -> Result<(), String> {
+    // The alias keeps a `fn(...)` return-type token out of forward's call
+    // facts, so these controls actually challenge the function-value walk.
+    for (owner_generic, helper, returned) in [
+        ("", "", "consume"),
+        ("<T>", "", "consume::<u32>"),
+        ("<T>", "", "consume:: <u32>"),
+        ("", "", "\u{200e}consume\u{200e}"),
+        ("", "", "\u{2028}consume\u{2028}"),
+        (
+            "",
+            "fn r#bridge(value: u32) -> u32 { consume(value) }",
+            "r#bridge",
+        ),
+        (
+            "",
+            "fn r#bridge(value: u32) -> u32 { consume(value) }",
+            "bridge",
+        ),
+        (
+            "",
+            "fn bridge(value: u32) -> u32 { consume(value) }",
+            "r#bridge",
+        ),
+    ] {
+        let source = format!(
+            "pub fn consume{owner_generic}(value: u32) -> u32 {{ value + 1 }}\n\
+             type Operation = fn(u32) -> u32;\n\
+             {helper}\n\
+             fn forward() -> Operation {{ {returned} }}\n\
+             pub struct Widget;\n\
+             impl Widget {{ pub fn consume(&self, value: u32) -> u32 {{ forward()(value) }} }}",
+        );
+        let index = parsed_index(&source)?;
+        let forward = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "forward")
+            .ok_or_else(|| "missing returned-function helper".to_string())?;
+        assert!(
+            calls_of(forward).next().is_none(),
+            "the control must reach the value scan, not an unknown call: {returned:?}"
+        );
+        let reach_index = TransitiveReachIndex::new(&index);
+        assert!(
+            !reach_index.owner_reach("consume").assertion_pins_other_function(
+                owner(&index, true)?,
+                "assert_eq!(widget.consume(1), 2)"
+            ),
+            "returned owner path must retain uncertainty: {returned:?} / {helper}"
+        );
+    }
     Ok(())
 }
 

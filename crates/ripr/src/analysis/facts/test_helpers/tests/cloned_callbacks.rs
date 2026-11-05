@@ -1,8 +1,8 @@
 use super::*;
 
 #[test]
-fn cloned_call_making_callbacks_do_not_lend_plain_helper_assertions()
--> Result<(), Box<dyn Error>> {
+fn cloned_call_making_callbacks_do_not_lend_plain_helper_assertions() -> Result<(), Box<dyn Error>>
+{
     for body in [
         "        let c = || gate(11);\n        run_test(true, c.clone());\n",
         "        let c = || gate(11);\n        let d = c.clone();\n        run_test(true, d);\n",

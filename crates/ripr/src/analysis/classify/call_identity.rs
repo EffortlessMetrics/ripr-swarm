@@ -2385,26 +2385,37 @@ pub(super) fn text_may_call_function_kind(text: &str, function: &FunctionSummary
 /// Names that may be function values, using the same exclusions as the
 /// owner-call identity scan. Mask and scan once, including non-ASCII names;
 /// walking every indexed name or rescanning repeated tokens is unnecessary.
+/// Raw and plain spellings can name the same function, while the fact graph
+/// retains the declaration's spelling, so preserve both lookup alternatives.
 /// These names preserve uncertainty and never grant owner-call credit.
 pub(super) fn function_value_names(text: &str) -> BTreeSet<String> {
     let masked = mask_comments_and_strings(text);
     let use_items = use_item_ranges(&masked);
     let mut names = BTreeSet::new();
     let mut start = 0;
+    let token_char = |ch| is_ident_char(ch) && !super::text::is_rust_whitespace(ch);
+    let mut record = |start: usize, end: usize| {
+        if start == end || (&masked[start..end] == "r" && masked[end..].starts_with('#')) {
+            return;
+        }
+        let raw_start = masked[..start]
+            .strip_suffix("r#")
+            .filter(|before| !before.chars().next_back().is_some_and(token_char))
+            .map_or(start, str::len);
+        if is_function_value_mention(&masked, &use_items, raw_start, end, true) {
+            let name = &masked[start..end];
+            names.insert(name.to_string());
+            names.insert(format!("r#{name}"));
+        }
+    };
     for (end, ch) in masked.char_indices() {
-        if is_ident_char(ch) {
+        if token_char(ch) {
             continue;
         }
-        if start < end && is_function_value_mention(&masked, &use_items, start, end) {
-            names.insert(masked[start..end].to_string());
-        }
+        record(start, end);
         start = end + ch.len_utf8();
     }
-    if start < masked.len()
-        && is_function_value_mention(&masked, &use_items, start, masked.len())
-    {
-        names.insert(masked[start..].to_string());
-    }
+    record(start, masked.len());
     names
 }
 
@@ -3389,7 +3400,7 @@ fn value_mentions(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
         if ident_char_at(&masked, end) {
             continue;
         }
-        if is_function_value_mention(&masked, &use_items, start, end) {
+        if is_function_value_mention(&masked, &use_items, start, end, false) {
             mentions.push(qualifier_before(masked[..start].trim_end()));
         }
     }
@@ -3401,17 +3412,23 @@ fn is_function_value_mention(
     use_items: &[std::ops::Range<usize>],
     start: usize,
     end: usize,
+    allow_generic_value: bool,
 ) -> bool {
     if use_items.iter().any(|range| range.contains(&start)) {
         return false;
     }
-    let tail = masked[end..].trim_start();
+    let tail = masked[end..].trim_start_matches(super::text::is_rust_whitespace);
     // `name!` is a macro, but `name != x` compares the name as a value.
     let is_macro = tail.starts_with('!') && !tail.starts_with("!=");
-    if tail.starts_with('(') || tail.starts_with(':') || is_macro {
+    let possible_generic_value = allow_generic_value
+        && tail.strip_prefix("::").is_some_and(|rest| {
+            rest.trim_start_matches(super::text::is_rust_whitespace)
+                .starts_with('<')
+        });
+    if tail.starts_with('(') || (tail.starts_with(':') && !possible_generic_value) || is_macro {
         return false;
     }
-    let head = masked[..start].trim_end();
+    let head = masked[..start].trim_end_matches(super::text::is_rust_whitespace);
     !head.ends_with('.')
         && !head.ends_with('\'')
         && !matches!(
@@ -4667,7 +4684,7 @@ mod tests {
              let text = \"quoted\";\n\
              }",
         );
-        for value in ["render", "módulo", "type"] {
+        for value in ["render", "r#render", "módulo", "r#módulo", "type", "r#type"] {
             assert!(values.contains(value), "missing function value: {value}");
         }
         for nonvalue in [
@@ -4675,9 +4692,37 @@ mod tests {
             "commented", "quoted",
         ] {
             assert!(!values.contains(nonvalue), "not a function value: {nonvalue}");
+            assert!(
+                !values.contains(&format!("r#{nonvalue}")),
+                "not a raw function value: {nonvalue}"
+            );
         }
         assert!(function_value_names("módulo").contains("módulo"));
         assert!(function_value_names("").is_empty());
+    }
+
+    #[test]
+    fn function_value_names_keep_rust_whitespace_generics_and_raw_spellings() {
+        for whitespace in ['\u{0085}', '\u{200e}', '\u{200f}', '\u{2028}', '\u{2029}'] {
+            let text = format!("let callback = {whitespace}render{whitespace};");
+            let names = function_value_names(&text);
+            assert!(names.contains("render"), "Rust whitespace: {whitespace:?}");
+        }
+        for expression in ["render::<u32>", "render:: <u32>", "r#render::<u32>", "r#render"] {
+            let names = function_value_names(&format!("let callback = {expression};"));
+            assert!(names.contains("render"), "function value: {expression}");
+            assert!(names.contains("r#render"), "raw alternative: {expression}");
+        }
+        for expression in [
+            "object.render::<u32>(1)",
+            "object.r#render::<u32>(1)",
+            "fn r#render() {}",
+            "use crate::r#render;",
+        ] {
+            let names = function_value_names(expression);
+            assert!(!names.contains("render"), "not a function value: {expression}");
+            assert!(!names.contains("r#render"), "not a raw value: {expression}");
+        }
     }
 
     #[test]

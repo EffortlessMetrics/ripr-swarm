@@ -9946,4 +9946,3 @@ mod file_fact_stale_schema_prune_tests {
         Ok(())
     }
 }
-
