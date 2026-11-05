@@ -6025,4 +6025,9 @@ fn git_path_text_strips_windows_verbatim_prefixes() {
     assert_eq!(git_path_text(Path::new(r"H:\repo")), r"H:\repo");
     assert_eq!(git_path_text(Path::new("/home/u/repo")), "/home/u/repo");
     assert_eq!(git_path_text(Path::new("relative/repo")), "relative/repo");
+    // Non-ASCII UTF-8 text passes through exactly (strict conversion).
+    assert_eq!(
+        git_path_text(Path::new(r"\\?\H:\café\repo")),
+        r"H:\café\repo"
+    );
 }
