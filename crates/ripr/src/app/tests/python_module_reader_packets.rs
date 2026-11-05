@@ -383,8 +383,8 @@ fn module_string_reader_weak_membership_has_return_value_guidance() -> Check {
         crate::domain::StageState::Weak
     );
     assert!(finding.static_limit_kind.is_none(), "{finding:?}");
-    let card = python_repair_card(&finding)
-        .ok_or("the bounded weak reader must supply a repair card")?;
+    let card =
+        python_repair_card(&finding).ok_or("the bounded weak reader must supply a repair card")?;
     assert_eq!(card.missing_discriminator, "greet('bob') == \"hi, bob\"");
     assert!(card.recommended_test_shape.contains("return-value"));
     Ok(())
