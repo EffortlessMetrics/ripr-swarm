@@ -1,0 +1,27 @@
+{
+  "candidate": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+  "tree": "7ccb0143bf76b2dbd902291a42f11d10142ebc35",
+  "patch": "147-to-importer-binding.patch",
+  "patch_sha256": "aa5db8dc775ac3ff2fd51afdc8adb3852bbf9658e0609b4d851423351a1d9ba4",
+  "patch_bytes": 17254,
+  "base": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+  "status": "focused real-Cargo alias controls running; not yet qualified",
+  "reproduced": "Single-package own-name dependency alias and alloc alias falsely credit external trait first/last. Correct and wrong native Cargo tests each pass; old producer reports exposed. Multi-member collision was not discriminating and is not claimed reproduced.",
+  "before_producer": "0.11.0+147d1968ab4ff0d9739c0c328a1a50a274073f76+languages:rust=1,typescript=1,python=1,perl=0",
+  "repair": "Reuse importer-aware MemberCrates.import_names for indexed library roots; remove unconditional alloc root; advance cache generation to full1.163 / compact+sharded0.165 and reject predecessor.",
+  "fixture_correction": "ac717838 focused run failed because empty local First trait shadowed external glob; 3d82 removes local trait except internal positive. This was fixture dispatch failure, not a product regression.",
+  "pending": [
+    "current focused controls",
+    "current producer replay and portable fixture refresh",
+    "affected source review",
+    "exact-head broad/native qualification",
+    "history-sync required hosted checks",
+    "release-selection and installed journey",
+    "promotion authorization"
+  ],
+  "holds": [
+    "promotion trust hold",
+    "release selection scope_pending"
+  ],
+  "history_merge_authority": "Clarified explicit one-PR protected history-preserving direct merge approval; no protection bypass or change; qualification still required"
+}

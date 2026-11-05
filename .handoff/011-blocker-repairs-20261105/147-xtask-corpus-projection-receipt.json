@@ -1,0 +1,53 @@
+{
+  "stage": "xtask-corpus-projection",
+  "candidate": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+  "tree": "c7dd5b1c99e7dd2b543f5a39740f0acbfffa56ca",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "xtask",
+    "--bin",
+    "xtask",
+    "rust_corpus_projection",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 10.03,
+  "counts": {
+    "passed": 5,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 5412
+  },
+  "log_sha256": "ffb4019c48363e64e3ef748ee2e433b30e43d257824160079b908db8f2388b37",
+  "peak_cgroup_memory_bytes": 3360108544,
+  "samples": [
+    {
+      "utc": "2026-11-05T16:22:55.615756+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+      "pid": 853352,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3360108544,
+      "workspace_free_bytes": 21539164160,
+      "temp_free_bytes": 9428467712
+    }
+  ]
+}

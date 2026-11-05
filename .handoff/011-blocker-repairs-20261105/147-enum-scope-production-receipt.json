@@ -1,0 +1,63 @@
+{
+  "stage": "enum-scope-production",
+  "candidate": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+  "tree": "c7dd5b1c99e7dd2b543f5a39740f0acbfffa56ca",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "boundary_gap_closure",
+    "enum_branch_existing_import_and_module_forms_observe_mutant",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 20.03,
+  "counts": {
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 25
+  },
+  "log_sha256": "9c906d82f6b02cbc039f439afa2c019715da89bfe415f761d802cbd9c404b4f7",
+  "peak_cgroup_memory_bytes": 3553759232,
+  "samples": [
+    {
+      "utc": "2026-11-05T16:21:45.491183+00:00",
+      "stage": "enum-scope-production",
+      "head": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+      "pid": 847135,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3158986752,
+      "workspace_free_bytes": 21539332096,
+      "temp_free_bytes": 9428467712
+    },
+    {
+      "utc": "2026-11-05T16:21:55.491965+00:00",
+      "stage": "enum-scope-production",
+      "head": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+      "pid": 847135,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3553759232,
+      "workspace_free_bytes": 21539303424,
+      "temp_free_bytes": 9426984960
+    }
+  ]
+}

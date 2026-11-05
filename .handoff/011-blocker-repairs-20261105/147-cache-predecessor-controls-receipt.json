@@ -1,0 +1,52 @@
+{
+  "stage": "cache-predecessor-controls",
+  "candidate": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+  "tree": "c7dd5b1c99e7dd2b543f5a39740f0acbfffa56ca",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "favorable_",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 10.02,
+  "counts": {
+    "passed": 3,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 18173
+  },
+  "log_sha256": "bcd8c94f0f111d4963fdc9a6a251a97c07f7499ecb974b19872e1e54bed22118",
+  "peak_cgroup_memory_bytes": 2300129280,
+  "samples": [
+    {
+      "utc": "2026-11-05T15:51:14.351517+00:00",
+      "stage": "cache-predecessor-controls",
+      "head": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+      "pid": 676956,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 2300129280,
+      "workspace_free_bytes": 21628334080,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

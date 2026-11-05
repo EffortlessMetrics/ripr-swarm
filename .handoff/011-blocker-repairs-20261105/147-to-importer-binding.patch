@@ -1,0 +1,296 @@
+diff --git a/changelog.d/12010-sink-identity.md b/changelog.d/12010-sink-identity.md
+index b9c4bb001..8740c1d60 100644
+--- a/changelog.d/12010-sink-identity.md
++++ b/changelog.d/12010-sink-identity.md
+@@ -1,2 +1,2 @@
+ <!-- section: Fixed -->
+-- Keep strong Rust discrimination tied to the assertion that observes the changed result or effect; reject proximity-only oracles, unchanged return tokens, stale results and intercepted collection reads (including unread external trait dispatch) while retaining validated wrapper, array, async and error observers (#12010).
++- Keep strong Rust discrimination tied to the assertion that observes the changed result or effect; reject proximity-only oracles, unchanged return tokens, stale results and intercepted collection reads (including unread external trait dispatch and rebound crate-name imports) while retaining validated wrapper, array, async and error observers (#12010).
+diff --git a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+index 501bf5754..0cc07834e 100644
+--- a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
++++ b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+@@ -63,14 +63,28 @@ fn mentions(node: &ra_ap_syntax::SyntaxNode, binding: &str) -> bool {
+ // projection witness. Ordinary field identity and closed standard imports
+ // keep their existing admission.
+ fn projection_imports_closed(index: &RustIndex) -> bool {
+-    let known = |root: &str| {
+-        matches!(root, "std" | "core" | "alloc" | "crate" | "self" | "super")
+-            || index
+-                .package_names
+-                .iter()
+-                .any(|name| name.replace('-', "_") == root)
+-    };
+-    index.files().values().all(|facts| {
++    // MemberCrates admits only a witnessed library target at src/lib.rs.
++    // A globally familiar crate name is not its binding in this importer:
++    // Cargo can bind the package's own name, or even `alloc`, to an outside
++    // dependency. Resolve each nonstandard root through manifest authority.
++    // The value-equality witness separately certifies the std/core roots.
++    let library_roots: Vec<_> = index
++        .files()
++        .iter()
++        .map(|(path, _)| path)
++        .filter(|path| path.ends_with("src/lib.rs"))
++        .collect();
++    index.files().iter().all(|(file, facts)| {
++        let known = |root: &str| {
++            matches!(root, "std" | "core" | "crate" | "self" | "super")
++                || library_roots.iter().any(|library| {
++                    index
++                        .member_crates
++                        .import_names(file, library)
++                        .iter()
++                        .any(|bound| bound == root)
++                })
++        };
+         if crate::analysis::classify::reveal::flattened_use_paths(&facts.source)
+             .iter()
+             .any(|import| {
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index da2f10252..7585aea1d 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -692,7 +692,8 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// `1.160`: same-named receiver and free calls no longer lend one another an
+ /// assertion oracle; real opposite-kind wrappers retain reach uncertainty (#12234).
+ /// `1.162`: compose successor 1.161 with main callback/call-kind semantics.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.162";
++/// `1.163`: collection observers require importer-bound crate identities.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.163";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -899,7 +900,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.162";
+ /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+ /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+ /// `0.164`: composed successor and main semantics, matching full 1.162.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
++/// `0.165`: same importer-bound observer semantics as full 1.163.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.165";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1108,7 +1110,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
+ /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+ /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+ /// `0.164`: composed successor and main semantics, matching full 1.162.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
++/// `0.165`: same importer-bound observer semantics as full 1.163.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.165";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5263,7 +5266,7 @@ mod tests {
+         // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
+         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+         // Composed main and successor invalidate both predecessor branches.
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.162");
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.163");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5408,8 +5411,8 @@ mod tests {
+         // 0.162 -> 0.163: same external-observer refusal as full 1.161.
+         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.164");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.164");
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.165");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.165");
+     }
+ 
+     #[test]
+@@ -5736,6 +5739,7 @@ mod tests {
+             ("12010-sink-identity", "1.159", "0.161"),
+             ("external-observer-interception", "1.160", "0.162"),
+             ("pre-main-composition", "1.161", "0.163"),
++            ("crate-alias-interception", "1.162", "0.164"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+@@ -5809,7 +5813,7 @@ mod tests {
+     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
+         for previous in [
+             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
+-            "0.161", "0.162", "0.163",
++            "0.161", "0.162", "0.163", "0.164",
+         ] {
+             for compact in [false, true] {
+                 let scratch = integrity_scratch("property-shard-generation")?;
+diff --git a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+index a8cb03660..b9f9d4f5d 100644
+--- a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
++++ b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.162";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.163";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
+diff --git a/crates/ripr/tests/owner_pin_execution.rs b/crates/ripr/tests/owner_pin_execution.rs
+index 3ea47820c..5c1503a19 100644
+--- a/crates/ripr/tests/owner_pin_execution.rs
++++ b/crates/ripr/tests/owner_pin_execution.rs
+@@ -4182,7 +4182,8 @@ fn external_collection_trait_cannot_supply_payload_identity() -> Result<(), Stri
+     let external = scratch.0.join("external");
+     std::fs::create_dir_all(subject.join("src")).map_err(|e| e.to_string())?;
+     std::fs::create_dir_all(external.join("src")).map_err(|e| e.to_string())?;
+-    std::fs::write(subject.join("Cargo.toml"), "[package]\nname=\"subject\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n[dependencies]\nexternal_first={path=\"../external\"}\n").map_err(|e| e.to_string())?;
++    let manifest = subject.join("Cargo.toml");
++    let target = scratch.0.join("cargo-target");
+     std::fs::write(
+         external.join("Cargo.toml"),
+         "[package]\nname=\"external_first\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n",
+@@ -4190,31 +4191,31 @@ fn external_collection_trait_cannot_supply_payload_identity() -> Result<(), Stri
+     .map_err(|e| e.to_string())?;
+     let external_source = external.join("src/lib.rs");
+     std::fs::write(&external_source, "pub trait First { fn first(&self)->Option<&String>; fn last(&self)->Option<&String>; }\nimpl First for std::cell::Ref<'_,Vec<String>> { fn first(&self)->Option<&String> { static FIXED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| \"order-42\".to_string()); Some(&FIXED) } fn last(&self)->Option<&String> { self.first() } }\n").map_err(|e| e.to_string())?;
+-    let library = external.join("libexternal_first.rlib");
+-    compiles(
+-        run(
+-            Path::new("rustc"),
+-            &[
+-                "--edition=2024".as_ref(),
+-                "--crate-name=external_first".as_ref(),
+-                "--crate-type=rlib".as_ref(),
+-                external_source.as_os_str(),
+-                "-o".as_ref(),
+-                library.as_os_str(),
+-            ],
+-        )?,
+-        "external observer library",
+-    )?;
+     for method in ["first", "last"] {
+-        for (import, exposed) in [
+-            ("", true),
+-            ("use std::fmt::Debug as _;", true),
+-            ("use external_first::First;", false),
+-            ("use external_first::First as _;", false),
+-            ("use external_first::*;", false),
++        for (alias, import, exposed) in [
++            ("external_first", "", true),
++            ("external_first", "use std::fmt::Debug as _;", true),
++            ("external_first", "use external_first::First;", false),
++            ("external_first", "use external_first::First as _;", false),
++            ("external_first", "use external_first::*;", false),
++            ("subject", "use subject::First;", false),
++            ("alloc", "use alloc::First;", false),
++            ("subject", "use crate::First;", true),
+         ] {
+-            let input = format!("{}{}{}", &original[..start], import, &original[end..])
+-                .replace(".first()", &format!(".{method}()"));
++            std::fs::write(&manifest, format!("[package]\nname=\"subject\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n[dependencies]\n{alias}={{package=\"external_first\",path=\"../external\"}}\n")).map_err(|e| e.to_string())?;
++            let local_trait = if import == "use crate::First;" {
++                "\npub trait First {}\n"
++            } else {
++                ""
++            };
++            let input = format!(
++                "{}{}{}{}",
++                &original[..start],
++                import,
++                &original[end..],
++                local_trait
++            )
++            .replace(".first()", &format!(".{method}()"));
+             std::fs::write(subject.join("src/lib.rs"), &input).map_err(|e| e.to_string())?;
+             let report = check_workspace(CheckInput {
+                 root: subject.clone(),
+@@ -4233,40 +4234,37 @@ fn external_collection_trait_cannot_supply_payload_identity() -> Result<(), Stri
+                     .findings
+                     .iter()
+                     .all(|f| (f.class == ExposureClass::Exposed) == exposed),
+-                "{method}/{import}: {:?}",
++                "{method}/{alias}/{import}: {:?}",
+                 report.findings
+             );
+             for wrong in [false, true] {
+-                let source = scratch.0.join("runtime.rs");
+                 let text = if wrong {
+                     input.replace("notifier.send(order_id);", "notifier.send(\"static_msg\");")
+                 } else {
+                     input.clone()
+                 };
+-                std::fs::write(&source, text).map_err(|e| e.to_string())?;
+-                let executable = subject.join(format!("control{}", std::env::consts::EXE_SUFFIX));
+-                let binding = format!("external_first={}", library.display());
+-                compiles(
+-                    run(
+-                        Path::new("rustc"),
+-                        &[
+-                            "--edition=2024".as_ref(),
+-                            "--test".as_ref(),
+-                            source.as_os_str(),
+-                            "--extern".as_ref(),
+-                            binding.as_ref(),
+-                            "-o".as_ref(),
+-                            executable.as_os_str(),
+-                        ],
+-                    )?,
+-                    "external observer subject",
++                std::fs::write(subject.join("src/lib.rs"), text).map_err(|e| e.to_string())?;
++                // Cargo resolves the alias. A compile error cannot satisfy
++                // the nonzero native test inventory and runtime outcome.
++                let result = run(
++                    Path::new("cargo"),
++                    &[
++                        "test".as_ref(),
++                        "--offline".as_ref(),
++                        "--manifest-path".as_ref(),
++                        manifest.as_os_str(),
++                        "--target-dir".as_ref(),
++                        target.as_os_str(),
++                        "--".as_ref(),
++                        "--test-threads=1".as_ref(),
++                    ],
+                 )?;
+-                let result = run(&executable, &["--test-threads=1".as_ref()])?;
+                 let failed = usize::from(wrong && exposed);
++                assert!(String::from_utf8_lossy(&result.stdout).contains("running 1 test"));
+                 assert!(
+                     String::from_utf8_lossy(&result.stdout)
+                         .contains(&format!("{} passed; {failed} failed;", 1 - failed)),
+-                    "{method}/{import}/wrong={wrong}: {}",
++                    "{method}/{alias}/{import}/wrong={wrong}: {}",
+                     String::from_utf8_lossy(&result.stdout)
+                 );
+                 assert_eq!(
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index 41c65ebce..92e421fb1 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -19773,7 +19773,7 @@ top-level `source_subject`:
+ 
+ - `digest_algorithm`: always `"sha256"`.
+ - `corpus` (additive, full Rust inventory only): the analysis-owned
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.162",
++  `{ "scope": "rust_workspace", "cache_schema_version": "1.163",
+   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+   classified inventory cache key, including both production and test Rust
+   files after the existing generated-file exclusions. Repo-exposure producers
+@@ -20558,7 +20558,7 @@ targeted-rerun receipt shape:
+     "recomputation_reasons": ["selected_test_scope_recomputed"],
+     "invalidation_status": "not_available",
+     "input_fingerprint": {
+-      "schema_version": "1.162",
++      "schema_version": "1.163",
+       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+       "workspace_root_hash": "…",
+       "files_content_hash": "…",
+diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
+index 55ea29c0a..dcfd11f5a 100644
+--- a/xtask/src/tests/rust_corpus_projection.rs
++++ b/xtask/src/tests/rust_corpus_projection.rs
+@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.162";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.163";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";

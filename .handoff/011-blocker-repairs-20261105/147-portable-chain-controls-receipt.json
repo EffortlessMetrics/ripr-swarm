@@ -1,0 +1,84 @@
+{
+  "stage": "portable-chain-controls",
+  "candidate": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+  "tree": "c7dd5b1c99e7dd2b543f5a39740f0acbfffa56ca",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "cli_smoke",
+    "first_useful_action_corpus_pins_routing_cases",
+    "--",
+    "--exact",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 40.05,
+  "counts": {
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 715
+  },
+  "log_sha256": "dce9bef737f97c762d065b875882664fb22729aeae01dbcfe32dd32d45856b39",
+  "peak_cgroup_memory_bytes": 4024352768,
+  "samples": [
+    {
+      "utc": "2026-11-05T15:59:34.538244+00:00",
+      "stage": "portable-chain-controls",
+      "head": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+      "pid": 710635,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3352793088,
+      "workspace_free_bytes": 21555146752,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T15:59:44.551560+00:00",
+      "stage": "portable-chain-controls",
+      "head": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+      "pid": 710635,
+      "elapsed": 10.01,
+      "cgroup_memory_bytes": 3606196224,
+      "workspace_free_bytes": 21555146752,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T15:59:54.557600+00:00",
+      "stage": "portable-chain-controls",
+      "head": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+      "pid": 710635,
+      "elapsed": 20.02,
+      "cgroup_memory_bytes": 3847577600,
+      "workspace_free_bytes": 21555146752,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:00:04.558685+00:00",
+      "stage": "portable-chain-controls",
+      "head": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+      "pid": 710635,
+      "elapsed": 30.02,
+      "cgroup_memory_bytes": 4024352768,
+      "workspace_free_bytes": 21530955776,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

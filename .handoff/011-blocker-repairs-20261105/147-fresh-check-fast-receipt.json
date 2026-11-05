@@ -1,0 +1,27 @@
+{
+  "stage": "fresh-check-fast",
+  "candidate": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+  "tree": "c7dd5b1c99e7dd2b543f5a39740f0acbfffa56ca",
+  "command": [
+    "/workspace/12010-proof/target/debug/xtask",
+    "check-fast"
+  ],
+  "native_exit": -15,
+  "guard_stop": null,
+  "seconds": 10.03,
+  "counts": null,
+  "log_sha256": "cb654130db00318fedd9b66b86d43f3a52b3c3eda980dced682eeae15e94f7ff",
+  "peak_cgroup_memory_bytes": 3481001984,
+  "samples": [
+    {
+      "utc": "2026-11-05T16:23:05.659709+00:00",
+      "stage": "fresh-check-fast",
+      "head": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
+      "pid": 853716,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3481001984,
+      "workspace_free_bytes": 21539225600,
+      "temp_free_bytes": 9428467712
+    }
+  ]
+}
