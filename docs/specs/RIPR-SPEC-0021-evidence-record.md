@@ -121,10 +121,12 @@ Each `seams[].evidence_record` must include:
   evidence.
 - `actionability`: advisory actionability class and available guidance signals.
 - `calibration`: static/runtime confidence placeholder.
-- `static_limitations`: unknown or opaque static evidence stages. Each entry
-  keeps the original reason and adds a normalized analyzer limitation
-  `category` plus `repair_route` so Lane 1 can group repair work without
-  converting analyzer limits into user test gaps.
+- `static_limitations`: unknown or opaque static evidence stages and
+  authoritative producer-named limitations. Each entry keeps the original
+  stage, state and reason and adds a normalized analyzer limitation `category`
+  plus `repair_route` so Lane 1 can group repair work without converting
+  analyzer limits into user test gaps. A named limitation can apply while
+  the stage state remains `yes` or `no`.
 - `presentation_text`: nullable presentation-text evidence-class projection.
   It remains `null` until a fixture-backed presentation-text slice classifies
   visibility, observer shape, source kind, and output actionability.
@@ -422,6 +424,15 @@ Downstream surfaces may use these rows to explain why a canonical item is
 blocked by analyzer work, but must not count them as user test debt or infer a
 focused repair action from a raw `static_unknown` finding.
 
+The producer-named panic limitation uses category
+`rust_panic_outcome_unresolved` and route
+`analysis/oracle-semantics-audit-fixes`, preserving the original stage, state
+and reason even when every stage remains `yes` or `no`. The raw grip class and
+stage states remain unchanged, while actionability is `static_limitation` and
+the canonical item is a limitation without a focused repair command. Pilot
+and agent brief consumers withhold the seam using the same static-limitation
+decision (#12977).
+
 The activation limitation category `field_assignment_value_unresolved` routes
 to `analysis/field-assignment-value-resolution`. It names a direct field write
 whose value RIPR cannot safely resolve. This limitation remains non-actionable;
@@ -455,6 +466,7 @@ count by itself and it does not claim mutation execution.
 | --- | --- |
 | Record carries identity, evidence path, recommendation, actionability, and calibration placeholder | `evidence_record_carries_identity_path_guidance_and_calibration_placeholder` |
 | Unknown stages become static limitations | `evidence_record_names_static_limitations_from_unknown_stages` |
+| A producer-named panic limitation preserves its stage, state, reason, category and route without reclassifying the seam | `named_panic_limit_withholds_pilot_and_brief_without_reclassifying` |
 | Opaque classification is static limitation work | `evidence_record_marks_opaque_seams_as_static_limitation_work` |
 | Unsupported direct field assignments use their named limitation and analyzer route | `evidence_record_normalizes_static_limitation_categories` |
 | Repo exposure schema and metrics remain present | `json_carries_schema_version_scope_and_metrics` |
