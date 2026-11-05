@@ -28,7 +28,11 @@
       "duration": "8m54s",
       "log": "history-workspace-all-targets.log",
       "limitation": "compile check, not runtime or release qualification"
-    }
+    },
+    "refreshed_commit": "2812f6e88ae667237d2b0e081fa96b2e38f843a7",
+    "refreshed_tree": "09f3be29bc08a1f0db38a6017317ce8a66562adb",
+    "refreshed_base": "f4bc18a361360a3d33f6f7e561991504b6f3464a",
+    "refreshed_qualification": "not run; compile pass retained only for 6f1f0f58"
   },
   "qualified_7490_materialization": {
     "commit": "339e4c1dea913e10a95c3efb0e198190274f2a65",
@@ -39,7 +43,9 @@
     "commit": "15cd57e49554d60491647be9d1190183bd2b46e6",
     "tree": "b2af1b0078260f9a423bc1f049db4d8cfc990a64",
     "content": "history plus exact 7490 artifact, not 12010 repair",
-    "qualification": "not run"
+    "qualification": "not run; no 12010 repair or combined schema yet",
+    "refreshed_commit": "2fc0b8f98d7f0fe3ca1dbb242427776a6ae5fa3a",
+    "refreshed_tree": "4d74ab87fcd57a2a635489657316b23c6c9aac6e"
   },
   "holds": [
     "queue-only CI",
@@ -47,25 +53,19 @@
     "no release selection/publication claim"
   ],
   "current_binding_candidate": {
-    "commit": "327ff755cf8c36ed4cc417940a19eaa6adea1a84",
-    "tree": "2cff466edf6bc15de985d877f9ac578179c52677",
-    "qualification": "workspace integration 4/4 pass; reveal-suite rerun active; no composed qualification",
-    "workspace_discard_control": {
-      "exit": 0,
-      "passed": 1,
-      "failed": 0,
-      "duration": "3m18s build + 0.14s execution",
-      "log": "assertion-binding-workspace.log",
-      "coverage": "actual workspace pipeline: unrelated negative, direct owner, bound result and both assertion orders"
-    },
+    "commit": "ada92361f3a35de2c5890e0ea6fec213bf199b04",
+    "tree": "5695d660f12f26ab3c0ced991558864d4d02fbf3",
+    "production_repair": "4ed7bb43bfa313ef532004b41908f759d5d21e37",
     "workspace_integration_file": {
-      "exit": 0,
-      "passed": 4,
+      "passed": 5,
       "failed": 0,
       "ignored": 0,
-      "log": "assertion-binding-workspace-full.log",
-      "scope": "diagnostic-only refusal, actual wording positive, discarded result negative and owner positives in both orders, native mutation separation"
-    }
+      "log": "assertion-binding-effect-workspace-final.log",
+      "source_custody": "same source bytes executed immediately before final one-line test-only commit; no production changes in ada92361",
+      "coverage": "discarded result, diagnostic-only use, shadowed binding, discarded initializer/asserted blocks, actual direct/bound results and both orders; native mutation contrast; persisted effect actual observer and separate-instance negative"
+    },
+    "qualification": "broader Rust-only reveal suite compiling; not composed or merge ready",
+    "review_delta": "whole-call-effect-review-delta.patch"
   },
   "review_delta": {
     "base": "d1bef96f582a0df8ed627481d808e1f72a25acc0",

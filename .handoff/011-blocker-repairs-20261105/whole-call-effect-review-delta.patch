@@ -1,0 +1,194 @@
+diff --git a/crates/ripr/src/analysis/classify/reveal.rs b/crates/ripr/src/analysis/classify/reveal.rs
+index 19245f2e8..8fbc28cb5 100644
+--- a/crates/ripr/src/analysis/classify/reveal.rs
++++ b/crates/ripr/src/analysis/classify/reveal.rs
+@@ -3026,6 +3026,14 @@ fn analyze_related_assertions(
+                     role: crate::domain::RelatedTestRole::Contributing,
+                 });
+             } else if matched {
++                let captured_log_read =
++                    (return_admission.captured_log_exact_membership_confirms)(test, assertion);
++                let collection_read = collection_observer_confirms(
++                    &probe.expression,
++                    matches!(probe.family, ProbeFamily::CallDeletion),
++                    test,
++                    assertion,
++                );
+                 let observation_confirmed = !self_computed
+                     // Refusal withholds kind-only credit, not an independently
+                     // confirmed token. Retain the token path's existing identity gates.
+@@ -3055,9 +3063,7 @@ fn analyze_related_assertions(
+                                 || collection_argument_read
+                                 || out_parameter_confirmed
+                                 || recording_double_read
+-                                || (return_admission.captured_log_exact_membership_confirms)(
+-                                    test, assertion,
+-                                )
++                                || captured_log_read
+                                 || (direct_collection_mutation_receiver(&probe.expression)
+                                     .is_none()
+                                     && ((has_token_match && field_write.is_none())
+@@ -3108,7 +3114,23 @@ fn analyze_related_assertions(
+                 // A call elsewhere in this test establishes reach, not what
+                 // this oracle reads. Bind the assertion itself to the owner's
+                 // result; retain the existing producer-authenticated observers.
+-                let identity = (owner_bound
++                // The lexical binding helper is sufficient for association, but
++                // not for strong identity: it does not establish binding
++                // currentness after shadowing. Bound-result identity belongs
++                // to the indexed producer pin below. Only a direct owner call
++                // in the oracle operands can use this lexical path.
++                let direct_owner_oracle = !import_defeats_owner
++                    && !cross_package_defeats_owner
++                    && !match_context.owner_shadowed
++                    && match_context.owner_callee.is_some_and(|owner| {
++                        assertion_comparison_operands(&assertion.text).is_some_and(|operands| {
++                            operands
++                                .iter()
++                                .any(|operand| is_whole_owner_call(operand.trim(), owner))
++                        }) || crate::analysis::extract::outer_assertion_condition(&assertion.text)
++                            .is_some_and(|operand| is_whole_owner_call(operand.trim(), owner))
++                    });
++                let identity = (direct_owner_oracle
+                     && matches!(
+                         reason,
+                         RelationReason::DirectOwnerCall
+@@ -3130,7 +3152,18 @@ fn analyze_related_assertions(
+                     || recording_double_read
+                     || field_collection_read
+                     || collection_argument_read
+-                    || out_parameter_confirmed;
++                    || out_parameter_confirmed
++                    || captured_log_read
++                    || collection_read
++                    // Preserve the existing effect-family token witness when
++                    // the same assertion passes its carrier and kind gates.
++                    // A relation or unrelated whole-object oracle alone still
++                    // cannot acquire identity through this path.
++                    || (is_effect_family(&probe.family)
++                        && !is_proximity_only(*reason)
++                        && has_token_match
++                        && observation_confirmed
++                        && (return_admission.effect_state_carried)(test, assertion));
+                 // Keep strength, kind, and confirmation on one assertion.
+                 // An equally strong confirmed oracle wins over an unrelated
+                 // one regardless of encounter order; a weaker oracle cannot.
+diff --git a/crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs b/crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs
+index a356bed8c..fc8d953ae 100644
+--- a/crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs
++++ b/crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs
+@@ -195,9 +195,11 @@ fn sink_identity_real_parser_discarded_return_cannot_lend_identity_to_another_as
+             "assert_eq!(description(), \"verifies catalog\"); assert_eq!(other, \"verifies catalog\");",
+             StageState::Yes,
+         ),
++        // This parser-only harness has no indexed return pin. The workspace
++        // integration control separately requires this genuine binding exposed.
+         (
+             "let result = description(); assert_eq!(result, \"verifies catalog\");",
+-            StageState::Yes,
++            StageState::Weak,
+         ),
+     ] {
+         let source = format!(
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index 969614d34..91b4a8566 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -13,7 +13,12 @@ fn check(test: &str) -> Result<String, String> {
+     check_source(SOURCE, test)
+ }
+ 
+-fn check_source(source: &str, test: &str) -> Result<String, String> {
++fn check_report(
++    source: &str,
++    test: &str,
++    manifest: &str,
++    diff_text: &str,
++) -> Result<serde_json::Value, String> {
+     struct Scratch(std::path::PathBuf);
+     impl Drop for Scratch {
+         fn drop(&mut self) {
+@@ -35,11 +40,11 @@ fn check_source(source: &str, test: &str) -> Result<String, String> {
+     std::fs::create_dir(&dir.0).map_err(|e| e.to_string())?;
+     std::fs::create_dir(dir.path().join("src")).map_err(|e| e.to_string())?;
+     std::fs::create_dir(dir.path().join("tests")).map_err(|e| e.to_string())?;
+-    std::fs::write(dir.path().join("Cargo.toml"), MANIFEST).map_err(|e| e.to_string())?;
++    std::fs::write(dir.path().join("Cargo.toml"), manifest).map_err(|e| e.to_string())?;
+     std::fs::write(dir.path().join("src/lib.rs"), source).map_err(|e| e.to_string())?;
+     std::fs::write(dir.path().join("tests/catalog.rs"), test).map_err(|e| e.to_string())?;
+     let diff = dir.path().join("change.diff");
+-    std::fs::write(&diff, DIFF).map_err(|e| e.to_string())?;
++    std::fs::write(&diff, diff_text).map_err(|e| e.to_string())?;
+     let report = check_workspace(CheckInput {
+         root: dir.path().into(),
+         diff_file: Some(diff),
+@@ -51,6 +56,11 @@ fn check_source(source: &str, test: &str) -> Result<String, String> {
+     let json: serde_json::Value =
+         serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+             .map_err(|e| e.to_string())?;
++    Ok(json)
++}
++
++fn check_source(source: &str, test: &str) -> Result<String, String> {
++    let json = check_report(source, test, MANIFEST, DIFF)?;
+     let findings = json["findings"].as_array().ok_or("missing findings")?;
+     assert_eq!(findings.len(), 1, "{json}");
+     assert_eq!(
+@@ -236,6 +246,22 @@ fn discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle() ->
+     let observed = "assert_eq!(default_check_description(), \"verifies catalog consistency\");";
+     for (assertions, expected) in [
+         (unrelated.to_string(), "weakly_exposed"),
++        (
++            "let result = default_check_description(); assert_eq!(other, \"verifies catalog consistency\", \"{result}\");".to_string(),
++            "weakly_exposed",
++        ),
++        (
++            "let result = default_check_description(); let result = \"verifies catalog consistency\"; assert_eq!(result, \"verifies catalog consistency\");".to_string(),
++            "weakly_exposed",
++        ),
++        (
++            "let result = { let _ = default_check_description(); \"verifies catalog consistency\" }; assert_eq!(result, \"verifies catalog consistency\");".to_string(),
++            "weakly_exposed",
++        ),
++        (
++            "assert_eq!({ let _ = default_check_description(); \"verifies catalog consistency\" }, \"verifies catalog consistency\");".to_string(),
++            "weakly_exposed",
++        ),
+         (observed.to_string(), "exposed"),
+         (format!("{unrelated}\n{observed}"), "exposed"),
+         (format!("{observed}\n{unrelated}"), "exposed"),
+@@ -249,3 +275,34 @@ fn discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle() ->
+     }
+     Ok(())
+ }
++
++/// Preserve the established persisted-effect observer while refusing an
++/// assertion on a different instance after the same owner call.
++#[test]
++fn persisted_effect_observer_retains_identity_without_lending_it_to_another_instance()
++-> Result<(), String> {
++    let source =
++        include_str!("../../../fixtures/observation_verified_side_effect/input/src/lib.rs");
++    let test = include_str!(
++        "../../../fixtures/observation_verified_side_effect/input/tests/process_tests.rs"
++    );
++    let manifest =
++        include_str!("../../../fixtures/observation_verified_side_effect/input/Cargo.toml");
++    let diff = include_str!("../../../fixtures/observation_verified_side_effect/diff.patch");
++    let unrelated = test.replace(
++        "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
++        "let other = Notifier::new();\n    assert_eq!(*other.sent.borrow(), Vec::<String>::new());",
++    );
++    assert_ne!(unrelated, test);
++    for (test, expected) in [(test, "exposed"), (unrelated.as_str(), "weakly_exposed")] {
++        let report = check_report(source, test, manifest, diff)?;
++        let finding = report["findings"]
++            .as_array()
++            .ok_or("missing findings")?
++            .iter()
++            .find(|finding| finding["probe"]["family"] == "side_effect")
++            .ok_or("side-effect row missing")?;
++        assert_eq!(finding["classification"], expected, "{report}");
++    }
++    Ok(())
++}
