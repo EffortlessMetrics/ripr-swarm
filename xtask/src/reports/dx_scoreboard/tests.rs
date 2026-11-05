@@ -11,6 +11,7 @@ use super::measure::{
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
 
+mod consumer_checkout;
 mod partial;
 
 /// The committed config, resolved from the crate root so a test that moves
