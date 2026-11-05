@@ -421,11 +421,26 @@ non-ignored related test matches one of these shapes:
   and escape are not followed.
 - **insta**: a `direct_owner_call` test with a snapshot macro that has no
   inline `@` literal, whose snapshotted value (after an optional literal name)
-  derives from the owner as above (a live binding at the assertion), and no `add_redaction`, `with_settings` or `Settings`,
+  derives from the owner as above (a live binding at the assertion),
   on a changed `field:` initializer that no redaction selector (a literal
   keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
   keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
-  does a redacted field (`lib-insta-json-redacted-id`).
+  does a literal redacted field (`lib-insta-json-redacted-id`) when no unread
+  settings are present. Executable whole names `add_redaction`, `with_settings`
+  or `Settings` before the owner-bound snapshot identify configuration this
+  reader does not evaluate (#13035). That case carries the same typed
+  limitation with advice naming the unread settings or redactions; it does not
+  assert that no redaction names the field. This limitation also applies to an
+  inline `@` snapshot under that unread configuration. Comments, strings,
+  identifier substrings, configuration only after the assertion, a snapshot
+  of another value, and settings without an owner-bound snapshot do not supply
+  this witness. Constant selectors remain withheld, and ordinary inline
+  snapshots retain their existing disposition. This is bounded syntax
+  admission; settings scopes, type aliases and dynamic selector evaluation
+  remain unsupported. Snapshot-byte identity and positive projection credit
+  remain with #8121. This reader governs fresh `Finding` output; repository
+  seam evidence and pilot/brief selection have a separate producer, whose
+  snapshot-uncertainty disclosure remains a residual under #8121.
 - **fixture receiver** (#9609): a `return_value` probe whose changed line
   holds a closure (`|..|`, `move |..|` or `|| ..` opening an argument; a boolean or bitwise `||` / `|` is not one) in a `&self` method, and a `direct_owner_call` test
   with a strong assertion: an `assert_eq!` with a literal (number, string,
@@ -1215,6 +1230,11 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
+- `insta_settings::unread_settings_withhold_both_fields` and
+  `insta_settings::with_settings_withholds_both_fields` exercise the public
+  classifier on both the redacted field and its unredacted sibling; controls
+  preserve literal redactions, constant selectors, ordinary inline snapshots,
+  exact field assertions and owner binding.
 - `fixtures/fixture_receiver_coincident_data` and its independent honesty case
   retain equal-column, single-row product/sum and all-zero product/sum refusals.
 - `fixture_receiver_literal_pin_reads_helper_data` and
