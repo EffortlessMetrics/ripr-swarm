@@ -1,0 +1,9 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-integration/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 8m 15s
+     Running unittests src/lib.rs (/workspace/12010-proof/target/debug/deps/ripr-7f72c4b83423df9b)
+
+running 1 test
+test analysis::classifier::evidence::tests::a_sibling_field_that_may_exit_keeps_return_value_weakly ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18090 filtered out; finished in 0.05s
+

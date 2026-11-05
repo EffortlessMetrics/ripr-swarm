@@ -1,11 +1,11 @@
 {
-  "candidate": "89996734794fe94d19d50a7fa6014d9fc36b7532",
-  "tree": "15780a938b6a327541bdb8ae09d1909d3a0f7556",
+  "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+  "tree": "8cfd711dfb13246f4e09508d57d2d7bc9a718397",
   "branch": "successor/011-integration-20261105",
   "product_source_review": {
     "candidate": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
     "tree": "ca975841fd261a4e4e7e274c86a718ffe10ecd30",
-    "result": "coordinator confirmed exact qualified-wrapper delta review clean; accumulated cdbb-to-current observer delta pending affected review"
+    "result": "coordinator review clean through cdbb; exact cumulative patch through d409 now published for affected source review; no new independent acceptance inferred"
   },
   "product_controls": {
     "candidate": "c0287c53f83aee5db1b74862ff10701612303bc6",
@@ -17,9 +17,9 @@
   },
   "current_delta": {
     "base": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
-    "path": "8999673-observer-complete.patch",
-    "bytes": 81041,
-    "sha256": "92a086a166e8875df506cf0ea15b350fa17b7ac3866bf484fe54fe0f7e7ef8df"
+    "path": "d409-observer-complete.patch",
+    "bytes": 97792,
+    "sha256": "47a0a06a5eb58c0699a2e12cbe1df9ea3e5f539d5f5e4d2f5367c9f7801423e0"
   },
   "retained_policy_leaves": {
     "allow_attributes": 0,
@@ -28,7 +28,7 @@
     "full_policy": "FD045 aggregate ci-policy exit 0; exact current refresh pending"
   },
   "qualification": {
-    "status": "compatibility batch terminal pass; broader exact-current qualification pending",
+    "status": "exact full-library passed; remaining consumer/native checks running",
     "prior_exact_candidate": "2ed9a70d5dcfe9e396d126c5a5e27cacac969dc1",
     "prior_full_library": {
       "passed": 18087,
@@ -95,6 +95,146 @@
       ],
       "receipt": "2ed9-owner-call-compatibility-receipt.json",
       "remaining": "mixed same-line boundary pairing in new control; same-file module and block-tail bool identity; out-of-line parent trait/unit imports"
+    },
+    "tool_session": 86286,
+    "current_focused_and_full": {
+      "array-return-controls": {
+        "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+        "native_exit": 0,
+        "counts": {
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 18090
+        },
+        "receipt": "d409-array-return-controls-receipt.json",
+        "log_sha256": "3008a47ab22966ad53c7e7297e76f358072fd865bc8b4c35c70c24a42906f0a3"
+      },
+      "parser-payload-controls": {
+        "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+        "native_exit": 0,
+        "counts": {
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 18090
+        },
+        "receipt": "d409-parser-payload-controls-receipt.json",
+        "log_sha256": "d15067d3fa158e9f5af7a25625453cde6904134e8c0869f6540e3c9dd63bcd67"
+      },
+      "helper-reach-controls": {
+        "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+        "native_exit": 0,
+        "counts": {
+          "passed": 45,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 18046
+        },
+        "receipt": "d409-helper-reach-controls-receipt.json",
+        "log_sha256": "00d33aecf00128d328a1b2bf2bffd18e07cd75afcffb305d7ae2a5db5568cbde"
+      },
+      "schema-consumer-controls": {
+        "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+        "native_exit": 0,
+        "counts": {
+          "passed": 11,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 18080
+        },
+        "receipt": "d409-schema-consumer-controls-receipt.json",
+        "log_sha256": "9c32e4d30e27c5b3186ed3a753200a007cd50942152d9cdeadf6eefc90f4a6bb"
+      },
+      "production-and-native-controls": {
+        "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+        "native_exit": 0,
+        "counts": {
+          "passed": 11,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 0
+        },
+        "receipt": "d409-production-and-native-controls-receipt.json",
+        "log_sha256": "3263912fc13b74c7c5b4dfdcfaade7492ccce7849c8a2de245f03f9744bbc4f8"
+      },
+      "cfg-authority-controls": {
+        "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+        "native_exit": 0,
+        "counts": {
+          "passed": 19,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 18072
+        },
+        "receipt": "d409-cfg-authority-controls-receipt.json",
+        "log_sha256": "16548d5f999babcaa266f3b5f292382d619d3fd6a1a31ad01d3e29edce1f3902"
+      },
+      "macro-binding-controls": {
+        "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+        "native_exit": 0,
+        "counts": {
+          "passed": 33,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 18058
+        },
+        "receipt": "d409-macro-binding-controls-receipt.json",
+        "log_sha256": "372cf4b12c8ed145db81e36e9d1b2ded8bf0e1b95f7c0f41e098bd41dfcba63b"
+      },
+      "final-reveal": {
+        "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+        "native_exit": 0,
+        "counts": {
+          "passed": 159,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 17932
+        },
+        "receipt": "d409-final-reveal-receipt.json",
+        "log_sha256": "7bade36fcafd2adcd55dda2f1406a61f2e31f352f73bad00b7fcb0b1f29d7a7f"
+      },
+      "final-full-lib": {
+        "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+        "native_exit": 0,
+        "counts": {
+          "passed": 18089,
+          "failed": 0,
+          "ignored": 2,
+          "measured": 0,
+          "filtered": 0
+        },
+        "receipt": "d409-final-full-lib-receipt.json",
+        "log_sha256": "eeaac6147ef5e70a9ed864c50bae8ef14522e92a0b6d43f7c2065035648a56b3"
+      },
+      "enum-scope-production": {
+        "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+        "native_exit": 0,
+        "counts": {
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 25
+        },
+        "receipt": "d409-enum-scope-production-receipt.json",
+        "log_sha256": "88c9822af727d58c96f71a9ced6157c52613bc7b3312e96ed98cae8059031abd"
+      },
+      "intercepted-first-golden": {
+        "candidate": "89996734794fe94d19d50a7fa6014d9fc36b7532",
+        "native_exit": 0,
+        "counts": null,
+        "receipt": "d409-intercepted-first-golden-receipt.json",
+        "log_sha256": "f9d025aabf4eca1e6e3b0ff31087500a5711719e29a09c3cf3040fc11bfbeb7f"
+      }
     }
   },
   "history": {

@@ -1,0 +1,52 @@
+{
+  "stage": "macro-binding-controls",
+  "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+  "tree": "8cfd711dfb13246f4e09508d57d2d7bc9a718397",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "analysis::syntax::owner_pin::",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 10.03,
+  "counts": {
+    "passed": 33,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 18058
+  },
+  "log_sha256": "372cf4b12c8ed145db81e36e9d1b2ded8bf0e1b95f7c0f41e098bd41dfcba63b",
+  "peak_cgroup_memory_bytes": 3072733184,
+  "samples": [
+    {
+      "utc": "2026-11-05T13:29:34.079541+00:00",
+      "stage": "macro-binding-controls",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 498270,
+      "elapsed": 0.01,
+      "cgroup_memory_bytes": 3072733184,
+      "workspace_free_bytes": 22457741312,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

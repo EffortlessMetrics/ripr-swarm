@@ -1,0 +1,52 @@
+{
+  "stage": "cfg-authority-controls",
+  "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+  "tree": "8cfd711dfb13246f4e09508d57d2d7bc9a718397",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "analysis::facts::cfg_predicates::tests::",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 10.12,
+  "counts": {
+    "passed": 19,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 18072
+  },
+  "log_sha256": "16548d5f999babcaa266f3b5f292382d619d3fd6a1a31ad01d3e29edce1f3902",
+  "peak_cgroup_memory_bytes": 3046936576,
+  "samples": [
+    {
+      "utc": "2026-11-05T13:29:23.807068+00:00",
+      "stage": "cfg-authority-controls",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 498241,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3046936576,
+      "workspace_free_bytes": 22457737216,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

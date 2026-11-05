@@ -1,0 +1,52 @@
+{
+  "stage": "helper-reach-controls",
+  "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+  "tree": "8cfd711dfb13246f4e09508d57d2d7bc9a718397",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "analysis::language::rust::proximity_reach_tests::",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 10.03,
+  "counts": {
+    "passed": 45,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 18046
+  },
+  "log_sha256": "00d33aecf00128d328a1b2bf2bffd18e07cd75afcffb305d7ae2a5db5568cbde",
+  "peak_cgroup_memory_bytes": 2771537920,
+  "samples": [
+    {
+      "utc": "2026-11-05T13:23:33.523548+00:00",
+      "stage": "helper-reach-controls",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 495657,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 2771537920,
+      "workspace_free_bytes": 22457978880,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

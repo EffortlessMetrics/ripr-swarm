@@ -1,0 +1,9 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-integration/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 5.03s
+     Running tests/boundary_gap_closure.rs (/workspace/12010-proof/target/debug/deps/boundary_gap_closure-b4a0b677901621b2)
+
+running 1 test
+test enum_branch_existing_import_and_module_forms_observe_mutant ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 4.07s
+

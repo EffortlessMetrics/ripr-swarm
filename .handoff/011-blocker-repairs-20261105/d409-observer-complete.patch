@@ -1,0 +1,2219 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index e1fc17235..ebfd049e6 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -9344,6 +9344,11 @@ id = "RIPR-SPEC-0108"
+ name = "evidence-promotion honesty meta-gate"
+ spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
+ tests = [
++  "crates/ripr/tests/owner_pin_execution.rs::default_trait_ufcs_result_pins_do_not_lend_identity_to_other_oracles",
++  "crates/ripr/tests/owner_pin_execution.rs::primitive_inherent_method_does_not_pin_same_named_trait_owner",
++  "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::projected_effect_payload_requires_fresh_state_and_a_preserving_map",
++  "crates/ripr/tests/owner_pin_execution.rs::awaited_predicate_identity_does_not_credit_discarded_or_overwritten_results",
++  "crates/ripr/tests/owner_pin_execution.rs::exact_error_kind_projection_keeps_its_own_result_identity",
+   "crates/ripr/tests/operand_whitespace.rs::primitive_type_aliases_do_not_hide_observed_operator_effects",
+   "crates/ripr/tests/operand_whitespace.rs::whitespace_does_not_supply_the_missing_shipping_discriminator",
+   "crates/ripr/tests/operand_callee_identity.rs::a_genuine_primitive_call_retains_the_operand_pin_downgrade",
+@@ -9445,6 +9450,7 @@ tests = [
+   "crates/ripr/src/analysis/language/perl/tests.rs::empty_diff_with_supplied_perl_packet_reports_findings",
+ ]
+ fixtures = [
++  "fixtures/rust_effect_receiver_intercepted_first",
+   "fixtures/typescript_reassigned_setup_hook",
+   "fixtures/typescript_parameter_default_setup_hook",
+   "fixtures/typescript_trailing_setup_hook_argument",
+diff --git a/changelog.d/12010-sink-identity.md b/changelog.d/12010-sink-identity.md
+index 49ff84db0..6a3e002cd 100644
+--- a/changelog.d/12010-sink-identity.md
++++ b/changelog.d/12010-sink-identity.md
+@@ -1,2 +1,2 @@
+ <!-- section: Fixed -->
+-- Withhold strong Rust discrimination from proximity-only oracles and unchanged return-value tokens; keep identity and confirmation on the selected oracle, including established returned-array fields and bound bare or qualified wrapper results (#12010).
++- Keep strong Rust discrimination tied to the assertion that observes the changed result or effect; reject proximity-only oracles, unchanged return tokens, stale results and intercepted collection reads while retaining validated wrapper, array, async and error observers (#12010).
+diff --git a/crates/ripr/src/analysis/classifier/evidence.rs b/crates/ripr/src/analysis/classifier/evidence.rs
+index 8de174d7b..f2c889477 100644
+--- a/crates/ripr/src/analysis/classifier/evidence.rs
++++ b/crates/ripr/src/analysis/classifier/evidence.rs
+@@ -744,6 +744,18 @@ impl ClassifiedProbeEvidence {
+         let owner_return_pin = context
+             .owner_fn
+             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
++        let async_result_identity = context
++            .workspace_complete
++            .then(|| {
++                context.owner_fn.and_then(|owner| {
++                    OwnerReturnPin::establish_async_result_identity(
++                        context.probe,
++                        owner,
++                        context.index,
++                    )
++                })
++            })
++            .flatten();
+         // RIPR-SPEC-0229: which owner-call input selects a changed arm.
+         // A same-named function elsewhere (a trait method on another enum
+         // with the same variant names) makes a direct call ambiguous; a
+@@ -1273,6 +1285,37 @@ impl ClassifiedProbeEvidence {
+                                         )
+                                     }))
+                             })
++                        } else if matches!(context.probe.family, ProbeFamily::Predicate) {
++                            (owner_return_pin
++                                .as_ref()
++                                .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail)
++                                && context.owner_fn.is_some_and(|owner| {
++                                    crate::analysis::classify::assertion_reads_bound_boundary_bool(
++                                        context.probe,
++                                        owner,
++                                        test,
++                                        assertion,
++                                        &activation,
++                                        context.index,
++                                    )
++                                }))
++                                || async_result_identity.as_ref().is_some_and(|pin| {
++                                    pin.admits(
++                                        test,
++                                        assertion,
++                                        context.index,
++                                        &|file, name| {
++                                            context.index.files().get(file).is_none_or(|facts| {
++                                                context.test_file_imports_foreign_callee_name(
++                                                    file,
++                                                    &facts.source,
++                                                    name,
++                                                )
++                                            })
++                                        },
++                                        pin_syntax,
++                                    )
++                                })
+                         } else {
+                             crate::analysis::classify::builder_override::owner_field_read_identity(
+                                 context.probe,
+diff --git a/crates/ripr/src/analysis/classify/boundary_pairing.rs b/crates/ripr/src/analysis/classify/boundary_pairing.rs
+index 0f1115397..0d64600e4 100644
+--- a/crates/ripr/src/analysis/classify/boundary_pairing.rs
++++ b/crates/ripr/src/analysis/classify/boundary_pairing.rs
+@@ -1100,6 +1100,37 @@ fn line_owner_call_count(test: &TestSummary, line: usize, owner: &FunctionSummar
+         .sum()
+ }
+ 
++/// An exact bool comparison reads this still-current boundary result as its
++/// whole operand. The existing block-result producer resolves the actual tail;
++/// a name inside a projection, diagnostic or unrelated block is not identity.
++pub(in crate::analysis) fn assertion_reads_bound_boundary_bool(
++    probe: &Probe,
++    owner: &FunctionSummary,
++    test: &TestSummary,
++    assertion: &OracleFact,
++    activation: &ActivationEvidence,
++    index: &RustIndex,
++) -> bool {
++    let Some([left, right]) = assertion_comparison_operands(&assertion.text) else {
++        return false;
++    };
++    let bound = boundary_bound_locals(
++        probe,
++        owner,
++        test,
++        activation,
++        super::argument_fold::FoldScope::of_test(test, index),
++        &|text, line| {
++            super::call_identity::boundary_owner_calls_resolve(index, owner, test, text, line)
++        },
++        assertion.line,
++    );
++    bound.iter().any(|name| {
++        (left.trim() == name && matches!(right.trim(), "true" | "false"))
++            || (right.trim() == name && matches!(left.trim(), "true" | "false"))
++    })
++}
++
+ fn assertion_observes_bound_name(operands: &str, bound_names: &[String]) -> bool {
+     // A binding named only in a comment or string is not observed.
+     let masked = crate::analysis::extract::mask_comments_and_strings(operands);
+diff --git a/crates/ripr/src/analysis/classify/call_identity.rs b/crates/ripr/src/analysis/classify/call_identity.rs
+index 0b66a5781..c047c16b2 100644
+--- a/crates/ripr/src/analysis/classify/call_identity.rs
++++ b/crates/ripr/src/analysis/classify/call_identity.rs
+@@ -3164,7 +3164,7 @@ fn module_reexports_owner(
+     })
+ }
+ 
+-fn qualified_call_names_owner(
++pub(super) fn qualified_call_names_owner(
+     index: &RustIndex,
+     owner: &FunctionSummary,
+     test: &TestSummary,
+diff --git a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+index 5480327b5..e28570620 100644
+--- a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
++++ b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
+ pub(in crate::analysis) struct ArgumentReceiver {
+     parameter: usize,
+     fields: BTreeSet<String>,
++    receiver_type: String,
+ }
+ fn compact(text: &str) -> String {
+     text.chars().filter(|c| !c.is_whitespace()).collect()
+@@ -54,12 +55,39 @@ fn mentions(node: &ra_ap_syntax::SyntaxNode, binding: &str) -> bool {
+             })
+     })
+ }
+-fn field_root(mut expression: ast::Expr) -> Option<(String, String)> {
++fn field_root(mut expression: ast::Expr, index: &RustIndex) -> Option<(String, String, bool)> {
++    let mut projected = false;
+     for _ in 0..super::MAX_DEPTH {
+         expression = match expression {
+             ast::Expr::PrefixExpr(prefix) => prefix.expr()?,
+             ast::Expr::RefExpr(reference) => reference.expr()?,
+             ast::Expr::ParenExpr(paren) => paren.expr()?,
++            ast::Expr::MethodCallExpr(call)
++                if call.name_ref()?.text() == "map"
++                    && call
++                        .arg_list()?
++                        .args()
++                        .map(|arg| compact(&arg.syntax().text().to_string()))
++                        .collect::<Vec<_>>()
++                        == ["String::as_str"]
++                    && !crate::analysis::classify::owner_pin::wrapper_may_be_rebound(
++                        "String", index,
++                    ) =>
++            {
++                projected = true;
++                call.receiver()?
++            }
++            ast::Expr::MethodCallExpr(call)
++                if matches!(call.name_ref()?.text(), "first" | "last")
++                    && call.arg_list()?.args().next().is_none()
++                    && !crate::analysis::classify::owner_pin::wrapper_may_be_rebound(
++                        call.name_ref()?.text(),
++                        index,
++                    ) =>
++            {
++                projected = true;
++                call.receiver()?
++            }
+             ast::Expr::MethodCallExpr(call)
+                 if call.arg_list()?.args().next().is_none()
+                     && call.name_ref().is_some_and(|name| {
+@@ -75,6 +103,7 @@ fn field_root(mut expression: ast::Expr) -> Option<(String, String)> {
+                 return Some((
+                     bare_path(field.expr()?)?,
+                     field.name_ref()?.text().to_string(),
++                    projected,
+                 ));
+             }
+             _ => return None,
+@@ -355,7 +384,11 @@ impl ArgumentReceiver {
+             let carrying = parameter_fields(callee, &parameters)?;
+             fields.retain(|field| carrying.contains(field));
+         }
+-        (!fields.is_empty()).then_some(Self { parameter, fields })
++        (!fields.is_empty()).then_some(Self {
++            parameter,
++            fields,
++            receiver_type: receiver_ty,
++        })
+     }
+     pub(in crate::analysis) fn admits(
+         &self,
+@@ -367,6 +400,93 @@ impl ArgumentReceiver {
+     ) -> bool {
+         self.bound(owner, index, test, assertion, syntax).is_some()
+     }
++    /// A first/last element projection can identify this call's payload
++    /// only on a concrete, freshly empty std vector field. Reuse canonical
++    /// receiver typing; do not credit an element seeded before the owner call.
++    fn starts_empty(
++        &self,
++        index: &RustIndex,
++        test: &TestSummary,
++        owner: &FunctionSummary,
++        root: &str,
++        field: &str,
++        definition: &ast::LetStmt,
++    ) -> bool {
++        use crate::analysis::classify::owner_pin::{
++            OwnerScope, test_receiver_named_type, wrapper_may_be_rebound,
++        };
++        if ["String", "Vec", "RefCell"]
++            .iter()
++            .any(|name| wrapper_may_be_rebound(name, index))
++            || test_receiver_named_type(
++                test,
++                root,
++                OwnerScope::new(&owner.name, owner.start_line, &owner.file),
++                index,
++            )
++            .as_deref()
++                != Some(self.receiver_type.as_str())
++        {
++            return false;
++        }
++        let Some(ast::Expr::CallExpr(call)) = definition.initializer() else {
++            return false;
++        };
++        if call
++            .arg_list()
++            .is_none_or(|args| args.args().next().is_some())
++        {
++            return false;
++        }
++        let Some(ast::Expr::PathExpr(path)) = call.expr() else {
++            return false;
++        };
++        let path = compact(&path.syntax().text().to_string());
++        let Some((ty, ctor)) = path.split_once("::") else {
++            return false;
++        };
++        if ty != self.receiver_type || ctor.contains("::") {
++            return false;
++        }
++        let Some(body) =
++            crate::analysis::classify::builder_override::inherent_method_body(index, ty, ctor)
++        else {
++            return false;
++        };
++        let Some(function) = parse_function(body) else {
++            return false;
++        };
++        let Some(list) = function.body().and_then(|body| body.stmt_list()) else {
++            return false;
++        };
++        if list.statements().next().is_some() {
++            return false;
++        }
++        let Some(ast::Expr::RecordExpr(record)) = list.tail_expr() else {
++            return false;
++        };
++        let record_type = record
++            .path()
++            .map(|path| compact(&path.syntax().text().to_string()));
++        if record_type.as_deref() != Some("Self") && record_type.as_deref() != Some(ty) {
++            return false;
++        }
++        let empty = record.record_expr_field_list().is_some_and(|fields| {
++            fields.fields().any(|entry| {
++                entry.field_name().is_some_and(|name| name.text() == field)
++                    && entry.expr().is_some_and(|expr| {
++                        compact(&expr.syntax().text().to_string()) == "RefCell::new(Vec::new())"
++                    })
++            })
++        });
++        empty && index.files().values().any(|facts| {
++            let Some(parse)=parse_clean_source_file(&facts.source) else { return false };
++            parse.tree().syntax().descendants().filter_map(ast::Struct::cast).any(|item| {
++                item.name().is_some_and(|name|name.text()==ty)
++                    && matches!(item.field_list(),Some(ast::FieldList::RecordFieldList(fields)) if fields.fields().any(|entry|entry.name().is_some_and(|name|name.text()==field) && entry.ty().is_some_and(|ty|compact(&ty.syntax().text().to_string())=="RefCell<Vec<String>>")))
++            })
++        })
++    }
+     fn bound(
+         &self,
+         owner: &FunctionSummary,
+@@ -375,18 +495,30 @@ impl ArgumentReceiver {
+         assertion: &OracleFact,
+         syntax: &OwnerPinSyntax,
+     ) -> Option<()> {
+-        if !syntax.admits(test, assertion, index) {
++        if !syntax.admits_effect_assertion(test, assertion, index) {
+             return None;
+         }
+-        let operands = assertion_comparison_operands(&assertion.text)?;
+-        let root = operands.iter().find_map(|operand| {
++        let operands = assertion_comparison_operands(&assertion.text)
++            .map(|operands| operands.map(str::to_string).to_vec())
++            .or_else(|| {
++                crate::analysis::classify::owner_pin::equality_condition_operands(&assertion.text)
++                    .map(|operands| operands.to_vec())
++            })
++            .unwrap_or_else(|| {
++                crate::analysis::extract::assertion_observed_operand(&assertion.text)
++                    .into_iter()
++                    .collect()
++            });
++        let (root, field, projected) = operands.iter().find_map(|operand| {
+             let function = parse_function(&format!("fn oracle() {{ {operand}; }}"))?;
+             let statements: Vec<_> = function.body()?.stmt_list()?.statements().collect();
+             let [statement] = statements.as_slice() else {
+                 return None;
+             };
+-            let (root, field) = field_root(expression(statement)?)?;
+-            self.fields.contains(&field).then_some(root)
++            let (root, field, projected) = field_root(expression(statement)?, index)?;
++            self.fields
++                .contains(&field)
++                .then_some((root, field, projected))
+         })?;
+         let function = parse_function(&test.body)?;
+         let statements: Vec<_> = function.body()?.stmt_list()?.statements().collect();
+@@ -409,6 +541,10 @@ impl ArgumentReceiver {
+         let ast::Pat::IdentPat(pattern) = definition.pat()? else {
+             return None;
+         };
++        if projected && !self.starts_empty(index, test, owner, &root, &field, definition) {
++            return None;
++        }
++
+         if pattern.name()?.text() != root || definition.let_else().is_some() {
+             return None;
+         }
+diff --git a/crates/ripr/src/analysis/classify/mod.rs b/crates/ripr/src/analysis/classify/mod.rs
+index 55d94078f..cbbebef88 100644
+--- a/crates/ripr/src/analysis/classify/mod.rs
++++ b/crates/ripr/src/analysis/classify/mod.rs
+@@ -72,9 +72,9 @@ pub(in crate::analysis) use binding_return_flow::{
+     BindingReturnFlow, evaluate_binding_return_flow, same_file_binding_helpers,
+ };
+ pub(in crate::analysis) use boundary_pairing::{
+-    WrapperEntryPairing, has_same_test_boundary_oracle_pairing,
+-    has_wrapper_boundary_oracle_pairing, same_test_pairing_missing_summary,
+-    wrapper_return_boundary_pinned,
++    WrapperEntryPairing, assertion_reads_bound_boundary_bool,
++    has_same_test_boundary_oracle_pairing, has_wrapper_boundary_oracle_pairing,
++    same_test_pairing_missing_summary, wrapper_return_boundary_pinned,
+ };
+ pub(in crate::analysis) use builder_override::{
+     constructor_starts_empty, function_returns_value, getter_plainly_reads,
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 46d013620..13dc55a70 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -4229,6 +4229,8 @@ enum ReceiverType {
+     Named(String),
+     /// `&[u8]`, read from `&[..][..]` or `&b".."[..]`.
+     ByteSlice,
++    /// An explicitly suffixed primitive floating-point literal.
++    Float64,
+ }
+ 
+ enum ReturnPathGate {
+@@ -4570,6 +4572,22 @@ pub(in crate::analysis) fn returned_closure_pin_required(
+             .is_some_and(|tail| tail.tail_is(&probe.expression))
+ }
+ 
++/// Test-side result identity with no changed-path or discrimination credit.
++pub(in crate::analysis) struct AsyncResultIdentity(OwnerReturnPin);
++impl AsyncResultIdentity {
++    pub(in crate::analysis) fn admits(
++        &self,
++        test: &TestSummary,
++        assertion: &OracleFact,
++        index: &RustIndex,
++        imports_foreign: ForeignImport<'_>,
++        syntax: &OwnerPinSyntax,
++    ) -> bool {
++        self.0
++            .admits(test, assertion, index, imports_foreign, syntax)
++    }
++}
++
+ impl OwnerReturnPin {
+     /// Establish a return pin from the actual tail expression of a
+     /// forwarding entry. The caller must separately prove that this entry
+@@ -4649,7 +4667,6 @@ impl OwnerReturnPin {
+         if !parser_backed {
+             return None;
+         }
+-        let name = owner.name.as_str();
+         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
+         let path = match return_path_gate_from(
+             &owner.body,
+@@ -4759,6 +4776,45 @@ impl OwnerReturnPin {
+         }) {
+             return None;
+         }
++        Self::from_path(probe, owner, index, path, returns_bool, changed_line)
++    }
++
++    /// Identity of an awaited primitive result only. This does not prove that
++    /// the changed predicate reaches that result or discriminates a boundary.
++    /// Callers retain the independent activation and observation gates.
++    pub(in crate::analysis) fn establish_async_result_identity(
++        probe: &Probe,
++        owner: &FunctionSummary,
++        index: &RustIndex,
++    ) -> Option<AsyncResultIdentity> {
++        if !matches!(probe.family, ProbeFamily::Predicate)
++            || !matches!(owner.item.container, FunctionContainer::Free)
++            || function_declaration_is_async(owner, index) != Some(true)
++            || !returns_primitive_scalar(owner, index)
++            || !owner.item.has_body
++            || index.files().get(&owner.file)?.used_lexical_fallback
++        {
++            return None;
++        }
++        Some(AsyncResultIdentity(Self::from_path(
++            probe,
++            owner,
++            index,
++            ReturnPathGate::Any,
++            declared_return_type(&owner.body).as_deref() == Some("bool"),
++            probe.location.line.checked_sub(owner.start_line)?,
++        )?))
++    }
++
++    fn from_path(
++        probe: &Probe,
++        owner: &FunctionSummary,
++        index: &RustIndex,
++        path: ReturnPathGate,
++        returns_bool: bool,
++        changed_line: usize,
++    ) -> Option<Self> {
++        let name = owner.name.as_str();
+         let call = pin_call(owner, index)?;
+         // #6544: a bare call's same-package module-level rivals are settled
+         // per test by the import or path that spells the call; every other
+@@ -5272,6 +5328,116 @@ impl OwnerReturnPin {
+         Some(stripped)
+     }
+ 
++    fn default_trait_call_shape<'a>(
++        &self,
++        operand: &'a str,
++        test: &TestSummary,
++        index: &RustIndex,
++        syntax: &OwnerPinSyntax,
++    ) -> Option<CallShape<'a>> {
++        if self.awaited || self.owner_file != test.file {
++            return None;
++        }
++        let PinCall::Method {
++            trait_scope: Some(trait_scope),
++            ..
++        } = &self.call
++        else {
++            return None;
++        };
++        let owner = index.functions().iter().find(|owner| {
++            owner.file == self.owner_file
++                && owner.start_line == self.owner_start_line
++                && owner.name == self.name
++        })?;
++        let FunctionContainer::Trait { trait_name } = &owner.item.container else {
++            return None;
++        };
++        if trait_name != &trait_scope.trait_name {
++            return None;
++        }
++        let operand = operand.trim();
++        let (callee, args) = operand.split_once('(')?;
++        let prefix = without_rust_whitespace(callee)
++            .strip_suffix(&format!("::{}", self.name))?
++            .to_string();
++        let receiver = args.strip_suffix(')')?.trim().strip_prefix('&')?.trim();
++        if !is_plain_identifier(receiver) {
++            return None;
++        }
++        let facts = index.files().get(&test.file)?;
++        if file_renames_to(&facts.source, trait_name)
++            || file_aliases_type(&facts.source, trait_name)
++            || declares_type(&mask_comments_and_strings(&test.body), trait_name)
++            || declares_trait(&mask_comments_and_strings(&test.body), trait_name)
++            || declared_module_names(&mask_comments_and_strings(&test.body))
++                .contains(&trait_name.as_str())
++            || flattened_use_paths(&test.body).iter().any(|path| {
++                path.path.ends_with(trait_name) || path.alias.as_deref() == Some(trait_name)
++            })
++        {
++            return None;
++        }
++        let parse = parse_clean_source_file(&facts.source)?;
++        let root = parse.tree();
++        let function = root
++            .syntax()
++            .descendants()
++            .filter_map(ast::Fn::cast)
++            .find(|function| {
++                function.name().is_some_and(|name| name.text() == self.name)
++                    && facts.source[..usize::from(function.syntax().text_range().start())]
++                        .matches('\n')
++                        .count()
++                        + 1
++                        == self.owner_start_line
++            })?;
++        let parameters = function.param_list()?;
++        let receiver_param = parameters.self_param()?;
++        if parameters.params().next().is_some()
++            || receiver_param.amp_token().is_none()
++            || receiver_param.mut_token().is_some()
++        {
++            return None;
++        }
++        let declaration = function.syntax().ancestors().find_map(ast::Trait::cast)?;
++        let test_modules = syntax
++            .item_nesting(index, &test.file, &test.name, test.start_line)?
++            .modules;
++        let declaration_modules = inline_modules_of(declaration.syntax());
++        let relative = relative_item_import_ranges(trait_name, &root, declaration.syntax());
++        let imported =
++            root.syntax()
++                .descendants()
++                .filter_map(ast::Use::cast)
++                .any(|item| {
++                    relative.iter().any(|range| {
++                        range.contains(&usize::from(item.syntax().text_range().start()))
++                    }) && inline_modules_of(item.syntax()) == test_modules
++                });
++        let names_trait = if prefix == *trait_name || prefix == format!("self::{trait_name}") {
++            test_modules == declaration_modules || imported
++        } else if prefix == format!("crate::{trait_name}") {
++            declaration_modules.is_empty()
++                && syntax
++                    .target_roots(index)
++                    .root(&test.file, index)
++                    .as_deref()
++                    == Some(self.owner_file.as_path())
++        } else {
++            false
++        };
++        let root_file = syntax.target_roots(index).root(&self.owner_file, index)?;
++        (names_trait
++            && !syntax.crate_may_hide_name(
++                index,
++                &root_file,
++                trait_name,
++                syntax.target_roots(index),
++            ))
++        .then_some(CallShape::Method(receiver))
++    }
++
+     fn awaited_call_shape<'a>(
+         &self,
+         poll_context: Option<(&TestSummary, &RustIndex, &OwnerPinSyntax)>,
+@@ -5298,11 +5464,24 @@ impl OwnerReturnPin {
+                     .then(|| owner_call_shape(future, name))
+                     .flatten()
+             }
+-            (false, _) => owner_call_shape(operand, name).or_else(|| {
+-                matches!(self.path, ReturnPathGate::FixtureReceiver(_))
+-                    .then(|| fixture_receiver::FixtureReceiver::inline_call(operand, name))
+-                    .flatten()
+-            }),
++            (false, _) => owner_call_shape(operand, name)
++                .or_else(|| {
++                    if let PinCall::Method { receivers, .. } = &self.call
++                        && receivers.contains(&ReceiverType::Float64)
++                        && let Some((receiver, arguments)) =
++                            operand.rsplit_once(&format!(".{name}("))
++                        && arguments.trim() == ")"
++                        && explicit_f64_literal(receiver)
++                    {
++                        return Some(CallShape::Constructed(receiver));
++                    }
++                    None
++                })
++                .or_else(|| {
++                    matches!(self.path, ReturnPathGate::FixtureReceiver(_))
++                        .then(|| fixture_receiver::FixtureReceiver::inline_call(operand, name))
++                        .flatten()
++                }),
+         }
+     }
+ 
+@@ -5733,8 +5912,10 @@ impl OwnerReturnPin {
+                 }
+             });
+             match (
+-                self.awaited_call_shape(poll_context, operands[0], &self.name),
+-                self.awaited_call_shape(poll_context, operands[1], &self.name),
++                self.awaited_call_shape(poll_context, operands[0], &self.name)
++                    .or_else(|| self.default_trait_call_shape(operands[0], test, index, syntax)),
++                self.awaited_call_shape(poll_context, operands[1], &self.name)
++                    .or_else(|| self.default_trait_call_shape(operands[1], test, index, syntax)),
+                 rendered,
+             ) {
+                 (_, _, Some(pin)) if renders || indexes => pin,
+@@ -6408,6 +6589,10 @@ impl OwnerReturnPin {
+                 }
+                 let shadowed_by_std = match &receiver_type {
+                     ReceiverType::ByteSlice => BYTE_SLICE_METHODS.contains(&self.name.as_str()),
++                    ReceiverType::Float64 => {
++                        F64_METHODS.contains(&self.name.as_str())
++                            || method_may_dispatch_through_prelude(&self.name)
++                    }
+                     ReceiverType::Named(_) => method_may_dispatch_through_prelude(&self.name),
+                 };
+                 !shadowed_by_std
+@@ -6643,14 +6828,116 @@ impl OwnerReturnPin {
+         let Some(source) = test_source else {
+             return false;
+         };
+-        if let Some(known) = self.trait_scope_by_file.borrow().get(&test.file) {
+-            return *known;
++        let known = self.trait_scope_by_file.borrow().get(&test.file).copied();
++        let in_scope = known.unwrap_or_else(|| {
++            let in_scope = trait_in_scope(source, trait_name, index);
++            self.trait_scope_by_file
++                .borrow_mut()
++                .insert(test.file.clone(), in_scope);
++            in_scope
++        });
++        in_scope || self.trait_inherited_through_super_globs(test, trait_name, index)
++    }
++
++    fn trait_inherited_through_super_globs(
++        &self,
++        test: &TestSummary,
++        trait_name: &str,
++        index: &RustIndex,
++    ) -> bool {
++        let scope = OwnerScope::new(&self.name, self.owner_start_line, &self.owner_file);
++        if test.file == self.owner_file
++            || parent_chain_shadows_trait(test, trait_name, scope, index)
++            || index
++                .files()
++                .get(&test.file)
++                .is_none_or(|facts| facts.role_provenance.earliest_unresolved_reason.is_some())
++        {
++            return false;
+         }
+-        let in_scope = trait_in_scope(source, trait_name, index);
+-        self.trait_scope_by_file
+-            .borrow_mut()
+-            .insert(test.file.clone(), in_scope);
+-        in_scope
++        let Some(nesting) =
++            indexed_item_nesting(index, &test.file, &test.name, test.start_line, false)
++        else {
++            return false;
++        };
++        if !nesting.modules.is_empty() {
++            return false;
++        }
++        let Some(facts) = index.files().get(&test.file) else {
++            return false;
++        };
++        let chain = &facts.role_provenance.edges;
++        let mut file = test.file.clone();
++        let mut seen = BTreeSet::new();
++        while seen.insert(file.clone()) {
++            let Some(facts) = index.files().get(&file) else {
++                return false;
++            };
++            let Some(parse) = parse_clean_source_file(&facts.source) else {
++                return false;
++            };
++            let root = parse.tree();
++            // Only imports/declarations at this file's actual module root
++            // are inherited; a sibling inline module contributes no binding.
++            let uses = root
++                .syntax()
++                .children()
++                .filter_map(ast::Use::cast)
++                .collect::<Vec<_>>();
++            let root_scope = uses
++                .iter()
++                .map(|item| item.syntax().text().to_string())
++                .chain(
++                    root.syntax()
++                        .children()
++                        .filter_map(ast::Trait::cast)
++                        .map(|item| item.syntax().text().to_string()),
++                )
++                .collect::<Vec<_>>()
++                .join("\n");
++            let owner_root_trait = index
++                .files()
++                .get(&self.owner_file)
++                .and_then(|facts| parse_clean_source_file(&facts.source))
++                .is_some_and(|parse| {
++                    parse
++                        .tree()
++                        .syntax()
++                        .children()
++                        .filter_map(ast::Trait::cast)
++                        .any(|item| item.name().is_some_and(|name| name.text() == trait_name))
++                });
++            let exact_root_import = uses.iter().any(|item| {
++                flattened_use_paths(&item.syntax().text().to_string())
++                    .iter()
++                    .any(|path| path.alias.is_none() && path.path == format!("crate::{trait_name}"))
++            });
++            let reaches_owner_root = file == self.owner_file
++                || (owner_root_trait
++                    && OwnerPinSyntax::default()
++                        .target_roots(index)
++                        .root(&file, index)
++                        .as_deref()
++                        == Some(self.owner_file.as_path())
++                    && exact_root_import);
++            if reaches_owner_root && trait_in_scope(&root_scope, trait_name, index) {
++                return true;
++            }
++            if !uses.iter().any(|item| {
++                without_rust_whitespace(&item.syntax().text().to_string()) == "usesuper::*;"
++            }) {
++                return false;
++            }
++            let mut parents = chain.iter().filter(|edge| {
++                edge.child == file
++                    && edge.kind == crate::analysis::facts::SourceRoleProvenanceEdgeKind::Module
++            });
++            let (Some(edge), None) = (parents.next(), parents.next()) else {
++                return false;
++            };
++            file = edge.parent.clone();
++        }
++        false
+     }
+ }
+ 
+@@ -6750,6 +7037,32 @@ impl FreeOwnerBinding<'_> {
+                 Vec::new()
+             }
+             _ => {
++                // A same-file module spelling uses the canonical qualified
++                // call resolver, including same-named rivals and scope shadows.
++                if test.file == *self.owner_file
++                    && index
++                        .functions()
++                        .iter()
++                        .find(|owner| {
++                            owner.file == *self.owner_file
++                                && owner.start_line == self.owner_start_line
++                                && owner.name == *self.name
++                        })
++                        .is_some_and(|owner| {
++                            super::call_identity::qualified_call_names_owner(
++                                index,
++                                owner,
++                                test,
++                                &path_prefix_segments(prefix),
++                            )
++                        })
++                {
++                    return syntax
++                        .item_nesting(index, self.owner_file, self.name, self.owner_start_line)
++                        .is_some_and(|owner| !owner.cfg_gated)
++                        && !syntax.file_cfg_gated(index, self.owner_file)
++                        && !syntax.crate_may_hide_name(index, &owner_root, self.name, roots);
++                }
+                 if !owner_is_root
+                     || !self.library_root_names_owner(root, test, test_source, index, syntax)
+                 {
+@@ -11100,7 +11413,7 @@ fn strip_type_arguments(self_ty: &str) -> &str {
+ /// `static`, `mod`, `trait` or macro of that name, a variant of a workspace
+ /// `enum`, a rename to it, or a `use` naming it from outside `std`, `core`
+ /// and `alloc`. Lexical and workspace-wide, so it fails closed.
+-fn wrapper_may_be_rebound(wrapper: &str, index: &RustIndex) -> bool {
++pub(super) fn wrapper_may_be_rebound(wrapper: &str, index: &RustIndex) -> bool {
+     index.files().values().any(|facts| {
+         facts.source.contains(wrapper) && {
+             let masked = mask_comments_and_strings(&facts.source);
+@@ -13110,7 +13423,127 @@ fn body_rebinds_type(masked: &str, type_name: &str) -> bool {
+ 
+ /// The receiver type an `impl` block's self type names, when it is one this
+ /// module can match a test binding against.
++// Conservative inherent-method collision set from the pinned Rust 1.95 sources:
++// https://github.com/rust-lang/rust/blob/1.95.0/library/core/src/num/f64.rs
++// https://github.com/rust-lang/rust/blob/1.95.0/library/std/src/num/f64.rs
++const F64_METHODS: &[&str] = &[
++    "abs",
++    "abs_sub",
++    "acos",
++    "acosh",
++    "algebraic_add",
++    "algebraic_div",
++    "algebraic_mul",
++    "algebraic_rem",
++    "algebraic_sub",
++    "asin",
++    "asinh",
++    "atan",
++    "atan2",
++    "atanh",
++    "cbrt",
++    "ceil",
++    "clamp_magnitude",
++    "classify",
++    "copysign",
++    "cos",
++    "cosh",
++    "div_euclid",
++    "erf",
++    "erfc",
++    "exp",
++    "exp2",
++    "exp_m1",
++    "floor",
++    "fract",
++    "gamma",
++    "hypot",
++    "is_finite",
++    "is_infinite",
++    "is_nan",
++    "is_negative",
++    "is_normal",
++    "is_positive",
++    "is_sign_negative",
++    "is_sign_positive",
++    "is_subnormal",
++    "ln",
++    "ln_1p",
++    "ln_gamma",
++    "log",
++    "log10",
++    "log2",
++    "max",
++    "maximum",
++    "midpoint",
++    "min",
++    "minimum",
++    "mul_add",
++    "next_down",
++    "next_up",
++    "powf",
++    "powi",
++    "recip",
++    "rem_euclid",
++    "round",
++    "round_ties_even",
++    "signum",
++    "sin",
++    "sin_cos",
++    "sinh",
++    "sqrt",
++    "tan",
++    "tanh",
++    "to_be_bytes",
++    "to_bits",
++    "to_degrees",
++    "to_int_unchecked",
++    "to_le_bytes",
++    "to_ne_bytes",
++    "to_radians",
++    "total_cmp",
++    "trunc",
++];
++
++fn explicit_f64_literal(text: &str) -> bool {
++    let Some(file) = parse_clean_source_file(&format!("fn __pin() {{ {text} }}")) else {
++        return false;
++    };
++    let Some(function) = file.tree().syntax().descendants().find_map(ast::Fn::cast) else {
++        return false;
++    };
++    let Some(mut expression) = function
++        .body()
++        .and_then(|b| b.stmt_list())
++        .and_then(|s| s.tail_expr())
++    else {
++        return false;
++    };
++    loop {
++        expression = match expression {
++            ast::Expr::ParenExpr(paren) => match paren.expr() {
++                Some(e) => e,
++                None => return false,
++            },
++            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Neg) => {
++                match prefix.expr() {
++                    Some(e) => e,
++                    None => return false,
++                }
++            }
++            ast::Expr::Literal(literal) => {
++                return matches!(literal.kind(), ast::LiteralKind::FloatNumber(_))
++                    && literal.syntax().text().to_string().ends_with("f64");
++            }
++            _ => return false,
++        };
++    }
++}
++
+ fn declared_receiver(self_ty: &str, index: &RustIndex) -> Option<ReceiverType> {
++    if self_ty == "f64" && builtin_type_unshadowed("f64", index, &OwnerPinSyntax::default()) {
++        return Some(ReceiverType::Float64);
++    }
+     if is_byte_slice_type(self_ty) {
+         return Some(ReceiverType::ByteSlice);
+     }
+@@ -13473,7 +13906,11 @@ fn let_bound_owner_call<'a>(
+             && READ_ONLY_ASSERTION_MACROS
+                 .iter()
+                 .any(|macro_name| is_plain_macro(&other.text, macro_name));
+-        if !(whole_operand || read_only) || other.line <= let_line {
++        if !(whole_operand || read_only)
++            || other.line < let_line
++            || (other.line == let_line
++                && (!scalar || !same_line_scalar_binding_precedes(test, binding_at, other)))
++        {
+             return None;
+         }
+         asserted += in_text;
+@@ -13484,9 +13921,13 @@ fn let_bound_owner_call<'a>(
+     }
+     if scalar {
+         let reviewed = mask_comments_and_strings(&assertion.text);
+-        return (assertion.line > let_line
+-            && whole_word_offsets(&reviewed, operand).len() == 1
+-            && same_block_after(&masked, binding_at, test.start_line, assertion))
++        return (whole_word_offsets(&reviewed, operand).len() == 1
++            && if assertion.line == let_line {
++                same_line_scalar_binding_precedes(test, binding_at, assertion)
++            } else {
++                assertion.line > let_line
++                    && same_block_after(&masked, binding_at, test.start_line, assertion)
++            })
+         .then(|| let_initializer(binding))
+         .flatten();
+     }
+@@ -13517,6 +13958,57 @@ fn let_bound_owner_call<'a>(
+     let_initializer(binding)
+ }
+ 
++/// A scalar's once-bound initializer may precede an assertion on the same
++/// line. Bind the exact parser invocation and enclosing statement list;
++/// line equality alone cannot establish order or scope.
++fn same_line_scalar_binding_precedes(
++    test: &TestSummary,
++    binding_at: usize,
++    assertion: &OracleFact,
++) -> bool {
++    let Some(parse) = parse_clean_source_file(&test.body) else {
++        return false;
++    };
++    let root = parse.tree();
++    let Some(binding) = root
++        .syntax()
++        .descendants()
++        .filter_map(ast::LetStmt::cast)
++        .find(|binding| {
++            let range = binding.syntax().text_range();
++            usize::from(range.start()) <= binding_at && binding_at < usize::from(range.end())
++        })
++    else {
++        return false;
++    };
++    let key = |text: &str| {
++        mask_comments_and_strings(text)
++            .chars()
++            .filter(|c| !c.is_whitespace())
++            .collect::<String>()
++    };
++    let expected = key(assertion.text.trim_end_matches(';'));
++    let mut calls = root
++        .syntax()
++        .descendants()
++        .filter_map(ast::MacroCall::cast)
++        .filter(|call| {
++            let at = usize::from(call.syntax().text_range().start());
++            test.start_line + test.body[..at].matches('\n').count() == assertion.line
++                && key(&call.syntax().text().to_string()) == expected
++        });
++    let (Some(call), None) = (calls.next(), calls.next()) else {
++        return false;
++    };
++    let list = |node: &SyntaxNode| {
++        node.ancestors()
++            .find(|ancestor| ast::StmtList::can_cast(ancestor.kind()))
++    };
++    call.syntax().text_range().start() >= binding.syntax().text_range().end()
++        && list(call.syntax()).is_some()
++        && list(call.syntax()) == list(binding.syntax())
++}
++
+ /// cell-0094 review: whether the line `assertion_line` starts with a
+ /// statement in the same block as the `let` at `let_at`, at its depth.
+ /// Leaving the `let`'s block (`{ let b = f(); } assert_eq!(b, 12);`) or
+@@ -15990,12 +16482,17 @@ fn is_trivial_expression(expression: &str, locals: bool) -> bool {
+ fn binds_outside_let(masked: &str, name: &str) -> bool {
+     // A function-pointer type has no item name: its `fn` is followed by
+     // `(`. Its parameter labels bind no values in the surrounding test.
+-    // Keep the existing conservative refusal for actual nested fn items.
++    // Nested items have their own parameter scope. A same-named nested
++    // function still binds this outer name; an unrelated item does not.
+     let fns: Vec<_> = whole_word_offsets(masked, "fn")
+         .into_iter()
+         .filter(|offset| !masked[offset + "fn".len()..].trim_start().starts_with('('))
+         .collect();
+-    if fns.len() > 1 {
++    if fns
++        .iter()
++        .skip(1)
++        .any(|offset| starts_with_word(masked[offset + "fn".len()..].trim_start(), name))
++    {
+         return true;
+     }
+     // The test's own parameters (`#[case] name: T`) bind the name too.
+@@ -16066,6 +16563,9 @@ fn binding_type(
+     if let Some(annotation) = annotation {
+         return named_or_slice(annotation, test, test_source, index, imports_foreign, owner);
+     }
++    if explicit_f64_literal(initializer) && builtin_type_unshadowed("f64", index, syntax) {
++        return Some(ReceiverType::Float64);
++    }
+     if is_byte_slice_expression(initializer) {
+         return Some(ReceiverType::ByteSlice);
+     }
+@@ -16080,7 +16580,21 @@ fn binding_type(
+         // `named_or_slice` refuses a lower-case name anyway; checking first
+         // skips the workspace scan for every local-variable receiver.
+         if !initializer.starts_with(|character: char| character.is_ascii_uppercase())
+-            || !unit_struct_value(initializer, &test.file, index, syntax)
++            || !(unit_struct_value(initializer, &test.file, index, syntax)
++                || (owner.file != test.file.as_path()
++                    && syntax
++                        .target_roots(index)
++                        .root(owner.file, index)
++                        .as_deref()
++                        == Some(owner.file)
++                    && root_unit_declared(index, owner.file, initializer)
++                    && unit_struct_value_in_definition(
++                        initializer,
++                        owner.file,
++                        index,
++                        syntax,
++                        true,
++                    )))
+         {
+             return None;
+         }
+@@ -16226,6 +16740,148 @@ impl UnitStructFacts {
+     }
+ }
+ 
++/// Ranges of relative imports that resolve to this file's same unit value.
++fn same_file_unit_import_ranges(name: &str, source: &str) -> Vec<std::ops::Range<usize>> {
++    if !source.contains("use") {
++        return Vec::new();
++    }
++    let Some(parse) = parse_clean_source_file(source) else {
++        return Vec::new();
++    };
++    let root = parse.tree();
++    let mut declarations = root
++        .syntax()
++        .descendants()
++        .filter_map(ast::Struct::cast)
++        .filter(|item| {
++            item.name().is_some_and(|n| n.text() == name)
++                && item.field_list().is_none()
++                && !item
++                    .syntax()
++                    .ancestors()
++                    .any(|node| ast::Fn::can_cast(node.kind()))
++        });
++    let (Some(declaration), None) = (declarations.next(), declarations.next()) else {
++        return Vec::new();
++    };
++    relative_item_import_ranges(name, &root, declaration.syntax())
++}
++
++fn inline_modules_of(node: &SyntaxNode) -> Vec<String> {
++    let mut path = node
++        .ancestors()
++        .filter_map(ast::Module::cast)
++        .filter_map(|module| module.name().map(|name| name.text().to_string()))
++        .collect::<Vec<_>>();
++    path.reverse();
++    path
++}
++
++fn relative_item_import_ranges(
++    name: &str,
++    root: &ast::SourceFile,
++    declaration: &SyntaxNode,
++) -> Vec<std::ops::Range<usize>> {
++    let mut wanted = inline_modules_of(declaration);
++    wanted.push(name.to_string());
++    root.syntax()
++        .descendants()
++        .filter_map(ast::Use::cast)
++        .filter_map(|item| {
++            let paths = flattened_use_paths(&item.syntax().text().to_string());
++            let named = paths
++                .iter()
++                .filter(|path| {
++                    path.path.split("::").any(|part| part == name)
++                        || path.alias.as_deref() == Some(name)
++                })
++                .collect::<Vec<_>>();
++            if named.is_empty() {
++                return None;
++            }
++            let bound = named.iter().all(|path| {
++                if path.alias.is_some() {
++                    return false;
++                }
++                let mut scope = inline_modules_of(item.syntax());
++                let mut parts = path.path.split("::").peekable();
++                match parts.peek().copied() {
++                    Some("self") => {
++                        parts.next();
++                    }
++                    Some("super") => {}
++                    _ => return false,
++                }
++                while parts.peek() == Some(&"super") {
++                    parts.next();
++                    if scope.pop().is_none() {
++                        return false;
++                    }
++                }
++                scope.extend(parts.map(str::to_string));
++                scope == wanted
++            });
++            bound.then(|| {
++                let range = item.syntax().text_range();
++                usize::from(range.start())..usize::from(range.end())
++            })
++        })
++        .collect()
++}
++
++fn root_unit_declared(index: &RustIndex, file: &Path, name: &str) -> bool {
++    index
++        .files()
++        .get(file)
++        .and_then(|facts| parse_clean_source_file(&facts.source))
++        .is_some_and(|parse| {
++            parse
++                .tree()
++                .syntax()
++                .children()
++                .filter_map(ast::Struct::cast)
++                .any(|item| {
++                    item.name().is_some_and(|item| item.text() == name)
++                        && item.field_list().is_none()
++                        && item.generic_param_list().is_none()
++                        && item.attrs().next().is_none()
++                })
++        })
++}
++
++fn root_unit_import_ranges(name: &str, source: &str) -> Vec<std::ops::Range<usize>> {
++    if !source.contains(name) || !source.contains("use") {
++        return Vec::new();
++    }
++    let Some(parse) = parse_clean_source_file(source) else {
++        return Vec::new();
++    };
++    parse
++        .tree()
++        .syntax()
++        .descendants()
++        .filter_map(ast::Use::cast)
++        .filter_map(|item| {
++            let paths = flattened_use_paths(&item.syntax().text().to_string());
++            let named = paths
++                .iter()
++                .filter(|path| {
++                    path.path.split("::").any(|part| part == name)
++                        || path.alias.as_deref() == Some(name)
++                })
++                .collect::<Vec<_>>();
++            (!named.is_empty()
++                && named
++                    .iter()
++                    .all(|path| path.alias.is_none() && path.path == format!("crate::{name}")))
++            .then(|| {
++                let range = item.syntax().text_range();
++                usize::from(range.start())..usize::from(range.end())
++            })
++        })
++        .collect()
++}
++
+ /// Whether the bare name `name`, spelled in `test_file`, evaluates to the
+ /// workspace unit struct `name` (#7083). Reading what a bare name resolves
+ /// to needs name resolution, so the rule admits only a shape where nothing
+@@ -16235,7 +16891,9 @@ impl UnitStructFacts {
+ ///   (`struct name;`), in the test's own file;
+ /// - every other spelling of the name in the workspace is an `impl` header
+ ///   (`impl name {`, `impl Trait for name {`), a method call (`name.f(..)`)
+-///   or a `let` initializer (`= name;`). An import, a type position, a raw
++///   a `let` initializer (`= name;`), a parser-confirmed shared value
++///   reference (`&name`), or an explicitly resolved redundant
++///   `self`/`super` import of that same item. Other imports, a type position, a raw
+ ///   identifier (`r#name`), a pattern, an enum variant, a macro argument or
+ ///   any `const`, `static`, `fn`, `type` or `as` rename refuses;
+ /// - no workspace `macro_rules!` matcher takes an `ident` or `tt` fragment,
+@@ -16258,6 +16916,82 @@ pub(super) fn unit_struct_value(
+     test_file: &Path,
+     index: &RustIndex,
+     syntax: &OwnerPinSyntax,
++) -> bool {
++    unit_struct_value_in_definition(name, test_file, index, syntax, false)
++}
++
++fn shared_unit_value_offsets(name: &str, source: &str) -> Vec<usize> {
++    if !source.contains('&') {
++        return Vec::new();
++    }
++    let Some(parse) = parse_clean_source_file(source) else {
++        return Vec::new();
++    };
++    let value_offsets = |root: &SyntaxNode| {
++        root.descendants()
++            .filter_map(ast::PathExpr::cast)
++            .filter_map(|expression| {
++                let path = expression.path()?;
++                if path.qualifier().is_some() || path.segment()?.name_ref()?.text() != name {
++                    return None;
++                }
++                let reference = expression.syntax().parent().and_then(ast::RefExpr::cast)?;
++                reference
++                    .mut_token()
++                    .is_none()
++                    .then(|| usize::from(expression.syntax().text_range().start()))
++            })
++            .collect::<Vec<_>>()
++    };
++    let root = parse.tree();
++    let mut offsets = value_offsets(root.syntax());
++    // Assertion token trees are opaque in the file AST. Parse only known
++    // standard assertion payloads as expression operands; this distinguishes
++    // `&Unit` values from type positions without trusting diagnostic strings.
++    for call in root.syntax().descendants().filter_map(ast::MacroCall::cast) {
++        let Some(path) = call.path() else { continue };
++        let path = without_rust_whitespace(&path.syntax().text().to_string());
++        let path = path.trim_start_matches("::");
++        let mut segments = path.split("::").collect::<Vec<_>>();
++        let Some(macro_name) = segments.pop() else {
++            continue;
++        };
++        if !matches!(macro_name, "assert_eq" | "assert_ne" | "assert")
++            || !matches!(segments.as_slice(), [] | ["std"] | ["core"])
++        {
++            continue;
++        }
++        let Some(tokens) = call.token_tree() else {
++            continue;
++        };
++        let text = tokens.syntax().text().to_string();
++        let Some(inner) = text.get(1..text.len().saturating_sub(1)) else {
++            continue;
++        };
++        let prefix = "fn assertion_values() { let _ = (";
++        let wrapped = format!("{prefix}{inner}); }}");
++        let Some(parsed) = parse_clean_source_file(&wrapped) else {
++            continue;
++        };
++        let origin = usize::from(tokens.syntax().text_range().start()) + 1;
++        offsets.extend(
++            value_offsets(parsed.tree().syntax())
++                .into_iter()
++                .filter_map(|offset| {
++                    let inner_offset = offset.checked_sub(prefix.len())?;
++                    (inner_offset < inner.len()).then_some(origin + inner_offset)
++                }),
++        );
++    }
++    offsets
++}
++
++fn unit_struct_value_in_definition(
++    name: &str,
++    test_file: &Path,
++    index: &RustIndex,
++    syntax: &OwnerPinSyntax,
++    allow_root_imports: bool,
+ ) -> bool {
+     // A prelude value (`None`, `Some`, `Ok`, `Err`) is in scope without any
+     // import, so the struct may not be the item the test names.
+@@ -16279,12 +17013,27 @@ pub(super) fn unit_struct_value(
+             continue;
+         }
+         let masked = mask_comments_and_strings(&facts.source);
++        let local_imports = if file.as_path() == test_file {
++            same_file_unit_import_ranges(name, &facts.source)
++        } else if allow_root_imports
++            && syntax.target_roots(index).root(file, index).as_deref() == Some(test_file)
++        {
++            root_unit_import_ranges(name, &facts.source)
++        } else {
++            Vec::new()
++        };
++        let references = shared_unit_value_offsets(name, &facts.source);
+         // One spelling in a macro body declares a struct per invocation,
+         // so no file that defines a macro may spell the name.
+         if unit_struct.macro_files.contains(file) && !whole_word_offsets(&masked, name).is_empty() {
+             return false;
+         }
+         for offset in whole_word_offsets(&masked, name) {
++            if local_imports.iter().any(|range| range.contains(&offset))
++                || references.contains(&offset)
++            {
++                continue;
++            }
+             let before = masked[..offset].trim_end();
+             let after = masked[offset + name.len()..].trim_start();
+             let word_start = before
+@@ -16696,7 +17445,7 @@ pub(in crate::analysis) fn test_receiver_named_type(
+         // the name ambiguous (`alt::Pool` imported over the real `Pool`), so
+         // identity is not established.
+         ReceiverType::Named(name) if workspace_type_name_count(&name, index) == 1 => Some(name),
+-        ReceiverType::Named(_) | ReceiverType::ByteSlice => None,
++        ReceiverType::Named(_) | ReceiverType::ByteSlice | ReceiverType::Float64 => None,
+     }
+ }
+ 
+diff --git a/crates/ripr/src/analysis/classify/owner_pin/tests.rs b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+index 84a896e5d..9757b16ce 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin/tests.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+@@ -14331,3 +14331,57 @@ fn mapped_enum_expectation_memo_is_index_owned_and_bounded() -> Result<(), Strin
+     }
+     Ok(())
+ }
++
++#[test]
++fn same_file_trait_empty_string_return_keeps_its_owner_pin() -> Result<(), String> {
++    let source = std::fs::read_to_string(
++        Path::new(env!("CARGO_MANIFEST_DIR"))
++            .join("../../fixtures/rust_trait_impl_import/input/src/lib.rs"),
++    )
++    .map_err(|e| e.to_string())?;
++    let index = index(&[(LIB, &source)]);
++    let owner = index
++        .functions()
++        .iter()
++        .find(|f| f.name == "render" && f.item.has_body)
++        .ok_or("missing implemented owner")?;
++    let pin = OwnerReturnPin::establish(&return_probe(owner, "String::from(\"\")"), owner, &index)
++        .ok_or("owner side failed")?;
++    let test = index.tests().iter().next().ok_or("missing fixture test")?;
++    let assertion = test.assertions.first().ok_or("missing fixture assertion")?;
++    let syntax = OwnerPinSyntax::default();
++    assert!(
++        pin.admits(
++            test,
++            assertion,
++            &index,
++            &|_, name| file_imports_foreign_callee_name(&source, name, &index.package_names),
++            &syntax
++        ),
++        "trait scope={}, syntax refusal={:?}",
++        trait_in_scope(&source, "Render", &index),
++        syntax.refusal(test, assertion, &index)
++    );
++    Ok(())
++}
++
++#[test]
++fn same_file_unit_value_imports_keep_the_declared_namespace() {
++    for (import, expected) in [
++        ("use super::Sample;", true),
++        ("use super::{Render, Sample};", true),
++        ("use super::Sample as Sample;", false),
++        ("use super::Other as Sample;", false),
++        ("use std::marker::PhantomPinned as Sample;", false),
++    ] {
++        let source = format!(
++            "pub struct Sample;\npub struct Other;\ntrait Render {{}}\nmod tests {{ {import} #[test] fn subject() {{ let _=Sample; }} }}\n"
++        );
++        let index = index(&[(LIB, &source)]);
++        assert_eq!(
++            unit_struct_value("Sample", Path::new(LIB), &index, &OwnerPinSyntax::default()),
++            expected,
++            "{source}"
++        );
++    }
++}
+diff --git a/crates/ripr/src/analysis/classify/reveal.rs b/crates/ripr/src/analysis/classify/reveal.rs
+index 5c3c7a078..4517db5dc 100644
+--- a/crates/ripr/src/analysis/classify/reveal.rs
++++ b/crates/ripr/src/analysis/classify/reveal.rs
+@@ -2743,7 +2743,10 @@ fn analyze_related_assertions(
+                 // A changed `return Err(..);` is an `error_path` probe; its
+                 // pin compares the owner's whole `Err(..)` result.
+                 ProbeFamily::ErrorPath => matches!(assertion.kind, OracleKind::ExactErrorVariant),
+-                ProbeFamily::Predicate => matches!(assertion.kind, OracleKind::RelationalCheck),
++                ProbeFamily::Predicate => matches!(
++                    assertion.kind,
++                    OracleKind::RelationalCheck | OracleKind::ExactValue
++                ),
+                 // #7063: a field of a changed `return Err(E::V { .. })` is
+                 // pinned by an `exact_error_variant` `assert_eq!` whose
+                 // expected `Err(E::V { .. })` the owner pin's early
+@@ -2894,7 +2897,7 @@ fn analyze_related_assertions(
+                 && (return_admission.effect_observer_identity)(test, assertion);
+             let value_receiver_read = matches!(
+                 probe.family,
+-                ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
++                ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction | ProbeFamily::Predicate
+             ) && *reason == RelationReason::DirectOwnerCall
+                 && !import_defeats_owner
+                 && !cross_package_defeats_owner
+@@ -3160,9 +3163,16 @@ fn analyze_related_assertions(
+                     && !match_context.owner_shadowed
+                     && match_context.owner_callee.is_some_and(|owner| {
+                         assertion_comparison_operands(&assertion.text).is_some_and(|operands| {
+-                            operands
+-                                .iter()
+-                                .any(|operand| is_whole_owner_call(operand.trim(), owner))
++                            operands.iter().any(|operand| {
++                                is_whole_owner_call(operand.trim(), owner)
++                                    || (matches!(probe.family, ProbeFamily::ErrorPath)
++                                        && operand
++                                            .trim()
++                                            .strip_suffix(".unwrap_err().kind()")
++                                            .is_some_and(|call| {
++                                                is_whole_owner_call(call.trim(), owner)
++                                            }))
++                            })
+                         }) || crate::analysis::extract::assertion_observed_operand(&assertion.text)
+                             .is_some_and(|operand| is_whole_owner_call(operand.trim(), owner))
+                     });
+diff --git a/crates/ripr/tests/owner_pin_execution.rs b/crates/ripr/tests/owner_pin_execution.rs
+index 0035d786a..f6038932a 100644
+--- a/crates/ripr/tests/owner_pin_execution.rs
++++ b/crates/ripr/tests/owner_pin_execution.rs
+@@ -3961,3 +3961,205 @@ fn literal_json_constructor_matches_real_callback_and_runtime_controls() -> Resu
+     }
+     Ok(())
+ }
++
++#[test]
++fn awaited_predicate_identity_does_not_credit_discarded_or_overwritten_results()
++-> Result<(), String> {
++    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");
++    let source =
++        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
++    let original = "let result = fetch_limit(100, 50).await;\n        assert_eq!(result, 90);";
++    assert!(source.contains(original));
++    for (body, exposed) in [
++        (
++            "let result = fetch_limit(50, 50).await; assert_eq!(result, 50);",
++            true,
++        ),
++        (
++            "let input=50;\nassert_eq!(input,50);\nlet result=fetch_limit(50,50).await;\nassert_eq!(result,50);",
++            true,
++        ),
++        (
++            "let result=fetch_limit(50,50).await;\nassert_eq!(result,50);\nlet input=50;\nassert_eq!(input,50);",
++            true,
++        ),
++        (
++            "let _=fetch_limit(50,50).await; let result=50; assert_eq!(result,50);",
++            false,
++        ),
++        (
++            "let mut result=fetch_limit(50,50).await; result=50; assert_eq!(result,50);",
++            false,
++        ),
++        (
++            "let result={ let _=fetch_limit(50,50).await; 50 }; assert_eq!(result,50);",
++            false,
++        ),
++    ] {
++        let scratch = Scratch::create()?;
++        std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
++        std::fs::copy(
++            fixture.join("input/Cargo.toml"),
++            scratch.0.join("Cargo.toml"),
++        )
++        .map_err(|e| e.to_string())?;
++        std::fs::write(scratch.0.join("src/lib.rs"), source.replace(original, body))
++            .map_err(|e| e.to_string())?;
++        let report = check_workspace(CheckInput {
++            root: scratch.0.clone(),
++            diff_file: Some(fixture.join("diff.patch")),
++            mode: Mode::Fast,
++            include_unchanged_tests: true,
++            ..CheckInput::default()
++        })?;
++        assert_eq!(report.findings.len(), 1, "nonempty async predicate subject");
++        assert_eq!(
++            report.findings[0].class == ExposureClass::Exposed,
++            exposed,
++            "{body}: {:?}",
++            report.findings[0]
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn exact_error_kind_projection_keeps_its_own_result_identity() -> Result<(), String> {
++    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
++        .join("../../fixtures/error_path_oracle_execution_direct");
++    let source =
++        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
++    let original = "assert_eq!(read_all(rdr).unwrap_err().kind(), io::ErrorKind::Other);";
++    assert!(source.contains(original));
++    for (body, exposed) in [
++        (format!("let input=32; assert_eq!(input,32); {original}"), true),
++        (format!("{original} let input=32; assert_eq!(input,32);"), true),
++        ("let _=read_all(BrokenReader); assert_eq!(other(rdr).unwrap_err().kind(), io::ErrorKind::Other);".to_string(), false),
++        ("assert_eq!(other(rdr).unwrap_err().kind(), io::ErrorKind::Other); let _=read_all(BrokenReader);".to_string(), false),
++    ] {
++        let scratch=Scratch::create()?;
++        std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
++        std::fs::copy(fixture.join("input/Cargo.toml"),scratch.0.join("Cargo.toml")).map_err(|e| e.to_string())?;
++        let helper="\nfn other<R: Read>(_: R) -> io::Result<usize> { Err(io::Error::other(\"other\")) }\n";
++        std::fs::write(scratch.0.join("src/lib.rs"),format!("{}{helper}",source.replace(original,&body))).map_err(|e| e.to_string())?;
++        let report=check_workspace(CheckInput { root:scratch.0.clone(), diff_file:Some(fixture.join("diff.patch")), mode:Mode::Fast, include_unchanged_tests:true, ..CheckInput::default() })?;
++        let subjects:Vec<_>=report.findings.iter().filter(|f|f.probe.family==ProbeFamily::ErrorPath).collect();
++        assert_eq!(subjects.len(),1,"nonempty error projection subject");
++        assert_eq!(subjects[0].class==ExposureClass::Exposed,exposed,"{body}: {:?}",subjects[0]);
++    }
++    Ok(())
++}
++
++#[test]
++fn default_trait_ufcs_result_pins_do_not_lend_identity_to_other_oracles() -> Result<(), String> {
++    let fixture =
++        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_trait_default_import");
++    let source =
++        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
++    let original = "assert_eq!(self::Counter::advance(&Unit), 8);";
++    assert!(source.contains(original));
++    for (body, exposed) in [
++        (original.to_string(), true),
++        (
++            format!("let factor=4; assert_eq!(factor,4);\n{original}"),
++            true,
++        ),
++        (
++            format!("{original}\nlet factor=4; assert_eq!(factor,4);"),
++            true,
++        ),
++        (
++            "let _=self::Counter::advance(&Unit); let factor=4; assert_eq!(factor,4);".to_string(),
++            false,
++        ),
++        (
++            "assert_eq!(self::Counter::advance(&Unit) * 0, 0);".to_string(),
++            false,
++        ),
++    ] {
++        let scratch = Scratch::create()?;
++        std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
++        std::fs::copy(
++            fixture.join("input/Cargo.toml"),
++            scratch.0.join("Cargo.toml"),
++        )
++        .map_err(|e| e.to_string())?;
++        let input = source.replace(original, &body);
++        std::fs::write(scratch.0.join("src/lib.rs"), &input).map_err(|e| e.to_string())?;
++        let report = check_workspace(CheckInput {
++            root: scratch.0.clone(),
++            diff_file: Some(fixture.join("diff.patch")),
++            mode: Mode::Fast,
++            include_unchanged_tests: true,
++            ..CheckInput::default()
++        })?;
++        assert_eq!(
++            report.findings.len(),
++            1,
++            "nonempty default-trait return subject"
++        );
++        assert_eq!(
++            report.findings[0].class == ExposureClass::Exposed,
++            exposed,
++            "{body}: {:?}",
++            report.findings[0]
++        );
++        for wrong in [false, true] {
++            let runtime = if wrong {
++                input.replace("4 * self.step()", "4 + self.step()")
++            } else {
++                input.clone()
++            };
++            source_runtime_control(
++                &runtime,
++                &format!("default_trait_ufcs/wrong={wrong}/{body}"),
++                1,
++                wrong && exposed,
++            )?;
++        }
++    }
++    Ok(())
++}
++
++#[test]
++fn primitive_inherent_method_does_not_pin_same_named_trait_owner() -> Result<(), String> {
++    let fixture =
++        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_f64_trait_impl_import");
++    let source =
++        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
++    let input = source.replace("render", "abs").replace(
++        r#"assert_eq!((-0.0f64).abs(), String::from(""));"#,
++        "assert_eq!((-1.0f64).abs(), 1.0);",
++    );
++    assert!(input.contains("assert_eq!((-1.0f64).abs(), 1.0);"));
++    let scratch = Scratch::create()?;
++    std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
++    std::fs::copy(
++        fixture.join("input/Cargo.toml"),
++        scratch.0.join("Cargo.toml"),
++    )
++    .map_err(|e| e.to_string())?;
++    std::fs::write(scratch.0.join("src/lib.rs"), &input).map_err(|e| e.to_string())?;
++    let diff = std::fs::read_to_string(fixture.join("diff.patch"))
++        .map_err(|e| e.to_string())?
++        .replace("render", "abs");
++    let diff_path = scratch.0.join("change.patch");
++    std::fs::write(&diff_path, diff).map_err(|e| e.to_string())?;
++    let report = check_workspace(CheckInput {
++        root: scratch.0.clone(),
++        diff_file: Some(diff_path),
++        mode: Mode::Fast,
++        include_unchanged_tests: true,
++        ..CheckInput::default()
++    })?;
++    assert_eq!(report.findings.len(), 1);
++    assert_ne!(report.findings[0].class, ExposureClass::Exposed);
++    source_runtime_control(&input, "primitive inherent abs/correct", 1, false)?;
++    source_runtime_control(
++        &input.replace("String::from(\"\")", "String::from(\"changed\")"),
++        "primitive inherent abs/wrong trait",
++        1,
++        false,
++    )?;
++    Ok(())
++}
+diff --git a/crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs b/crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs
+index b1d12bf86..37189591c 100644
+--- a/crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs
++++ b/crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs
+@@ -9,6 +9,12 @@ const SOURCE: &str =
+ const BOUNDARY: &str = "    assert_eq!(b::gate(10), true);";
+ const CASES: &[(&str, &str, bool, bool)] = &[
+     ("sibling_direct", BOUNDARY, false, false),
++    (
++        "bound_constant_projection",
++        "    let got = a::gate(10);\n    assert_eq!(got || true, true);",
++        false,
++        false,
++    ),
+     (
+         "sibling_bound",
+         "    let got = b::gate(10);\n    assert_eq!(got, true);",
+@@ -274,7 +280,8 @@ fn check_case(
+             assert!(
+                 finding["ripr"]["discriminate"]["summary"]
+                     .as_str()
+-                    .is_some_and(|summary| summary.contains("same_test_pairing_missing")),
++                    .is_some_and(|summary| summary.contains("same_test_pairing_missing")
++                        || summary.contains("identity_unresolved")),
+                 "{case}"
+             );
+         }
+diff --git a/crates/ripr/tests/owner_pin_execution/effect_assertions.rs b/crates/ripr/tests/owner_pin_execution/effect_assertions.rs
+index b882bd41c..14e7a4818 100644
+--- a/crates/ripr/tests/owner_pin_execution/effect_assertions.rs
++++ b/crates/ripr/tests/owner_pin_execution/effect_assertions.rs
+@@ -307,3 +307,72 @@ fn effect_assertion_contexts_match_executed_mutant_controls() -> Result<(), Stri
+     }
+     Ok(())
+ }
++
++#[test]
++fn projected_effect_payload_requires_fresh_state_and_a_preserving_map() -> Result<(), String> {
++    let assertion = "assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));";
++    for (label, seeded, constant_map, shadowed_map, exposed) in [
++        ("fresh", false, false, false, true),
++        ("seeded", true, false, false, false),
++        ("constant_map", false, true, false, false),
++        ("shadowed_map", false, false, true, false),
++        ("intercepted_first", false, false, false, false),
++    ] {
++        let mut source = effect_source(assertion, "direct")?;
++        if seeded {
++            source = source.replace(
++                "RefCell::new(Vec::new())",
++                "RefCell::new(vec![\"order-42\".to_string()])",
++            );
++        }
++        if constant_map {
++            source = source.replace("map(String::as_str)", "map(|_| \"order-42\")");
++        }
++        if shadowed_map {
++            source=source.replace("use super::*;","use super::*;\nmod String { pub fn as_str(_: &std::string::String) -> &'static str { \"order-42\" } }");
++        }
++        if label == "intercepted_first" {
++            source=source.replace("use super::*;","use super::*;\ntrait First { fn first(&self)->Option<&String>; }\nimpl First for Vec<String> { fn first(&self)->Option<&String> { static FIXED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| \"order-42\".to_string()); Some(&FIXED) } }\n");
++        }
++        let scratch = Scratch::create()?;
++        std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
++        std::fs::write(
++            scratch.0.join("Cargo.toml"),
++            "[package]\nname=\"projected_effect\"\nversion=\"0.0.0\"\nedition=\"2024\"\n",
++        )
++        .map_err(|e| e.to_string())?;
++        std::fs::write(scratch.0.join("src/lib.rs"), &source).map_err(|e| e.to_string())?;
++        let diff = scratch.0.join("diff.patch");
++        std::fs::write(&diff, super::effect_assertion_sweep::ALIGNED_DIFF)
++            .map_err(|e| e.to_string())?;
++        let report = check_workspace(CheckInput {
++            root: scratch.0.clone(),
++            diff_file: Some(diff),
++            mode: Mode::Fast,
++            include_unchanged_tests: true,
++            ..CheckInput::default()
++        })?;
++        assert_eq!(report.findings.len(), 2, "nonempty actual effect subjects");
++        for finding in report.findings {
++            assert_eq!(
++                finding.class == ExposureClass::Exposed,
++                exposed,
++                "{label}: {finding:?}"
++            );
++        }
++        for wrong in [false, true] {
++            let runtime = if wrong {
++                source.replace("notifier.send(order_id);", "notifier.send(\"static_msg\");")
++            } else {
++                source.clone()
++            };
++            source_runtime_control(
++                &runtime,
++                &format!("projected_effect/{label}/wrong={wrong}"),
++                1,
++                wrong && exposed,
++            )?;
++        }
++    }
++    Ok(())
++}
+diff --git a/fixtures/evidence-promotion-honesty-corpus/corpus.json b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+index a41b033e6..b2365a30a 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/corpus.json
++++ b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+@@ -29,6 +29,54 @@
+     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json"
+   ],
+   "cases": [
++    {
++      "id": "rust_effect_receiver_intercepted_first_side_effect",
++      "language": "rust",
++      "tier": "pure",
++      "source_fixture": "fixtures/rust_effect_receiver_intercepted_first",
++      "vector": "intercepted_first_returns_a_fixed_value_instead_of_the_changed_payload",
++      "probe_family": "side_effect",
++      "assertions": [
++        {
++          "type": "must_not_report_clean"
++        },
++        {
++          "type": "expected_finding_count",
++          "count": 1
++        },
++        {
++          "type": "must_not_promote"
++        },
++        {
++          "type": "expected_class",
++          "class": "weakly_exposed"
++        }
++      ]
++    },
++    {
++      "id": "rust_effect_receiver_intercepted_first_call_deletion",
++      "language": "rust",
++      "tier": "pure",
++      "source_fixture": "fixtures/rust_effect_receiver_intercepted_first",
++      "vector": "intercepted_first_returns_a_fixed_value_instead_of_the_changed_payload",
++      "probe_family": "call_deletion",
++      "assertions": [
++        {
++          "type": "must_not_report_clean"
++        },
++        {
++          "type": "expected_finding_count",
++          "count": 1
++        },
++        {
++          "type": "must_not_promote"
++        },
++        {
++          "type": "expected_class",
++          "class": "weakly_exposed"
++        }
++      ]
++    },
+     {
+       "id": "rust_binding_status_wrong_owner_observer",
+       "language": "rust",
+diff --git a/fixtures/rust_effect_receiver_intercepted_first/SPEC.md b/fixtures/rust_effect_receiver_intercepted_first/SPEC.md
+new file mode 100644
+index 000000000..6f5480c80
+--- /dev/null
++++ b/fixtures/rust_effect_receiver_intercepted_first/SPEC.md
+@@ -0,0 +1,28 @@
++# Fixture: rust_effect_receiver_intercepted_first
++
++Spec: RIPR-SPEC-0108
++
++## Given
++
++A free owner sends its changed payload into a fresh `RefCell<Vec<String>>`.
++The test reads `first().map(String::as_str)`, but an in-scope `First` trait
++intercepts `Vec::first` before slice dereferencing and returns a fixed string.
++
++## When
++
++Run `cargo xtask fixtures rust_effect_receiver_intercepted_first` and the
++`projected_effect_payload_requires_fresh_state_and_a_preserving_map` native
++controls in `owner_pin_execution`.
++
++## Then
++
++Both call-deletion and changed-argument findings stay weakly exposed. The
++assertion does not discriminate the effect: the correct and deliberately wrong
++producer each compile and pass one real Rust test. The matched fresh receiver
++without interception remains a positive control in the integration test.
++
++## Must Not
++
++- Treat a field mention as observation through an intercepted collection read.
++- Credit seeded elements, constant maps or a shadowed `String::as_str`.
++- Re-bless exposed output or claim mutation adequacy from a static finding.
+diff --git a/fixtures/rust_effect_receiver_intercepted_first/diff.patch b/fixtures/rust_effect_receiver_intercepted_first/diff.patch
+new file mode 100644
+index 000000000..19a653f95
+--- /dev/null
++++ b/fixtures/rust_effect_receiver_intercepted_first/diff.patch
+@@ -0,0 +1,11 @@
++diff --git a/src/lib.rs b/src/lib.rs
++index 0000000..1111111 100644
++--- a/src/lib.rs
+++++ b/src/lib.rs
++@@ -16,5 +16,5 @@ impl Notifier {
++ 
++ pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {
++-    notifier.send("static_msg");
+++    notifier.send(order_id);
++     true
++ }
+diff --git a/fixtures/rust_effect_receiver_intercepted_first/expected/CHANGELOG.md b/fixtures/rust_effect_receiver_intercepted_first/expected/CHANGELOG.md
+new file mode 100644
+index 000000000..64d1c152a
+--- /dev/null
++++ b/fixtures/rust_effect_receiver_intercepted_first/expected/CHANGELOG.md
+@@ -0,0 +1,13 @@
++# Golden Output Changes
++
++## Pending — rust_effect_receiver_intercepted_first (1)
++
++Reason:
++RIPR-SPEC-0108: refuse intercepted first observer; native correct and wrong payload controls both pass, preserving weak evidence
++
++Command:
++`cargo xtask goldens bless rust_effect_receiver_intercepted_first --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
+diff --git a/fixtures/rust_effect_receiver_intercepted_first/expected/check.json b/fixtures/rust_effect_receiver_intercepted_first/expected/check.json
+new file mode 100644
+index 000000000..302b477db
+--- /dev/null
++++ b/fixtures/rust_effect_receiver_intercepted_first/expected/check.json
+@@ -0,0 +1,199 @@
++{
++  "schema_version": "0.2",
++  "tool": "ripr",
++  "mode": "fast",
++  "root": "fixtures/rust_effect_receiver_intercepted_first/input",
++  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
++  "analysis_outcome": {
++    "analysis_complete": true,
++    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:12e1b21d04f264edcedca77f9704ffc842463e5f6ab7238281eca742c45bd400","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
++  },
++  "findings": [
++    {
++      "id": "probe:src_lib.rs:call_deletion:934aa430",
++      "canonical_gap_id": "gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id",
++      "canonical_gap_group_size": 1,
++      "canonical_gap": {
++        "id": "gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id",
++        "language": "rust",
++        "file": "src/lib.rs",
++        "owner": "process_order",
++        "behavior_kind": "call_deletion",
++        "probe_kind": "call_deletion",
++        "normalized_discriminator": "notifier.send_order_id"
++
++      },
++      "classification": "weakly_exposed",
++      "severity": "warning",
++      "confidence": 0.92,
++      "probe": {
++        "id": "probe:src_lib.rs:call_deletion:934aa430",
++        "family": "call_deletion",
++        "delta": "effect",
++        "file": "./src/lib.rs",
++        "line": 18,
++        "expression": "notifier.send(order_id)"
++       },
++      "ripr": {
++        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach process_order: process_order_sends_exact_order_id"},
++        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
++        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: notifier.send(order_id)"},
++        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
++        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
++       },
++      "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches event or outbound call: notifier.send(order_id) (line 18)", "related test src/lib.rs:29 process_order_sends_exact_order_id uses strong exact value oracle: assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));", "source function argument value order_id = \"order-42\" at line 31", "source assertion argument value \"order-42\" at line 32"],
++      "flow_sinks": [
++        {"kind":"event_call","text":"notifier.send(order_id)","line":18}
++      ],
++      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach process_order: process_order_sends_exact_order_id"],
++      "missing": ["No strong discriminator was detected"],
++      "assertion_texts": {
++        "31": "process_order(&notifier, \"order-42\");",
++        "32": "assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));"
++      },
++      "activation": {
++        "observed_values": [
++          {
++            "line": 31,
++            "value": "order_id = \"order-42\"",
++            "context": "function_argument"
++          },
++          {
++            "line": 32,
++            "value": "\"order-42\"",
++            "context": "assertion_argument"
++          }
++        ],
++        "missing_discriminators": [
++        ]
++      },
++      "observed_values": [
++        {
++          "line": 31,
++          "value": "order_id = \"order-42\"",
++          "context": "function_argument"
++        },
++        {
++          "line": 32,
++          "value": "\"order-42\"",
++          "context": "assertion_argument"
++        }
++      ],
++      "missing_discriminators": [
++      ],
++      "related_tests_total": 1,
++      "related_tests": [
++        {
++          "name": "process_order_sends_exact_order_id",
++          "file": "src/lib.rs",
++          "line": 29,
++          "oracle_strength": "strong",
++          "oracle_kind": "exact_value",
++          "oracle": "assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));",
++          "relation_reason": "direct_owner_call",
++          "relation_confidence": "high"
++        }
++      ],
++      "stop_reasons": [],
++      "oracle_kind": "exact_value",
++      "oracle_strength": "strong",
++      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
++      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
++      "language": "rust",
++      "source_currentness": "candidate_current"
++    },
++    {
++      "id": "probe:src_lib.rs:side_effect:95da2a37",
++      "canonical_gap_id": "gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id",
++      "canonical_gap_group_size": 1,
++      "canonical_gap": {
++        "id": "gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id",
++        "language": "rust",
++        "file": "src/lib.rs",
++        "owner": "process_order",
++        "behavior_kind": "side_effect",
++        "probe_kind": "side_effect",
++        "normalized_discriminator": "notifier.send_order_id"
++
++      },
++      "classification": "weakly_exposed",
++      "severity": "warning",
++      "confidence": 0.92,
++      "probe": {
++        "id": "probe:src_lib.rs:side_effect:95da2a37",
++        "family": "side_effect",
++        "delta": "effect",
++        "file": "./src/lib.rs",
++        "line": 18,
++        "expression": "notifier.send(order_id)"
++       },
++      "ripr": {
++        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach process_order: process_order_sends_exact_order_id"},
++        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
++        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: notifier.send(order_id)"},
++        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
++        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
++       },
++      "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches event or outbound call: notifier.send(order_id) (line 18)", "related test src/lib.rs:29 process_order_sends_exact_order_id uses strong exact value oracle: assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));", "source function argument value order_id = \"order-42\" at line 31", "source assertion argument value \"order-42\" at line 32"],
++      "flow_sinks": [
++        {"kind":"event_call","text":"notifier.send(order_id)","line":18}
++      ],
++      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach process_order: process_order_sends_exact_order_id"],
++      "missing": ["No strong discriminator was detected"],
++      "assertion_texts": {
++        "31": "process_order(&notifier, \"order-42\");",
++        "32": "assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));"
++      },
++      "activation": {
++        "observed_values": [
++          {
++            "line": 31,
++            "value": "order_id = \"order-42\"",
++            "context": "function_argument"
++          },
++          {
++            "line": 32,
++            "value": "\"order-42\"",
++            "context": "assertion_argument"
++          }
++        ],
++        "missing_discriminators": [
++        ]
++      },
++      "observed_values": [
++        {
++          "line": 31,
++          "value": "order_id = \"order-42\"",
++          "context": "function_argument"
++        },
++        {
++          "line": 32,
++          "value": "\"order-42\"",
++          "context": "assertion_argument"
++        }
++      ],
++      "missing_discriminators": [
++      ],
++      "related_tests_total": 1,
++      "related_tests": [
++        {
++          "name": "process_order_sends_exact_order_id",
++          "file": "src/lib.rs",
++          "line": 29,
++          "oracle_strength": "strong",
++          "oracle_kind": "exact_value",
++          "oracle": "assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));",
++          "relation_reason": "direct_owner_call",
++          "relation_confidence": "high"
++        }
++      ],
++      "stop_reasons": [],
++      "oracle_kind": "exact_value",
++      "oracle_strength": "strong",
++      "recommended_next_step": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
++      "suggested_next_action": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
++      "language": "rust",
++      "source_currentness": "candidate_current"
++    }
++  ]
++}
+diff --git a/fixtures/rust_effect_receiver_intercepted_first/expected/human.txt b/fixtures/rust_effect_receiver_intercepted_first/expected/human.txt
+new file mode 100644
+index 000000000..2f2198d16
+--- /dev/null
++++ b/fixtures/rust_effect_receiver_intercepted_first/expected/human.txt
+@@ -0,0 +1,50 @@
++ripr static RIPR exposure analysis
++mode: fast
++root: fixtures/rust_effect_receiver_intercepted_first/input
++
++Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
++
++Analysis outcome: findings below (analysis complete)
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
++
++Start here:
++  State: a test gap to inspect or repair
++  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
++  File: ./src/lib.rs:18
++  Static exposure: weak (severity: warning, confidence 0.92)
++  Why weak: a related test reaches this change but does not observe the exact changed value
++  Gap ID (for scripts): gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id
++  Changed behavior: notifier.send(order_id)
++  Missing check: No strong assertion was detected
++  Related test: src/lib.rs:29 process_order_sends_exact_order_id
++  Next step: Strengthen the related assertion so it discriminates the changed behavior
++  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
++    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
++      propagation = changed effect reaches output; observation = related test/assertion evidence;
++      assertion = a test assertion tells intended from wrong behavior
++    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
++      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
++    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
++      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
++      no test path = no test path found; unclear = analysis limited, not a verdict;
++      found = listed for review; suppressed by your settings = hidden by your suppression policy;
++      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
++    - reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id
++    - infection yes: Reachable tests can plausibly activate this changed behavior
++    - 7 more detail line(s) in --format human-full
++
++Next: drill into the top finding:
++  (finding id, for explain/context)
++  ripr explain --root <cwd>/fixtures/rust_effect_receiver_intercepted_first/input --diff <cwd>/fixtures/rust_effect_receiver_intercepted_first/diff.patch --mode fast probe:src_lib.rs:call_deletion:934aa430
++  ripr context --root <cwd>/fixtures/rust_effect_receiver_intercepted_first/input --diff <cwd>/fixtures/rust_effect_receiver_intercepted_first/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:934aa430
++  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a way to follow the changed value to something a test can check; follow the Next step above, then rerun `ripr check`
++No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
++Write this test by hand: call the function, then assert the visible change the changed call makes (a changed value, state, or output); then rerun `ripr check`.
++
++Hidden:
++  1 lower-priority finding(s) omitted from default human output.
++    - ./src/lib.rs:18 (weak); kind: side_effect; reason: No strong assertion was detected
++  Hidden classes:
++    weak = tests reach it but check it only loosely
++  Full evidence: rerun with --format human-full
++  Machine data: rerun with --format json
+diff --git a/fixtures/rust_effect_receiver_intercepted_first/input/Cargo.toml b/fixtures/rust_effect_receiver_intercepted_first/input/Cargo.toml
+new file mode 100644
+index 000000000..cad1956f1
+--- /dev/null
++++ b/fixtures/rust_effect_receiver_intercepted_first/input/Cargo.toml
+@@ -0,0 +1,6 @@
++[package]
++name = "rust_effect_receiver_intercepted_first_fixture"
++version = "0.0.0"
++edition = "2024"
++
++[workspace]
+diff --git a/fixtures/rust_effect_receiver_intercepted_first/input/src/lib.rs b/fixtures/rust_effect_receiver_intercepted_first/input/src/lib.rs
+new file mode 100644
+index 000000000..028716137
+--- /dev/null
++++ b/fixtures/rust_effect_receiver_intercepted_first/input/src/lib.rs
+@@ -0,0 +1,34 @@
++use std::cell::RefCell;
++
++pub struct Notifier {
++    pub sent: RefCell<Vec<String>>,
++}
++
++impl Notifier {
++    pub fn new() -> Self {
++        Notifier { sent: RefCell::new(Vec::new()) }
++    }
++    pub fn send(&self, payload: &str) -> bool {
++        self.sent.borrow_mut().push(payload.to_string());
++        true
++    }
++}
++
++pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {
++    notifier.send(order_id);
++    true
++}
++
++#[cfg(test)]
++mod tests {
++use super::*;
++trait First { fn first(&self)->Option<&String>; }
++impl First for Vec<String> { fn first(&self)->Option<&String> { static FIXED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| "order-42".to_string()); Some(&FIXED) } }
++
++#[test]
++fn process_order_sends_exact_order_id() {
++let notifier = Notifier::new();
++process_order(&notifier, "order-42");
++assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some("order-42")));
++}
++}

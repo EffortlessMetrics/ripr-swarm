@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized] target(s) in 0.31s
+     Running unittests src/lib.rs (/workspace/12010-proof/target/debug/deps/ripr-7f72c4b83423df9b)
+
+running 11 tests
+test output::schemas::tests::cache_status_docs_name_live_status_field_contract ... ok
+test output::schemas::tests::check_output_doc_separates_internal_schema_gate_from_consumer_tolerance ... ok
+test output::schemas::tests::command_version_table_names_live_public_outputs ... ok
+test output::schemas::tests::corpus_consumer_versions_match_live_cache_identity ... ok
+test output::schemas::tests::producer_version_extraction_rejects_missing_and_conflicting_literals ... ok
+test output::schemas::tests::registry_matches_live_agent_artifact_versions ... ok
+test output::schemas::tests::rerun_example_analyzer_identity_accepts_language_feature_sets ... ok
+test output::schemas::tests::rerun_example_analyzer_identity_rejects_malformed_formats ... ok
+test output::schemas::tests::rerun_example_nested_versions_match_live_cache_identity ... ok
+test output::schemas::tests::swarm_queue_example_matches_live_envelope_contract ... ok
+test output::schemas::tests::verification_execution_response_version_matches_private_producer ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 18080 filtered out; finished in 0.09s
+

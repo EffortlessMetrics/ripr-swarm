@@ -1,0 +1,40 @@
+    Finished `test` profile [unoptimized] target(s) in 0.48s
+     Running unittests src/lib.rs (/workspace/12010-proof/target/debug/deps/ripr-7f72c4b83423df9b)
+
+running 33 tests
+test analysis::syntax::owner_pin::binding_free_index_tests::binding_free_index_is_collected_once_per_file_not_per_macro ... ok
+test analysis::syntax::owner_pin::fallible_check::tests::literal_check_syntax_accepts_both_assertion_spellings_and_function_orders ... ok
+test analysis::syntax::owner_pin::fallible_check::tests::literal_check_syntax_refuses_outside_the_closed_check_grammar ... ok
+test analysis::syntax::owner_pin::fallible_check::tests::literal_owner_syntax_accepts_only_the_closed_owner_shape ... ok
+test analysis::syntax::owner_pin::fallible_check::tests::primitive_u8_literal_refuses_non_decimal_or_non_u8_values ... ok
+test analysis::syntax::owner_pin::literal_json::tests::cached_uses_keep_per_call_scope ... ok
+test analysis::syntax::owner_pin::literal_json::tests::json_use_scan_runs_once_per_file_not_per_macro ... ok
+test analysis::syntax::owner_pin::literal_macro_export_tests::macro_use_records_the_source_crate_only_for_selected_plain_imports ... ok
+test analysis::syntax::owner_pin::literal_macro_export_tests::only_a_plain_unconditional_root_declaration_supplies_an_export_witness ... ok
+test analysis::syntax::owner_pin::prelude_glob_audit_tests::every_trusted_prelude_glob_has_an_audit_row_and_back ... ok
+test analysis::syntax::owner_pin::prelude_glob_audit_tests::spec_glob_column_matches_the_full_trusted_glob_paths ... ok
+test analysis::syntax::owner_pin::process_names_scan_tests::a_file_of_many_tests_reads_its_process_imports_once ... ok
+test analysis::syntax::owner_pin::process_names_scan_tests::a_renamed_process_import_still_ends_each_test_before_its_assertions ... ok
+test analysis::syntax::owner_pin::root_inline_glob_tests::many_distinct_inline_globs_are_scanned_with_one_file_inventory ... ok
+test analysis::syntax::owner_pin::root_inline_glob_tests::only_the_proven_inline_glob_site_is_removed ... ok
+test analysis::syntax::owner_pin::skipping_table_tests::a_body_fingerprint_follows_the_text_exactly ... ok
+test analysis::syntax::owner_pin::skipping_table_tests::a_column_is_never_read_for_a_loop_that_skips_for_another_reason ... ok
+test analysis::syntax::owner_pin::skipping_table_tests::a_glob_import_leaves_the_list_unestablished ... ok
+test analysis::syntax::owner_pin::skipping_table_tests::a_key_cell_that_is_not_a_plain_string_cannot_be_compared ... ok
+test analysis::syntax::owner_pin::skipping_table_tests::a_listed_row_is_dropped_from_every_column ... ok
+test analysis::syntax::owner_pin::skipping_table_tests::a_loop_without_the_guard_is_not_a_skipping_table ... ok
+test analysis::syntax::owner_pin::skipping_table_tests::every_claims_macro_is_trusted_test_scoped_and_dropped_in_from_claims ... ok
+test analysis::syntax::owner_pin::skipping_table_tests::only_the_exact_guard_shape_is_read ... ok
+test analysis::syntax::owner_pin::skipping_table_tests::the_plain_column_reader_still_refuses_a_guarded_loop ... ok
+test analysis::syntax::owner_pin::skipping_table_tests::the_skip_list_must_be_one_plain_literal_const ... ok
+test analysis::syntax::owner_pin::slice_table::tests::assertion_operands_may_read_only_the_column_or_result ... ok
+test analysis::syntax::owner_pin::slice_table::tests::column_bounds_refuse_oversized_tables ... ok
+test analysis::syntax::owner_pin::slice_table::tests::eager_table_call_yields_rows_call_text_and_assertion_count ... ok
+test analysis::syntax::owner_pin::slice_table::tests::non_path_arguments_and_missing_parameters_are_refused ... ok
+test analysis::syntax::owner_pin::slice_table::tests::owner_references_are_unknown_when_hidden_uses_are_possible ... ok
+test analysis::syntax::owner_pin::slice_table::tests::owner_references_count_identifier_uses_in_clean_source ... ok
+test analysis::syntax::owner_pin::slice_table::tests::suspended_nested_or_unresolved_control_flow_refuses_the_table ... ok
+test analysis::syntax::owner_pin::slice_table::tests::unwrap_needs_every_row_to_be_nonempty ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 18058 filtered out; finished in 0.27s
+

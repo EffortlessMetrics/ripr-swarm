@@ -1,0 +1,26 @@
+    Finished `test` profile [unoptimized] target(s) in 0.40s
+     Running unittests src/lib.rs (/workspace/12010-proof/target/debug/deps/ripr-7f72c4b83423df9b)
+
+running 19 tests
+test analysis::facts::cfg_predicates::tests::alternatives_negation_literals_and_lookalikes_stay_production ... ok
+test analysis::facts::cfg_predicates::tests::cfg_attr_forms_never_require_test ... ok
+test analysis::facts::cfg_predicates::tests::cfg_attr_introduced_path_attributes_are_detected ... ok
+test analysis::facts::cfg_predicates::tests::cfg_attr_introduces_a_bare_sibling_only_under_a_predicate_known_true ... ok
+test analysis::facts::cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true ... ok
+test analysis::facts::cfg_predicates::tests::cfg_predicate_spelling_table_pins_requires_test_forms ... ok
+test analysis::facts::cfg_predicates::tests::deeply_nested_predicates_fail_closed_instead_of_overflowing ... ok
+test analysis::facts::cfg_predicates::tests::inactive_prelude_flags_keep_unknown_and_malformed_boundaries ... ok
+test analysis::facts::cfg_predicates::tests::malformed_and_unsupported_predicates_stay_unknown ... ok
+test analysis::facts::cfg_predicates::tests::multiple_attributes_compose_conjunctively_without_optimism ... ok
+test analysis::facts::cfg_predicates::tests::non_path_cfg_attr_shapes_are_not_path_introductions ... ok
+test analysis::facts::cfg_predicates::tests::plain_test_gate_excludes_conditional_attribute_expansion ... ok
+test analysis::facts::cfg_predicates::tests::rust_ident_name_strips_one_raw_identifier_prefix ... ok
+test analysis::facts::cfg_predicates::tests::source_preservation_closes_stable_crate_metadata_without_cfg_credit ... ok
+test analysis::facts::cfg_predicates::tests::split_handles_leading_whitespace_and_trailing_non_ascii ... ok
+test analysis::facts::cfg_predicates::tests::split_leading_attribute_extracts_balanced_prefix_with_literals ... ok
+test analysis::facts::cfg_predicates::tests::test_build_availability_preserves_unknown_and_boolean_identity ... ok
+test analysis::facts::cfg_predicates::tests::test_build_availability_refuses_raw_attribute_heads ... ok
+test analysis::facts::cfg_predicates::tests::unlexable_cfg_attr_conditions_fail_closed_to_conditional ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 18072 filtered out; finished in 0.07s
+
