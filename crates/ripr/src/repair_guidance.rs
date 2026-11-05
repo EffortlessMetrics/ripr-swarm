@@ -8,7 +8,7 @@
 //!
 //! The module lives at the crate root rather than under `domain/` because
 //! [`RepairGuidance::semantic_digest`] serializes through `serde_json`, and
-//! `policy/architecture.txt` forbids `serde_json` inside `crates/ripr/src/domain/**`.
+//! `policy/architecture.txt` forbids `serde_json` inside the domain compartment (`crates/ripr-contract/src/domain/**`, `crates/ripr/src/domain/**`).
 //! This matches the sibling `#2827` contract in [`crate::analysis_outcome`].
 //!
 //! This module is internal until #2657 and #2658 connect the packet

@@ -1,0 +1,160 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/ts_multiline_return_continuation_clause/input",
+  "config_path": "<cwd>/fixtures/ts_multiline_return_continuation_clause/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:785d932166b116b7","base_revision":null,"input_identity":"sha256:ece1ba7c3ec88bfd0ba71d47d09895917811624b5e4ffcd481fffc3a882163ba","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_f.ts:typescript_preview:620cc5fc",
+      "canonical_gap_id": "gap:typescript:typescript_preview:620cc5fc",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "observation_not_confirmed", "summary": "the assertion is not confirmed to observe the changed value"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_f.ts:typescript_preview:620cc5fc",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/f.ts",
+        "line": 3,
+        "expression": "    typeof input !== \"function\";",
+        "owner": "typescript:src/f.ts::f"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `f`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter: strong oracle found but its literal inputs give the old and the changed code the same value; the assertion does not discriminate the change."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `f`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but its literal inputs give the old and the changed code the same value; the assertion does not discriminate the change.", "local flow reaches returned value: typeof input !== \"function\"; (line 3)", "related test tests/f.test.ts:4 f takes one input uses strong exact value oracle: expect(...).toBe(...)"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"typeof input !== \"function\";","line":3}
+      ],
+      "evidence": ["owner: f", "typescript_oracle_observed: f(42, false)", "typescript_oracle_expected: false", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/f.test.ts:5", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/f.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_f.ts:typescript_preview:620cc5fc;owner=f", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Every related assertion calls `f` with literal inputs on which the old and the changed returned expression evaluate to the same value; the changed arm or bound is not exercised, so an exact assertion on those inputs passes on both versions. Add an input that reaches the changed arm.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target check or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "f takes one input",
+          "file": "tests/f.test.ts",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "return_value changed at src/f.ts:3: `typeof input !== \"function\";`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "f",
+        "owner_kind": "function",
+        "probe_family": "return_value",
+        "related_test": {
+          "file": "tests/f.test.ts",
+          "line": 4,
+          "name": "f takes one input"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "The related test's check is already strong, but ripr cannot tie it to the changed line. Exercise the changed branch with an input that flips it.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+      },
+      "preview_actionability": {
+        "actionability_category": "missing_target_shape",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "repair_kind",
+          "target_test_shape",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/f.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 3,
+            "owner": "f",
+            "raw": "file=src/f.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_f.ts:typescript_preview:620cc5fc;owner=f",
+            "sample": null,
+            "source_id": "probe:src_f.ts:typescript_preview:620cc5fc"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.",
+      "suggested_next_action": "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": ["src/f.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/f.ts","digest":"sha256:48a6530ac7294cfa423c2c40601047ba75db28122dd2a7a38d608bf05b43b130"}]}
+}
