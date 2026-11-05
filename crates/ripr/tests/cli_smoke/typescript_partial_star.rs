@@ -87,6 +87,46 @@ impl Subject {
             );
         }
         if partial {
+            assert_eq!(finding["classification"], "static_unknown", "{finding}");
+            assert_eq!(
+                finding["static_limit_kind"], "typescript_workspace_read_limited",
+                "{finding}"
+            );
+            assert_eq!(
+                finding["static_limitation"]["kind"],
+                "typescript_workspace_read_limited"
+            );
+            let next = finding["recommended_next_step"]
+                .as_str()
+                .ok_or("missing read-limit recovery")?;
+            assert!(
+                next.contains("Raise RIPR_TS_MAX_FILE_READ_BYTES")
+                    && next.contains("RIPR_TS_MAX_WORKSPACE_READ_BYTES")
+                    && next.contains("then check again"),
+                "a refused sibling requires read-budget recovery: {next}"
+            );
+            assert_eq!(
+                finding["preview_actionability"]["gap_state"],
+                "static_limitation"
+            );
+            assert_eq!(
+                finding["preview_actionability"]["actionability_category"],
+                "typescript_workspace_read_limited"
+            );
+            assert_eq!(
+                finding["preview_actionability"]["repair_route"],
+                next.trim_end_matches('.')
+            );
+            assert_eq!(
+                finding["preview_actionability"]["repair_packet_ready"],
+                false
+            );
+            assert_eq!(
+                finding["typescript_preview_card"]["repair_packet_ready"],
+                false
+            );
+            assert!(finding.get("typescript_repair_packet").is_none());
+            assert!(finding.get("canonical_gap").is_none());
             assert_eq!(report["analysis_outcome"]["analysis_complete"], false);
             let limitations = report["analysis_outcome"]["outcome"]["limitations"]
                 .as_array()
@@ -144,13 +184,14 @@ fn typescript_partial_star_index_never_retains_positive_credit() -> TestResult {
     let subject = Subject::new()?;
     // A known-empty sibling permits the only binding. Losing its facts must
     // withhold that credit rather than infer it still has no competing export.
+    // The unread source also prevents a no-path claim and needs a named limit.
     let padding = format!("//{}\n", "x".repeat(1024));
     fs::write(
         subject.0.join("src/other.ts"),
         format!("{padding}export const other = 1;\n"),
     )?;
     subject.check("4096", "exposed", 1, false)?;
-    subject.check("512", "no_static_path", 0, true)?;
+    subject.check("512", "static_unknown", 0, true)?;
     // With a competing binding the complete index already refuses credit;
     // reducing the byte cap must never improve that verdict.
     fs::write(
@@ -158,7 +199,7 @@ fn typescript_partial_star_index_never_retains_positive_credit() -> TestResult {
         format!("{padding}export function price(value) {{ return value + 10; }}\n"),
     )?;
     subject.check("4096", "no_static_path", 0, false)?;
-    subject.check("512", "no_static_path", 0, true)?;
+    subject.check("512", "static_unknown", 0, true)?;
     // Parse failures also withhold absence evidence, and restoring a valid
     // empty module recovers the supported positive case.
     fs::write(subject.0.join("src/other.ts"), "export function broken(")?;
