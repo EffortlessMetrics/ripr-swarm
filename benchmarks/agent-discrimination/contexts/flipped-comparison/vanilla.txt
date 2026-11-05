@@ -1,0 +1,48 @@
+# CONTEXT: vanilla
+# Crate: flipped-comparison
+# The complete change under study (git diff HEAD~1..HEAD),
+# followed by the full current source file.
+
+===== git diff HEAD~1..HEAD =====
+diff --git a/src/lib.rs b/src/lib.rs
+index 0d7dbf7..2038aed 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,7 +4,7 @@
+ ///
+ /// Members aged 65 and over receive the senior discount.
+ pub fn discount_percent(age: u32) -> u32 {
+-    if age >= 65 {
++    if age > 65 {
+         10
+     } else {
+         0
+
+===== full changed source: src/lib.rs (current HEAD) =====
+//! Membership pricing rules for the storefront.
+
+/// Returns the discount percentage applied at checkout for a member age.
+///
+/// Members aged 65 and over receive the senior discount.
+pub fn discount_percent(age: u32) -> u32 {
+    if age > 65 {
+        10
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod baseline_tests {
+    use super::*;
+
+    #[test]
+    fn senior_member_gets_discount() {
+        assert_eq!(discount_percent(70), 10);
+    }
+
+    #[test]
+    fn young_member_gets_no_discount() {
+        assert_eq!(discount_percent(30), 0);
+    }
+}

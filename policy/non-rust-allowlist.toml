@@ -750,6 +750,15 @@ reason = "Controlled inputs, specs, and corpora consumed by the B1-B6 agentic-su
 covered_by = ["cargo xtask agentic-bench", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "benchmarks/agent-discrimination/**"
+kind = "benchmark_fixture"
+owner = "agent-efficiency-bench"
+surface = "fixtures"
+classification = "fixture"
+reason = "Agent A/B discrimination harness (issue #13113): recorded scenario crate content trees, seed-study context captures and reports, and POSIX evaluator/record scripts. Scenario crates are analyzed inputs; the shell scripts must run under the solver's POSIX shell (Git Bash/WSL) alongside cargo, not inside cargo, so an xtask port cannot host them."
+covered_by = ["cargo xtask check-file-policy", "bash benchmarks/agent-discrimination/eval.sh", "bash benchmarks/agent-discrimination/make-scenario-crates.sh"]
+
+[[allow]]
 glob = "crates/ripr/vendor/**"
 kind = "vendor_proto"
 owner = "analysis"

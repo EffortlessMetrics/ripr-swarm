@@ -23811,6 +23811,11 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if path.starts_with("benchmarks/agent-discrimination/") && path.ends_with(".sh") {
+        return Some(
+            "Agent A/B discrimination harness scripts must run under the solver's POSIX shell (Git Bash/WSL) beside cargo and git: they drive cargo phases, per-run clone materialization, and record writes that execute outside any cargo process, so an xtask port cannot host them (#13113).",
+        );
+    }
     if path == ".ci/contabo-result.sh" {
         return Some(
             "Pinned EM CI requires a Bash result script; this lightweight jq consumer accepts only centrally authenticated exact-subject product imports without compiling or executing product code (#4988).",

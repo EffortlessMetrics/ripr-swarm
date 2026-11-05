@@ -222,3 +222,18 @@ reason = "Immutable verbatim GitHub PR capture for the #4932 real closeout rows;
 path = "tools/repo-policy/tests/fixtures/review_bodies/ready-pr12736-7.md"
 owner = "ci/admission"
 reason = "Verbatim real review-of-record body kept untrimmed as a review-disposition verifier fixture (#12814); the prose is a historical comment, not analyzer output."
+
+[[allow]]
+path = "benchmarks/agent-discrimination/contexts/inserted-guard/tool-note.txt"
+owner = "agent-efficiency-bench"
+reason = "Verbatim Nov 2-4 seed-study context capture (#13113 encoding); byte count is pinned in scenarios/inserted-guard/scenario.json, so inline allows would falsify the recorded evidence. The captured tool note describes the analyzer boundary and names the prohibited vocabulary as boundary data, not static classification output."
+
+[[allow]]
+path = "benchmarks/agent-discrimination/contexts/flipped-comparison/tool-note.txt"
+owner = "agent-efficiency-bench"
+reason = "Verbatim Nov 2-4 seed-study context capture (#13113 encoding); byte count is pinned in scenarios/flipped-comparison/scenario.json, so inline allows would falsify the recorded evidence. The captured tool note describes the analyzer boundary and names the prohibited vocabulary as boundary data, not static classification output."
+
+[[allow]]
+path = "benchmarks/agent-discrimination/contexts/silent-return/tool-note.txt"
+owner = "agent-efficiency-bench"
+reason = "Verbatim Nov 2-4 seed-study context capture (#13113 encoding); byte count is pinned in scenarios/silent-return/scenario.json, so inline allows would falsify the recorded evidence. The captured tool note describes the analyzer boundary and names the prohibited vocabulary as boundary data, not static classification output."
