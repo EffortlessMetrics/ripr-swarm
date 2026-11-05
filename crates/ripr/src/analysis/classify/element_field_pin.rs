@@ -52,8 +52,9 @@ pub(in crate::analysis) fn observes_returned_element_field(
 }
 
 /// A returned-array value is observed through a field only when that field
-/// changed at the selected element. Reuse the element pin's receiver, index,
-/// equality and execution authorities, restricted to this exact assertion.
+/// changed at the selected element. Field probes already identify the field;
+/// whole-return probes first narrow the before/after arrays. Both reuse the
+/// element pin's authorities, restricted to this exact assertion.
 pub(in crate::analysis) fn observes_returned_array_value(
     probe: &Probe,
     owner: &FunctionSummary,
@@ -62,8 +63,12 @@ pub(in crate::analysis) fn observes_returned_array_value(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> bool {
-    if !matches!(probe.family, ProbeFamily::ReturnValue)
-        || !probe.expression.trim_start().starts_with('[')
+    if !matches!(
+        probe.family,
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    ) || (matches!(probe.family, ProbeFamily::ReturnValue)
+        && !probe.expression.trim_start().starts_with('['))
+        || !owner.body.contains('[')
         || index
             .functions()
             .iter()
@@ -72,6 +77,16 @@ pub(in crate::analysis) fn observes_returned_array_value(
             != 1
     {
         return false;
+    }
+    let authority = SharedAuthority {
+        owner,
+        test,
+        index,
+        syntax,
+        selected_assertion: Some(assertion),
+    };
+    if matches!(probe.family, ProbeFamily::FieldConstruction) {
+        return observes_with(probe, owner, test, &authority);
     }
     let Some(fields) = changed_array_fields(probe, owner) else {
         return false;
@@ -89,18 +104,7 @@ pub(in crate::analysis) fn observes_returned_array_value(
             return false;
         };
         field_probe.location.line = owner.start_line + prefix.matches('\n').count();
-        observes_with(
-            &field_probe,
-            owner,
-            test,
-            &SharedAuthority {
-                owner,
-                test,
-                index,
-                syntax,
-                selected_assertion: Some(assertion),
-            },
-        )
+        observes_with(&field_probe, owner, test, &authority)
     })
 }
 

@@ -629,19 +629,21 @@ fn returned_array_field_identity_tracks_the_changed_element() -> Result<(), Stri
             "use rust_catalog_description_structural_oracle::{{rows,Row}};\n#[test]\nfn observes() {{\n {body}\n}}\n"
         );
         let report = check_report(source, &test, MANIFEST, diff)?;
-        let findings: Vec<_> = report["findings"]
-            .as_array()
-            .ok_or("findings missing")?
-            .iter()
-            .filter(|finding| finding["family"] == "return_value")
-            .collect();
-        assert!(!findings.is_empty(), "{report}");
-        for finding in findings {
-            assert_eq!(
-                finding["classification"] == "exposed",
-                exposed,
-                "{body}: {report}"
-            );
+        for family in ["return_value", "field_construction"] {
+            let findings: Vec<_> = report["findings"]
+                .as_array()
+                .ok_or("findings missing")?
+                .iter()
+                .filter(|finding| finding["probe"]["family"] == family)
+                .collect();
+            assert!(!findings.is_empty(), "{family}: {report}");
+            for finding in findings {
+                assert_eq!(
+                    finding["classification"] == "exposed",
+                    exposed,
+                    "{body}: {report}"
+                );
+            }
         }
     }
     Ok(())
