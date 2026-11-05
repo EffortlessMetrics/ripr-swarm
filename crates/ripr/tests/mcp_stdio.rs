@@ -4240,7 +4240,7 @@ fn unknown_method_names_stay_bounded_and_recover() -> Result<(), String> {
             let mut unsupported = current_meta();
             unsupported["io.modelcontextprotocol/protocolVersion"] = json!("2099-01-01");
             for (label, params, expected_code) in [
-                ("missing-meta", json!({}), json!(-32600)),
+                ("missing-meta", json!({}), json!(-32602)),
                 (
                     "unsupported-version",
                     json!({"_meta": unsupported}),
