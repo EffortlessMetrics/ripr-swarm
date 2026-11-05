@@ -2721,9 +2721,10 @@ recorded in [Clippy policy](CLIPPY_POLICY.md).
 
 The same workflow's separate `stable-repo-policy` job checks the small policy
 package on the moving stable channel with matching LLVM tools. It records the
-compiler and LLVM identities, runs genuine coverage-profile controls, and checks
-strict Clippy for that package. Failures stay visible in this advisory job;
-the repository pin, MSRV and required merge gates are unchanged. See the
+compiler and LLVM identities, runs genuine coverage-profile controls and isolated
+`frontdoor` fixtures, and checks strict Clippy for that package. Failures stay
+visible in this advisory job; the repository pin, MSRV and required merge gates
+are unchanged. See the
 [focused toolchain-upgrade recipe](ci/coverage.md#validate-locally).
 
 It installs `cargo-deny` as a normal command-line binary before running the

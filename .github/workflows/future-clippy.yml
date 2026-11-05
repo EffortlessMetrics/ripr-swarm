@@ -135,5 +135,8 @@ jobs:
       - name: Check stable coverage diagnostics
         run: cargo +stable test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
 
+      - name: Check stable isolated workflow fixtures
+        run: cargo +stable test --locked -p repo-policy --test frontdoor
+
       - name: Check stable repo-policy Clippy
         run: cargo +stable clippy --locked -p repo-policy --all-targets -- -D warnings

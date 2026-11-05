@@ -28,7 +28,8 @@ Policy impact:
   CI failure manifest. Required gates, validated profile inputs, retention limits
   and the original failure outcome remain unchanged.
 - A focused stable-toolchain job in the existing advisory future-Clippy workflow
-  exercises the real compiler/LLVM boundary without running workspace coverage.
+  exercises the real compiler/LLVM boundary and isolated fixture activation
+  without running workspace coverage.
 
 ## Problem
 
@@ -189,7 +190,8 @@ The stable advisory job is covered in `tools/repo-policy/tests/future_clippy.rs`
 
 - `stable_compatibility_requires_matching_tools_and_focused_commands` refuses
   missing tools, incorrect activation, conditional preparation, ignored failures,
-  missing commands and setup placed after the proof commands.
+  missing diagnostic, `frontdoor` or Clippy commands, and setup placed after the
+  proof commands.
 - `behavior::stable_identity_uses_matching_llvm_and_preserves_tool_failures`
   exercises the workflow's identity script with a selected sysroot containing a
   space, a wrong LLVM tool on `PATH`, and compiler/sysroot/host/LLVM failures.

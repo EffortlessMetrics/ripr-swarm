@@ -129,9 +129,10 @@ does not apply. This keeps the policy helper's build-time and runtime compiler
 identities aligned. The checks retain their compiler-identity refusals.
 
 The `stable-repo-policy` job in the existing advisory Future Clippy workflow
-runs the focused diagnostic tests and Clippy on the moving stable channel with
-matching `llvm-tools-preview`. It records the actual compiler and LLVM tool
-versions. It follows that workflow's existing main-push, manual-dispatch and
+runs the focused diagnostic tests, the isolated `frontdoor` target and Clippy on
+the moving stable channel with matching `llvm-tools-preview`. It records the
+actual compiler and LLVM tool versions. It follows that workflow's existing
+main-push, manual-dispatch and
 `clippy-future`/`full-ci` plus `merge-ready` PR routing. A failure stays visible;
 the job does not become a required merge gate or run full workspace coverage.
 The existing future-Clippy job continues to inspect deferred lints on Rust

@@ -50,6 +50,7 @@ fn stable_compatibility_requires_matching_tools_and_focused_commands() -> Result
     const SETUP: &str = "      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable\n        with:\n          toolchain: stable\n          components: clippy, llvm-tools-preview\n";
     const TESTS: &str =
         "cargo +stable test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture";
+    const FRONTDOOR: &str = "cargo +stable test --locked -p repo-policy --test frontdoor";
     const CLIPPY: &str =
         "cargo +stable clippy --locked -p repo-policy --all-targets -- -D warnings";
     let job = |text: &str, name: &str| {
@@ -98,10 +99,11 @@ fn stable_compatibility_requires_matching_tools_and_focused_commands() -> Result
             return false;
         }
         let blocks = repo_policy::extract_workflow_run_blocks(after);
-        matches!(blocks.as_slice(), [identity, tests, clippy]
+        matches!(blocks.as_slice(), [identity, tests, frontdoor, clippy]
             if identity.text.contains("compiler=$(rustc -vV)")
                 && identity.text.contains("\"$profdata\" --version")
                 && tests.text.trim() == TESTS
+                && frontdoor.text.trim() == FRONTDOOR
                 && clippy.text.trim() == CLIPPY)
     };
     let text = workflow()?;
@@ -129,6 +131,7 @@ fn stable_compatibility_requires_matching_tools_and_focused_commands() -> Result
             "    name: stable-repo-policy\n    continue-on-error: true\n",
         ),
         ("omitted diagnostics", TESTS, "echo diagnostics omitted"),
+        ("omitted frontdoor", FRONTDOOR, "echo frontdoor omitted"),
         ("omitted Clippy", CLIPPY, "echo Clippy omitted"),
     ] {
         let changed = text.replace(from, to);

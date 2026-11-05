@@ -3,5 +3,6 @@
   correct header sizes, retain explicit unsupported and partial results, and
   compile with stable Clippy while preserving Rust 1.95 compatibility. A focused
   advisory stable-toolchain job checks real profile generation and matching LLVM
-  tools before future upgrades. Historical profiles remain captured when newer
-  LLVM reports a raw profile version mismatch (#13116).
+  tools and isolated workflow fixtures before future upgrades. Historical
+  profiles remain captured when newer LLVM reports a raw profile version
+  mismatch (#13116).
