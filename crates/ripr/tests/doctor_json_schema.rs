@@ -120,13 +120,19 @@ fn source_build_doctor_json_refuses_missing_explicit_compiler() -> Result<(), St
     let analysis = doctor_json_output_with_environment(&root, &[], environment);
     let build =
         doctor_json_output_with_environment(&root, &["--profile", "source-build"], environment);
+    let cargo_build = doctor_json_output_with_environment(
+        &root,
+        &["--profile", "source-build"],
+        |command| {
+            command
+                .env_remove("RUSTC")
+                .env("CARGO_BUILD_RUSTC", &missing);
+        },
+    );
     let _ = std::fs::remove_dir_all(&root);
     let analysis = analysis?;
-    let build = build?;
     let analysis: Value =
         serde_json::from_slice(&analysis.stdout).map_err(|error| error.to_string())?;
-    let document: Value =
-        serde_json::from_slice(&build.stdout).map_err(|error| error.to_string())?;
     let rustc = |document: &Value| {
         document["checks"]
             .as_array()
@@ -135,17 +141,20 @@ fn source_build_doctor_json_refuses_missing_explicit_compiler() -> Result<(), St
             .ok_or_else(|| format!("missing rustc check: {document}"))
     };
     let analysis_check = rustc(&analysis)?;
-    let build_check = rustc(&document)?;
     assert_eq!(analysis_check["status"], "pass", "{analysis}");
-    assert_eq!(build_check["status"], "fail", "{document}");
-    assert_eq!(document["profile"], "source-build");
-    assert_eq!(build.status.code(), Some(3));
-    let evidence = build_check["evidence"].as_str().unwrap_or_default();
-    assert!(
-        evidence.contains("RUSTC compiler: rustc not available"),
-        "{evidence}"
-    );
-    assert!(evidence.contains("fix or unset RUSTC"), "{evidence}");
+    for (selector, build) in [("RUSTC", build), ("CARGO_BUILD_RUSTC", cargo_build)] {
+        let build = build?;
+        let document: Value =
+            serde_json::from_slice(&build.stdout).map_err(|error| error.to_string())?;
+        let build_check = rustc(&document)?;
+        assert_eq!(build_check["status"], "fail", "{document}");
+        assert_eq!(document["profile"], "source-build");
+        assert_eq!(build.status.code(), Some(3));
+        assert_eq!(
+            build_check["evidence"],
+            format!("{selector} compiler: rustc not available; fix or unset {selector}")
+        );
+    }
     Ok(())
 }
 

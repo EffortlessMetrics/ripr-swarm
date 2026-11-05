@@ -2190,6 +2190,9 @@ fn doctor_tool_check_for_root(
         let mut result =
             doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, Some(root));
         if let Some(selector) = selector {
+            if result.evidence == rust_toolchain_missing_with_install_fix(tool) {
+                result.evidence = rust_toolchain_missing_state(tool);
+            }
             result.evidence = format!("{selector} compiler: {}", result.evidence);
             if result.status == DoctorStatus::Fail {
                 result.evidence.push_str(&format!("; fix or unset {selector}"));
