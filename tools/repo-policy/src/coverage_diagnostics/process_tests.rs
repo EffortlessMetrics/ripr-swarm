@@ -66,8 +66,11 @@ fn run_observation_exact_child() -> Result<()> {
     let root = crate::test_support::scratch("coverage-observation-child")?;
     // No automatic deletion: any error or panic retains the child's witnesses.
     let result = (|| -> Result<()> {
-        fs::write(root.join("expected-inherited"), b"owned-observation-sentinel\n")
-            .map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("expected-inherited"),
+            b"owned-observation-sentinel\n",
+        )
+        .map_err(|error| error.to_string())?;
         let stdout = root.join("child-stdout");
         let stderr = root.join("child-stderr");
         let capture = |path: &std::path::Path| {
@@ -126,9 +129,8 @@ fn run_observation_exact_child() -> Result<()> {
                 let passed = format!("test {OBSERVATION_TEST} ... ok");
                 if selected != ["running 1 test"]
                     || summaries.len() != 1
-                    || !summaries[0].starts_with(
-                        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; ",
-                    )
+                    || !summaries[0]
+                        .starts_with("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; ")
                     || !stdout.lines().any(|line| line == passed)
                 {
                     return Err("observation child did not finish exactly one selected test".into());
@@ -145,7 +147,10 @@ fn run_observation_exact_child() -> Result<()> {
     })();
     match result {
         Ok(()) => fs::remove_dir_all(&root).map_err(|error| {
-            format!("retain observation child fixture {}: {error}", root.display())
+            format!(
+                "retain observation child fixture {}: {error}",
+                root.display()
+            )
         }),
         Err(error) => {
             eprintln!("retain observation child fixture: {}", root.display());
@@ -283,7 +288,8 @@ fn child_cleanup_retains_custody_and_refuses_external_reaping() -> Result<()> {
     let mut command = Command::new("sh");
     command.args(["-c", "sleep 30"]);
     let mut child = CoverageChild::spawn(command)?;
-    assert_ne!(child.pid, rustix::process::getpgrp());
+    let pgid = rustix::process::getpgid(Some(child.pid)).map_err(|error| error.to_string())?;
+    assert_eq!(pgid, child.pid);
     assert!(!child.exited().map_err(|error| error.to_string())?);
     let (status, error) = child.cleanup();
     assert_eq!(error, None);
