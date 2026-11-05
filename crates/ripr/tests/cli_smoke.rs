@@ -1185,7 +1185,31 @@ fn normalize_agent_verify_fixture(text: &str) -> Result<String, Box<dyn std::err
 }
 
 fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let root = printed_path(&workspace_root().canonicalize()?);
+    normalize_agent_receipt_fixture_for_root(text, &root)
+}
+
+fn normalize_agent_receipt_fixture_for_root(
+    text: &str,
+    root: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let mut value: serde_json::Value = serde_json::from_str(text)?;
+    // Incomplete receipt guidance embeds the missing analysis-outcome path.
+    // Replace only this workspace's directory prefix in those guidance fields;
+    // retain the artifact name, error reason, and fail-closed instruction.
+    for pointer in [
+        "/summary/next_recommendation",
+        "/summary/next_action/recommended_action",
+    ] {
+        if let Some(serde_json::Value::String(guidance)) = value.pointer_mut(pointer) {
+            for separator in ['/', '\\'] {
+                let prefix = format!("{}{separator}", root.trim_end_matches(['/', '\\']));
+                if !root.is_empty() && prefix.len() > 1 {
+                    *guidance = guidance.replace(&prefix, "<workspace>/");
+                }
+            }
+        }
+    }
     if let Some(provenance) = value
         .get_mut("provenance")
         .and_then(serde_json::Value::as_object_mut)
@@ -1228,6 +1252,50 @@ fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::er
     let mut rendered = serde_json::to_string_pretty(&value)?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+#[test]
+fn receipt_fixture_normalization_preserves_missing_outcome_guidance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let make_receipt = |root: &str| {
+        serde_json::json!({
+        "status": "incomplete",
+        "analysis_outcome_error": format!("Analysis outcome artifact {root}/results/analysis-outcome.json is unavailable: No such file."),
+        "summary": {
+            "next_recommendation": format!("incomplete: {root}/results/analysis-outcome.json is unavailable: No such file; rerun analysis"),
+            "next_action": {"recommended_action": format!("incomplete: {root}/results/analysis-outcome.json is unavailable: No such file; rerun analysis")},
+            "remaining_gap": format!("unrelated {root}/other remains unchanged")
+        }
+    }).to_string()
+    };
+    let first = normalize_agent_receipt_fixture_for_root(&make_receipt("/tmp/one"), "/tmp/one")?;
+    let second = normalize_agent_receipt_fixture_for_root(&make_receipt("/tmp/two"), "/tmp/two")?;
+    let first: serde_json::Value = serde_json::from_str(&first)?;
+    let second: serde_json::Value = serde_json::from_str(&second)?;
+    assert_eq!(
+        first["summary"]["next_recommendation"],
+        second["summary"]["next_recommendation"]
+    );
+    assert_eq!(
+        first["summary"]["next_action"],
+        second["summary"]["next_action"]
+    );
+    let guidance = first["summary"]["next_recommendation"]
+        .as_str()
+        .ok_or("guidance")?;
+    assert!(
+        guidance.contains("<workspace>/results/analysis-outcome.json is unavailable: No such file")
+    );
+    assert!(guidance.contains("incomplete") && guidance.contains("rerun analysis"));
+    assert_eq!(first["status"], "incomplete");
+    assert_eq!(
+        first["summary"]["remaining_gap"],
+        "unrelated /tmp/one/other remains unchanged"
+    );
+    let adjacent =
+        normalize_agent_receipt_fixture_for_root(&make_receipt("/tmp/one-other"), "/tmp/one")?;
+    assert!(adjacent.contains("/tmp/one-other/results/analysis-outcome.json"));
+    Ok(())
 }
 
 fn normalize_unchanged_repo_exposure_producer_fixture(
