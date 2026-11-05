@@ -98,6 +98,170 @@ pushes, manual dispatches, and same-repo pull requests. Fork pull requests still
 generate `lcov.info` and upload the `rust-lcov` artifact, but skip Codecov
 upload because repository secrets are unavailable.
 
+### Storage observations during coverage
+
+The Linux workflow invokes the prebuilt repo-policy run-coverage adapter. It
+runs exactly cargo llvm-cov --workspace --all-features --lcov --output-path
+lcov.info with inherited stdin, stdout, stderr and environment. The native
+exit code is preserved; a signal is recorded and returned as shell status
+128 plus that signal. Observation errors and sampling limits do not stop
+Cargo. The existing 45-minute workflow timeout remains the execution limit.
+
+Before the command, at most 46 times at 60-second intervals, and at completion,
+the adapter emits coverage_storage.v1 records prefixed ripr-coverage-storage.
+Summary, bucket, inspected-profile-entry and end records share a sequence
+number. Each record starts on a new line, uses one write of at most 4 KiB, and
+flushes immediately so it stays identifiable beside concurrent test output.
+A complete sample uses at most 16 KiB; all 48 possible samples use at most
+768 KiB. Oversized records, omitted buckets and short writes remain explicit.
+Missing end records mean the sample was interrupted. Worker loss can still
+prevent delivery of a final record.
+
+The metadata-only scan separates plain build output, instrumented build/state,
+direct raw profiles, target/ripr artifacts, fixture native-target directories,
+and remaining target scratch. Cargo force-routes temporary files into target,
+so these fixture roots are separate from raw profiles that outlive fixture
+cleanup. Other declared roots are the checkout Git directory, Cargo home,
+Rustup home and RUNNER_TEMP when available. Root labels and device IDs connect
+the measurements without dumping environment values. These fixed roots are
+not a whole-filesystem inventory and do not discover arbitrary Cargo config
+overrides or every fixture-specific output directory.
+
+Allocated bytes use filesystem blocks and count each device/inode once across
+the sample, assigning shared allocation to its first inspected bucket.
+Logical file bytes count regular-file directory entries, including hard links;
+duplicate-inode counts explain that distinction. Capacity reports available
+bytes and inodes from fstatvfs on each observed device, with checked block-size
+multiplication; available blocks exclude space reserved from ordinary users.
+The eight largest inspected raw-profile entries retain only bounded names
+and metadata, never profile contents or producer attribution.
+
+Each sample inspects at most 100,000 directory entries, descends at most
+32 levels, and checks a five-second elapsed budget before processing entries.
+Capacity uses a safe query on a held directory, at most once per observed device; it
+spawns no process. Filesystem operations are not individually preempted.
+Directory descriptors and no-follow opens prevent following filesystem
+symlinks; the trusted proc descriptor namespace anchors traversal.
+Missing roots, detected races, errors, overflow and exhausted limits make the
+sample partial. Counts then describe inspected entries rather than totals,
+and an absent bucket is not a measured zero. All samples are non-atomic observations
+while the workload continues writing.
+
+The observer creates no diagnostic files, removes nothing and changes no
+profile pattern, test selection, threshold or runner capacity. It supplies
+storage evidence for #4978; it does not establish the dominant producer or
+repair the capacity failure by itself. The existing failure-profile adapter
+and LCOV upload remain in place.
+
+### Coverage build debug information
+
+Only the Generate coverage step sets `CARGO_PROFILE_TEST_STRIP=debuginfo`.
+Ordinary builds, the plain spawned-binary prebuild and the diagnostic preflight
+retain their normal configuration. The full workspace/all-features command,
+profile pattern, test population and strict report generation stay unchanged.
+This setting removes linked debug information; it preserves ordinary symbols.
+Coverage binaries therefore lose debugger line information even though their
+coverage source mappings must remain usable.
+
+This is a bounded response to measured build pressure, not an attribution of
+the final ENOSPC write. In diagnostic run
+[42015956653](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/42015956653),
+the last complete sample recorded 57,278,578,688 allocated bytes in
+`instrumented_build` and 93,016,064 in `raw_profiles`. The log ended before the worker's
+terminal ENOSPC failure, so subsequent growth remains unobserved. The bucket
+does not identify the share occupied by debug information. A smaller fixture
+does not establish a particular workspace reduction or sufficient capacity;
+acceptance still requires a complete native coverage run, its test results and
+LCOV artifact, with the same population and comparable storage measurements.
+
+The mandatory diagnostics preflight includes
+`native_test_profile_strip_preserves_coverage_and_reduces_fixture_size`. It
+builds the same dependency-free Cargo test fixture with explicit `none` and
+`debuginfo` strip modes, separate target directories and identical explicit
+coverage instrumentation. Child-only compiler/wrapper/encoded-flag overrides
+prevent the outer cargo-llvm-cov environment from changing either comparison.
+The native compiler invocation must show the expected coverage/debug flags and
+candidate strip setting. The baseline binary must contain a nonempty,
+nonallocated `PROGBITS` `.debug_line` section. The candidate must be smaller
+and contain no debug-prefixed section except an exact, nonempty `PROGBITS`
+`.debug_gdb_scripts` with `ALLOC` and without write/execute flags. Allocated
+DWARF, compressed debug sections, lookalike names and unknown debug prefixes
+still fail the control.
+
+The distinction follows the pinned producer and linker. Rust's
+[GDB metadata producer](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/compiler/rustc_codegen_llvm/src/debuginfo/gdb.rs)
+emits pretty-printer loader records and retains a volatile reference to them;
+they are not DWARF line tables. The pinned
+[linker mapping](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/compiler/rustc_codegen_ssa/src/back/linker.rs)
+selects `--strip-debug`, and the matching LLVM
+[debug-section predicate](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/lld/ELF/InputSection.h)
+excludes allocated sections. This permits only the named loader metadata in
+the control; allocation alone never admits another debug section. Actual
+retained sections must come from the native receipt, not this source rule.
+
+The GNU ELF parser requires one literal `[Nr]` column header before any
+numeric data row, with the whitespace-separated tokens `Name Type Address Off
+Size ES Flg Lk Inf Al` in that order. Missing, malformed, duplicate or late
+column headers are errors. Numeric row indices remain unique. For each
+debug-prefixed section it records the name, type, hexadecimal byte size and
+flags. Flag bytes must be unique members of `WAXMSILOGTCERlyopx`; optional
+empty flags remain valid. The
+[pinned LLVM GNU section printer](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/llvm/tools/llvm-readobj/ELFDumper.cpp)
+defines this column order and flag alphabet. This lexical validation precedes
+the existing section policy; it does not admit arbitrary allocated DWARF.
+Malformed debug fields, duplicate debug names and exhausted row/text bounds
+remain errors. Ordinary section fields and name uniqueness are outside this
+control's validation; the unnamed `NULL` section is not a debug subject.
+Each compiler/section diagnostic
+record is at most 4 KiB. Compiler text and raw context for parse failures are
+bounded to eight 512-character chunks with explicit remaining/truncated
+markers. At most 32 debug sections from at most 256 indexed rows are admitted.
+These observations precede the assertions, so a later failure retains its
+actual section evidence in the job output.
+
+Each variant runs the exact test twice, with a post-assertion acknowledgement,
+one-test success and a fresh nonempty profile per invocation. Matching-sysroot
+LLVM tools must merge both profiles without warnings, match each merged
+profile's ID to its own executable, and export usable JSON and LCOV. The
+control compares the complete owned JSON file record, both authored function
+records after removing only their mangled names, and all owned LCOV line
+counts. Each authored function must execute twice, with a hot return count
+of two and a cold return count of zero. Other exported files and unrelated
+functions are outside this fixture control; it does not qualify the LLVM
+exporter or require whole-export equality.
+IDs may differ between the two binaries. Tool absence, malformed output,
+zero selection, warning-only partial merging and missing source evidence fail
+the Linux control. Existing malformed-profile and size-bound controls remain
+selected by the same preflight.
+
+The command-environment control re-enters its exact libtest identity in an
+isolated child with a dedicated inherited variable and no HOME. The observed
+coverage command receives no explicit override for that variable. A successful
+native status, nonempty exact selection, explicit successful inner cleanup
+receipt and fresh post-assertion acknowledgement are required. The parent
+bounds the child to 30 seconds and each captured stream to 16 KiB. All witnesses
+share its retained root; deletion follows confirmed cleanup and completed
+validation. The parent's environment stays unchanged.
+
+The finite native commands use the private non-reaping process owner,
+30-second per-command deadlines and 256 KiB per-stream capture limits. Fixture
+outputs and captures stay under the owned root; the commands preserve the
+parent environment and clean their owned groups before reaping. A compact
+native receipt records actual tool versions, sizes, IDs and expected counts.
+These bounds apply to the control; they do not shorten the coverage workload's 45-minute limit.
+Before explicit success cleanup, the native fixture retains and reports its
+root on an error or panic, including uncertain child cleanup. Removal follows
+successful commands and assertions, before the passed receipt is emitted.
+
+The pinned interface basis is Rust 1.95.0
+[`strip` codegen documentation](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/src/doc/rustc/src/codegen-options/index.md#strip),
+its Cargo revision's
+[profiles](https://github.com/rust-lang/cargo/blob/f2d3ce0bd7f24a49f8f72d9000448f8838c4e850/src/doc/src/reference/profiles.md#strip)
+and [profile environment variables](https://github.com/rust-lang/cargo/blob/f2d3ce0bd7f24a49f8f72d9000448f8838c4e850/src/doc/src/reference/environment-variables.md),
+and [cargo-llvm-cov 0.9.1](https://github.com/taiki-e/cargo-llvm-cov/blob/v0.9.1/src/main.rs).
+Native execution, including the matching LLVM 22.1.2 tools on the pinned
+workflow, remains the compatibility authority.
+
 ### Validate locally
 
 On Linux, before adopting a newer Rust toolchain, run the small diagnostics package with

@@ -26391,6 +26391,77 @@ fn check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed() 
     Ok(())
 }
 
+/// #13238: `check --format agent` on a diff whose findings are all
+/// `no_static_path` must not collapse to a bare `stop=` line. The agent
+/// surface owes the same bounded route the human surface names for the same
+/// run: one record per counted finding (file:line, id) plus the
+/// `ripr explain` drill-in, and the terminal must not claim nothing more is
+/// fixable while the human Start-here block recommends adding a co-located
+/// test.
+#[test]
+fn check_format_agent_all_static_limited_emits_records_and_a_route() -> Result<(), String> {
+    let root = unique_temp_workspace("agent-format-all-limited");
+    std::fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir: {e}"))?;
+    run_git(&root, &["init", "-b", "main"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn one() -> i32 { 1 }\n")
+        .map_err(|e| format!("write lib: {e}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"agent-all-limited\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| format!("write Cargo.toml: {e}"))?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|e| format!("gitignore: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn one() -> i32 { 1 }\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\npub fn fee(pct: u32) -> bool {\n    pct >= 90\n}\n",
+    )
+    .map_err(|e| format!("write lib v2: {e}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "add levy and fee"])?;
+    let root_str = root.to_string_lossy().into_owned();
+    let output = run_ripr(&[
+        "check", "--root", &root_str, "--base", "HEAD~1", "--format", "agent",
+    ]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains(" gaps=0 ") {
+        return Err(format!("expected a zero-gap all-limited header:\n{stdout}"));
+    }
+    if !stdout.contains("no_static_path=4") {
+        return Err(format!(
+            "expected both new functions counted as no_static_path (predicate + return_value probes):\n{stdout}"
+        ));
+    }
+    if !stdout.contains("no_static_path|src/lib.rs:") || !stdout.contains("|id=") {
+        return Err(format!(
+            "the all-limited run must emit bounded records (file:line + id):\n{stdout}"
+        ));
+    }
+    if !stdout.contains("src/lib.rs:4|") || !stdout.contains("src/lib.rs:8|") {
+        return Err(format!(
+            "the records must name both changed functions (levy at line 4, fee at line 8):\n{stdout}"
+        ));
+    }
+    if !stdout.contains("next=ripr explain ") {
+        return Err(format!(
+            "the all-limited run must emit the drill-in route:\n{stdout}"
+        ));
+    }
+    if stdout.contains("nothing more is fixable") {
+        return Err(format!(
+            "stop= must not claim nothing more is fixable; the human surface names a co-located test for this run:\n{stdout}"
+        ));
+    }
+    if !stdout.contains("co-located test") {
+        return Err(format!("stop= must name the documented route:\n{stdout}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #9222: a default-base run (no `--base`) on a branch that only deletes a file
 /// lands in `no_scope` with zero changed files. Human, GitHub and JSON output
 /// must not assure the reader that nothing changed, and must still say that

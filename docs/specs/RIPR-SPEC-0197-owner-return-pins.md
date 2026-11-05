@@ -2598,18 +2598,31 @@ limitation, not a credit, until the receiving call is itself resolved.
 - A private file-level foreign glob (`use rayon::prelude::*;` with no
   visibility, outside any inline module or block) is visible only in its own
   module and the modules declared beneath it, so it reaches a test only when
-  the test's file is the glob's file or a file the glob's file declares,
-  directly or through further `mod` edges (`use super::*;` in a `mod tests;`
-  child still sees it). A glob in a sibling or unrelated file of the same
-  crate no longer refuses the test. The confinement needs established
-  composition on both ends: the glob's file has an execution context (so it
+  the test's file is the glob's file, or a file the glob's file declares,
+  directly or through further `mod` edges. A single-parent glob chain may
+  carry the import down across those edges; a qualified glob such as
+  `use crate::*` or `use super::super::*` may skip intermediate files and
+  keeps the refusal. Named assertion-macro imports, item-position macro calls,
+  unknown attributes and unparsed files also retain the refusal (#13269).
+  A private `use` is not inherited by a child module,
+  so a crate-root `use colored::*;` does not refuse a descendant when ripr
+  establishes that no import or expansion can carry it there. A glob in a
+  sibling or unrelated file of the same crate no longer refuses the test.
+  The confinement needs established composition on both ends: the glob's
+  file has an execution context (so it
   is no `include!` fragment and nothing above it is unresolved), the test's
   file has one, and no `include!` or `#[path]` is unresolved anywhere in the
   workspace. Otherwise the glob keeps its crate-local reach above. `pub`
   globs, `#[macro_use]`, definitions, imports by name, globs in a macro body
   and withheld files are unchanged
   (`a_sibling_modules_private_glob_does_not_block_the_test`,
-  `a_glob_in_the_tests_own_file_or_an_ancestor_still_blocks_it`,
+  `a_glob_in_the_tests_own_file_still_blocks_it`,
+  `an_ancestor_glob_does_not_reach_a_descendant_with_no_glob_chain`,
+  `an_ancestor_glob_still_blocks_a_descendant_a_glob_chain_can_reach`,
+  `a_deep_glob_can_skip_an_intermediate_module`,
+  `a_named_import_in_an_inline_module_can_reach_an_out_of_line_child`,
+  `an_unknown_derive_may_emit_a_glob_into_an_intermediate_module`,
+  `review_macro_use_can_shadow_builtin_derive_in_ancestor`,
   `a_glob_reaches_a_child_test_module_file_through_use_super`,
   `a_path_attribute_mount_is_a_module_of_its_declarer`,
   `an_include_fragment_glob_lands_in_its_includer_and_stays_workspace_wide`,
