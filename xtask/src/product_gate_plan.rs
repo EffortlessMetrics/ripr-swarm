@@ -697,20 +697,58 @@ mod tests {
         violations
     }
 
+    const NATIVE_ACTIVATION_OUTPUT_FILTER: &str = concat!(
+        "package(=xtask) & binary(=rust_activation) & ",
+        "test(=installed_rustup_activation_keeps_the_exact_fixture_compiler)"
+    );
+
+    // #13123 needs the native SDK identity in JUnit. This one closed output-only
+    // row changes neither test selection nor execution policy. Compare path
+    // components so a quoted dotted key cannot impersonate the actual CI scope.
+    fn native_activation_output_override(path: &[&str], value: &toml::Value) -> bool {
+        if path != ["profile", "ci", "overrides"] {
+            return false;
+        }
+        let Some(rows) = value.as_array() else {
+            return false;
+        };
+        let [row] = rows.as_slice() else {
+            return false;
+        };
+        let Some(row) = row.as_table() else {
+            return false;
+        };
+        row.len() == 2
+            && row.get("filter").and_then(toml::Value::as_str)
+                == Some(NATIVE_ACTIVATION_OUTPUT_FILTER)
+            && row
+                .get("junit")
+                .and_then(toml::Value::as_table)
+                .is_some_and(|junit| {
+                    junit.len() == 1
+                        && junit
+                            .get("store-success-output")
+                            .and_then(toml::Value::as_bool)
+                            == Some(true)
+                })
+    }
+
     /// Keys that change which tests nextest selects or how it retries them,
-    /// wherever they appear in the parsed config, quoted or inline.
-    fn collect_selection_keys(value: &toml::Value, path: &str, violations: &mut Vec<String>) {
+    /// wherever they appear in the parsed config, quoted or inline. The single
+    /// exact native-activation JUnit output row is the only override exception.
+    fn collect_selection_keys(value: &toml::Value, path: &[&str], violations: &mut Vec<String>) {
         match value {
             toml::Value::Table(table) => {
                 for (key, child) in table {
-                    let child_path = if path.is_empty() {
-                        key.clone()
-                    } else {
-                        format!("{path}.{key}")
-                    };
-                    if key == "default-filter" || key == "overrides" {
+                    let mut child_path = path.to_vec();
+                    child_path.push(key.as_str());
+                    if key == "default-filter"
+                        || (key == "overrides"
+                            && !native_activation_output_override(&child_path, child))
+                    {
                         violations.push(format!(
-                            "nextest config declares `{child_path}`, which narrows or re-policies the selected tests"
+                            "nextest config declares `{}`, which narrows or re-policies the selected tests",
+                            child_path.join(".")
                         ));
                     }
                     collect_selection_keys(child, &child_path, violations);
@@ -731,7 +769,7 @@ mod tests {
             Err(err) => return vec![format!("nextest config does not parse: {err}")],
         };
         let mut violations = Vec::new();
-        collect_selection_keys(&value, "", &mut violations);
+        collect_selection_keys(&value, &[], &mut violations);
         let ci = value.get("profile").and_then(|profile| profile.get("ci"));
         if ci
             .and_then(|ci| ci.get("retries"))
@@ -983,11 +1021,19 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("profile.ci.default-filter"))
         );
-        let inline = NEXTEST_CONFIG.replace(
+        let mut without_override: toml::Value =
+            toml::from_str(NEXTEST_CONFIG).expect("committed TOML");
+        without_override["profile"]["ci"]
+            .as_table_mut()
+            .expect("CI table")
+            .remove("overrides");
+        let without_override = toml::to_string(&without_override).expect("TOML");
+        let inline = without_override.replace(
             "[profile.ci]\n",
             "[profile.ci]\noverrides = [{ filter = \"test(slow)\", retries = 3 }]\n",
         );
-        assert_ne!(inline, NEXTEST_CONFIG, "fixture must add inline overrides");
+        assert_ne!(inline, without_override, "fixture must add inline overrides");
+        toml::from_str::<toml::Value>(&inline).expect("inline override must parse");
         assert!(
             nextest_config_violations(&inline)
                 .iter()
@@ -1000,6 +1046,96 @@ mod tests {
         assert_ne!(table_retries, NEXTEST_CONFIG, "fixture must retry");
         assert!(!nextest_config_violations(&table_retries).is_empty());
         assert!(!nextest_config_violations("[profile.ci\n").is_empty());
+    }
+
+    #[test]
+    fn native_activation_junit_override_refuses_execution_and_scope_changes() {
+        let mut parsed: toml::Value = toml::from_str(NEXTEST_CONFIG).expect("committed TOML");
+        let retained = parsed["profile"]["ci"]
+            .as_table_mut()
+            .expect("CI table")
+            .remove("overrides")
+            .expect("native identity receipt override");
+        let base = toml::to_string(&parsed).expect("serialize unchanged profile");
+        let filter = NATIVE_ACTIVATION_OUTPUT_FILTER;
+        let row = format!(
+            "[[profile.ci.overrides]]\nfilter = {filter:?}\njunit.store-success-output = true\n"
+        );
+        assert!(nextest_config_violations(&format!("{base}\n{row}")).is_empty());
+
+        let quoted = row
+            .replace("profile.ci.overrides", "\"profile\".\"ci\".\"overrides\"")
+            .replace("junit.store-success-output", "\"junit\".\"store-success-output\"");
+        assert!(nextest_config_violations(&format!("{base}\n{quoted}")).is_empty());
+        let inline = format!(
+            "[profile.ci]\nretries = 0\noverrides = [{{ filter = {filter:?}, junit = {{ store-success-output = true }} }}]\n[profile.ci.junit]\npath = 'junit.xml'\n"
+        );
+        assert!(nextest_config_violations(&inline).is_empty());
+
+        let refuse = |label: &str, config: &str| {
+            toml::from_str::<toml::Value>(config).expect("negative fixture must be valid TOML");
+            assert!(
+                nextest_config_violations(config)
+                    .iter()
+                    .any(|violation| violation.contains("overrides")),
+                "{label} was not refused: {config}"
+            );
+        };
+        for extra in [
+            "retries = 0",
+            "retries = 1",
+            "slow-timeout = { period = '1s', terminate-after = 1 }",
+            "test-group = 'serial'",
+            "threads-required = 1",
+            "run-ignored = 'all'",
+            "default-filter = 'all()'",
+            "success-output = 'immediate'",
+            "platform = 'cfg(unix)'",
+            "junit.path = 'elsewhere.xml'",
+            "junit.store-failure-output = false",
+        ] {
+            refuse(extra, &format!("{base}\n{row}{extra}\n"));
+        }
+        for replacement in [
+            "all()",
+            "test(=installed_rustup_activation_keeps_the_exact_fixture_compiler)",
+            "package(=xtask) & binary(=rust_activation)",
+            "package(xtask) & binary(rust_activation) & test(installed_rustup_activation)",
+            "package(=xtask) & binary(=rust_activation) & test(=other)",
+        ] {
+            refuse(
+                replacement,
+                &format!("{base}\n{}", row.replace(filter, replacement)),
+            );
+        }
+        for changed in [
+            row.replace(" = true", " = false"),
+            row.replace(" = true", " = 'true'"),
+            row.replace(&format!("filter = {filter:?}\n"), ""),
+            row.replace("junit.store-success-output = true\n", ""),
+            format!("{row}\n{row}"),
+            row.replace("profile.ci.overrides", "profile.default.overrides"),
+            row.replace("profile.ci.overrides", "profile.windows-advisory.overrides"),
+            row.replace("profile.ci.overrides", "profile.ci.nested.overrides"),
+            row.replace("profile.ci.overrides", "\"profile.ci\".overrides"),
+        ] {
+            refuse("changed receipt row", &format!("{base}\n{changed}"));
+        }
+        for replacement in [
+            toml::Value::Array(Vec::new()),
+            retained.as_array().expect("override array")[0].clone(),
+            toml::Value::Array(vec![toml::Value::String("not a table".to_string())]),
+        ] {
+            let mut changed = parsed.clone();
+            changed["profile"]["ci"]
+                .as_table_mut()
+                .expect("CI table")
+                .insert("overrides".to_string(), replacement);
+            refuse(
+                "wrong override shape",
+                &toml::to_string(&changed).expect("TOML"),
+            );
+        }
     }
 
     /// Runs the real `Required Rust tests` step body under the Actions

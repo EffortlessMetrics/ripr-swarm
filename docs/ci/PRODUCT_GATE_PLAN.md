@@ -50,7 +50,14 @@ intentionally dual:
 Nextest cannot execute doctests, so a green nextest row never stands in for the
 doctest row, and neither row claims non-default-feature subjects. The `ci`
 profile pins `retries = 0` and may not declare a `default-filter` or
-per-test overrides, so every test selected by default is required; the
+per-test execution overrides, so every test selected by default is required. Its
+one output-only exception retains successful JUnit output for the exact
+`xtask::rust_activation` test
+`installed_rustup_activation_keeps_the_exact_fixture_compiler` (#13123).
+The parsed row must contain only the exact package/binary/test filter and
+`junit.store-success-output = true`; changed scope, duplicate rows, extra fields,
+and false or non-boolean retention refuse. Test selection, retries, deadlines
+and concurrency are unchanged. The
 `framed_lsp_`/`editor_agent_loop_` skip in `.config/nextest.toml` is a local
 iteration hint and is never applied in CI. Nextest exit 0 without a fresh JUnit
 report naming at least one test fails the step, so an empty selection cannot
@@ -102,8 +109,9 @@ config, and this table. Each of these fails `cargo nextest run`:
   `run: cargo test --workspace --doc`;
 - any `NEXTEST_*`, `RUSTDOCFLAGS`, or `CARGO_TARGET_*_RUNNER` variable in the
   workflow;
-- a `default-filter`, `overrides`, non-zero or table `retries`, or a
-  different JUnit path anywhere in the parsed nextest config, quoted or inline;
+- a `default-filter`, any override outside the closed native-activation output
+  row, non-zero or table `retries`, or a different JUnit path in the parsed
+  nextest config, quoted or inline;
 - restating a different command in this table.
 
 The `Required Rust tests` step body itself is executed under
