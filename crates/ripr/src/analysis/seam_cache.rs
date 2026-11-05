@@ -683,7 +683,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.159`: a cloned call-making callback cannot borrow an unrelated plain
 /// helper assertion (#13219). Raw file facts are unchanged; helper credit is
 /// recomputed after loading them.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.159";
+/// `1.160`: same-named receiver and free calls no longer lend one another an
+/// assertion oracle; real opposite-kind wrappers retain reach uncertainty (#12234).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.160";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -884,7 +886,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.159";
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
 /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
+/// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1087,7 +1090,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
 /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
+/// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5215,7 +5219,8 @@ mod tests {
         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
         // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.159");
+        // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.160");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5356,8 +5361,9 @@ mod tests {
         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.161");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.161");
+        // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.162");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.162");
     }
 
     #[test]

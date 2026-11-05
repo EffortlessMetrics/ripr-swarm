@@ -96,6 +96,17 @@ suite('Genuine fixture producer process boundary', function () {
     } finally { clearTimeout(timer); }
   });
 
+  test('preserves literal native arguments including spaces quotes empty values and trailing backslashes', async () => {
+    const filename = path.join(root, 'native argv echo.js');
+    fs.writeFileSync(filename, 'process.stdout.write(JSON.stringify(process.argv.slice(2)));');
+    const expected = ['', 'directory with spaces/host', 'embedded"quote', 'backslashes\\"quote',
+      String.raw`C:\path\to\directory with spaces` + '\\', 'two trailing\\\\', '& literal | < > % !'];
+    const transcript = await runFixtureProducer(process.execPath, [filename, ...expected], {
+      cwd: root, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeoutMs: nativeBudget
+    });
+    assert.deepStrictEqual(JSON.parse(transcript), expected);
+  });
+
   test('retains native status and both streams for a failed process', async () => {
     await assert.rejects(run(`process.stdout.write('native stdout'); process.stderr.write('native stderr'); process.exitCode = 23;`), error => {
       assert.ok(error instanceof FixtureProducerError);

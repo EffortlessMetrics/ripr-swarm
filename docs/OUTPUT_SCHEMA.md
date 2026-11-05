@@ -104,6 +104,7 @@ map is:
 | --- | --- | --- |
 | `ripr check --format json` | `schema_version` | `0.2` |
 | `ripr check --format json-compact` | `schema_version` | `0.2` (the `json` document minified; parsed values identical, #13103) |
+| `ripr check --format json-terse` | `schema_version` | `0.2` (the `json` findings with repeated evidence prose coded against an `evidence_legend`; see "json-terse" below) |
 | `ripr context --json` (`context_packet`; versions via top-level `version` key) | `version` | `1.1` |
 | `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
 | `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
@@ -180,6 +181,51 @@ records that distinction.
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
+
+### `json-terse`: semantically compacted check JSON
+
+`ripr check --format json-terse` renders the same findings as `json` for
+token-priced machine consumers (LLM agents parsing findings). It is a
+documented rendering profile over the `0.2` check document, not a schema
+bump; `schema_version` stays `0.2`. Unlike `json-compact` (#13103), whose
+parsed value is identical to `json` and differs only in whitespace, the
+terse document rewrites repeated content. Exactly what differs:
+
+| Difference | Full (`json`/`json-compact`) | Terse |
+| --- | --- | --- |
+| Document head | no rendering marker | `"rendering": "terse"` names the profile |
+| `evidence_path`, `evidence`, `missing` entries | full prose sentences | strings of 24+ bytes replaced by stable codes (`E0001`, ...); prose under 24 bytes stays verbatim |
+| `assertion_texts` values | assertion source lines | long values coded the same way |
+| `evidence_legend` | absent | code → full template, emitted once at the document head in first-appearance order |
+| Same-value alias fields | both keys emitted | a later finding field whose string value is byte-identical to an earlier field in the same finding object is omitted; the removed key is listed in `dropped_aliases` |
+
+Guarantees and limits, stated precisely:
+
+- No finding is dropped; no verdict changes. Finding `id`,
+  `classification`, `severity`, `confidence`, `probe` and `ripr` blocks
+  move verbatim, and identity/verdict fields are exempt from alias removal
+  even when values coincide.
+- Expanding every code through `evidence_legend` reconstructs the exact
+  original strings in the original order, so the prose is recoverable from
+  the terse document alone. Alias-removed values survive in the earlier
+  same-value field.
+- What terse does *not* code: `ripr` stage summaries, related-test oracle
+  lines, flow-sink text and repair cards stay inline. Those are the
+  remaining cross-finding duplication; coding them is follow-up work if
+  measurements justify it.
+- The transform runs on the stamped `json` document (including the CLI's
+  canonical next-action member when present) and fails closed: an
+  unparseable producer document aborts the run instead of emitting an
+  unmarked full document.
+
+Measured on the committed 11-finding fixture
+`fixtures/returned_closure_arithmetic_masking/expected/check.json`
+(see `json_terse_round_trips_fixture_prose_and_beats_compact_in_size`):
+terse is smaller than `json-compact` on the same document, and
+`json-compact` in turn is smaller than `json`. The exact byte counts are
+pinned by that test's assertion messages on failure; the ordering
+invariant (terse < compact < json on multi-finding documents) is the
+contract.
 
 ## Imported Kani observation (`ripr_kani_report.v1`)
 
@@ -5243,6 +5289,12 @@ Field contract:
   `activation_overlap` is a static tie-breaker from already observed call
   values, such as a predicate-boundary equality call. `related_tests_total` is
   unaffected by ranking.
+- On applicable returned-value seams, an assertion on an established
+  same-named function of the opposite call kind supplies no oracle credit only
+  when its complete value is closed: literal invocation inputs, an independent
+  primitive/enum body, and established comparison/drop behavior. Unresolved
+  receivers, wrappers, global/local/field values, rewriting attributes and
+  unsupported assertion expressions preserve their prior evidence (#12234).
 - A related test whose only assertion on a returned-value seam is an exact
   error-variant pin that does not name the `Err(..)` that seam constructs (this
   includes a seam that constructs no `Err` at all, such as an `Ok(n)` arm
@@ -19696,7 +19748,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.159",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.160",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20481,7 +20533,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.159",
+      "schema_version": "1.160",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
