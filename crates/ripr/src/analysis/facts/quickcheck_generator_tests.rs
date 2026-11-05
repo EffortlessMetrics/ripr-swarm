@@ -183,14 +183,9 @@ fn quickcheck_generator_change_is_stimulus_unknown() -> Result<(), String> {
                     );
                     assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
                     assert_eq!(finding.probe.family, ProbeFamily::StaticUnknown);
-                    assert!(
-                        finding
-                            .evidence
-                            .iter()
-                            .any(|text| {
-                                text.contains("test-input generator") && text.contains("stimulus")
-                            })
-                    );
+                    assert!(finding.evidence.iter().any(|text| {
+                        text.contains("test-input generator") && text.contains("stimulus")
+                    }));
                     assert!(finding.canonical_gap.is_none());
                 }
             }
@@ -208,7 +203,11 @@ fn quickcheck_generator_nonempty_compiler_wrapper_refuses_role() -> Result<(), S
         || {
             let findings =
                 findings_at_with_provider_admission(MANIFEST, SOURCE, "src/lib.rs", &[], false)?;
-            assert_eq!(findings.len(), 1, "one changed return remains a product subject");
+            assert_eq!(
+                findings.len(),
+                1,
+                "one changed return remains a product subject"
+            );
             for finding in findings {
                 assert_eq!(finding.class, ExposureClass::NoStaticPath);
                 assert_eq!(finding.probe.family, ProbeFamily::ReturnValue);

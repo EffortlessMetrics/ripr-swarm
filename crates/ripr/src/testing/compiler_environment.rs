@@ -66,10 +66,11 @@ fn run(
 }
 
 fn exact_selector(module: &str, test: &str) -> Result<String, String> {
-    let (_, module) = module
+    let qualified = format!("{module}::{test}");
+    let (_, selector) = qualified
         .split_once("::")
-        .ok_or_else(|| "compiler fixture module has no crate prefix".to_string())?;
-    Ok(format!("{module}::{test}"))
+        .ok_or_else(|| "compiler fixture selector has no crate prefix".to_string())?;
+    Ok(selector.to_string())
 }
 
 fn compiler_admission_variable(key: &OsStr) -> bool {
@@ -148,8 +149,9 @@ fn run_child(selector: &str, untrusted_wrapper: bool) -> Result<(), String> {
 }
 
 fn verify_acknowledgement(path: &Path, selector: &str) -> Result<(), String> {
-    let actual = std::fs::read_to_string(path)
-        .map_err(|error| format!("read compiler fixture acknowledgement for {selector}: {error}"))?;
+    let actual = std::fs::read_to_string(path).map_err(|error| {
+        format!("read compiler fixture acknowledgement for {selector}: {error}")
+    })?;
     if actual != selector {
         return Err(format!(
             "compiler fixture acknowledgement has the wrong identity for {selector}"
@@ -192,6 +194,19 @@ impl Drop for Scratch {
             eprintln!("remove compiler fixture {}: {error}", self.path.display());
         }
     }
+}
+
+#[test]
+fn root_and_nested_selectors_keep_libtest_names() -> Result<(), String> {
+    assert_eq!(
+        exact_selector("quickcheck_generator_rendered", "positive")?,
+        "positive"
+    );
+    assert_eq!(
+        exact_selector("ripr::analysis::facts::quickcheck_generator_tests", "positive")?,
+        "analysis::facts::quickcheck_generator_tests::positive"
+    );
+    Ok(())
 }
 
 #[test]

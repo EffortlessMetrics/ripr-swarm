@@ -2,6 +2,8 @@
 id = "RIPR-SPEC-0153"
 tests = [
   "crates/ripr/src/analysis/facts/quickcheck_generator_tests.rs::quickcheck_generator_nonempty_compiler_wrapper_refuses_role",
+  "crates/ripr/tests/quickcheck_generator_rendered.rs::compiler_wrapper_keeps_generator_as_a_product_gap",
+  "crates/ripr/src/testing/compiler_environment.rs::root_and_nested_selectors_keep_libtest_names",
   "crates/ripr/src/testing/compiler_environment.rs::zero_selected_tests_cannot_acknowledge_fixture_assertions",
   "crates/ripr/src/testing/compiler_environment.rs::acknowledgement_for_another_test_is_rejected",
   "crates/ripr/src/testing/compiler_environment.rs::profiling_variables_are_not_compiler_admission_overrides",
