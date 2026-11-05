@@ -126,7 +126,7 @@ fn native_success_and_signal_survive_observation() -> Result<()> {
         let mut command = Command::new("sh");
         command.args(["-c", script]);
         let mut events = Vec::new();
-        let code = run_observed(command, Duration::from_secs(60), 0, |event| {
+        let code = run_observed(command, Duration::from_mins(1), 0, |event| {
             events.push(event);
         })?;
         assert_eq!(code, expected);
@@ -159,7 +159,9 @@ fn child_cleanup_retains_custody_and_refuses_external_reaping() -> Result<()> {
             .map_err(|error| error.to_string())?
             .success()
     );
-    assert!(child.exited().is_err());
+    if child.exited().is_ok() {
+        return Err("externally reaped child retained status custody".into());
+    }
     assert!(child.closed);
     assert_eq!(child.cleanup().1, Some("owned_child_custody_unavailable"));
     Ok(())
