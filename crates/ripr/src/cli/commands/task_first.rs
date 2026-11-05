@@ -661,6 +661,32 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 ),
             ))
         }
+        ContinueSelection::BaselineBlocked { reports, total } => {
+            // Readiness is the shared status reading; observing it never
+            // rewrites state or invokes the advanced after authority.
+            for report in &reports {
+                eprint!(
+                    "{}",
+                    crate::app::agent_status::render_agent_attempt_status_markdown(report)
+                );
+            }
+            if total > reports.len() {
+                let root = crate::agent::loop_commands::shell_arg(
+                    &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+                );
+                eprintln!(
+                    "ripr: {} additional baseline-limited attempts are omitted from this bounded status summary. Inspect the full inventory with `ripr status --root {root}`, then select an exact attempt with `ripr status --root {root} --attempt <attempt-id>`",
+                    total - reports.len()
+                );
+            }
+            Err(typed_decision(
+                RepairRefusalCode::AttemptBaselineBlocked,
+                format!(
+                    "repair continuation did not run: {} retained before baseline(s) are ambiguous or unavailable. Resolve the cause and follow the admitted recovery in the status above; no completion is claimed",
+                    total
+                ),
+            ))
+        }
         ContinueSelection::NoneAvailable {
             prepared,
             terminal,

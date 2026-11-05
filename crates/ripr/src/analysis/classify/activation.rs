@@ -6651,15 +6651,20 @@ pub(in crate::analysis) fn returned_comparison_view(probe: &Probe) -> Option<Pro
     if !matches!(probe.family, ProbeFamily::ReturnValue) {
         return None;
     }
-    let (expression, explicit) = strip_explicit_return(&probe.expression);
-    if explicit && !is_top_level_comparison(&expression) {
+    let (expression, _) = strip_explicit_return(&probe.expression);
+    // A genuine returned comparison only: the operator must sit at the top
+    // level of both texts, explicit `return` or implicit tail alike. A
+    // turbofish `sum::<u64>() + 25 * 2`, a call/index-nested comparison or
+    // any other arithmetic rewrite contains comparison-shaped tokens
+    // without being one, and keeps the return-value reading.
+    if !is_top_level_comparison(&expression) {
         return None;
     }
     let before = probe.before.as_deref().map(|before| {
         let (before, before_explicit) = strip_explicit_return(before);
         (before, before_explicit)
     });
-    if let Some((before, true)) = &before
+    if let Some((before, _)) = &before
         && !is_top_level_comparison(before)
     {
         return None;
@@ -10890,6 +10895,19 @@ assert_eq!(input.amount, 100);"#
         );
         assert_eq!(view("return x > 1 && y", "return x > 2 && y"), None);
         assert_eq!(view("return x == 100", "return x > 101"), None);
+        // Implicit tails need the same top-level operator: a turbofish
+        // arithmetic rewrite (`sum::<u64>() + 50` -> `.. + 25 * 2`) or a
+        // nested comparison is not a returned bare comparison.
+        assert_eq!(
+            view(
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 25 * 2"
+            ),
+            None
+        );
+        assert_eq!(view("f(x > 100)", "f(x > 101)"), None);
+        assert_eq!(view("v[x > 1]", "v[x > 2]"), None);
+        assert_eq!(view("x.parse::<i32>() > 5", "x.parse::<i32>() > 6"), None);
     }
 
     /// #9145 keyword boundary: `return` is stripped before any whitespace, never

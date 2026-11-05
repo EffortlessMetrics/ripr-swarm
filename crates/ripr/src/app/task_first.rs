@@ -3262,6 +3262,8 @@ pub(crate) enum RepairRefusalCode {
     RetryBudgetExhausted,
     /// `continue`: no current attempt exists.
     NoCurrentAttempt,
+    /// `continue`: the retained before capture is ambiguous or unavailable.
+    AttemptBaselineBlocked,
     /// The repair spellings ran where no workspace, package or Git repository
     /// anchors the current directory, so there is no project to answer about
     /// (#12417). An explicit `--root` skips that discovery gate.
@@ -3290,7 +3292,7 @@ pub(crate) enum RepairRefusalDisposition {
     Terminal,
     /// The caller must name one of several choices.
     NeedsSelection,
-    /// Nothing started; fix the stated cause and run `ripr repair` again.
+    /// The requested phase did not start; fix the stated cause before retrying.
     NotStarted,
 }
 
@@ -3308,7 +3310,7 @@ impl RepairRefusalDisposition {
 impl RepairRefusalCode {
     /// Every code, for the docs/help parity test.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 18] = [
+    pub(crate) const ALL: [Self; 19] = [
         Self::ItemNamesNoSeam,
         Self::ItemNamesSeveralSeams,
         Self::SeamNotRepairEligible,
@@ -3320,6 +3322,7 @@ impl RepairRefusalCode {
         Self::AwaitingEdit,
         Self::RetryBudgetExhausted,
         Self::NoCurrentAttempt,
+        Self::AttemptBaselineBlocked,
         Self::UnanchoredRoot,
         Self::AmbiguousAttempts,
         Self::AttemptEndedWithoutReceipt,
@@ -3342,6 +3345,7 @@ impl RepairRefusalCode {
             Self::AwaitingEdit => "awaiting_edit",
             Self::RetryBudgetExhausted => "retry_budget_exhausted",
             Self::NoCurrentAttempt => "no_current_attempt",
+            Self::AttemptBaselineBlocked => "attempt_baseline_blocked",
             Self::UnanchoredRoot => "unanchored_root",
             Self::AmbiguousAttempts => "ambiguous_attempts",
             Self::AttemptEndedWithoutReceipt => "attempt_ended_without_receipt",
@@ -3371,6 +3375,7 @@ impl RepairRefusalCode {
             | Self::StartRefusedUncommittedTarget
             | Self::NoTestRoute
             | Self::NoCurrentAttempt
+            | Self::AttemptBaselineBlocked
             | Self::UnanchoredRoot => RepairRefusalDisposition::NotStarted,
         }
     }
@@ -3402,6 +3407,9 @@ impl RepairRefusalCode {
     }
 }
 
+/// Bound full status reconstruction after a complete eligibility inventory.
+pub(crate) const CONTINUE_BASELINE_REPORT_LIMIT: usize = 8;
+
 /// What `ripr continue` resolved to: run the after path, report an ended
 /// attempt, or ask for a current attempt explicitly.
 pub(crate) enum ContinueSelection {
@@ -3430,6 +3438,12 @@ pub(crate) enum ContinueSelection {
     /// (#7032): the manifest state alone is not a completion claim.
     EndedUnconfirmed {
         report: Box<AgentAttemptStatusReport>,
+    },
+    /// No eligible continuation remains. Preserve each blocked attempt's
+    /// shared status/recovery instead of executing an already limited after.
+    BaselineBlocked {
+        reports: Vec<AgentAttemptStatusReport>,
+        total: usize,
     },
     /// No current nonterminal attempt exists under the selected root.
     NoneAvailable {
@@ -3534,6 +3548,18 @@ pub(crate) fn select_continue_attempt(
             manifest.state,
             RepairAttemptState::AwaitingEdit | RepairAttemptState::Prepared
         ) {
+            // Ordinary continue stops before invoking after when its retained
+            // before evidence is already limited, even if another refusal
+            // also applies. This changes no budget/trust facts; the explicitly
+            // invoked advanced after route retains its own refusal order.
+            if !crate::app::repair_attempt::repair_attempt_baseline_reading(root, &manifest)
+                .permits_continuation()
+            {
+                return Ok(ContinueSelection::BaselineBlocked {
+                    reports: vec![build_agent_attempt_status(root, root, None, &parsed)?],
+                    total: 1,
+                });
+            }
             return Ok(ContinueSelection::Proceed { attempt_id: parsed });
         }
         let report = build_agent_attempt_status(root, root, None, &parsed)?;
@@ -3565,9 +3591,25 @@ pub(crate) fn select_continue_attempt(
         });
     }
     let mut tally = ContinueTally::default();
+    let mut baseline_blocked = Vec::new();
     for entry in inventory_repair_attempts_from(root, None)? {
         match entry {
-            RepairAttemptInventoryEntry::Valid(manifest) => tally.add(&manifest),
+            RepairAttemptInventoryEntry::Valid(manifest) => {
+                if manifest.state == RepairAttemptState::AwaitingEdit
+                    && !crate::app::repair_attempt::after_refusal_budget_exhausted(&manifest)
+                    && find_manifest_artifact_by_role(
+                        &manifest,
+                        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+                    )
+                    .is_none()
+                    && !crate::app::repair_attempt::repair_attempt_baseline_reading(root, &manifest)
+                        .permits_continuation()
+                {
+                    baseline_blocked.push(manifest.repair_attempt_id.clone());
+                } else {
+                    tally.add(&manifest);
+                }
+            }
             RepairAttemptInventoryEntry::Invalid { directory, error } => {
                 return Err(format!(
                     "continue selection refused: attempt row `{directory}` is invalid: {error}"
@@ -3594,6 +3636,17 @@ pub(crate) fn select_continue_attempt(
                 .map_err(|error| format!("continue selection: {error}"))?,
         }),
         None => {
+            if !baseline_blocked.is_empty() {
+                let reports = baseline_blocked
+                    .iter()
+                    .take(CONTINUE_BASELINE_REPORT_LIMIT)
+                    .map(|id| build_agent_attempt_status(root, root, None, id))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(ContinueSelection::BaselineBlocked {
+                    reports,
+                    total: baseline_blocked.len(),
+                });
+            }
             if let Some(id) = already_complete_id {
                 let report = build_agent_attempt_status(root, root, None, &id)?;
                 if matches!(
@@ -3634,14 +3687,24 @@ pub(crate) struct ReusableAttempt {
 pub(crate) fn reusable_awaiting_attempt(root: &Path, seam_id: &str) -> Option<ReusableAttempt> {
     let head = current_git_head(root).ok()?;
     let entries = inventory_repair_attempts_from(root, None).ok()?;
-    let manifests = entries.iter().filter_map(|entry| match entry {
-        RepairAttemptInventoryEntry::Valid(manifest) => Some(manifest.as_ref()),
-        RepairAttemptInventoryEntry::Invalid { .. } => None,
-    });
+    let manifests = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            RepairAttemptInventoryEntry::Valid(manifest) => Some(manifest.as_ref()),
+            RepairAttemptInventoryEntry::Invalid { .. } => None,
+        })
+        .filter(|manifest| {
+            manifest.state == RepairAttemptState::AwaitingEdit
+                && manifest.seam_id == seam_id
+                && manifest.repository_head == head
+                && crate::app::repair_attempt::repair_attempt_baseline_reading(root, manifest)
+                    .permits_continuation()
+        });
     pick_reusable_attempt(manifests, seam_id, &head)
 }
 
-/// Decision law of [`reusable_awaiting_attempt`], free of the filesystem.
+/// Decision law after [`reusable_awaiting_attempt`] has admitted the retained
+/// baseline, free of the filesystem.
 /// The newest matching attempt wins when earlier duplicates already exist.
 fn pick_reusable_attempt<'a>(
     manifests: impl Iterator<Item = &'a RepairAttemptManifest>,
@@ -6330,6 +6393,7 @@ pub(crate) mod tests {
         use crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE;
         use crate::app::repair_attempt::{
             BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
+            edit_cage_policy_from_packet, write_edit_cage_baseline,
         };
         use crate::testing::fixture_git::fixture_git_ok as run_git;
 
@@ -6362,11 +6426,23 @@ pub(crate) mod tests {
         std::fs::write(&before, "{}").map_err(|error| format!("write before failed: {error}"))?;
         let binding = root.join("binding.json");
         std::fs::write(&binding, "{}").map_err(|error| format!("write binding failed: {error}"))?;
+        let baseline = root.join("baseline.json");
+        let policy = edit_cage_policy_from_packet(
+            r#"{"seam_id":"seam:plain","allowed_edit_surface":["tests/target.rs"],"forbidden_files":[]}"#,
+            "seam:plain",
+        )?;
+        write_edit_cage_baseline(&root, &baseline, &policy)?;
         let begin = |seam_id: &str, bound: bool| {
-            let mut sources = vec![BeforeArtifactSource {
-                role: "before_snapshot",
-                path: &before,
-            }];
+            let mut sources = vec![
+                BeforeArtifactSource {
+                    role: "before_snapshot",
+                    path: &before,
+                },
+                BeforeArtifactSource {
+                    role: "edit_cage_baseline",
+                    path: &baseline,
+                },
+            ];
             if bound {
                 sources.push(BeforeArtifactSource {
                     role: BINDING_ARTIFACT_ROLE,
@@ -6409,6 +6485,20 @@ pub(crate) mod tests {
                 return Err("implicit continue must select the lone unbound attempt".to_string());
             }
         }
+        // #13216: a second, genuinely ambiguous capture cannot grant a
+        // trust-bound attempt an ordinary continuation or alter its binding.
+        crate::testing::fixture_git::stage_case_collision_index_entries(&root)?;
+        write_edit_cage_baseline(&root, &baseline, &policy)?;
+        let limited_bound = begin("seam:limited-bound", true)?;
+        let id = &limited_bound.manifest.repair_attempt_id;
+        assert!(matches!(
+            select_continue_attempt(&root, Some(id.as_str()))?,
+            ContinueSelection::BaselineBlocked { .. }
+        ));
+        assert_eq!(
+            load_repair_attempt_manifest_from(&root, None, id)?,
+            limited_bound.manifest
+        );
         Ok(())
     }
 }

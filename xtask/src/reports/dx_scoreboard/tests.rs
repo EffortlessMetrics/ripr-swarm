@@ -11,6 +11,7 @@ use super::measure::{
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
 
+mod consumer_checkout;
 mod partial;
 
 /// The committed config, resolved from the crate root so a test that moves
@@ -3448,6 +3449,365 @@ fn the_runner_class_cpu_model_is_the_first_model_name_as_a_slug() {
 }
 
 #[test]
+fn measured_checkout_uses_the_pin_not_cached_worktree_inputs() -> Result<(), String> {
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture = Fixture(crate::tests::temp_dir("dx-isolated-checkout"));
+    let root = &fixture.0;
+    let corpus = root.join("corpus");
+    let source = corpus.join("fixture");
+    fs::create_dir_all(&source).map_err(|err| err.to_string())?;
+    let git = |args: &[&str]| super::measure::git(Some(&source), args);
+    git(&["init", "--quiet"])?;
+    fs::write(source.join(".gitignore"), "ripr.toml\ntarget/\n").map_err(|err| err.to_string())?;
+    fs::write(source.join("subject.rs"), "pinned\n").map_err(|err| err.to_string())?;
+    git(&["add", "."])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "base",
+    ])?;
+    let base = git(&["rev-parse", "HEAD"])?;
+    fs::write(source.join("subject.rs"), "pin\n").map_err(|err| err.to_string())?;
+    fs::write(
+        source.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\"]\n",
+    )
+    .map_err(|err| err.to_string())?;
+    git(&["add", "."])?;
+    git(&["add", "-f", "ripr.toml"])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "pin",
+    ])?;
+    let pin = git(&["rev-parse", "HEAD"])?;
+    git(&["rm", "--quiet", "ripr.toml"])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "later",
+    ])?;
+    let before = git(&["rev-parse", "HEAD"])?;
+    fs::write(source.join("ripr.toml"), "[languages\n").map_err(|err| err.to_string())?;
+    fs::write(source.join("extra.rs"), "untracked\n").map_err(|err| err.to_string())?;
+    fs::create_dir_all(source.join("target/ripr")).map_err(|err| err.to_string())?;
+    fs::write(source.join("target/ripr/keep"), "keep").map_err(|err| err.to_string())?;
+    let options = parse_options(&["--corpus-dir".to_string(), corpus.display().to_string()])?;
+    let entry = CorpusEntry {
+        id: "fixture".to_string(),
+        url: String::new(),
+        sha: pin.trim().to_string(),
+        base_sha: None,
+        note: String::new(),
+        heavy: false,
+        language: None,
+        ceilings: BTreeMap::new(),
+        expected_partial: None,
+        size_tier: None,
+        memory_ratchet: None,
+    };
+    let checkout =
+        super::measure::prepare_measured_checkout(&entry, &options, &root.join("run-one"))
+            .map_err(|(_, reason)| reason)?;
+    assert_eq!(
+        fs::read_to_string(checkout.join("subject.rs")).map_err(|err| err.to_string())?,
+        "pin\n"
+    );
+    assert_eq!(
+        fs::read_to_string(checkout.join("ripr.toml")).map_err(|err| err.to_string())?,
+        "[languages]\nenabled = [\"rust\"]\n"
+    );
+    assert!(!checkout.join("extra.rs").exists());
+    assert!(!checkout.join("target/ripr/keep").exists());
+    assert_eq!(
+        super::measure::git(Some(&checkout), &["rev-parse", "HEAD~1"])?,
+        base
+    );
+    assert_eq!(git(&["rev-parse", "HEAD"])?, before);
+    assert!(source.join("target/ripr/keep").exists());
+    assert_eq!(
+        fs::read_to_string(source.join("ripr.toml")).map_err(|err| err.to_string())?,
+        "[languages\n"
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("extra.rs")).map_err(|err| err.to_string())?,
+        "untracked\n"
+    );
+    let second = super::measure::prepare_measured_checkout(&entry, &options, &root.join("run-two"))
+        .map_err(|(_, reason)| reason)?;
+    assert_ne!(checkout, second);
+    let mut explicit = entry.clone();
+    explicit.base_sha = Some(base.trim().to_string());
+    let explicit_checkout =
+        super::measure::prepare_measured_checkout(&explicit, &options, &root.join("explicit"))
+            .map_err(|(_, reason)| reason)?;
+    assert_eq!(
+        super::measure::git(Some(&explicit_checkout), &["rev-parse", "HEAD~1"])?,
+        base
+    );
+    let mut missing_base = entry.clone();
+    missing_base.base_sha = Some("0000000000000000000000000000000000000000".to_string());
+    let scratch = root.join("failed-run");
+    fs::create_dir_all(&scratch).map_err(|err| err.to_string())?;
+    let mut samples = Vec::new();
+    let result = super::measure::measure_corpus_entry(
+        &missing_base,
+        &options,
+        &root.join("unused-binary"),
+        &scratch,
+        0,
+        std::time::Duration::from_secs(5),
+        &mut samples,
+    );
+    assert_eq!(result["status"], "failed");
+    assert!(
+        result["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("cannot resolve base"))
+    );
+    assert_eq!(samples.len(), 11);
+    assert!(
+        samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::Failed))
+    );
+    let mut missing_pin = entry.clone();
+    missing_pin.sha = "0000000000000000000000000000000000000000".to_string();
+    let mut missing_samples = Vec::new();
+    let missing_result = super::measure::measure_corpus_entry(
+        &missing_pin,
+        &options,
+        &root.join("unused-binary"),
+        &scratch,
+        1,
+        std::time::Duration::from_secs(5),
+        &mut missing_samples,
+    );
+    assert_eq!(missing_result["status"], "failed");
+    assert!(
+        missing_result["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("lacks pin"))
+    );
+    assert_eq!(missing_samples.len(), 11);
+    assert!(
+        missing_samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::Failed))
+    );
+    let mut absent = entry.clone();
+    absent.id = "absent".to_string();
+    let mut absent_samples = Vec::new();
+    let absent_result = super::measure::measure_corpus_entry(
+        &absent,
+        &options,
+        &root.join("unused-binary"),
+        &scratch,
+        2,
+        std::time::Duration::from_secs(5),
+        &mut absent_samples,
+    );
+    assert_eq!(absent_result["status"], "not_measured");
+    assert_eq!(absent_samples.len(), 11);
+    assert!(
+        absent_samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::NotMeasured))
+    );
+    fs::create_dir_all(corpus.join("absent/target")).map_err(|err| err.to_string())?;
+    let mut interrupted_samples = Vec::new();
+    let interrupted_result = super::measure::measure_corpus_entry(
+        &absent,
+        &options,
+        &root.join("unused-binary"),
+        &scratch,
+        3,
+        std::time::Duration::from_secs(5),
+        &mut interrupted_samples,
+    );
+    assert_eq!(interrupted_result["status"], "failed");
+    assert_eq!(interrupted_samples.len(), 11);
+    assert!(
+        interrupted_samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::Failed))
+    );
+    fs::write(source.join("subject.rs"), "dirty\n").map_err(|err| err.to_string())?;
+    let (_, reason) =
+        super::measure::prepare_measured_checkout(&entry, &options, &root.join("dirty"))
+            .err()
+            .ok_or("dirty checkout should be rejected")?;
+    assert!(reason.contains("local changes"), "{reason}");
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn partial_corpus_requires_clone_authorization_to_hydrate_pin() -> Result<(), String> {
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture = Fixture(crate::tests::temp_dir("dx-partial-checkout"));
+    let root = &fixture.0;
+    let source = root.join("source");
+    fs::create_dir_all(&source).map_err(|err| err.to_string())?;
+    let git = |args: &[&str]| super::measure::git(Some(&source), args);
+    git(&["init", "--quiet"])?;
+    fs::write(source.join("subject.rs"), "parent\n").map_err(|err| err.to_string())?;
+    git(&["add", "."])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "parent",
+    ])?;
+    fs::write(source.join("subject.rs"), "pin\n").map_err(|err| err.to_string())?;
+    git(&["add", "."])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "pin",
+    ])?;
+    let pin = git(&["rev-parse", "HEAD"])?;
+    fs::write(source.join("subject.rs"), "tip\n").map_err(|err| err.to_string())?;
+    git(&["add", "."])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "tip",
+    ])?;
+    let remote = root.join("remote.git");
+    super::measure::git(
+        None,
+        &[
+            "clone",
+            "--quiet",
+            "--bare",
+            &source.display().to_string(),
+            &remote.display().to_string(),
+        ],
+    )?;
+    super::measure::git(Some(&remote), &["config", "uploadpack.allowFilter", "true"])?;
+    let corpus = root.join("corpus");
+    fs::create_dir_all(&corpus).map_err(|err| err.to_string())?;
+    let url = format!("file://{}", remote.display());
+    super::measure::git(
+        None,
+        &[
+            "clone",
+            "--quiet",
+            "--filter=blob:none",
+            &url,
+            &corpus.join("fixture").display().to_string(),
+        ],
+    )?;
+    let entry = CorpusEntry {
+        id: "fixture".to_string(),
+        url,
+        sha: pin.trim().to_string(),
+        base_sha: None,
+        note: String::new(),
+        heavy: false,
+        language: None,
+        ceilings: BTreeMap::new(),
+        expected_partial: None,
+        size_tier: None,
+        memory_ratchet: None,
+    };
+    let args = ["--corpus-dir".to_string(), corpus.display().to_string()];
+    let offline = parse_options(&args)?;
+    let cache = corpus.join("fixture");
+    let cache_head = super::measure::git(Some(&cache), &["rev-parse", "HEAD"])?;
+    let scratch = root.join("scratch");
+    fs::create_dir_all(&scratch).map_err(|err| err.to_string())?;
+    let mut samples = Vec::new();
+    let failed = super::measure::measure_corpus_entry(
+        &entry,
+        &offline,
+        &root.join("unused-binary"),
+        &scratch,
+        0,
+        std::time::Duration::from_secs(5),
+        &mut samples,
+    );
+    assert_eq!(failed["status"], "failed");
+    assert!(
+        failed["reason"]
+            .as_str()
+            .is_some_and(|s| s.contains("missing objects"))
+    );
+    assert_eq!(samples.len(), 11);
+    assert!(
+        samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::Failed))
+    );
+    let (_, still_missing) =
+        super::measure::prepare_measured_checkout(&entry, &offline, &scratch.join("offline"))
+            .err()
+            .ok_or("offline preparation unexpectedly hydrated the pin")?;
+    assert!(still_missing.contains("missing objects"), "{still_missing}");
+    let online = parse_options(&[
+        "--corpus-dir".to_string(),
+        corpus.display().to_string(),
+        "--clone".to_string(),
+    ])?;
+    let checkout =
+        super::measure::prepare_measured_checkout(&entry, &online, &scratch.join("hydrated"))
+            .map_err(|(_, reason)| reason)?;
+    assert_eq!(
+        fs::read_to_string(checkout.join("subject.rs")).map_err(|err| err.to_string())?,
+        "pin\n"
+    );
+    assert_eq!(
+        super::measure::git(Some(&cache), &["rev-parse", "HEAD"])?,
+        cache_head
+    );
+    assert_eq!(
+        fs::read_to_string(cache.join("subject.rs")).map_err(|err| err.to_string())?,
+        "tip\n"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_parent_repo()
 -> Result<(), String> {
     // An empty `.git` makes git fall through to the enclosing repository,
@@ -5380,6 +5740,7 @@ fn timed_complete_run(ms: u64, rss_mb: u64, stdout: &str) -> MeasuredOutput {
     run
 }
 
+#[cfg(unix)]
 fn sample_of<'a>(samples: &'a [Sample], metric: &str) -> Option<&'a Sample> {
     samples.iter().find(|sample| sample.metric == metric)
 }
