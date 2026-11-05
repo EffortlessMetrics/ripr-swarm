@@ -66,12 +66,9 @@ fn assert_credited(finding: &Finding) {
         Some("strong_oracle_observes_changed_exception_variant")
     );
     assert!(
-        finding
-            .observed_sink
-            .as_deref()
-            .is_some_and(|sink| {
-                sink.contains("pytest.raises(TooLongError)") && sink.contains("parse(")
-            }),
+        finding.observed_sink.as_deref().is_some_and(|sink| {
+            sink.contains("pytest.raises(TooLongError)") && sink.contains("parse(")
+        }),
         "the credited context must retain its own call: {finding:?}"
     );
     assert!(
@@ -284,7 +281,10 @@ fn specific_exception_variant_requires_import_and_binding_identity() -> Check {
         "import builtins\nbuiltins.Exception = fake\n",
         "def rewrite():\n    global TooLongError\n    TooLongError = Exception\n",
     ] {
-        let tests = test.replace("\ndef test_variant", &format!("\n{binding}\ndef test_variant"));
+        let tests = test.replace(
+            "\ndef test_variant",
+            &format!("\n{binding}\ndef test_variant"),
+        );
         assert_no_credit(&classify(SOURCE, &tests, OLD, NEW)?);
     }
     for binding in [
@@ -303,7 +303,9 @@ fn specific_exception_variant_requires_import_and_binding_identity() -> Check {
         format!("__builtins__ = custom_builtins\n{SOURCE}"),
         format!("len = lambda value: 0\n{SOURCE}"),
         format!("{SOURCE}\nTooLongError = EmptyError\n"),
-        format!("{SOURCE}\ndef rewrite():\n    global TooLongError\n    TooLongError = EmptyError\n"),
+        format!(
+            "{SOURCE}\ndef rewrite():\n    global TooLongError\n    TooLongError = EmptyError\n"
+        ),
         SOURCE.replace("def parse(s):", "def parse(s, TooLongError):"),
         SOURCE.replace("    return len(s)", "    return len(s)\n    len = other"),
         SOURCE.replace("    return len(s)", "    yield len(s)"),
@@ -377,7 +379,13 @@ fn specific_exception_variant_requires_a_type_only_single_line_edit() -> Check {
         assert_no_credit(&classify(&source, &test, old, new)?);
     }
     assert_no_credit(&classify_with_context(SOURCE, &test, None, NEW, true)?);
-    assert_no_credit(&classify_with_context(SOURCE, &test, Some(OLD), NEW, false)?);
+    assert_no_credit(&classify_with_context(
+        SOURCE,
+        &test,
+        Some(OLD),
+        NEW,
+        false,
+    )?);
     assert_no_credit(&classify(
         SOURCE,
         &test,

@@ -550,31 +550,32 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
     // A class-only exception assertion is exact only for this raised-type
     // replacement, with its own context call reaching the edited statement.
-    let exception_variants = if no_behavior.sole_line_replacement
-        && no_behavior.pytest_import_unshadowed
-    {
-        owner_source
-            .zip(owners.iter().find(|candidate| {
-                candidate.is_module_owner() && candidate.file == owner.file
-            }))
-            .map(|(source, module_owner)| {
-                exception_variant_credits(
-                    &ModuleEdit {
-                        file,
-                        line,
-                        line_text,
-                        old_line_text,
-                        new_source: source,
-                    },
-                    owner,
-                    module_owner,
-                    &related_candidates,
+    let exception_variants =
+        if no_behavior.sole_line_replacement && no_behavior.pytest_import_unshadowed {
+            owner_source
+                .zip(
+                    owners.iter().find(|candidate| {
+                        candidate.is_module_owner() && candidate.file == owner.file
+                    }),
                 )
-            })
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+                .map(|(source, module_owner)| {
+                    exception_variant_credits(
+                        &ModuleEdit {
+                            file,
+                            line,
+                            line_text,
+                            old_line_text,
+                            new_source: source,
+                        },
+                        owner,
+                        module_owner,
+                        &related_candidates,
+                    )
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
     for credit in &exception_variants {
         if let Some(row) = related.iter_mut().find(|row| {
             row.file == credit.test.file

@@ -231,9 +231,7 @@ fn credits<'a>(
 
 /// Only the constructor's name changes; evaluating its arguments runs no code.
 fn raised_type(line: &str) -> Option<(String, Vec<ast::Constant>)> {
-    let Mod::Module(module) =
-        parse_module_result(Path::new("raise.py"), line.trim()).ok()?
-    else {
+    let Mod::Module(module) = parse_module_result(Path::new("raise.py"), line.trim()).ok()? else {
         return None;
     };
     let [Stmt::Raise(raise)] = module.body.as_slice() else {
@@ -329,7 +327,10 @@ fn plain_parameters(function: &ast::StmtFunctionDef) -> bool {
 fn deferred_body(body: &[Stmt]) -> bool {
     let mut deferred = false;
     visit_exprs_in_statements(body, &mut |expression| {
-        deferred |= matches!(expression, Expr::Yield(_) | Expr::YieldFrom(_) | Expr::Await(_));
+        deferred |= matches!(
+            expression,
+            Expr::Yield(_) | Expr::YieldFrom(_) | Expr::Await(_)
+        );
     });
     deferred
 }
@@ -469,11 +470,13 @@ impl RaisePath<'_> {
                     }
                 }
                 Stmt::Raise(raise) => {
-                    return Some(if line_for_range_start(self.source, raise.range) == self.line {
-                        Flow::Target
-                    } else {
-                        Flow::Exit
-                    });
+                    return Some(
+                        if line_for_range_start(self.source, raise.range) == self.line {
+                            Flow::Target
+                        } else {
+                            Flow::Exit
+                        },
+                    );
                 }
                 Stmt::Return(_) => return Some(Flow::Exit),
                 Stmt::Pass(_) => {}
@@ -490,9 +493,9 @@ impl RaisePath<'_> {
         }
         match expression {
             Expr::Constant(_) | Expr::Name(_) => evaluate(expression, &scope(self.parameters)),
-            Expr::UnaryOp(unary) if unary.op == ast::UnaryOp::Not => {
-                Some(Value::Bool(!self.value(&unary.operand, depth + 1)?.truthy()))
-            }
+            Expr::UnaryOp(unary) if unary.op == ast::UnaryOp::Not => Some(Value::Bool(
+                !self.value(&unary.operand, depth + 1)?.truthy(),
+            )),
             Expr::Compare(compare) => {
                 let mut left = self.value(&compare.left, depth + 1)?;
                 for (operator, right) in compare.ops.iter().zip(&compare.comparators) {

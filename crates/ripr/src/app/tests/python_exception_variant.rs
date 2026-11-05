@@ -120,7 +120,8 @@ fn check_output_python_exception_variant_preserves_import_environment_guards() -
             let output = run_check(root)?;
             assert_variant_credit(changed_raise(&output)?);
         }
-        for (argument, credited) in [("éééééééé", false), ("ééééééééééé", true)] {
+        for (argument, credited) in [("éééééééé", false), ("ééééééééééé", true)]
+        {
             fs::write(
                 root.join("tests/test_core.py"),
                 TEST.replace("abcdefghijklmnop", argument),
@@ -172,8 +173,14 @@ fn check_output_python_exception_variant_rejects_framework_shadows() -> Result<(
             ("pytest.pyc", "compiled pytest identity unavailable"),
             ("pytest.so", "compiled pytest identity unavailable"),
             ("pytest.pyd", "compiled pytest identity unavailable"),
-            ("pytest/__init__.pyc", "compiled pytest identity unavailable"),
-            ("tests/pytest/__init__.pyc", "compiled pytest identity unavailable"),
+            (
+                "pytest/__init__.pyc",
+                "compiled pytest identity unavailable",
+            ),
+            (
+                "tests/pytest/__init__.pyc",
+                "compiled pytest identity unavailable",
+            ),
         ] {
             let shadow = root.join(relative);
             let parent = shadow.parent().ok_or("shadow path needs a parent")?;
@@ -194,7 +201,10 @@ fn check_output_python_exception_variant_rejects_framework_shadows() -> Result<(
             let restored = run_check(root)?;
             let finding = changed_raise(&restored)?;
             assert_variant_credit(finding);
-            assert_eq!(finding.canonical_gap.as_ref().map(|gap| &gap.id), Some(&gap));
+            assert_eq!(
+                finding.canonical_gap.as_ref().map(|gap| &gap.id),
+                Some(&gap)
+            );
         }
         Ok(())
     })
