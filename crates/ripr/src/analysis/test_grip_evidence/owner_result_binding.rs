@@ -35,9 +35,10 @@ pub(super) fn missing_field_value_facts(
     }
     // #11398: a field write names the written field, not an owner-result
     // field. #11870: it starts a repair only through the one weak-read policy
-    // that `check` also asks, over the related tests.
+    // that `check` also asks, over the tests that run the owner; the caller
+    // that has each test's relation asks it ([`assigned_field_weak_read_fact`]).
     if crate::analysis::classify::field_assignment_target(seam.expression()).is_some() {
-        return assigned_field_weak_read_fact(seam, related, context, owner_fn);
+        return Vec::new();
     }
     let Some(owner_fn) = owner_fn else {
         return Vec::new();
@@ -90,22 +91,21 @@ pub(super) fn missing_field_value_facts(
 /// Fail-closed: the policy is [`assigned_field_weak_read_start`] (which also
 /// withholds a non-plain `Drop` owner type); an owner the seam cannot place
 /// withholds it.
-fn assigned_field_weak_read_fact(
+pub(super) fn assigned_field_weak_read_fact(
     seam: &RepoSeam,
-    related: &[&CompactTest<'_>],
+    reaching: &[&crate::analysis::rust_index::TestSummary],
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
 ) -> Vec<MissingDiscriminatorFact> {
     let (Some(owner), Some(field)) = (owner_fn, super::written_field(seam)) else {
         return Vec::new();
     };
-    let tests: Vec<&crate::analysis::rust_index::TestSummary> =
-        related.iter().map(|indexed| indexed.test).collect();
+    let tests = reaching;
     if !crate::analysis::classify::assigned_field_weak_read_start(
         owner,
         seam.expression(),
         field,
-        &tests,
+        tests,
         context.index,
     ) {
         return Vec::new();

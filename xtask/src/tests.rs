@@ -65,6 +65,14 @@ use super::run::{
 };
 use super::scratch_gc_concurrency_violations;
 use super::validate_bless_reason;
+
+#[cfg(windows)]
+use super::{
+    check_allow_attributes, check_droid_review_config, check_executable_files, check_file_policy,
+    check_local_context, check_no_panic_family, check_process_policy, check_static_language,
+    check_workflows,
+};
+
 use super::{
     ArtifactRouterInput, BUN_UB_CROSS_LANGUAGE_DOGFOOD_REQUIRED_CASES, BadgeArtifactJob,
     BadgeBasisReport, BadgeBasisSignal, BadgeCanonicalProjection, BadgeCountBreakdown,
@@ -112,32 +120,29 @@ use super::{
     badge_basis_needs_repo_badge_plus_job, badge_basis_report_json, badge_basis_report_markdown,
     badge_basis_seam_native_counts, badge_diff_policy_violations, badge_native_audit_snapshot,
     build_lsp_cockpit_report, build_repo_exposure_latency_report,
-    build_targeted_test_outcome_report, check_allow_attributes,
-    check_badge_diff_policy_with_context, check_doc_artifacts,
-    check_doc_artifacts_with_unregistered_baseline, check_droid_review_config,
-    check_executable_files, check_file_policy, check_local_context, check_network_policy,
-    check_no_panic_family, check_process_policy, check_static_language, check_support_tiers,
-    check_workflows, ci_enforced_xtask_invocations, ci_full_evidence_gates, cockpit_json,
-    cockpit_markdown, command_catalog, command_catalog_ci_drift_violations,
-    command_catalog_violations, commands_report_json, commands_report_markdown, critic_findings,
-    days_from_civil, doc_artifact_kind_matches_path, doc_artifact_violations,
-    dogfood_bun_ub_cross_language_run, dogfood_bun_ub_cross_language_scenarios,
-    dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
-    dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
-    dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families, dogfood_finding_alignment_run,
-    dogfood_finding_alignment_scenarios, dogfood_first_action_run, dogfood_first_action_scenarios,
-    dogfood_first_pr_metrics, dogfood_first_pr_run, dogfood_first_pr_scenarios,
-    dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios, dogfood_gate_result,
-    dogfood_generated_ci_cockpit_run_from_surfaces, dogfood_language_preview_run,
-    dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
-    dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
-    dogfood_pr_review_front_panel_scenarios, dogfood_push_python_quality_ratio_json,
-    dogfood_python_no_action_eval_run, dogfood_python_no_action_eval_scenarios,
-    dogfood_python_real_repo_eval_run, dogfood_python_real_repo_eval_scenarios,
-    dogfood_python_repair_routing_quality_summary, dogfood_python_static_limit_eval_run,
-    dogfood_python_static_limit_eval_scenarios, dogfood_real_repair_attempt_run,
-    dogfood_real_repair_attempt_scenarios, dogfood_report_json, dogfood_report_markdown,
-    dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios, dogfood_report_status,
+    build_targeted_test_outcome_report, check_badge_diff_policy_with_context, check_doc_artifacts,
+    check_doc_artifacts_with_unregistered_baseline, check_network_policy, check_support_tiers,
+    ci_enforced_xtask_invocations, ci_full_evidence_gates, cockpit_json, cockpit_markdown,
+    command_catalog, command_catalog_ci_drift_violations, command_catalog_violations,
+    commands_report_json, commands_report_markdown, critic_findings, days_from_civil,
+    doc_artifact_kind_matches_path, doc_artifact_violations, dogfood_bun_ub_cross_language_run,
+    dogfood_bun_ub_cross_language_scenarios, dogfood_class_counts,
+    dogfood_editor_first_pr_bridge_run, dogfood_editor_first_pr_bridge_scenarios,
+    dogfood_editor_gap_cockpit_run, dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families,
+    dogfood_finding_alignment_run, dogfood_finding_alignment_scenarios, dogfood_first_action_run,
+    dogfood_first_action_scenarios, dogfood_first_pr_metrics, dogfood_first_pr_run,
+    dogfood_first_pr_scenarios, dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
+    dogfood_gate_result, dogfood_generated_ci_cockpit_run_from_surfaces,
+    dogfood_language_preview_run, dogfood_language_preview_scenarios,
+    dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
+    dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
+    dogfood_push_python_quality_ratio_json, dogfood_python_no_action_eval_run,
+    dogfood_python_no_action_eval_scenarios, dogfood_python_real_repo_eval_run,
+    dogfood_python_real_repo_eval_scenarios, dogfood_python_repair_routing_quality_summary,
+    dogfood_python_static_limit_eval_run, dogfood_python_static_limit_eval_scenarios,
+    dogfood_real_repair_attempt_run, dogfood_real_repair_attempt_scenarios, dogfood_report_json,
+    dogfood_report_markdown, dogfood_report_packet_index_run,
+    dogfood_report_packet_index_scenarios, dogfood_report_status,
     dogfood_surface_projection_alignment_run, dogfood_surface_projection_alignment_scenarios,
     dogfood_typescript_preview_repair_loop_run, dogfood_typescript_preview_repair_loop_scenarios,
     dogfood_user_surface_projection_run, dogfood_user_surface_projection_scenarios,
@@ -6554,10 +6559,61 @@ fn non_rust_programming_policy_requires_retention_rule() {
     assert!(non_rust_programming_retention_reason(".ci/contabo-product.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/contabo-result.sh").is_some());
     assert!(non_rust_programming_retention_reason(".ci/arbitrary.sh").is_none());
+    assert!(non_rust_programming_retention_reason("tools/activate-rust.sh").is_some());
+    assert!(non_rust_programming_retention_reason("tools/test-activate-rust.sh").is_some());
+    assert!(non_rust_programming_retention_reason("tools/arbitrary.sh").is_none());
+    assert!(non_rust_programming_retention_reason("tools/activate-rust-extra.sh").is_none());
+    assert!(non_rust_programming_retention_reason("tools/test-activate-rust-extra.sh").is_none());
+    assert!(
+        non_rust_programming_retention_reason("tools/python/installed-provider-recovery/run.py")
+            .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason("tools/python/installed-provider-recovery/other.py")
+            .is_none()
+    );
     assert!(
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
     );
+}
+
+#[test]
+fn editor_setup_node_bootstrap_retention_is_exact() -> Result<(), String> {
+    let path = "editors/vscode/test/developerSetup.cjs";
+    assert!(is_non_rust_programming_candidate(path));
+    assert!(non_rust_programming_retention_reason(path).is_some());
+    let Some(bootstrap) = super::non_rust_source_conversion_candidate(path) else {
+        return Err("Node setup entrypoint should be assessed".to_string());
+    };
+    assert_eq!(bootstrap.priority, "retained");
+    assert_eq!(bootstrap.kind, "retained_external_runtime");
+
+    for path in [
+        "editors/vscode/test/developerSetup-extra.cjs",
+        "editors/vscode/test/developerSetup.cjs.extra.cjs",
+        "editors/vscode/test/other.cjs",
+        "editors/vscode/src/developerSetup.cjs",
+        "editors/vscode/test/developerSetup.js",
+        "tools/developerSetup.cjs",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!(
+                "Unapproved neighboring path should be assessed: {path}"
+            ));
+        };
+        assert_eq!(candidate.priority, "high", "{path}");
+        assert_eq!(
+            candidate.kind, "non_rust_programming_without_retention_rule",
+            "{path}"
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -29673,6 +29729,10 @@ fn xtask_run_helpers_report_success_failure_and_optional_output() -> Result<(), 
     })
 }
 
+// Native Windows retains this exact facade for the #5044/#13012 evidence
+// admission consumer. Other hosts run its policy checks once through ci-policy;
+// the packet invariant now belongs to fresh check-file-policy acceptance.
+#[cfg(windows)]
 #[test]
 fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
     #[cfg(all(unix, not(target_os = "linux")))]
@@ -29685,7 +29745,7 @@ fn policy_checker_facade_runs_current_repo_checks() -> Result<(), String> {
     policy_checker_facade_in_subprocess()
 }
 
-#[cfg(not(all(unix, not(target_os = "linux"))))]
+#[cfg(windows)]
 fn policy_checker_facade_in_subprocess() -> Result<(), String> {
     const CHILD_ENV: &str = "RIPR_XTASK_POLICY_FACADE_CHILD";
     const COMPLETED: &str = "policy facade child checks completed";
@@ -29745,6 +29805,7 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
 fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
     // Each phase is announced on stderr before it starts. When the child outlives
     // its tool-build deadline the parent's diagnostic carries this stream, so a
@@ -52784,7 +52845,7 @@ does_not_prove = "It does not demonstrate compiled analyzer behavior."
 [[pack]]
 id = "release-package"
 paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml"]
-required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo publish -p ripr --dry-run", "cargo xtask release-readiness"]
+required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo xtask publish-dry-run", "cargo xtask release-readiness"]
 advisory_commands = []
 ci_lane = "release-readiness-proof"
 proves = "Release surfaces pay the full release proof."

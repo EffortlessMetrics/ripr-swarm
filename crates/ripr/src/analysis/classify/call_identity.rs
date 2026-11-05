@@ -77,6 +77,8 @@ type SharedOwnerScopes = BTreeMap<PathBuf, (Arc<str>, Option<Arc<super::owner_pi
 
 type SharedIdentities = BTreeMap<(bool, String), Option<std::sync::Arc<OwnerCallIdentity>>>;
 type SoloIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>>;
+type DeriveBindingSites = Arc<Vec<(String, Option<(usize, usize)>)>>;
+type DeriveBindingMemo = BTreeMap<(Arc<str>, Vec<String>), DeriveBindingSites>;
 
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
@@ -129,6 +131,10 @@ pub(crate) struct CallIdentityMemos {
     /// #10701: every indexed source with comments and strings masked, built
     /// once per index for the repair-start Drop-type gate.
     masked_sources: std::sync::OnceLock<Vec<String>>,
+    /// #11870: how many times each identifier appears in the raw text of every
+    /// indexed source, a `fn <name>` definition not counted. Built once per
+    /// index for the weak-read start's "no other mention of the owner" gate.
+    identifier_mentions: std::sync::OnceLock<BTreeMap<String, usize>>,
     /// #10701: per type name, whether a `type` alias declares it and which
     /// further type names its renames and definitions mention, so each name is
     /// read from the corpus once per run instead of once per seam.
@@ -146,6 +152,10 @@ pub(crate) struct CallIdentityMemos {
     rebound_scans: std::sync::atomic::AtomicUsize,
     /// #8917: whether a type name carries a unique workspace `Default` derive.
     pub(in crate::analysis) type_derives_default: Mutex<BTreeMap<String, bool>>,
+    /// Exact-source, requested-name binding scans used by the closed assertion
+    /// value check. Different source bytes or trusted names never share a result;
+    /// the whole memo expires with this analysis index, including on clone.
+    pub(super) standard_derive_bindings: Mutex<DeriveBindingMemo>,
 }
 
 impl CallIdentityMemos {
@@ -159,6 +169,14 @@ impl CallIdentityMemos {
     #[cfg(test)]
     pub(in crate::analysis) fn receiver_scan_passes(&self) -> u32 {
         self.receiver_pin_syntax.workspace_scan_passes()
+    }
+
+    /// The memoized identifier mention counts, built by `build` on first use.
+    pub(in crate::analysis) fn identifier_mentions(
+        &self,
+        build: impl FnOnce() -> BTreeMap<String, usize>,
+    ) -> &BTreeMap<String, usize> {
+        self.identifier_mentions.get_or_init(build)
     }
 
     /// The memoized masked sources, built by `build` on first use.
@@ -1479,7 +1497,7 @@ fn entry_attributes_preserve_items(source: &ra_ap_syntax::SyntaxNode) -> bool {
 /// A syntactic data declaration cannot establish an import's kind if a cfg,
 /// rewriting attribute or another declaration/import can select a trait there.
 fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    use ra_ap_syntax::{AstNode, ast};
     if !crate::analysis::syntax::supported_targeted_item_context(node)
         || node.ancestors().any(|ancestor| {
             ancestor
@@ -1490,6 +1508,13 @@ fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> boo
     {
         return false;
     }
+    data_declaration_name_is_unambiguous(node)
+}
+
+/// Same-scope declaration/import authority only. Callers separately establish
+/// whether this item's attributes and enclosing context preserve its kind.
+pub(super) fn data_declaration_name_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let Some(name) = ast::AnyHasName::cast(node.clone()).and_then(|item| item.name()) else {
         return false;
     };
@@ -2349,7 +2374,7 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
             continue;
         }
         let head = masked[..start].trim_end();
-        if head.ends_with('.') {
+        if head.ends_with('.') && !head.ends_with("..") {
             if with_methods {
                 calls.push((Some(Vec::new()), true));
             }
@@ -2361,6 +2386,25 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
         calls.push((qualifier_before(head), false));
     }
     calls
+}
+
+/// Whether a call of this name may have the function's container kind (#12234).
+/// This only separates bare calls from receiver calls. A qualified or unread
+/// path may be a free call or UFCS, and an unknown container stays uncertain.
+/// Matching shape does not resolve the receiver or grant owner-call credit.
+pub(super) fn text_may_call_function_kind(text: &str, function: &FunctionSummary) -> bool {
+    call_sites(text, &function.name, true)
+        .into_iter()
+        .any(|(qualifier, is_method)| match qualifier {
+            Some(segments) if segments.is_empty() => match function.item.container {
+                FunctionContainer::Free | FunctionContainer::Local => !is_method,
+                FunctionContainer::Inherent { .. }
+                | FunctionContainer::TraitImpl { .. }
+                | FunctionContainer::Trait { .. } => is_method,
+                FunctionContainer::Unknown => true,
+            },
+            _ => true,
+        })
 }
 
 /// `module` without its leading crate segment when that segment names the

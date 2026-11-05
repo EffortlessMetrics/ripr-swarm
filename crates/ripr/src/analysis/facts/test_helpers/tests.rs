@@ -1624,3 +1624,4 @@ fn function_item_passed_by_name_keeps_plain_helper_credit_as_a_disclosed_residua
 }
 
 mod assertion_macros;
+mod cloned_callbacks;

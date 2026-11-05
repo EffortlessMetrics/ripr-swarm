@@ -5373,9 +5373,9 @@ mod tests {
             return Err("staged tool remained after atomic publication".to_string());
         }
         let shim_text = shim.to_str().ok_or("shim path is not utf-8")?;
-        // #2441: this test publishes and immediately execs, exactly like its
-        // sibling below, so it needs the same bounded launch retry. Without it
-        // the test failed intermittently on CI with `ExecutableFileBusy` while
+        // #2441: this test publishes and immediately execs, so it needs the
+        // bounded launch retry. Without it the test failed intermittently on
+        // CI with `ExecutableFileBusy` while
         // proving nothing about the publication contract it exists to check.
         let (status, evidence) = probe_published_tool(shim_text, Duration::from_secs(1));
         std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
@@ -5390,10 +5390,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn doctor_tool_check_times_out_a_hanging_tool_100_times() -> Result<(), String> {
-        // #2183 review: a shim that blocks forever must not hang doctor;
+        // #2183 review: a hanging tool must not hang doctor;
         // the probe terminates it at the deadline and names the timeout. Run
-        // the materialization and probe repeatedly to catch visibility and
-        // cleanup races under full-suite parallelism.
+        // the probe repeatedly to catch deadline and cleanup races under
+        // full-suite parallelism.
         // Ten threads of ten attempts: the same 100 probes, but each waits out
         // its 250ms deadline concurrently, so the race window is wider and the
         // test takes about a tenth of the wall time.
@@ -5422,32 +5422,30 @@ mod tests {
 
     #[cfg(unix)]
     fn hanging_tool_attempt(attempt: usize) -> Result<(), String> {
-        let dir = unique_test_dir("timeout");
-        std::fs::create_dir(&dir).map_err(|err| format!("create dir: {err}"))?;
         let sleep = ["/usr/bin/sleep", "/bin/sleep"]
             .into_iter()
             .find(|candidate| std::path::Path::new(candidate).is_file())
             .ok_or("no portable Unix sleep utility found")?;
-        let script = format!("#!/bin/sh\nexec {sleep} 60\n");
-        let shim = publish_doctor_test_tool(&dir, "ripr-hanging-probe-tool", &script)?;
+        let shell = "/bin/sh";
+        let mut command = doctor_tool_command(shell);
+        command.args(["-c", &format!("exec {sleep} 60")]);
 
         let start = std::time::Instant::now();
-        let shim_text = shim.to_str().ok_or("shim path is not utf-8")?;
-        // #2242/#2378: publish the executable pathname only after the
-        // writer is closed. The bounded retry for independent host-level
-        // exec contention now lives in `probe_published_tool`, shared with
-        // the atomic-publication test (#2441); a real timeout result is
-        // still never retried.
-        let (status, evidence) = probe_published_tool(shim_text, Duration::from_millis(250));
+        // #13305: execute a stable interpreter instead of a newly written
+        // tool. The fixed script replaces the shell with sleep, so doctor
+        // still owns the hanging process. Its appended --version is shell
+        // argument zero, not an option passed to sleep.
+        let (status, evidence) =
+            doctor_tool_check_with_command(shell, command, Duration::from_millis(250), None)
+                .into_public();
         let elapsed = start.elapsed();
 
-        std::fs::remove_dir_all(&dir).map_err(|err| format!("remove dir: {err}"))?;
         if status != DoctorStatus::Fail {
             return Err(format!(
                 "attempt {attempt}: hanging tool unexpectedly passed"
             ));
         }
-        if evidence != format!("{shim_text} timed out after 250ms") {
+        if evidence != format!("{shell} timed out after 250ms") {
             return Err(format!(
                 "attempt {attempt}: expected a 250ms timeout, got: {evidence}"
             ));

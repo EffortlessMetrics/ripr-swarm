@@ -11,6 +11,7 @@ use super::repair_admission::{SeamAdmission, SeamVerdict};
 use crate::domain::Finding;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::path::Path;
 
 pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v4";
@@ -722,13 +723,10 @@ fn gap_evidence_core(
         "readiness": {
             "repair_packet_ready": readiness.ready,
             "reason": readiness.detail(),
-            "prepared_by": "#3090",
-            "evaluation_basis": "producer facts on the committed finding: candidate actionability (#3281), the canonical gap's normalized discriminator (a producer-named missing discriminator is accepted only on a weakly exposed finding, where it is the repair target), and the strongest directly-related related-test grip; conjoined with the shared seam-level repair validator behind `ripr repair`, which must admit the item's seam (#8717)",
         },
         "repair_boundary": {
             "allowed_edit_surface": "none_declared",
             "must_not_change": "none_declared",
-            "prepared_by": "#3090",
         },
     }))
 }
@@ -833,10 +831,18 @@ pub(crate) fn limitation_resource_id(uri: &str) -> Option<&str> {
 }
 
 /// Extract the snapshot id from a `ripr://snapshot/{id}` resource URI.
-pub(crate) fn snapshot_resource_id(uri: &str) -> Option<&str> {
-    uri.strip_prefix("ripr://snapshot/")
+/// Simple URI-template expansion encodes the canonical id's colons. Decode
+/// only the captured id, once, while retaining raw-id compatibility (#13229).
+pub(crate) fn snapshot_resource_id(uri: &str) -> Option<Cow<'_, str>> {
+    let captured = uri
+        .strip_prefix("ripr://snapshot/")
         .map(trim_one_trailing_slash)
-        .filter(|id| !id.is_empty() && !id.contains('/'))
+        .filter(|id| !id.is_empty() && !id.contains('/'))?;
+    Some(
+        percent_decode_resource_id(captured)
+            .map(Cow::Owned)
+            .unwrap_or(Cow::Borrowed(captured)),
+    )
 }
 
 /// Percent-decode a captured resource-id segment (#8736). Canonical ids
@@ -1498,12 +1504,21 @@ mod tests {
         if reason.is_empty() {
             return Err("readiness reason must not be empty".to_string());
         }
-        if document
-            .pointer("/item/readiness/prepared_by")
-            .and_then(Value::as_str)
-            != Some("#3090")
+        // Internal slice provenance (`prepared_by`, `evaluation_basis`) stays
+        // out of the MCP-facing document: it names the producing repair
+        // slice, not a fact about the gap, and no documented MCP consumer
+        // reads it.
+        if document.pointer("/item/readiness/prepared_by").is_some()
+            || document
+                .pointer("/item/readiness/evaluation_basis")
+                .is_some()
+            || document
+                .pointer("/item/repair_boundary/prepared_by")
+                .is_some()
         {
-            return Err("readiness lost the repair-slice owner".to_string());
+            return Err(
+                "internal provenance fields must not leak into the MCP gap document".to_string(),
+            );
         }
         if document.pointer("/item/repair_boundary/allowed_edit_surface")
             != Some(&serde_json::json!("none_declared"))
@@ -2349,7 +2364,7 @@ mod tests {
     fn resource_uri_parsing_is_strict() {
         assert_eq!(gap_resource_id("ripr://gap/gap:test:1"), Some("gap:test:1"));
         assert_eq!(
-            snapshot_resource_id("ripr://snapshot/snapshot:sha256:x"),
+            snapshot_resource_id("ripr://snapshot/snapshot:sha256:x").as_deref(),
             Some("snapshot:sha256:x")
         );
         for other in [
@@ -2393,7 +2408,55 @@ mod tests {
             // The single-segment grammar stays strict inside the id.
             ("ripr://snapshot/a/b/", None),
         ] {
-            assert_eq!(snapshot_resource_id(uri), expected, "snapshot route: {uri}");
+            assert_eq!(
+                snapshot_resource_id(uri).as_deref(),
+                expected,
+                "snapshot route: {uri}"
+            );
+        }
+    }
+
+    /// #13229: template expansion encodes the colons in a snapshot id.
+    /// Interpret only its captured segment, never the namespace or a second
+    /// layer of escapes; malformed bytes must not disappear into a valid id.
+    #[test]
+    fn snapshot_resource_id_decodes_one_segment_once() {
+        for uri in [
+            "ripr://snapshot/snapshot:sha256:abc",
+            "ripr://snapshot/snapshot%3Asha256%3Aabc",
+            "ripr://snapshot/snapshot%3asha256%3aabc",
+            "ripr://snapshot/%73napshot%3Asha256%3Aabc",
+            "ripr://snapshot/snapshot%3Asha256%3Aabc/",
+        ] {
+            assert_eq!(
+                snapshot_resource_id(uri).as_deref(),
+                Some("snapshot:sha256:abc"),
+                "{uri}"
+            );
+        }
+        for (id, expected) in [
+            ("snapshot%253Asha256%253Aabc", "snapshot%3Asha256%3Aabc"),
+            ("snapshot%3Asha256%3Aabc%", "snapshot:sha256:abc%"),
+            ("snapshot%3Asha256%3Aabc%3", "snapshot:sha256:abc%3"),
+            ("snapshot%3Asha256%3Aabc%GG", "snapshot:sha256:abc%GG"),
+            ("snapshot%3Asha256%3Aabc%FF", "snapshot%3Asha256%3Aabc%FF"),
+            ("snapshot%3Asha256%3Aabc%2F", "snapshot:sha256:abc/"),
+        ] {
+            assert_eq!(
+                snapshot_resource_id(&format!("ripr://snapshot/{id}")).as_deref(),
+                Some(expected),
+                "{id}"
+            );
+        }
+        for uri in [
+            "ripr://%73napshot/snapshot%3Asha256%3Aabc",
+            "ripr:%2F%2Fsnapshot/snapshot%3Asha256%3Aabc",
+            "ripr://gap/snapshot%3Asha256%3Aabc",
+            "ripr://snapshot/",
+            "ripr://snapshot/snapshot%3Asha256%3Aabc//",
+            "ripr://snapshot/snapshot:sha256:abc/extra",
+        ] {
+            assert_eq!(snapshot_resource_id(uri), None, "{uri}");
         }
     }
 

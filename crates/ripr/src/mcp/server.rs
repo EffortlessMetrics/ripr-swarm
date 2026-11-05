@@ -1217,6 +1217,28 @@ fn invalid_argument_failure(error: &ErrorData) -> workspace::AttemptFailure {
     .with_data(data)
 }
 
+/// An unknown method can fit the input cap while its diagnostic exceeds the
+/// response cap. Bound only the echo, after routing the complete method name.
+fn unknown_method_error(method: &str) -> ErrorData {
+    const MAX_METHOD_NAME_PREVIEW_CHARS: usize = 128;
+    let mut chars = method.chars();
+    let preview: String = chars.by_ref().take(MAX_METHOD_NAME_PREVIEW_CHARS).collect();
+    let truncated = chars.next().is_some();
+    let (message, data) = if truncated {
+        (
+            format!("Method not found: {preview} (name truncated)"),
+            Some(serde_json::json!({
+                "method": preview,
+                "method_truncated": true,
+                "method_bytes": method.len(),
+            })),
+        )
+    } else {
+        (format!("Method not found: {preview}"), None)
+    };
+    ErrorData::new(ErrorCode::METHOD_NOT_FOUND, message, data)
+}
+
 /// Failure schema version of each tool whose handler panics are contained at
 /// the call boundary, `ripr_refresh` included: its `InFlightAttempt` guard
 /// clears `in_flight` on unwind, so a glue panic leaves the session usable.
@@ -1331,11 +1353,7 @@ impl ServerHandler for McpServer {
                 Some(serde_json::json!({ "method": request.method })),
             ));
         }
-        Err(ErrorData::new(
-            ErrorCode::METHOD_NOT_FOUND,
-            format!("Method not found: {}", request.method),
-            None,
-        ))
+        Err(unknown_method_error(&request.method))
     }
     async fn list_tools(
         &self,
@@ -1433,7 +1451,7 @@ impl ServerHandler for McpServer {
         }
         if let Some(snapshot_id) = gaps::snapshot_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.snapshot_document(snapshot_id) {
+            return match session.snapshot_document(snapshot_id.as_ref()) {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,
@@ -1537,12 +1555,12 @@ impl McpServer {
         recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        // Resources pretty-print their document text while tool payloads
-        // serialize compact (`bounded_tool_envelope`): the encodings differ
-        // by design, and tool/resource equivalence (#7145) is pinned over the
-        // parsed document, never over the wire bytes. Do not reformat either
-        // side to match the other.
-        let text = serde_json::to_string_pretty(&document)
+        // Resource payloads serialize compact, the same encoding tool
+        // payloads use (`bounded_tool_envelope`): a resource is LLM-facing
+        // text, and pretty-print inflation spends tokens on whitespace a
+        // JSON parser discards. Tool/resource equivalence (#7145) stays
+        // pinned over the parsed document, never over the wire bytes.
+        let text = serde_json::to_string(&document)
             .map_err(|_error| ErrorData::internal_error("serialize resource", None))?;
         let envelope = json_envelope(uri, text);
         let bytes = serde_json::to_vec(&envelope)

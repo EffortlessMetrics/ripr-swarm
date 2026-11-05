@@ -23,6 +23,7 @@ use crate::output::pilot::ranking::{top_actionable_seams, withheld_static_limita
 use crate::output::python_repair_card::PythonRepairCard;
 use std::path::{Path, PathBuf};
 
+mod framework_snapshot;
 #[cfg(unix)]
 mod native_artifacts;
 mod panic_outcome;

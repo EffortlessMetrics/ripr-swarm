@@ -98,6 +98,115 @@ pushes, manual dispatches, and same-repo pull requests. Fork pull requests still
 generate `lcov.info` and upload the `rust-lcov` artifact, but skip Codecov
 upload because repository secrets are unavailable.
 
+### Coverage build debug information
+
+Only the Generate coverage step sets `CARGO_PROFILE_TEST_STRIP=debuginfo`.
+Ordinary builds, the plain spawned-binary prebuild and the diagnostic preflight
+retain their normal configuration. The full workspace/all-features command,
+profile pattern, test population and strict report generation stay unchanged.
+This setting removes linked debug information; it preserves ordinary symbols.
+Coverage binaries therefore lose debugger line information even though their
+coverage source mappings must remain usable.
+
+This is a bounded response to measured build pressure, not an attribution of
+the final ENOSPC write. In diagnostic run
+[42015956653](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/42015956653),
+the last complete sample recorded 57,278,578,688 allocated bytes in
+`instrumented_build` and 93,016,064 in `raw_profiles`. The log ended before the worker's
+terminal ENOSPC failure, so subsequent growth remains unobserved. The bucket
+does not identify the share occupied by debug information. A smaller fixture
+does not establish a particular workspace reduction or sufficient capacity;
+acceptance still requires a complete native coverage run, its test results and
+LCOV artifact, with the same population and comparable storage measurements.
+
+The mandatory diagnostics preflight includes
+`native_test_profile_strip_preserves_coverage_and_reduces_fixture_size`. It
+builds the same dependency-free Cargo test fixture with explicit `none` and
+`debuginfo` strip modes, separate target directories and identical explicit
+coverage instrumentation. Child-only compiler/wrapper/encoded-flag overrides
+prevent the outer cargo-llvm-cov environment from changing either comparison.
+The native compiler invocation must show the expected coverage/debug flags and
+candidate strip setting. The baseline binary must contain a nonempty,
+nonallocated `PROGBITS` `.debug_line` section. The candidate must be smaller
+and contain no debug-prefixed section except an exact, nonempty `PROGBITS`
+`.debug_gdb_scripts` with `ALLOC` and without write/execute flags. Allocated
+DWARF, compressed debug sections, lookalike names and unknown debug prefixes
+still fail the control.
+
+The distinction follows the pinned producer and linker. Rust's
+[GDB metadata producer](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/compiler/rustc_codegen_llvm/src/debuginfo/gdb.rs)
+emits pretty-printer loader records and retains a volatile reference to them;
+they are not DWARF line tables. The pinned
+[linker mapping](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/compiler/rustc_codegen_ssa/src/back/linker.rs)
+selects `--strip-debug`, and the matching LLVM
+[debug-section predicate](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/lld/ELF/InputSection.h)
+excludes allocated sections. This permits only the named loader metadata in
+the control; allocation alone never admits another debug section. Actual
+retained sections must come from the native receipt, not this source rule.
+
+The GNU ELF parser requires one literal `[Nr]` column header before any
+numeric data row, with the whitespace-separated tokens `Name Type Address Off
+Size ES Flg Lk Inf Al` in that order. Missing, malformed, duplicate or late
+column headers are errors. Numeric row indices remain unique. For each
+debug-prefixed section it records the name, type, hexadecimal byte size and
+flags. Flag bytes must be unique members of `WAXMSILOGTCERlyopx`; optional
+empty flags remain valid. The
+[pinned LLVM GNU section printer](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/llvm/tools/llvm-readobj/ELFDumper.cpp)
+defines this column order and flag alphabet. This lexical validation precedes
+the existing section policy; it does not admit arbitrary allocated DWARF.
+Malformed debug fields, duplicate debug names and exhausted row/text bounds
+remain errors. Ordinary section fields and name uniqueness are outside this
+control's validation; the unnamed `NULL` section is not a debug subject.
+Each compiler/section diagnostic
+record is at most 4 KiB. Compiler text and raw context for parse failures are
+bounded to eight 512-character chunks with explicit remaining/truncated
+markers. At most 32 debug sections from at most 256 indexed rows are admitted.
+These observations precede the assertions, so a later failure retains its
+actual section evidence in the job output.
+
+Each variant runs the exact test twice, with a post-assertion acknowledgement,
+one-test success and a fresh nonempty profile per invocation. Matching-sysroot
+LLVM tools must merge both profiles without warnings, match each merged
+profile's ID to its own executable, and export usable JSON and LCOV. The
+control compares the complete owned JSON file record, both authored function
+records after removing only their mangled names, and all owned LCOV line
+counts. Each authored function must execute twice, with a hot return count
+of two and a cold return count of zero. Other exported files and unrelated
+functions are outside this fixture control; it does not qualify the LLVM
+exporter or require whole-export equality.
+IDs may differ between the two binaries. Tool absence, malformed output,
+zero selection, warning-only partial merging and missing source evidence fail
+the Linux control. Existing malformed-profile and size-bound controls remain
+selected by the same preflight.
+
+The command-environment control re-enters its exact libtest identity in an
+isolated child with a dedicated inherited variable and no HOME. The observed
+coverage command receives no explicit override for that variable. A successful
+native status, nonempty exact selection, explicit successful inner cleanup
+receipt and fresh post-assertion acknowledgement are required. The parent
+bounds the child to 30 seconds and each captured stream to 16 KiB. All witnesses
+share its retained root; deletion follows confirmed cleanup and completed
+validation. The parent's environment stays unchanged.
+
+The finite native commands use the private non-reaping process owner,
+30-second per-command deadlines and 256 KiB per-stream capture limits. Fixture
+outputs and captures stay under the owned root; the commands preserve the
+parent environment and clean their owned groups before reaping. A compact
+native receipt records actual tool versions, sizes, IDs and expected counts.
+These bounds apply to the control; they do not shorten the coverage workload's 45-minute limit.
+Before explicit success cleanup, the native fixture retains and reports its
+root on an error or panic, including uncertain child cleanup. Removal follows
+successful commands and assertions, before the passed receipt is emitted.
+
+The pinned interface basis is Rust 1.95.0
+[`strip` codegen documentation](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/src/doc/rustc/src/codegen-options/index.md#strip),
+its Cargo revision's
+[profiles](https://github.com/rust-lang/cargo/blob/f2d3ce0bd7f24a49f8f72d9000448f8838c4e850/src/doc/src/reference/profiles.md#strip)
+and [profile environment variables](https://github.com/rust-lang/cargo/blob/f2d3ce0bd7f24a49f8f72d9000448f8838c4e850/src/doc/src/reference/environment-variables.md),
+and [cargo-llvm-cov 0.9.1](https://github.com/taiki-e/cargo-llvm-cov/blob/v0.9.1/src/main.rs).
+Native execution, including the matching LLVM 22.1.2 tools on the pinned
+workflow, remains the compatibility authority.
+
 ### Validate locally
 
 On Linux, before adopting a newer Rust toolchain, run the small diagnostics package with
@@ -105,10 +214,11 @@ both the repository pin and stable. Install matching LLVM tools for each
 selected compiler; a system `llvm-profdata` from another LLVM release is not a
 substitute for the tool in that compiler's sysroot.
 
+<!-- ripr:coverage-upgrade:start -->
 ```bash
 (
     set -e
-    rustup component add --toolchain 1.95.0 clippy llvm-tools-preview
+    rustup toolchain install 1.95.0 --profile minimal --component clippy --component llvm-tools-preview
     rustup update stable
     rustup component add --toolchain stable clippy llvm-tools-preview
 
@@ -147,26 +257,33 @@ substitute for the tool in that compiler's sysroot.
         printf 'Selected toolchain: %s\n%s\n' "$ripr_channel" "$ripr_identity"
         "$LLVM_COV" --version >/dev/null || exit $?
         "$LLVM_PROFDATA" --version || exit $?
-        exec "$ripr_cargo" "$@"
+        "$ripr_cargo" "$@" || exit $?
+        printf -v ripr_command ' %q' "$@"
+        printf 'Completed: %s cargo%s\n' "$ripr_channel" "$ripr_command"
     )
 
-    ripr_cargo_for 1.95.0 test --locked -p repo-policy --lib coverage_diagnostics
+    ripr_cargo_for 1.95.0 test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
     ripr_cargo_for stable test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
     ripr_cargo_for stable test --locked -p repo-policy --test frontdoor
     ripr_cargo_for stable clippy --locked -p repo-policy --all-targets -- -D warnings
 )
 ```
+<!-- ripr:coverage-upgrade:end -->
 
-`rustup update stable` refreshes an already installed channel; adding components
-alone does not establish that its compiler is current. Retain the compiler and
-LLVM identities and the test's reported raw version/layout with the results.
+The explicit pin installation also works when activation disabled automatic
+installation. `rustup update stable` deliberately refreshes the stable channel;
+adding components alone does not establish that its compiler is current. Retain
+the compiler and LLVM identities and the test's reported raw version/layout with
+the results.
 The subshell resolves the requested compiler and Cargo with `rustup which`, invokes
 Cargo by its absolute path, and selects the same compiler for both `RUSTC` and
 literal `rustc` subprocesses through `PATH`. The LLVM paths come from that compiler's
 sysroot. This supports a shell that already activated either the pin or stable,
 including activation that prepends SDK binaries and exports an absolute `RUSTC`.
 Each command leaves the caller's activation unchanged. Missing tools and failed
-version probes stop before Cargo runs; Cargo failures stop the remaining checks.
+version probes stop before Cargo runs; Cargo failures keep their original status
+and stop the remaining checks. A `Completed:` line follows each successful Cargo
+command; a missing check cannot be inferred from another command's success.
 
 `RUSTUP_TOOLCHAIN` also follows subprocesses into temporary fixture repositories,
 where a directory-local override alone does not apply. Setting it alone does not
@@ -177,10 +294,15 @@ Selecting these together keeps the policy helper's build-time and runtime compil
 identities aligned. The checks retain their compiler-identity refusals.
 
 The `stable-repo-policy` job in the existing advisory Future Clippy workflow
-runs the focused diagnostic tests, the isolated `frontdoor` target and Clippy on
-the moving stable channel with matching `llvm-tools-preview`. It records the
-actual compiler and LLVM tool versions. It follows that workflow's existing
-main-push, manual-dispatch and
+executes this marked recipe with genuine pin/stable toolchains and matching
+`llvm-tools-preview`, starting with the stable SDK first on `PATH` and an absolute
+`RUSTC`. It first runs the workflow controls, then requires all four ordered
+completion records, nonempty successful test runs, genuine LLVM association
+observations for both diagnostics checks, and successful Clippy completion.
+Missing, ambiguous or malformed recipe boundaries, partial execution and stale
+run evidence fail the job. Native compiler, LLVM and profile observations stay
+in the job output. This route replaces the duplicate stable Cargo commands. It
+follows that workflow's existing main-push, manual-dispatch and
 `clippy-future`/`full-ci` plus `merge-ready` PR routing. A failure stays visible;
 the job does not become a required merge gate or run full workspace coverage.
 The existing future-Clippy job continues to inspect deferred lints on Rust

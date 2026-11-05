@@ -23,7 +23,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-54 bars. ripr meets 28, is below the bar on 21, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them. First-run bars are recomputed by this page from the raw walk receipts; an ingested scoreboard value owns its bar once one lands.
+55 bars. ripr meets 29, is below the bar on 21, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them. First-run bars are recomputed by this page from the raw walk receipts; an ingested scoreboard value owns its bar once one lands.
 
 By board, so the weak areas show before the full table:
 
@@ -31,7 +31,7 @@ By board, so the weak areas show before the full table:
 | --- | --- | --- | --- | --- |
 | Speed and memory | 0 | 4 | 0 | 0 |
 | CI adoption | 1 | 1 | 1 | 0 |
-| Trust | 18 | 6 | 2 | 0 |
+| Trust | 19 | 6 | 2 | 0 |
 | Pasted commands | 2 | 0 | 0 | 0 |
 | First run | 3 | 3 | 2 | 0 |
 | corpus | 2 | 0 | 0 | 0 |
@@ -54,6 +54,7 @@ By board, so the weak areas show before the full table:
 | Trust | Hand-checked edits where ripr gives no specific verdict | **37.1%** | <= 20.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **1.2%** | <= 0.0% | below the bar | no earlier measurement (observed at 2af3f38) |
+| Trust | In-scope numbered spec acceptance examples (minus waived) that a runtime-labeled verdict-corpus case cites | 100.0% | >= 100.0% | meets the bar | no earlier measurement |
 | Trust | When ripr says a test discriminates, real mutants are caught | 96.8% | >= 95.0% | meets the bar | first receipt (mutation spot check, 63 of 63 canonical-precise `strongly_gripped` mutants scored; 0 unscored) |
 | Trust | When ripr reports a gap, real mutants survive | 100.0% | >= 80.0% | meets the bar | first receipt (mutation spot check, 12 of 12 canonical-precise `ungripped` mutants scored; 0 unscored) |
 | Trust | Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap | 5.0% | <= 5.0% | meets the bar | no earlier measurement (observed at 76651d1) |
@@ -107,7 +108,7 @@ Not measured, and why:
 Each line below is computed from the receipts above. Detail sections follow.
 
 - **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): no case recorded. On the authored cases, which were written to fill empty corpus cells, it did so on 0 of 411 (0.0%).
-- **Mostly unsure.** On real-repository changes it abstained on 36 of 41 cases (87.8%); on the authored cases, 286 of 805 (35.5%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Mostly unsure.** On real-repository changes it abstained on 36 of 41 cases (87.8%); on the authored cases, 285 of 805 (35.4%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
 - **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -166,8 +167,8 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | False actionable (of discriminated) | 0/433 (0.0%) | 0/22 (0.0%) | 0/411 (0.0%) |
 | False exposed (of not fully discriminated) | 0/413 (0.0%) | 0/19 (0.0%) | 0/394 (0.0%) |
 | False silent (of not fully discriminated) | 0/413 (0.0%) | 0/19 (0.0%) | 0/394 (0.0%) |
-| Ideal verdict | 524/846 (61.9%) | 5/41 (12.2%) | 519/805 (64.5%) |
-| Abstained (limited or silent where acceptable) | 322/846 (38.1%) | 36/41 (87.8%) | 286/805 (35.5%) |
+| Ideal verdict | 525/846 (62.1%) | 5/41 (12.2%) | 520/805 (64.6%) |
+| Abstained (limited or silent where acceptable) | 321/846 (37.9%) | 36/41 (87.8%) | 285/805 (35.4%) |
 | Findings with a contradiction | 0/1035 (0.0%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
@@ -942,7 +943,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `spec0360-ex08a-one-element-call-term` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
 | `spec0360-ex08b-call-term-statement-body-callee` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `spec0360-ex09-call-term-second-argument` | authored | discriminated | credited | limited | static_unknown | abstained | none |
-| `spot-cap-generic-via-wrapper` | authored | discriminated | credited | limited | propagation_unknown | abstained | none |
+| `spot-cap-generic-via-wrapper` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spot-code-digit-helper-ok-or` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spot-code-length-guard-query` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spot-initials-computed-local-boundary` | authored | discriminated | credited | credited | exposed | ideal | none |

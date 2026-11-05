@@ -3874,6 +3874,96 @@ fn repeated_repair_resumes_the_awaiting_attempt_instead_of_duplicating() -> Resu
     Ok(())
 }
 
+/// #13216: a real ambiguous capture survives process restart as a limited
+/// attempt. Ordinary continue refuses without invoking after, and repeat
+/// repair captures a fresh baseline instead of reusing that historical one.
+#[test]
+fn retained_ambiguous_baseline_blocks_continue_and_repeat_repair_reuse() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-retained-baseline")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let object = run_git(root, &["hash-object", "-w", "src/lib.rs"])?;
+    for name in ["baseline-collision.txt", "BASELINE-COLLISION.txt"] {
+        run_git(
+            root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                "100644",
+                object.trim(),
+                name,
+            ],
+        )?;
+    }
+    let before = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&before, 0, "ambiguous before publication");
+    let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+    let original = manifest_bytes(root, &attempt_id)?;
+    let status = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    assert_exit(&status, 0, "ambiguous retained status");
+    let document: serde_json::Value = serde_json::from_slice(&status.stdout)
+        .map_err(|error| format!("ambiguous status JSON: {error}"))?;
+    assert_eq!(document["attempt"]["state"], "awaiting_edit");
+    assert_eq!(document["attempt"]["status_class"], "limited");
+    assert_eq!(document["attempt"]["baseline_ambiguous"], true);
+    assert_eq!(document["next_action"]["step"], "repair_attempt_before");
+    for explicit in [false, true] {
+        let mut args = vec!["continue", "--root", root_arg.as_str()];
+        if explicit {
+            args.extend(["--attempt", attempt_id.as_str()]);
+        }
+        let continued = run_ripr(root, &args)?;
+        assert_exit(&continued, 3, "baseline-blocked continuation");
+        assert_refusal_code(
+            &continued,
+            "attempt_baseline_blocked",
+            "not_started",
+            "baseline block",
+        );
+        assert!(continued.stdout.is_empty());
+        assert!(stderr_text(&continued).contains("baseline is ambiguous"));
+        assert_eq!(manifest_bytes(root, &attempt_id)?, original);
+    }
+    // Removing the capture cause does not repair the old immutable baseline.
+    for name in ["baseline-collision.txt", "BASELINE-COLLISION.txt"] {
+        run_git(root, &["update-index", "--force-remove", name])?;
+    }
+    let repeated = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&repeated, 0, "repair captures a fresh baseline");
+    let new_id = attempt_id_from_before_stderr(&stderr_text(&repeated))?;
+    assert_ne!(new_id, attempt_id);
+    assert_eq!(attempt_ids(root).len(), 2);
+    assert_eq!(manifest_bytes(root, &attempt_id)?, original);
+    let current = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &new_id,
+            "--json",
+        ],
+    )?;
+    assert_exit(&current, 0, "fresh retained status");
+    let current: serde_json::Value = serde_json::from_slice(&current.stdout)
+        .map_err(|error| format!("fresh status JSON: {error}"))?;
+    assert_eq!(current["attempt"]["baseline_ambiguous"], false);
+    assert_eq!(current["attempt"]["status_class"], "awaiting_edit");
+    Ok(())
+}
+
 /// Control 6: stale head — continue refuses with the canonical
 /// restart/recompute route and leaves the attempt awaiting its edit.
 #[test]
@@ -6246,6 +6336,10 @@ fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Resul
 
 #[path = "task_first_facade/brief_diff_status.rs"]
 mod brief_diff_status;
+#[path = "task_first_facade/field_snapshot.rs"]
+mod field_snapshot;
+#[path = "task_first_facade/panic_marker.rs"]
+mod panic_marker;
 
 /// #11598: `--quiet` (and `RIPR_QUIET`) on `repair` / `continue` drop the
 /// phase narration and `wrote <path>` lines but never the results (attempt

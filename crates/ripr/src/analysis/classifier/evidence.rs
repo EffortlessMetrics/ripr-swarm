@@ -254,6 +254,15 @@ impl ClassifiedProbeEvidence {
         })
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::early_return_literal_witness(
+                    context.probe,
+                    owner,
+                    &flow_sinks,
+                )
+            })
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::concat_tail_witness(
                     context.probe,
                     owner,
@@ -1189,7 +1198,7 @@ impl ClassifiedProbeEvidence {
                         );
                         owner_reach
                             .get_or_init(|| proximity_reach.owner_reach(&owner.name))
-                            .assertion_pins_other_function(&text)
+                            .assertion_pins_other_function(owner, test, assertion, &text)
                     })
                 },
                 owner_parameters: &owner_parameters,
@@ -1660,9 +1669,12 @@ impl ClassifiedProbeEvidence {
                         context.index,
                     )
                     .is_some_and(|path| {
+                        // #11870: every test that runs the owner, not those
+                        // related by file or name proximity alone.
                         let tests: Vec<&TestSummary> = context
                             .related_tests
                             .iter()
+                            .filter(|(_, reason)| reason.establishes_reach(true))
                             .map(|(test, _)| *test)
                             .collect();
                         crate::analysis::classify::assigned_field_weak_read_start(
