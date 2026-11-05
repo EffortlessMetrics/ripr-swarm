@@ -26,7 +26,8 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json"
   ],
   "cases": [
     {
@@ -11255,6 +11256,37 @@
           "file": "src/lib.rs",
           "oracle_strength": "none",
           "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_wrapper_fed_error_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/wrapper-fed-error",
+      "vector": "repo_exposure_err_inside_a_wrapper_call_or_mem_replace_is_written_by_the_test_and_cannot_grade_an_error_seam_up",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_wrapped",
+          "expression": "Err(Fault::Wrapped)",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_replaced",
+          "expression": "Err(Fault::Replaced)",
+          "grip_class": "weakly_gripped",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::parse_pinned",
+          "expression": "Err(Fault::Pinned)",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
         }
       ]
     },
