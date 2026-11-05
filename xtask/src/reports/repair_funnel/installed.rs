@@ -63,7 +63,7 @@ fn require(condition: bool, message: &str) -> Result<(), String> {
 
 fn relative(path: &str) -> bool {
     !path.is_empty()
-        && Path::new(path)
+            && Path::new(path)
             .components()
             .all(|c| matches!(c, Component::Normal(_)))
 }
@@ -115,7 +115,10 @@ impl Receipts {
                 let bytes = self.bytes.get(&format!("{prefix}{stream}"))
                     .ok_or("missing raw command stream")?;
                 require(
-                    result.get(format!("{stream}_sha256")).and_then(Value::as_str) == Some(digest(bytes).as_str()),
+                    result
+                        .get(format!("{stream}_sha256"))
+                        .and_then(Value::as_str)
+                        == Some(digest(bytes).as_str()),
                     "raw command stream digest mismatch",
                 )?;
             }
@@ -179,21 +182,19 @@ fn bind_check(
     require(
         text(report, "root")? == root
             && report.get("base_commit") == subject.get("base")
-        && report.pointer("/head/commit") == subject.get("head")
-        && report.pointer("/head/source") == Some(&json!("working_tree")),
+            && report.pointer("/head/commit") == subject.get("head")
+            && report.pointer("/head/source") == Some(&json!("working_tree")),
         "check root/base/head mismatch",
     )?;
     let base = text(subject, "base")?;
+    let expected = json!([
+        "check", "--root", root, "--base", base, "--worktree", "--format", "json"
+    ]);
     let matched = commands.iter().any(|(command, result, stdout)| {
-        let Some(args) = command.get("args").and_then(Value::as_array) else {
-            return false;
-        };
         command.get("program").and_then(Value::as_str) == Some(binary)
-            && args.first().and_then(Value::as_str) == Some("check")
-            && args.windows(2).any(|a| a == [json!("--root"), json!(root)])
-            && args.windows(2).any(|a| a == [json!("--base"), json!(base)])
-            && args.iter().any(|a| a == "--worktree")
-            && clean(result) && result.get("native_exit_code") == Some(&json!(0))
+            && command.get("args") == Some(&expected)
+            && clean(result)
+            && result.get("native_exit_code") == Some(&json!(0))
             && serde_json::from_slice::<Value>(stdout).ok().as_ref() == Some(report)
     });
     require(matched, "check has no matching successful raw command")
@@ -206,28 +207,53 @@ fn native_facts(
 ) -> Result<(bool, bool), String> {
     let selector = text(native, "selector")?;
     require(selector == "equality_boundary_discounts", "unsupported native selector")?;
-    let argv = native.get("command").and_then(Value::as_array).ok_or("missing native command")?;
+    let argv = native
+        .get("command")
+        .and_then(Value::as_array)
+        .ok_or("missing native command")?;
     require(
-        argv.first() == Some(&json!("cargo"))
-            && argv.windows(2).any(|a| a == [json!("--manifest-path"), json!(format!("{root}/Cargo.toml"))])
-        && argv.windows(2).any(|a| a == [json!("--test"), json!("pricing")])
-        && argv.iter().any(|a| a == selector)
-        && argv.iter().any(|a| a == "--exact"),
+        native.get("command")
+            == Some(&json!([
+                "cargo",
+                "test",
+                "--manifest-path",
+                format!("{root}/Cargo.toml"),
+                "--test",
+                "pricing",
+                selector,
+                "--",
+                "--exact",
+                "--nocapture"
+            ])),
         "native command subject mismatch",
     )?;
-    let selected = native.get("selected").and_then(Value::as_u64).ok_or("missing selected count")?;
-    let executed = native.get("executed").and_then(Value::as_u64).ok_or("missing executed count")?;
-    let passed = native.get("passed").and_then(Value::as_u64).ok_or("missing passed count")?;
-    let failed = native.get("failed").and_then(Value::as_u64).ok_or("missing failed count")?;
+    let selected = native
+        .get("selected")
+        .and_then(Value::as_u64)
+        .ok_or("missing selected count")?;
+    let executed = native
+        .get("executed")
+        .and_then(Value::as_u64)
+        .ok_or("missing executed count")?;
+    let passed = native
+        .get("passed")
+        .and_then(Value::as_u64)
+        .ok_or("missing passed count")?;
+    let failed = native
+        .get("failed")
+        .and_then(Value::as_u64)
+        .ok_or("missing failed count")?;
     require(
         selected <= 1
             && passed.checked_add(failed) == Some(executed)
-        && executed == selected
-        && native.get("ignored") == Some(&json!(0)),
+            && executed == selected
+            && native.get("ignored") == Some(&json!(0)),
         "inconsistent native denominator",
     )?;
-    let exit = native.get("native_exit_code")
-        .and_then(Value::as_i64).ok_or("missing native exit status")?;
+    let exit = native
+        .get("native_exit_code")
+        .and_then(Value::as_i64)
+        .ok_or("missing native exit status")?;
     require(
         (exit == 0 && failed == 0) || (exit != 0 && failed > 0),
         "native exit and failure count disagree",
@@ -235,8 +261,10 @@ fn native_facts(
     let matched = commands.iter().any(|(command, result, stdout)| {
         let output = String::from_utf8_lossy(stdout);
         let summary = format!("{passed} passed; {failed} failed; 0 ignored;");
-        command.get("program") == argv.first() && command.get("args") == Some(&json!(&argv[1..]))
-            && clean(result) && result.get("native_exit_code") == native.get("native_exit_code")
+        command.get("program") == argv.first()
+            && command.get("args") == Some(&json!(&argv[1..]))
+            && clean(result)
+            && result.get("native_exit_code") == native.get("native_exit_code")
             && output.lines().filter(|l| l.starts_with("test result: ")).count() == 1
             && output.lines().any(|l| l.starts_with("test result: ") && l.contains(&summary))
             && output.lines().any(|l| {
@@ -245,7 +273,7 @@ fn native_facts(
                     if selected == 1 { "test" } else { "tests" }
                 )
             })
-                && (executed == 0
+            && (executed == 0
                 || output.lines().any(|l| {
                     l == format!(
                         "test {selector} ... {}",
@@ -275,7 +303,7 @@ fn project(receipts: &Receipts) -> Result<FunnelCaseRowV1, String> {
     require(
         invocation.get("mode") == Some(&json!("installed"))
             && text(&invocation, "selector")? == SELECTOR
-        && text(&runner, "test_selector")? == SELECTOR,
+            && text(&runner, "test_selector")? == SELECTOR,
         "not the strict installed ordinary producer",
     )?;
     let candidate = hex_text(&invocation, "candidate_sha", 40)?;
@@ -283,8 +311,9 @@ fn project(receipts: &Receipts) -> Result<FunnelCaseRowV1, String> {
     require(
         hex_text(&wheel, "candidate_sha", 40)? == candidate
             && hex_text(&runner, "candidate_sha", 40)? == candidate
-        && hex_text(&wheel, "candidate_tree", 40)? == hex_text(&runner, "candidate_tree", 40)?
-        && hex_text(&runner, "runner_sha256", 64)? == hex_text(&invocation, "runner_sha256", 64)?,
+            && hex_text(&wheel, "candidate_tree", 40)? == hex_text(&runner, "candidate_tree", 40)?
+            && hex_text(&runner, "runner_sha256", 64)?
+                == hex_text(&invocation, "runner_sha256", 64)?,
         "candidate/runner source mismatch",
     )?;
     let payload = hex_text(&invocation, "payload_sha256", 64)?;
@@ -294,9 +323,9 @@ fn project(receipts: &Receipts) -> Result<FunnelCaseRowV1, String> {
     require(
         text(&admitted, "sha256")? == format!("sha256:{payload}")
             && wheel.pointer("/wheel/installed_payload_sha256") == invocation.get("payload_sha256")
-        && admitted.get("full_version") == invocation.get("full_version")
-        && text(&admitted, "full_version")?.ends_with(&format!("({candidate})"))
-        && invocation.get("installed_binary") == admitted.get("resolved_binary"),
+            && admitted.get("full_version") == invocation.get("full_version")
+            && text(&admitted, "full_version")?.ends_with(&format!("({candidate})"))
+            && invocation.get("installed_binary") == admitted.get("resolved_binary"),
         "installed binary identity mismatch",
     )?;
     for (name, field) in [
@@ -389,7 +418,9 @@ fn project(receipts: &Receipts) -> Result<FunnelCaseRowV1, String> {
             stage: "first_honest_result".into(),
             at_ms: None,
             receipt_digest: receipts.hashes["journey/before.json"].clone(),
-            not_measured_reason: Some("controlled static result; no install or shared stage clock".into()),
+            not_measured_reason: Some(
+                "controlled static result; no install or shared stage clock".into(),
+            ),
         },
     );
     // These are ordinary observations, never a reconstructed RepairAttempt.
@@ -398,7 +429,9 @@ fn project(receipts: &Receipts) -> Result<FunnelCaseRowV1, String> {
             "project_verification_executed" => receipts.hashes.get("journey/native-after.json"),
             "after_analysis_complete" => receipts.hashes.get("journey/after.json"),
             "verified_improvement_or_closure" => receipts.hashes.get("journey/after.json"),
-            "first_check_complete" | "first_honest_result" => receipts.hashes.get("journey/before.json"),
+            "first_check_complete" | "first_honest_result" => {
+                receipts.hashes.get("journey/before.json")
+            }
             _ => None,
         }
         .cloned()
@@ -541,12 +574,15 @@ mod tests {
         after["findings"][0]["canonical_gap_id"] = json!("unrelated-gap");
         after["findings"][0]["canonical_gap"]["id"] = json!("unrelated-gap");
         repin_check(&mut receipts, "journey/after.json", 11, &after)?;
-        assert!(project(&receipts).is_err(), "another internally consistent gap cannot borrow movement");
+        assert!(
+            project(&receipts).is_err(),
+            "another internally consistent gap cannot borrow movement"
+        );
         Ok(())
     }
 
     #[test]
-    fn repair_funnel_native_pass_without_static_movement_is_not_improvement() -> Result<(), String> {
+    fn repair_funnel_native_pass_without_static_movement_stays_limited() -> Result<(), String> {
         let mut receipts = retained()?;
         let mut after = receipts.json("journey/after.json")?;
         after["findings"][0]["classification"] = json!("weakly_exposed");
@@ -614,7 +650,10 @@ mod tests {
             assert!(project(&receipts).is_err(), "{file}");
         }
         let mut receipts = retained()?;
-        receipts.bytes.insert("journey/command-010/stdout".into(), b"test result: ok. 1 passed".to_vec());
+        receipts.bytes.insert(
+            "journey/command-010/stdout".into(),
+            b"test result: ok. 1 passed".to_vec(),
+        );
         assert!(project(&receipts).is_err());
         Ok(())
     }
@@ -645,6 +684,37 @@ mod tests {
         assert!(!row.stages.iter().any(|s| {
             s.stage == "after_analysis_complete" || s.stage == "verified_improvement_or_closure"
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn repair_funnel_refuses_repinned_native_and_check_command_argv() -> Result<(), String> {
+        for wrong_subcommand in [true, false] {
+            let mut receipts = retained()?;
+            let mut native = receipts.json("journey/native-after.json")?;
+            if wrong_subcommand {
+                native["command"][1] = json!("run");
+            } else {
+                native["command"]
+                    .as_array_mut()
+                    .ok_or("native argv")?
+                    .push(json!("--release"));
+            }
+            let mut raw_command = receipts.json("journey/command-010/command.json")?;
+            let argv = native["command"].as_array().ok_or("native argv")?;
+            raw_command["args"] = json!(&argv[1..]);
+            repin(&mut receipts, "journey/native-after.json", &native)?;
+            repin(&mut receipts, "journey/command-010/command.json", &raw_command)?;
+            assert!(project(&receipts).is_err(), "repinned unsupported Cargo argv");
+        }
+        let mut receipts = retained()?;
+        let mut raw_command = receipts.json("journey/command-001/command.json")?;
+        raw_command["args"]
+            .as_array_mut()
+            .ok_or("check argv")?
+            .push(json!("--quiet"));
+        repin(&mut receipts, "journey/command-001/command.json", &raw_command)?;
+        assert!(project(&receipts).is_err(), "repinned unsupported check argv");
         Ok(())
     }
 

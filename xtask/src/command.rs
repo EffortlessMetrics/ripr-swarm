@@ -596,7 +596,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "metrics",
         "rust-repair-trust-report",
         "repair-card-usability-report",
-        "repair-funnel-report",
+        "repair-funnel-report [--input <manifest.json>]",
         "blind-journey-contract",
         "blind-journey-execute",
         "orchestration-scorecard [--captured <corpus.json>]",
@@ -1109,7 +1109,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/repair-funnel.{md,json}",
             false,
             false,
-            "Projects accepted install/first-run and repair-attempt receipts into a versioned first-hour repair funnel; validates planted control corpus and writes dx-scoreboard ingest input.",
+            "Projects the planted controls or explicit --input retained installed receipts into the existing first-hour repair funnel, preserving cohort separation and missing timing.",
         ),
         command_entry(
             "blind-journey-contract",
@@ -3045,4 +3045,3 @@ mod tests {
 mod help;
 
 use help::{format_help_entries, format_top_level_help};
-

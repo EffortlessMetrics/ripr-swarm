@@ -701,7 +701,11 @@ pub(crate) fn repair_funnel_report(args: &[String]) -> Result<(), String> {
     let report = match args {
         [] => repair_funnel_report_value()?,
         [flag, manifest] if flag == "--input" => installed::report(Path::new(manifest))?,
-        _ => return Err("usage: repair-funnel-report [--input <retained-installed-manifest.json>]".into()),
+        _ => {
+            return Err(
+                "usage: repair-funnel-report [--input <retained-installed-manifest.json>]".into(),
+            );
+        }
     };
     if !report.control_failures.is_empty() {
         return Err(format!(
@@ -1072,4 +1076,3 @@ mod tests {
         Ok(())
     }
 }
-
