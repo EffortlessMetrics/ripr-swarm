@@ -90,7 +90,7 @@ title = "Windows flake: issued_history tests intermittently fail with ERROR_ALRE
 
 [[issue]]
 number = 12421
-state = "open"
+state = "closed"
 flaky = true
 title = "Windows: cache export test fails with \"workspace inputs changed during export\""
 

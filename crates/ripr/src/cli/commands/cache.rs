@@ -884,6 +884,10 @@ mod tests {
     #[test]
     fn export_current_snapshot_through_command_preserves_source_and_bounds_history()
     -> Result<(), String> {
+        // The export input witness reads the effective seam limit twice; hold
+        // the cap mutators off so an in-process pilot or repair test cannot
+        // move the limit between the reads (#12421).
+        let _seam_limit_mutators = crate::analysis::hold_seam_limit_mutators();
         let root = temp_dir("export-history");
         fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
         let config = crate::config::RiprConfig::default();
@@ -984,6 +988,9 @@ mod tests {
         // Hold the cwd lock for the whole test: other tests `chdir` while it
         // runs, which made the relative root vanish (#12989).
         let _cwd = crate::testing::cwd_lock::hold_cwd();
+        // Same double-read of the effective seam limit, same exposure to an
+        // in-process pilot or repair test moving it (#12421).
+        let _seam_limit_mutators = crate::analysis::hold_seam_limit_mutators();
         let current = std::env::current_dir().map_err(|error| error.to_string())?;
         let unique = temp_dir("export-relative-root");
         let name = unique

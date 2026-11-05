@@ -85,30 +85,60 @@ static PILOT_INVENTORY_DEFAULT: AtomicUsize = AtomicUsize::new(0);
 ///
 /// The cap is process-wide (a static, not thread-local, because inventory work
 /// runs on worker threads): one pilot run at a time per process. The guard
-/// restores the value it replaced, so nested guards unwind in order. The only
-/// holder is `ripr pilot`, whose entry point is private to the CLI adapter module and is
-/// reached from the CLI dispatch alone: the LSP and MCP adapters never call it
-/// and xtask runs the pilot binary as a subprocess, so no other in-process
-/// analysis shares the lowered default.
+/// holds the same exclusivity lock as [`WidenedInventoryCap`] (#12421), so a
+/// pilot run and a widened repair rerun serialize instead of moving the cap
+/// under each other, and the value it replaces is restored exactly on drop.
+/// The only production holder is `ripr pilot`, whose entry point is private to
+/// the CLI adapter module and is reached from the CLI dispatch alone: the LSP
+/// and MCP adapters never call it and xtask runs the pilot binary as a
+/// subprocess, so no other in-process analysis shares the lowered default.
 #[must_use = "the pilot inventory default lasts only while the guard is held"]
 pub(crate) struct PilotInventoryDefault {
     previous: usize,
+    // Fields drop after `Drop::drop` runs, so the lock is released after the
+    // cap is restored.
+    _exclusive: std::sync::MutexGuard<'static, ()>,
 }
 
 impl PilotInventoryDefault {
     /// Validates `RIPR_PILOT_SEAM_BUDGET` (#4529) and scopes the default.
+    /// The guard holds the mutator lock for its lifetime, so the scoped
+    /// default cannot move under an in-flight analysis that reads it twice
+    /// (the cache export input witness, #12421).
     pub(crate) fn enter() -> Result<Self, String> {
+        let exclusive = WIDEN_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let cap = pilot_seam_budget()?.map_or(0, |(budget, _)| {
             budget.min(DEFAULT_REPO_EXPOSURE_SEAM_LIMIT)
         });
         let previous = PILOT_INVENTORY_DEFAULT.swap(cap, Ordering::Relaxed);
-        Ok(Self { previous })
+        Ok(Self {
+            previous,
+            _exclusive: exclusive,
+        })
     }
 }
 
-/// Serializes widened-cap holders so overlapping holders (concurrent MCP
-/// worker threads) cannot restore out of order and strand the cap.
+/// Serializes cap mutators — pilot runs ([`PilotInventoryDefault::enter`]) and
+/// widened repair reruns ([`PilotInventoryDefault::widen_to`]) — so overlapping
+/// holders (concurrent MCP worker threads, an in-process unit-test suite)
+/// cannot restore out of order, strand the cap, or move it between the two
+/// effective-limit reads of an in-flight export witness (#12421).
 static WIDEN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Test-only hold on the cap-mutator lock, for in-process tests whose behavior
+/// spans two reads of the effective seam limit (the cache export input
+/// witness, #12421). Taking it parks pilot runs and widened repair reruns for
+/// the hold's lifetime without changing the cap itself. Production callers
+/// never need it: no production flow runs a pilot, a widened repair rerun,
+/// and an unrelated analysis concurrently in one process.
+#[cfg(test)]
+pub(crate) fn hold_seam_limit_mutators() -> std::sync::MutexGuard<'static, ()> {
+    WIDEN_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// Guard that holds a repair-widened built-in inventory cap (#1887).
 #[must_use = "the widened inventory cap lasts only while the guard is held"]
@@ -11594,6 +11624,103 @@ pub fn check_b(x: i32) -> bool { x < 0 }
             "pilot budget must not exceed the repo-exposure seam limit"
         );
         assert_eq!(DEFAULT_PILOT_SEAM_BUDGET, 2_000);
+    }
+
+    // #12421: the cache export input-witness refused with `changed: seam
+    // limit` on the Windows nightly because another in-process test moved the
+    // process-wide pilot default (0 -> the pilot budget -> 0) between the
+    // export's two key reads. This test pins the serialization contract the
+    // fix relies on: a held cap guard excludes every other mutator until it
+    // drops, so the effective limit is stable while an analysis runs.
+
+    #[test]
+    fn pilot_default_guard_excludes_concurrent_mutators_until_dropped() -> Result<(), String> {
+        // Anchor the base value under the lock: while the mutator lock is
+        // free the cap always equals the restored base, so this anchor is
+        // stable even when sibling tests churn the cap in parallel.
+        let before = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        let pilot = PilotInventoryDefault::enter()?;
+        let held = PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed);
+
+        // A repair widen (#1887) from another thread must wait for the pilot
+        // guard instead of swapping the cap under it. The acquisition signal
+        // is the discriminator, not a sampled value: a completed and restored
+        // transient would sample equal to `held`.
+        let (widen_acquired, acquired) = std::sync::mpsc::channel();
+        let widen = std::thread::spawn(move || {
+            let cap = PilotInventoryDefault::widen_to(9_123);
+            let _ = widen_acquired.send(PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed));
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(cap);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed),
+            held,
+            "a concurrent widen moved the process-wide cap while a pilot guard held it",
+        );
+        assert!(
+            acquired
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_err(),
+            "the concurrent widen acquired the cap while the pilot guard held it",
+        );
+        drop(pilot);
+        if widen.join().is_err() {
+            return Err("widen thread panicked".to_string());
+        }
+        let restored = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        assert_eq!(
+            restored, before,
+            "the guard chain must restore the anchored base value exactly",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn seam_limit_mutator_hold_excludes_a_concurrent_pilot_enter() -> Result<(), String> {
+        let before = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        let hold = hold_seam_limit_mutators();
+        let (pilot_entered, entered) = std::sync::mpsc::channel();
+        let enter_thread = std::thread::spawn(move || {
+            let guard = PilotInventoryDefault::enter();
+            let _ = pilot_entered.send(guard.is_ok());
+            drop(guard);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert_eq!(
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed),
+            before,
+            "a concurrent pilot enter moved the cap while a reader held the mutator lock",
+        );
+        assert!(
+            entered
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_err(),
+            "the concurrent pilot enter acquired the cap while the mutator hold excluded it",
+        );
+        drop(hold);
+        if enter_thread.join().is_err() {
+            return Err("enter thread panicked".to_string());
+        }
+        let restored = {
+            let _anchor = hold_seam_limit_mutators();
+            PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed)
+        };
+        assert_eq!(
+            restored, before,
+            "the completed enter and its drop must restore the anchored base value exactly",
+        );
+        Ok(())
     }
 
     #[test]
