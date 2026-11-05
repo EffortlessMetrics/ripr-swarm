@@ -301,6 +301,8 @@ fn smart_pointer_new_callee(expression: ast::Expr) -> bool {
         [a, b] if a == "Rc" && b == "new" => true,
         [a, b] if a == "Arc" && b == "new" => true,
         [a, b, c, d] if a == "std" && b == "boxed" && c == "Box" && d == "new" => true,
+        [a, b, c, d] if a == "std" && b == "rc" && c == "Rc" && d == "new" => true,
+        [a, b, c, d] if a == "std" && b == "sync" && c == "Arc" && d == "new" => true,
         _ => false,
     }
 }
