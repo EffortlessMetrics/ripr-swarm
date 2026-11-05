@@ -185,13 +185,13 @@ respond() {
   delay=$(printf '%s' "$response" | jq -r '.hang_seconds // 0')
   [ "$delay" = 0 ] || /bin/sleep "$delay"
   if printf '%s' "$response" | jq -e 'has("raw_stdout")' >/dev/null; then
-    printf '%s' "$response" | jq -r '.raw_stdout'
+    printf '%s' "$response" | jq -jr '.raw_stdout'
   else
     if [ "$kind" = pr ]; then
       status=$(printf '%s' "$response" | jq -r '.status // 200')
       printf 'HTTP/2.0 %s Fixture\ncontent-type: application/json\r\n\r\n' "$status"
     fi
-    printf '%s' "$response" | jq -r '.body'
+    printf '%s' "$response" | jq -jr '.body'
   fi
   printf '%s' "$response" | jq -r '.error // empty' >&2
   exit "$(printf '%s' "$response" | jq -r '.exit // 0')"
@@ -908,6 +908,36 @@ fn transient_pr_reads_recollect_within_the_same_admission() -> Result<(), String
 }
 
 #[test]
+fn empty_transient_frames_recover() -> Result<(), String> {
+    let source = workflow()?;
+    let event = "pull_request";
+    for status in [502, 503, 504] {
+        for headers in ["content-type: application/json\r\n", ""] {
+            let raw = format!("HTTP/2.0 {status} Fixture\n{headers}\r\n");
+            let transient = serde_json::json!({"raw_stdout": raw, "exit": 1});
+            for second_read in [false, true] {
+                let mut prs = Vec::new();
+                if second_read {
+                    prs.push(read_response(LIVE_PR, 200, 0));
+                }
+                prs.push(transient.clone());
+                prs.push(read_response(LIVE_PR, 200, 0));
+                let (success, report) = with_read_responses(&source, event, &prs, &[], &[])?;
+                assert!(success, "bodyless HTTP {status}: {report}");
+                assert_read_counts(
+                    &report,
+                    if second_read { 4 } else { 3 },
+                    if second_read { 2 } else { 1 },
+                    1,
+                );
+                assert!(report.contains(&format!("native exit 1, HTTP {status}")));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn second_pr_read_retry_discards_reviews_threads_queue_and_pagination() -> Result<(), String> {
     let source = workflow()?;
     let page = LIVE_GRAPHQL.replace(
@@ -1069,6 +1099,10 @@ fn only_framed_transient_pr_failures_are_retried() -> Result<(), String> {
     }
     for exit in [0, 2, 99, 124, 137] {
         terminal.push(read_response(LIVE_PR, 503, exit));
+        terminal.push(serde_json::json!({
+            "raw_stdout": "HTTP/2.0 503 Fixture\n\r\n",
+            "exit": exit
+        }));
     }
     for body in [
         "{".to_string(),
@@ -1084,6 +1118,8 @@ fn only_framed_transient_pr_failures_are_retried() -> Result<(), String> {
         format!("HTTP/2.0 unknown\ncontent-type: application/json\r\n\r\n{LIVE_PR}"),
         format!("HTTP/2.0 200 OK\ncontent-type: application/json\r\n{LIVE_PR}"),
         format!("HTTP/2.0 503 Unavailable\nHTTP/2.0 200 OK\r\n\r\n{LIVE_PR}"),
+        "HTTP/2.0 503 Unavailable\ncontent-type: application/json\r\n\r".to_string(),
+        "HTTP/2.0 503 Unavailable\n\r".to_string(),
     ] {
         terminal.push(serde_json::json!({"raw_stdout": raw, "exit": 1}));
     }

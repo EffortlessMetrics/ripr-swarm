@@ -744,7 +744,9 @@ jobs:
             read_pr() {
               local response status_line headers http=unframed native=0
               pr=
-              response=$(timeout --kill-after=1s 15s gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --method GET --include 2>/dev/null) || native=$?
+              # Preserve the final LF of a bodyless frame and the native exit.
+              response=$(read_exit=0; timeout --kill-after=1s 15s gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --method GET --include 2>/dev/null || read_exit=$?; printf '.'; exit "$read_exit") || native=$?
+              response=${response%.}
               # gh writes an LF status line, CRLF headers, then a CRLF blank line.
               # Only that frame classifies a retry; stderr and body text do not.
               status_line=${response%%$'\n'*}
