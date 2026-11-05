@@ -117,19 +117,32 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
         return false;
     };
     let name = hop.caller.name.as_str();
+    let qualified = super::helper_transfer::assertion_bound_qualified_entry_path(
+        index,
+        test,
+        assertion,
+        &hop.caller,
+    );
+    let path = qualified.as_deref().unwrap_or(name);
+    let whole_entry = |operand: &str| {
+        if qualified.is_some() {
+            super::helper_transfer::operand_is_exact_call(operand, path)
+        } else {
+            super::owner_pin::direct_call_name(operand) == Some(name)
+        }
+    };
     let literal = |text: &str| {
         matches!(text.trim(), "true" | "false") || argument_is_whole_numeric_literal(text.trim())
     };
     let whole_call = assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
-        (super::owner_pin::direct_call_name(left) == Some(name) && literal(right))
-            || (super::owner_pin::direct_call_name(right) == Some(name) && literal(left))
+        (whole_entry(left) && literal(right)) || (whole_entry(right) && literal(left))
     });
     assertion.text.trim_start().starts_with("assert_eq!")
         && assertion.kind == OracleKind::ExactValue
         && assertion.strength == OracleStrength::Strong
         && whole_call
         && chain_forwards_owner_result(&owner.name, chain)
-        && assertion_names_one_entry_call(owner, name, assertion, Some((test, scope)))
+        && assertion_names_one_entry_call_at_path(owner, name, path, assertion, Some((test, scope)))
         && assertion_observes_boundary_entry_call(owner, name, assertion, activation)
 }
 
@@ -202,6 +215,34 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
                 index,
             )
         });
+    }
+    if wrapper_entry.is_some_and(|entry| {
+        let Some(hop) = entry.chain.hops.last() else {
+            return false;
+        };
+        related_tests.iter().any(|test| {
+            let rows = std::cell::OnceCell::new();
+            test.assertions.iter().any(|assertion| {
+                assertion_admitted(test, assertion)
+                    && super::helper_transfer::assertion_bound_qualified_entry_path(
+                        index,
+                        test,
+                        assertion,
+                        &hop.caller,
+                    )
+                    .is_some()
+                    && wrapper_return_boundary_pinned(
+                        owner,
+                        assertion,
+                        entry.chain,
+                        rows.get_or_init(|| (entry.test_activation)(test)),
+                        test,
+                        index,
+                    )
+            })
+        })
+    }) {
+        return true;
     }
     // #6694 / #6672: a private helper reached only through a wrapper pairs
     // on the wrapper call when every hop hands the helper's result to its
@@ -511,10 +552,24 @@ fn assertion_names_one_entry_call(
     assertion: &OracleFact,
     test: Option<(&TestSummary, super::argument_fold::FoldScope<'_>)>,
 ) -> bool {
+    assertion_names_one_entry_call_at_path(owner, entry, entry, assertion, test)
+}
+
+fn assertion_names_one_entry_call_at_path(
+    owner: &FunctionSummary,
+    entry: &str,
+    path: &str,
+    assertion: &OracleFact,
+    test: Option<(&TestSummary, super::argument_fold::FoldScope<'_>)>,
+) -> bool {
     let whole_entry = assertion_comparison_operands(&assertion.text).is_some_and(|operands| {
-        operands
-            .into_iter()
-            .any(|operand| super::owner_pin::direct_call_name(operand) == Some(entry))
+        operands.into_iter().any(|operand| {
+            if path == entry {
+                super::owner_pin::direct_call_name(operand) == Some(entry)
+            } else {
+                super::helper_transfer::operand_is_exact_call(operand, path)
+            }
+        })
     });
     let subject = assertion_subject(&assertion.text);
     let entry_calls = owner_call_argument_lists(&subject, entry);

@@ -2234,10 +2234,43 @@ pub(crate) fn chain_entry_pin_admits(
     chain_forwards_return_to_observed_hops(owner_name, chain, related_tests, index, identity)
 }
 
-/// Whether `operand` is exactly one direct call of `name` (`entry(1)`),
-/// after optional grouping parens and `&`: no path qualifier, receiver,
-/// operator or trailing projection.
-fn operand_is_exact_call(operand: &str, name: &str) -> bool {
+/// Resolve a qualified entry spelling only for this assertion's whole-call
+/// operand. A same-named call elsewhere in the test supplies no authority.
+pub(in crate::analysis) fn assertion_bound_qualified_entry_path(
+    index: &RustIndex,
+    test: &crate::analysis::facts::TestSummary,
+    assertion: &crate::analysis::facts::OracleFact,
+    entry: &FunctionSummary,
+) -> Option<String> {
+    if !assertion.text.contains("::") {
+        return None;
+    }
+    let operands = super::reveal::assertion_comparison_operands(&assertion.text)?;
+    let last_line = assertion
+        .line
+        .checked_add(assertion.text.matches('\n').count())?;
+    test.calls
+        .iter()
+        .filter(|call| {
+            call.name == entry.name
+                && (assertion.line..=last_line).contains(&call.line)
+                && !test_call_is_shadowed_for_entry(index, test, entry, call.line)
+        })
+        .find_map(|call| {
+            super::related_tests::own_crate_qualified_entry_path(index, test, entry, call.line)
+                .filter(|path| {
+                    path.contains("::")
+                        && operands
+                            .iter()
+                            .any(|operand| operand_is_exact_call(operand, path))
+                })
+        })
+}
+
+/// Whether `operand` is exactly one call of the supplied callee spelling,
+/// after grouping and `&`, with no operator or trailing projection. A
+/// qualified spelling is used only after the caller establishes its binding.
+pub(super) fn operand_is_exact_call(operand: &str, name: &str) -> bool {
     let masked = crate::analysis::extract::mask_comments_and_strings(operand);
     let mut text = masked.trim();
     loop {
