@@ -4,9 +4,9 @@ use super::measure::{
     CHECK_SCHEMA_VERSION, CheckAdmission, CheckSubject, OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL,
     PasteVerdict, Probe, WARM_CHECK_MODE, admit_check_document, builds_ripr_from_source,
     check_args_without_explicit_mode, check_contradictions, classify_replay, contradiction_outcome,
-    extract_commands, hostile_outcome, parse_test_result, permissive_json_exit_zero, probe_result,
-    record_warm_check, repo_exposure_contradictions, rss_sample, scan_check_contradictions,
-    warm_check_args, warm_check_envs, warm_check_subject,
+    extract_commands, git_path_text, hostile_outcome, parse_test_result, permissive_json_exit_zero,
+    probe_result, record_warm_check, repo_exposure_contradictions, rss_sample,
+    scan_check_contradictions, warm_check_args, warm_check_envs, warm_check_subject,
 };
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
@@ -6012,4 +6012,17 @@ fn a_memory_ceiling_looser_than_the_tier_bar_needs_a_dated_ratchet_note() -> Res
         return Err(format!("unexpected error: {err}"));
     }
     Ok(())
+}
+
+#[test]
+fn git_path_text_strips_windows_verbatim_prefixes() {
+    use std::path::Path;
+    assert_eq!(git_path_text(Path::new(r"\\?\H:\repo")), r"H:\repo");
+    assert_eq!(
+        git_path_text(Path::new(r"\\?\UNC\server\share\repo")),
+        r"\\server\share\repo"
+    );
+    assert_eq!(git_path_text(Path::new(r"H:\repo")), r"H:\repo");
+    assert_eq!(git_path_text(Path::new("/home/u/repo")), "/home/u/repo");
+    assert_eq!(git_path_text(Path::new("relative/repo")), "relative/repo");
 }
