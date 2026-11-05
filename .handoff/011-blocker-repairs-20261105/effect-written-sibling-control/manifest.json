@@ -1,0 +1,61 @@
+{
+  "source": "dde1ced5d928068a2386ea070eef4c4c7e42377a",
+  "version": "ripr 0.11.0 (dde1ced5d928068a2386ea070eef4c4c7e42377a)",
+  "binary_sha256": "577839ef6e8d047d05ee349a10ec7ac623ae7c4be18570f2b1373127c345325e",
+  "results": [
+    {
+      "case": "sent",
+      "rows": [
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "evidence": [
+            "A related test observes a value or effect near the changed behavior",
+            "Complete propagation witness reaches returned value: notifier.send(order_id)",
+            "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+            "Reachable tests can plausibly activate this changed behavior",
+            "Related tests appear to reach process_order: observes"
+          ]
+        },
+        {
+          "family": "side_effect",
+          "classification": "exposed",
+          "evidence": [
+            "A related test observes a value or effect near the changed behavior",
+            "Changed behavior appears to influence event or outbound call: notifier.send(order_id)",
+            "Reachable tests can plausibly activate this changed behavior",
+            "Related tests appear to reach process_order: observes",
+            "Strong oracle found: exact value or pattern assertion"
+          ]
+        }
+      ]
+    },
+    {
+      "case": "status",
+      "rows": [
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "evidence": [
+            "A related test observes a value or effect near the changed behavior",
+            "Complete propagation witness reaches returned value: notifier.send(order_id)",
+            "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+            "Reachable tests can plausibly activate this changed behavior",
+            "Related tests appear to reach process_order: observes"
+          ]
+        },
+        {
+          "family": "side_effect",
+          "classification": "exposed",
+          "evidence": [
+            "A related test observes a value or effect near the changed behavior",
+            "Changed behavior appears to influence event or outbound call: notifier.send(order_id)",
+            "Reachable tests can plausibly activate this changed behavior",
+            "Related tests appear to reach process_order: observes",
+            "Strong oracle found: exact value or pattern assertion"
+          ]
+        }
+      ]
+    }
+  ]
+}

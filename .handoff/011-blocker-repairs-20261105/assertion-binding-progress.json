@@ -62,47 +62,45 @@
       }
     },
     "latest": {
-      "candidate": "dde1ced5d928068a2386ea070eef4c4c7e42377a",
-      "tree": "b3c8be5f981a35b4e72ba80883db63e9a9728516",
+      "candidate": "c0287c53f83aee5db1b74862ff10701612303bc6",
+      "tree": "142431beb193dd6f40be9b4f45ea3e4835869fe9",
+      "source": "32ddb1f83d195c9372e23753959c7a857cb04c91",
       "branch": "successor/011-integration-20261105",
-      "review_base": "63d92bf3f8127f4c85f5419699dd63c314a4a2e8",
-      "delta": "integration-final-review-delta.patch",
-      "delta_sha256": "660fe7e6a01115e37746511294f3fcbae9c4edb55d21dcb7259ce4c5b6467ec0",
-      "delta_bytes": 12695,
-      "prior_compile": {
-        "source": "63d92bf3f8127f4c85f5419699dd63c314a4a2e8",
-        "native_exit": 101,
-        "reason": "test helper OwnerPinSyntax qualification; zero tests ran",
-        "log": "composed-63d-unit-compile-failure.log"
-      },
-      "prior_production": {
-        "source": "cbfd9d2df709275c57ff7d27d4b3f1cecd94436c",
+      "review_base": "dde1ced5d928068a2386ea070eef4c4c7e42377a",
+      "delta": "integration-effect-argument-review-delta.patch",
+      "delta_bytes": 16424,
+      "delta_sha256": "e4ace41972512b132507e22f93ec75361e276258e6fe5aa864ab64dcd5fe764a",
+      "prior_proof": {
+        "candidate": "dde1ced5d928068a2386ea070eef4c4c7e42377a",
+        "production_passed": 9,
+        "production_failed": 0,
         "native_path_passed": 4,
-        "production_passed": 8,
-        "production_failed": 1,
-        "reason": "New observed-alias positive expected all field rows exposed but existing field confirmation declines alias; true ReturnValue row exposed. Replace with inert owned-copy control preserving direct field observation. Mutation negative controls already passed.",
-        "log": "composed-cbfd-production.log"
+        "reveal_passed": 157,
+        "reveal_failed": 2,
+        "reveal_filtered": 17929,
+        "reveal_compile_and_test_exit": 101,
+        "reveal_log": "dde1-reveal.log",
+        "reveal_receipt": "dde1-reveal-receipt.json",
+        "two_failures": "Builder unit fixtures omitted complete execution-context graph required by indexed owner-call authority. Added explicit empty parent graph for these two known independent fixture roots; no production gate weakened."
       },
-      "current_proof": "nine production subjects plus native paths compiling; default-feature reveal and full harness follow sequentially on same binary",
-      "policy": {
-        "traceability": 0,
-        "changelog": 0,
-        "process": 0,
-        "tool_source": "pre-generation composed source; policy implementations unchanged in final delta, checks read repaired tree"
+      "counterexamples": {
+        "nested_let_write": "reproduced; mutation negatives and inert direct-copy/field-read positives pass in prior nine-subject batch",
+        "written_sibling": "reproduced on dde1: sent payload and status-only assertion both exposed; source/input/JSON retained in effect-written-sibling-control",
+        "repair": "changed argument positions select method parameters; bounded direct stores/collection writes nominate carrying fields; constants and unchanged argument siblings cannot lend identity; count-only reads no longer borrow whole-field identity"
       },
-      "current_source_sha": "f2fc5f15b",
-      "generated_outputs": {
-        "producer_staged_tree": "7f9a9c95d471b16aa7ad212ad3daddda95937471",
-        "producer_sha256": "9d59de4e3215919f3206e059ebd28c5006bb8b3ca4b45f8e52eb8ca06b60e785",
-        "reports": 21,
-        "golden_fixtures": 2,
-        "claim": "actual producer regeneration before intervening-let correction; retained under original identity, final goldens/honesty checks pending"
+      "current_tests": "ten production subjects plus native paths compiling in session41178; no current-head pass claimed",
+      "historical_compile_error": {
+        "candidate": "6640fec99d67326137dcadfebca95a0904078fd0",
+        "exit": 101,
+        "tests_ran": 0,
+        "reason": "HasGenericArgs trait not imported; corrected without semantic change in current source",
+        "log": "6640-effect-argument-compile-failure.log"
       },
-      "status": "not qualified; no source attestation, CI request, merge or release performed",
+      "status": "unqualified; no PR qualification label, protected merge, release or settings action performed",
       "holds": [
-        "ordinary queue-only CI except approved one-PR history-sync qualification",
+        "ordinary queue-only CI except approved one-PR history-sync route",
         "promotion trust hold",
-        "release selection remains scope_pending"
+        "release selection scope_pending"
       ]
     }
   },

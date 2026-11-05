@@ -1,0 +1,47 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-integration/crates/ripr)
+error[E0599]: no method named `generic_arg_list` found for struct `ra_ap_syntax::ast::MethodCallExpr` in the current scope
+   --> crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs:150:28
+    |
+150 |                 }) && call.generic_arg_list().is_none()
+    |                            ^^^^^^^^^^^^^^^^
+    |
+   ::: /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ra_ap_syntax-0.0.349/src/ast/traits.rs:57:8
+    |
+ 57 |     fn generic_arg_list(&self) -> Option<ast::GenericArgList> {
+    |        ---------------- the method is available for `ra_ap_syntax::ast::MethodCallExpr` here
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `HasGenericArgs` which provides `generic_arg_list` is implemented but not in scope; perhaps you want to import it
+    |
+  3 + use ra_ap_syntax::ast::HasGenericArgs;
+    |
+help: there is a method `arg_list` with a similar name
+    |
+150 -                 }) && call.generic_arg_list().is_none()
+150 +                 }) && call.arg_list().is_none()
+    |
+
+error[E0599]: no method named `generic_arg_list` found for struct `ra_ap_syntax::ast::MethodCallExpr` in the current scope
+   --> crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs:197:23
+    |
+197 |             ) || call.generic_arg_list().is_some()
+    |                       ^^^^^^^^^^^^^^^^
+    |
+   ::: /workspace/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ra_ap_syntax-0.0.349/src/ast/traits.rs:57:8
+    |
+ 57 |     fn generic_arg_list(&self) -> Option<ast::GenericArgList> {
+    |        ---------------- the method is available for `ra_ap_syntax::ast::MethodCallExpr` here
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `HasGenericArgs` which provides `generic_arg_list` is implemented but not in scope; perhaps you want to import it
+    |
+  3 + use ra_ap_syntax::ast::HasGenericArgs;
+    |
+help: there is a method `arg_list` with a similar name
+    |
+197 -             ) || call.generic_arg_list().is_some()
+197 +             ) || call.arg_list().is_some()
+    |
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `ripr` (lib) due to 2 previous errors
