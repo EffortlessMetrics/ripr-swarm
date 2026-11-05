@@ -1576,6 +1576,10 @@ fn gap_list_output_schema() -> Value {
                                 ]
                             },
                             "label": { "type": "string" },
+                            // Optional, paired producer disclosure on committed
+                            // zero-item empty-scope outcomes only (#13280).
+                            "analysis_status": { "type": "string", "const": "not_analyzed" },
+                            "clean": { "type": "boolean", "const": false },
                             "limitations": {
                                 "type": "array",
                                 "items": { "type": "string" }
@@ -1904,7 +1908,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v4",
+                "schema_version": "ripr-mcp-gap-list-v5",
                 "rows": (0..count)
                     .map(|index| {
                         json!({
@@ -1945,7 +1949,7 @@ mod tests {
         }
         let reparsed: Value = serde_json::from_str(small_text)
             .map_err(|error| format!("text copy is not JSON: {error}"))?;
-        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v4")) {
+        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v5")) {
             return Err(format!("text copy drifted from the document: {reparsed}"));
         }
 
@@ -2075,7 +2079,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v4",
+                "schema_version": "ripr-mcp-gap-list-v5",
                 "claim_boundary": "Static exposure evidence only.",
                 "selected": count,
                 "overflowed": false,
@@ -2125,7 +2129,7 @@ mod tests {
         // The text-only pointer, the identity of the document, the counts
         // and the first identities (so a text-only agent can continue).
         for needle in [
-            "ripr-mcp-gap-list-v4",
+            "ripr-mcp-gap-list-v5",
             "not a copy",
             "structuredContent",
             "RIPR_MCP_TEXT_CONTENT=full",
@@ -2223,7 +2227,7 @@ mod tests {
 
     fn brief_gap_list() -> Value {
         json!({
-            "schema_version": "ripr-mcp-gap-list-v4",
+            "schema_version": "ripr-mcp-gap-list-v5",
             "eligible": 3,
             "omitted": 0,
             "items": [
@@ -2623,6 +2627,34 @@ mod tests {
                 return Err(format!(
                     "missing inventory lost its surface diagnosis: {error}"
                 ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn gap_list_output_schema_admits_only_the_explicit_not_analyzed_pair()
+    -> Result<(), String> {
+        let schema = gap_list_output_schema();
+        let outcome = schema
+            .pointer("/oneOf/0/properties/outcome")
+            .ok_or("gap-list schema lost its outcome owner")?;
+        if outcome.pointer("/properties/analysis_status/const")
+            != Some(&json!("not_analyzed"))
+            || outcome.pointer("/properties/clean/const") != Some(&json!(false))
+            || outcome.pointer("/additionalProperties") != Some(&json!(false))
+        {
+            return Err(format!(
+                "closed outcome schema lost its fail-closed empty disclosure: {outcome}"
+            ));
+        }
+        let required = outcome
+            .get("required")
+            .and_then(Value::as_array)
+            .ok_or("outcome required fields missing")?;
+        for optional in ["analysis_status", "clean"] {
+            if required.iter().any(|entry| entry.as_str() == Some(optional)) {
+                return Err(format!("normal analyzed scopes cannot require {optional}"));
             }
         }
         Ok(())

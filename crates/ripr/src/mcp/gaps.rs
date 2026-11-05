@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v4";
+pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v5";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
 pub(crate) const LIMITATION_SCHEMA_VERSION: &str = "ripr-mcp-gap-limitation-v1";
 /// Typed kind of a limitation document that names no limiting producer fact.

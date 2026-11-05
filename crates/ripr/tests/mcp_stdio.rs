@@ -2984,6 +2984,65 @@ fn install_b4_repair_ready_fixture() -> Result<PathBuf, String> {
     Ok(root)
 }
 
+/// #13280: the native two-tool journey cannot turn a zero-item default
+/// committed comparison into a clean result. Explicitly choosing the actual
+/// change base recovers a nonempty finding from the same real Git fixture.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn empty_default_base_gap_list_names_not_analyzed_before_a_real_base_recovers()
+-> Result<(), String> {
+    const TIMEOUT: Duration = Duration::from_mins(3);
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    // main now points at the checkout's HEAD, so the default comparison
+    // excludes the real committed source boundary change in HEAD~1..HEAD.
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), TIMEOUT)?;
+
+    let default = session.call_tool("empty-default", "ripr_refresh", json!({}), TIMEOUT)?;
+    let default = structured_tool_success(&default, "empty committed refresh")?;
+    if default["snapshot"]["outcome_kind"] != "no_scope"
+        || default["snapshot"]["total_items"] != json!(0)
+    {
+        return Err(format!("fixture must genuinely analyze no behavior: {default}"));
+    }
+    let listed = session.call_tool("empty-list", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let listed = structured_tool_success(&listed, "empty real gap list")?;
+    if listed["schema_version"] != "ripr-mcp-gap-list-v5"
+        || listed["snapshot_id"] != default["snapshot"]["snapshot_id"]
+        || listed["outcome"]["kind"] != json!("no_scope")
+        || listed["outcome"]["analysis_status"] != json!("not_analyzed")
+        || listed["outcome"]["clean"] != json!(false)
+        || listed["selected"] != json!(0)
+        || listed["total"] != json!(0)
+    {
+        return Err(format!("empty real gap list falsely reads as clean: {listed}"));
+    }
+
+    let based = session.call_tool(
+        "nondefault-base",
+        "ripr_refresh",
+        json!({ "base": "HEAD~1" }),
+        TIMEOUT,
+    )?;
+    let based = structured_tool_success(&based, "nondefault-base native refresh")?;
+    let changed = session.call_tool("changed-list", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let changed = structured_tool_success(&changed, "nonempty native gap list")?;
+    if based["snapshot"]["total_items"].as_u64().is_none_or(|value| value == 0)
+        || changed["total"].as_u64().is_none_or(|value| value == 0)
+        || changed["snapshot_id"] != based["snapshot"]["snapshot_id"]
+        || changed["outcome"].get("analysis_status").is_some()
+        || changed["outcome"].get("clean").is_some()
+        || changed["snapshot_id"] == listed["snapshot_id"]
+    {
+        return Err(format!(
+            "explicit base must recover a distinct analyzed subject: {changed}"
+        ));
+    }
+    Ok(())
+}
+
 /// Real committed multi-item input for RIPR-SPEC-0211 / #7464. The two
 /// pricing boundaries have strong test sites; the uncovered Rust predicates
 /// and (when compiled) Python predicate provide distinct excluded subjects.
@@ -3048,7 +3107,7 @@ fn check_filtered_gap_page(
         || document["filtered"] != json!(filtered)
         || document["page"]["returned"] != json!(expected_ids.len())
         || document["snapshot_id"] != snapshot_id
-        || document["schema_version"] != "ripr-mcp-gap-list-v4"
+        || document["schema_version"] != "ripr-mcp-gap-list-v5"
     {
         return Err(format!(
             "filtered transport page differs from exact IDs/counts: expected {expected_ids:?}, selected={selected}, filtered={filtered}: {document}"
@@ -3159,7 +3218,7 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
             if refused.get("error").is_some()
                 || refused.pointer("/result/isError") != Some(&json!(true))
                 || refused.pointer("/result/structuredContent/schema_version")
-                    != Some(&json!("ripr-mcp-gap-list-v4"))
+                    != Some(&json!("ripr-mcp-gap-list-v5"))
                 || refused.pointer("/result/structuredContent/failure/code")
                     != Some(&json!("result_too_large"))
                 || refused.pointer("/result/structuredContent/failure/data/current_snapshot_id")

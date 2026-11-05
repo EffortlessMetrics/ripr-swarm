@@ -1223,6 +1223,17 @@ impl WorkspaceSession {
                 "the list is deterministic for its snapshot identity; a refresh replaces the snapshot and its identities",
             ],
         });
+        // #13280: a committed no-scope snapshot observed no behavior.
+        // A zero-item list is not a clean finding result. Reuse the same
+        // producer kind/source/zero-item boundary as the refresh hint; do not
+        // infer this from a filtered-to-zero page or invent a default base.
+        if snapshot.source == RefreshSource::Committed
+            && snapshot.outcome.kind.is_empty_scope()
+            && snapshot.items.is_empty()
+        {
+            document["outcome"]["analysis_status"] = json!("not_analyzed");
+            document["outcome"]["clean"] = json!(false);
+        }
         // Additive (#12921): the filtered items reached only by a proof harness
         // ripr does not evaluate. A subset of the `no_static_path` items and
         // never test coverage; absent when zero.
@@ -3278,6 +3289,91 @@ mod tests {
             return Err(format!(
                 "gap list carried {} outcome limitations where the snapshot carries {snapshot_limitations}",
                 outcome_limitations.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// #13280: a committed zero-item scope is not a clean result, even when
+    /// the gap list is queried rather than the originating refresh document.
+    /// An actually complete empty analysis, a saved-worktree scope and an
+    /// empty page over nonempty findings do not inherit this marker.
+    #[test]
+    fn gap_list_marks_only_committed_empty_scopes_as_not_analyzed() -> Result<(), String> {
+        let list = |session: &WorkspaceSession, filter: &GapListFilter| {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow::default(),
+                    filter,
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let none = GapListFilter::default();
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            let mut session = session_with(kind, 0)?;
+            let document = list(&session, &none)?;
+            if document["outcome"]["kind"] != kind.as_str()
+                || document["total"] != json!(0)
+                || document["selected"] != json!(0)
+                || document["outcome"]["analysis_status"] != json!("not_analyzed")
+                || document["outcome"]["clean"] != json!(false)
+            {
+                return Err(format!("{kind:?} must disclose not analyzed: {document}"));
+            }
+            // The same immutable snapshot gives the same status on replay.
+            let replay = list(&session, &none)?;
+            if replay != document {
+                return Err(format!("{kind:?} gap-list replay drifted: {replay}"));
+            }
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("empty scope fixture must own its snapshot")?;
+            snapshot.source = RefreshSource::Worktree;
+            let worktree = list(&session, &none)?;
+            if worktree["outcome"].get("analysis_status").is_some()
+                || worktree["outcome"].get("clean").is_some()
+            {
+                return Err(format!(
+                    "worktree-sourced output must not imply committed empty scope: {worktree}"
+                ));
+            }
+        }
+        let complete = list(
+            &session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?,
+            &none,
+        )?;
+        if complete["outcome"].get("analysis_status").is_some()
+            || complete["outcome"].get("clean").is_some()
+        {
+            return Err(format!("complete empty analysis is not a missing scope: {complete}"));
+        }
+
+        let populated = session_with_varied_findings()?;
+        let all = list(&populated, &none)?;
+        if all["total"].as_u64().is_none_or(|count| count == 0)
+            || all["outcome"].get("analysis_status").is_some()
+        {
+            return Err(format!("real findings must remain nonempty: {all}"));
+        }
+        let no_match = GapListFilter {
+            file: Some("source/does-not-exist.rs".to_string()),
+            ..Default::default()
+        };
+        let filtered = list(&populated, &no_match)?;
+        if filtered["filtered"] != json!(0)
+            || filtered["outcome"].get("analysis_status").is_some()
+            || filtered["outcome"].get("clean").is_some()
+        {
+            return Err(format!(
+                "filtered-to-zero findings must not claim no analysis: {filtered}"
             ));
         }
         Ok(())

@@ -325,15 +325,19 @@ zero-config language auto-enable, and a present-but-unreadable or unparseable
 config fails the attempt closed with `config_invalid`. Provider
 configuration stays unloaded.
 
-Gap-list responses use `ripr-mcp-gap-list-v4`, including typed refusals.
+Gap-list responses use `ripr-mcp-gap-list-v5`, including typed refusals.
 The prior v1 success schema forbids unknown top-level properties, so the new
-`filtered` and `filters` fields required the v2 change; v3 adds the snapshot's
+ `filtered` and `filters` fields required the v2 change; v3 adds the snapshot's
 typed `outcome` block (`kind`, a plain label, and the outcome limitation
 kinds), so a `partial_with_limitations` run never reads as clean; v4 adds the
-independently windowed omission disclosure (`omitted_page`, `omitted_offset`). Strict v1
-readers must rediscover `tools/list`, accept v4 explicitly and validate
-against the advertised `outputSchema`; callers may still omit all filter
-arguments.
+independently windowed omission disclosure (`omitted_page`, `omitted_offset`).
+v5 adds optional `outcome.analysis_status: "not_analyzed"` paired with
+`outcome.clean: false` **only** for a zero-item committed empty-scope snapshot;
+complete analysis and filtered-to-empty pages do not gain those fields.
+The fields keep the producer's existing typed outcome, selection and scope
+identity unchanged. Strict older readers must rediscover `tools/list`, accept
+v5 explicitly and validate against its updated closed `outputSchema`; callers
+may still omit all filter arguments.
 
 All MCP document `schema_version` identifiers, so a client can route and
 validate every document the server emits:
