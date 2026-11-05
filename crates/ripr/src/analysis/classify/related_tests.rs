@@ -5766,11 +5766,9 @@ pub(in crate::analysis::classify) fn assertion_has_closed_candidate_values(
                 candidate_seen |= candidate_call;
                 candidate_call
                     && matches!(call.receiver(), Some(ast::Expr::PathExpr(_)))
-                    && call
-                        .arg_list()
-                        .is_some_and(|list| {
-                            list.args().all(|arg| matches!(arg, ast::Expr::Literal(_)))
-                        })
+                    && call.arg_list().is_some_and(|list| {
+                        list.args().all(|arg| matches!(arg, ast::Expr::Literal(_)))
+                    })
             }
             ast::Expr::CallExpr(call) => {
                 let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
@@ -5785,11 +5783,9 @@ pub(in crate::analysis::classify) fn assertion_has_closed_candidate_values(
                     .is_some_and(|name| name.text() == candidate.name);
                 candidate_seen |= candidate_call;
                 (candidate_call || declared_enum(&path))
-                    && call
-                        .arg_list()
-                        .is_some_and(|list| {
-                            list.args().all(|arg| matches!(arg, ast::Expr::Literal(_)))
-                        })
+                    && call.arg_list().is_some_and(|list| {
+                        list.args().all(|arg| matches!(arg, ast::Expr::Literal(_)))
+                    })
             }
             _ => false,
         }
@@ -6060,9 +6056,8 @@ fn assertion_arguments_resolve_with(
                 || ast::MatchArm::can_cast(node.kind())
                 || ast::LetExpr::can_cast(node.kind())
                 || (all_named_calls.is_some()
-                    && ast::CallExpr::cast(node.clone()).is_some_and(|call| {
-                        !matches!(call.expr(), Some(ast::Expr::PathExpr(_)))
-                    }))
+                    && ast::CallExpr::cast(node.clone())
+                        .is_some_and(|call| !matches!(call.expr(), Some(ast::Expr::PathExpr(_)))))
                 || (ast::Item::can_cast(node.kind()) && node != *wrapper.syntax())
                 || ast::LetStmt::cast(node)
                     .is_some_and(|binding| !matches!(binding.pat(), Some(ast::Pat::WildcardPat(_))))

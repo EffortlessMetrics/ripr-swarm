@@ -667,23 +667,13 @@ fn credited_related_tests<'a>(
             if let Some((owner, owner_reach)) = owner_reach.as_ref()
                 && (reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
-                && test
-                    .assertions
-                    .iter()
-                    .any(|oracle| {
-                        owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
-                    })
+                && test.assertions.iter().any(|oracle| {
+                    owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                })
             {
-                view.to_mut()
-                    .assertions
-                    .retain(|oracle| {
-                        !owner_reach.assertion_pins_other_function(
-                            owner,
-                            test,
-                            oracle,
-                            &oracle.text,
-                        )
-                    });
+                view.to_mut().assertions.retain(|oracle| {
+                    !owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                });
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.

@@ -764,7 +764,11 @@ mod tests {
         let full = evidence_for_seam(arm, &index);
         let context = CompactGripContext::new(&index);
         let compact = compact_evidence_for_seam(arm, &context);
-        assert_eq!(full.related_tests.len(), 1, "{case}: nonempty test stimulus");
+        assert_eq!(
+            full.related_tests.len(),
+            1,
+            "{case}: nonempty test stimulus"
+        );
         assert_eq!(full.observe.state, StageState::Yes, "{case}: full observe");
         assert_eq!(
             full.discriminate.state,

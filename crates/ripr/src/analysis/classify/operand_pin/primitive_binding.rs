@@ -203,7 +203,10 @@ fn standard_derive_binding_holds(
                 false
             });
         let sites = std::sync::Arc::new(
-            sites.into_iter().map(|(name, site)| (name, site.scope)).collect::<Vec<_>>(),
+            sites
+                .into_iter()
+                .map(|(name, site)| (name, site.scope))
+                .collect::<Vec<_>>(),
         );
         if let Some(index) = index
             && let Ok(mut memo) = index.call_identity_memos.standard_derive_bindings.lock()
@@ -295,16 +298,11 @@ pub(in crate::analysis::classify) fn callable_context_is_closed(
         // primitive field reader's scope inventory. Check the actual function
         // and enclosing impl attributes before reasoning from its source body.
         function.syntax().ancestors().all(|ancestor| {
-            ancestor
-                .children()
-                .filter_map(ast::Attr::cast)
-                .all(|attr| {
-                    let text = attr.syntax().text().to_string();
-                    crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(&text)
-                        || crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(
-                            &text,
-                        )
-                })
+            ancestor.children().filter_map(ast::Attr::cast).all(|attr| {
+                let text = attr.syntax().text().to_string();
+                crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(&text)
+                    || crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
+            })
         }) && context_scopes(&function)
             .iter()
             .all(|scope| closed_scope_with(scope, derives, Some(index)))
