@@ -26,6 +26,8 @@ Linked issues:
 - #4798 / RIPR-SPEC-0217 — the `agent_attempt_status` DTO this spec consumes
   as the semantic authority (no editor-side state machine)
 - #2927 — shared durable `RepairAttempt` authority
+- #13216 — preserve retained baseline limitations and recovery across status
+  and continuation surfaces
 
 Linked PRs:
 
@@ -69,6 +71,15 @@ The VS Code extension consumes the shared DTO; it invents no state.
   `attempt.attempt_id`, and refuses — returns `undefined`, never a softened
   projection — any `status_class` outside the ten RIPR-SPEC-0217 classes or
   any `currentness` outside `current`/`historical`/`unknown`.
+- The additive `baseline_ambiguous` and `baseline_unavailable_reason` fields
+  on the selected `attempt` and inventory rows retain the shared producer's
+  evidence reading. Omitted or `null` fields mean unknown; omission never
+  becomes `false`, and limitation prose is never parsed into readiness.
+  A present ambiguity value must be a boolean or `null`; a present
+  unavailable reason must be a non-empty string or `null`. Malformed fields
+  refuse the whole document, including an inventory with another valid row.
+  `false` names an unambiguous capture, not a guarantee that the attempt can
+  finish or that a repair is correct.
 - `ripr: Show Repair Attempt Status` resolves the workspace root, runs
   `ripr agent status --root <root> --json` through the existing
   `runRipr(command, args, cwd)` seam, parses rows with the adapter, applies
@@ -103,8 +114,15 @@ The VS Code extension consumes the shared DTO; it invents no state.
   execution renders `ripr: attempt status unavailable` with a warning tone —
   never a friendly state. Tooltip and notification lines derive only from
   DTO fields (attempt id, seam, operational state, status class,
-  currentness, moved-HEAD note, unreadable reason, the exact next/recovery
-  action, first limitation).
+  currentness, moved-HEAD note, unreadable reason, typed baseline limitation,
+  the exact next/recovery action and its reason, first limitation). An
+  ambiguous or unavailable baseline is disclosed before the producer's
+  recovery reason and exact command, even when the first general limitation
+  concerns compatibility artifacts. A withheld action stays absent; the
+  editor does not invent a restart command or upgrade the shared class.
+  When a typed baseline limitation has no action, the producer's
+  `claim_boundary` lines follow the baseline disclosure, preserving any
+  shared admission refusal and by-hand guidance without parsing its prose.
 - Untrusted workspaces never read repair authority: the command refuses
   before any CLI invocation, matching the extension's existing
   server-resolution trust gate.
@@ -131,6 +149,13 @@ The VS Code extension consumes the shared DTO; it invents no state.
   (the restart/deactivation lifecycle, since `workspaceState` is the only
   store and survives both), and the untrusted-workspace refusal with zero
   CLI invocations.
+- Retained-baseline cases (#13216) cover true, false, `null`, omitted and
+  malformed fields; ambiguity/unavailability disclosed before recovery;
+  a gate-withheld action staying absent; and a fresh controller preserving
+  the limited status of a remembered attempt. Start and Continue controls
+  require the producer's `resumable` disposition, excluding both
+  `baseline_ambiguous` and `baseline_unavailable` even when an old after
+  command remains present.
 - `cargo xtask check-spec-format`, `check-spec-numbering`,
   `check-doc-artifacts`, `check-traceability`, `check-doc-index`, and
   `check-file-policy` pass on the candidate.
@@ -138,7 +163,9 @@ The VS Code extension consumes the shared DTO; it invents no state.
 
 ## Non-Goals
 
-- No Start Repair, Continue, or Finish behavior (#2928 owns that journey).
+- No new Start Repair, Continue, or Finish selection rule (#2928 owns that
+  journey). Those paths continue to use the shared inventory disposition;
+  status inspection may still select a limited attempt by its exact id.
 - No palette/onboarding reorganization (#2928).
 - No LSP protocol change: the LSP stays read-only and the editor reads the
   CLI DTO directly through the existing binary-resolution seam.
@@ -164,6 +191,15 @@ The VS Code extension consumes the shared DTO; it invents no state.
    rejected as unavailable rather than projected.
 5. In an untrusted workspace the command refuses with an explanation and
    `runRipr` is never invoked.
+6. An existing attempt with `baseline_ambiguous: true`, operational state
+   `awaiting_edit`, and shared class `limited` shows a warning and the
+   baseline limitation before the admitted clean-state before recovery.
+   Its identity remains inspectable after editor restart; it is not selected
+   for after continuation.
+7. An unavailable retained baseline preserves the producer's reason and
+   `baseline_ambiguous: null`. If the shared gate withholds recovery,
+   the editor shows the limitation and the producer's claim-boundary
+   explanation without constructing an action.
 
 ## Test Mapping
 
@@ -175,9 +211,14 @@ The VS Code extension consumes the shared DTO; it invents no state.
   Attempt Status command (#4643)", including the remembered-selection
   second run that models post-restart persistence (a fresh controller reads
   the same `workspaceState`) and the cross-root isolation case.
+- `editors/vscode/test/suite/repairStart.test.ts` — retained-baseline reuse
+  refusal (#13216).
+- `editors/vscode/test/suite/repairFinish.test.ts` — retained-baseline
+  continuation refusal (#13216).
 
 Fixtures: `editors/vscode/test-fixtures/attempt-status/` (one
-`status-<class>.json` per pinned class plus `inventory.json`).
+`status-<class>.json` per pinned class, baseline-ambiguous and
+baseline-unavailable limited variants, plus `inventory.json`).
 
 ## Implementation Mapping
 

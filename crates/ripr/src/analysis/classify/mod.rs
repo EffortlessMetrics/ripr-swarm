@@ -114,7 +114,8 @@ pub(in crate::analysis) use gap_admission::{
     REFUSALS_ARE_ANALYZER_LIMITS, assertion_confirms_captured_log_exact_membership, is_ignored,
     should_panic_tests_deciding_changed_panic, withhold_call_budget_gap,
     withhold_debug_assertion_gap, withhold_log_capture_gap, withhold_mixed_refusal_gap,
-    withhold_should_panic_gap, withhold_truncated_discovery_gap, withhold_unsupported_gap,
+    withhold_read_limited_workspace_gap, withhold_should_panic_gap,
+    withhold_truncated_discovery_gap, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{

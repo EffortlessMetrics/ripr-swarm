@@ -101,6 +101,7 @@ reproduced by a checked-in instrument. Refresh with each new baseline.
 | Precision | 96.8% (61 of 63) | 97% | no |
 | Recall, strict (flagged ungripped) | 10.6% (34 of 322 runtime-missed); Rust only | 80% | no |
 | Recall, flagged or honest unknown (ungripped, weakly_gripped, activation_unknown, opaque) | 58.7% (189 of 322: 34 + 0 + 151 + 4); Rust only, Python and TypeScript not established | 80% | no |
+| Replaces cargo-mutants (`replacement_criterion.verdict`) | not_yet: precision (96.8%), flagged-or-unknown recall (58.7%) and scored coverage (28.3%) not met; time met on one crate (ripr 0.225 s vs full cargo-mutants 128 s on rust-hex, ratio 0.002); Python/TypeScript real-mutant agreement not established; Rust only | every thresholded criterion met, none not established. Precision and recall bars are the R2 rows above; scored coverage at least 50% (a majority of mutants get a scored verdict) and ripr time at most 10% of full cargo-mutants are agent-chosen | no |
 | Agent lift, FV strength, retention | not measured | see R3 | not established |
 
 Result: R0 is not yet met (first value across channels is unproven), and R1
@@ -169,12 +170,17 @@ Other counts are generated, not copied here:
 
 - Repository orientation inventory: `cargo xtask current-state` writes
   `target/ripr/reports/current-state.{json,md}`; `--json` also prints the JSON.
-  Its current coverage is checkout repository identity, workspace version/MSRV,
-  declared development/release authorities, the command-catalog entry count, and
-  four retired goal-authority markers in the current roadmap section.
-  `cargo xtask current-state --check` checks those markers, support-map file
-  existence, and a nonempty catalog. The broader inventory and drift coverage
-  remains open under [#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330).
+  Its coverage is checkout repository identity, workspace version/MSRV,
+  declared development/release authorities, the command-catalog entry count,
+  four retired goal-authority markers in the current roadmap section, registered
+  artifact counts by kind/recorded status, and support-row counts by tier.
+  The counts and sorted structural violations reuse `repo-contract-report`'s
+  ledger-plus-fragments and support collectors. `cargo xtask current-state --check`
+  rejects those existing violations as well as the retired markers and an empty
+  catalog; missing/malformed required inputs produce named failure. JSON and
+  readable Markdown state the remaining coverage limitations. These counts do
+  not establish filesystem completeness, semantic implementation or earned
+  support. The broader inventory and drift coverage remains open under [#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330).
 - Registered artifact and support structure: `cargo xtask repo-contract-report`
   writes `target/ripr/reports/source-of-truth-graph.{json,md}` from the artifact
   ledger and its fragments, support rows, and existing structural diagnostics.

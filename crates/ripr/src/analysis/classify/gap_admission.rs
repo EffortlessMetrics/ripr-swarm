@@ -100,6 +100,48 @@ pub(in crate::analysis) fn withhold_truncated_discovery_gap(
     true
 }
 
+/// #11985: a complete file walk is still an incomplete evidence index when
+/// workspace reads refuse sources under either byte cap. Preserve findings
+/// backed by observed tests and limits another producer already established.
+pub(in crate::analysis) fn withhold_read_limited_workspace_gap(
+    finding: &mut Finding,
+    unread_sources: usize,
+    file_cap: u64,
+    workspace_budget: u64,
+) -> bool {
+    if unread_sources == 0
+        || finding.class != ExposureClass::NoStaticPath
+        || finding.static_limit_kind.is_some()
+    {
+        return false;
+    }
+    let first_unresolved_edge = format!(
+        "whether any of {unread_sources} workspace source file(s) refused by the byte limits contains a test or call path to the changed code"
+    );
+    let next_step = format!(
+        "Workspace reads refused {unread_sources} source file(s) under the {file_cap}-byte per-file cap or {workspace_budget}-byte total budget, so ripr cannot say no test reaches this change. Raise RIPR_TS_MAX_FILE_READ_BYTES and/or RIPR_TS_MAX_WORKSPACE_READ_BYTES, or run ripr from a narrower root, then check again."
+    );
+    withhold_gap(
+        finding,
+        StaticLimitKind::TypescriptWorkspaceReadLimited,
+        &first_unresolved_edge,
+        next_step,
+        &[],
+    );
+    // The no-path confidence reason also claimed that no test reaches the
+    // owner. Re-derive it for the withheld class before any output or context
+    // packet consumes it; no related test or strong oracle was established.
+    finding.confidence_basis = ConfidenceCap::for_preview(
+        &finding.class,
+        &ConfidenceBasisInputs {
+            has_related_test: false,
+            strong_oracle_present: false,
+            boundary_input_matched: true,
+        },
+    );
+    true
+}
+
 /// #5431: a `weakly_exposed` gap asks for a stronger assertion, but a refused
 /// `assert_eq!` on the owner may already be that assertion. Withhold the gap
 /// when the refusal rests on an analyzer limit. Returns `true` when the
@@ -1522,6 +1564,103 @@ mod tests {
                 "ripr could not read whether the assertions in `test_format_u8` (src/lib.rs:40) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does."
             )
         );
+    }
+
+    #[test]
+    fn a_read_limit_withholds_only_untyped_no_path_findings() {
+        let mut finding = marked();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.language = Some(LanguageId::TypeScript);
+        finding.related_tests.clear();
+        finding.confidence_basis = vec![
+            ConfidenceCap::PreviewStagesNotModeled,
+            ConfidenceCap::SyntaxFirstNoTypeResolution,
+            ConfidenceCap::NoRelatedTest,
+        ];
+        assert!(withhold_read_limited_workspace_gap(
+            &mut finding,
+            2,
+            512,
+            2048
+        ));
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(
+            finding.confidence_basis,
+            vec![
+                ConfidenceCap::PreviewStagesNotModeled,
+                ConfidenceCap::SyntaxFirstNoTypeResolution,
+                ConfidenceCap::DiscriminatorNotEstablished,
+            ]
+        );
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::TypescriptWorkspaceReadLimited)
+        );
+        assert!(finding.activation.missing_discriminators.is_empty());
+        assert_eq!(
+            finding.stop_reasons,
+            vec![StopReason::GapEvidenceUnresolved]
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| {
+                    step.contains("512-byte")
+                        && step.contains("2048-byte")
+                        && step.contains("RIPR_TS_MAX_FILE_READ_BYTES")
+                        && step.contains("RIPR_TS_MAX_WORKSPACE_READ_BYTES")
+                })
+        );
+        let withheld = finding.clone();
+        assert!(!withhold_read_limited_workspace_gap(
+            &mut finding,
+            2,
+            512,
+            2048
+        ));
+        assert_eq!(finding, withheld);
+
+        for class in [
+            ExposureClass::Exposed,
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+            ExposureClass::StaticUnknown,
+        ] {
+            let mut observed = marked();
+            observed.class = class;
+            let before = observed.clone();
+            assert!(!withhold_read_limited_workspace_gap(
+                &mut observed,
+                2,
+                512,
+                2048
+            ));
+            assert_eq!(observed, before);
+        }
+
+        for (unread_sources, existing_limit) in [
+            (0, None),
+            (2, Some(StaticLimitKind::MissingImportGraph)),
+            (
+                2,
+                Some(StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated),
+            ),
+        ] {
+            let mut unchanged = marked();
+            unchanged.class = ExposureClass::NoStaticPath;
+            unchanged.static_limit_kind = existing_limit;
+            let before = unchanged.clone();
+            assert!(!withhold_read_limited_workspace_gap(
+                &mut unchanged,
+                unread_sources,
+                512,
+                2048,
+            ));
+            assert_eq!(unchanged, before);
+        }
     }
 
     #[test]
