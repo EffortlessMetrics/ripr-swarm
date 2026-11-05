@@ -279,7 +279,7 @@ fn render_repo_seams_sarif_compact_with_budget(
 }
 
 /// Minifies a rendered SARIF document and, when a budget applies and the
-/// document exceeds it, retains the longest result prefix that fits and
+/// document exceeds it, retains a result prefix that fits and
 /// discloses the bound in the run properties (#13195). The retained
 /// document stays valid SARIF 2.1.0; when even the empty-results skeleton
 /// exceeds the budget it is returned as the minimal disclosed document.
