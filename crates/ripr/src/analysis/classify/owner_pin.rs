@@ -2591,6 +2591,17 @@ fn source_may_carry_glob_chain(source: &str) -> bool {
 /// parse can hide one. Only a plain single-parent glob is known not to jump;
 /// unknown attributes and other forms deliberately over-refuse.
 fn source_may_skip_glob_parent(source: &str) -> bool {
+    const BUILTIN_DERIVES: &[&str] = &[
+        "Clone",
+        "Copy",
+        "Debug",
+        "Default",
+        "PartialEq",
+        "Eq",
+        "PartialOrd",
+        "Ord",
+        "Hash",
+    ];
     let Some(parse) = parse_clean_source_file(source) else {
         return true;
     };
@@ -2603,7 +2614,12 @@ fn source_may_skip_glob_parent(source: &str) -> bool {
                 .chars()
                 .filter(|ch| !ch.is_whitespace())
                 .collect();
+            let builtin_derive = compact
+                .strip_prefix("#[derive(")
+                .and_then(|value| value.strip_suffix(")]"))
+                .is_some_and(|names| names.split(',').all(|name| BUILTIN_DERIVES.contains(&name)));
             let inert = compact == "#[test]"
+                || builtin_derive
                 || compact.starts_with("///")
                 || compact.starts_with("//!")
                 || compact.starts_with("#[doc=")
@@ -2622,6 +2638,7 @@ fn source_may_skip_glob_parent(source: &str) -> bool {
             // declaring file's scoped lookup. An imported `test` can also
             // shadow the built-in attribute and expand to a glob.
             if text.contains("test")
+                || BUILTIN_DERIVES.iter().any(|name| text.contains(*name))
                 || assertion_context_macros()
                     .iter()
                     .any(|name| text.contains(*name))

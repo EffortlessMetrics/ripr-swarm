@@ -184,10 +184,26 @@ fn a_shadowed_test_attribute_may_emit_an_intermediate_glob() {
 #[test]
 fn inert_attributes_do_not_create_a_glob_chain() {
     let lib = "use rayon::prelude::*;\nmod suite;\n";
-    let suite = "/// documentation\n#[allow(dead_code)] struct Marker; mod tests;";
+    let suite = "/// documentation\n#[allow(dead_code)] #[derive(Debug, Clone, PartialEq, Eq)] struct Marker; mod tests;";
     let child = "use super::*; #[test] fn weighs() { assert_eq!(2 + 2, 4); }";
     let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
     assert_eq!(refusal_of(&indexed, SUITE_TESTS), None);
+    let nested = "#[derive(Debug)] struct Marker; mod tests { use super::*; #[test] fn weighs() { assert_eq!(2 + 2, 4); } }";
+    let indexed = index(&[(LIB, lib), (SUITE, "mod tests;"), (SUITE_TESTS, nested)]);
+    assert_eq!(
+        refusal_of(&indexed, SUITE_TESTS),
+        None,
+        "inline test module"
+    );
+}
+
+#[test]
+fn a_shadowed_debug_derive_may_emit_an_intermediate_glob() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let suite = "use inject::Debug; #[derive(Debug)] struct Marker; mod tests;";
+    let child = "use super::*; #[test] fn weighs() { assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
+    assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)));
 }
 
 #[test]
