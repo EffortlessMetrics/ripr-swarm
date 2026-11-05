@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- Refuse a conflicting repeated `--root` (`--root a --root b`) with a usage error naming both values instead of silently analyzing the last root; an identical repeat stays absorbed so scripted double-root invocations keep working (#9008).
+- Refuse a conflicting repeated `--root` (`--root a --root b`) with a usage error naming both values instead of silently analyzing the last root; an identical repeat stays absorbed so scripted double-root invocations keep working. The exception is `ripr mcp`, whose stdio server keeps its own single-root argument handling: identical repeats are still rejected there and its conflict error does not name both values (#9008).

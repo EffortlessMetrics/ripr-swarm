@@ -30,27 +30,32 @@ pub(in crate::cli) fn config(args: &[String]) -> Result<(), String> {
 }
 
 fn parse_validate_root(args: &[String]) -> Result<PathBuf, String> {
-    match args {
-        [] => Ok(PathBuf::from(".")),
-        [flag] if flag == "--root" => {
-            Err("missing value for --root; pass a value right after it".to_string())
+    let mut root: Option<PathBuf> = None;
+    let mut rest = args;
+    while let Some((flag, tail)) = rest.split_first() {
+        if flag != "--root" {
+            return Err(unknown_argument("config validate", flag));
         }
         // `--root` is an option token here; `./--root` names the literal path.
-        [flag, value, ..] if flag == "--root" && value == "--root" => {
-            Err("missing value for --root; pass a value right after it".to_string())
+        let Some((value, after_value)) = tail.split_first() else {
+            return Err("missing value for --root; pass a value right after it".to_string());
+        };
+        if value == "--root" {
+            return Err("missing value for --root; pass a value right after it".to_string());
         }
-        [flag, value] if flag == "--root" => Ok(PathBuf::from(value)),
-        // #9008/#10542: a second `--root` with an identical value is
-        // absorbed for scripted double-root invocations; a conflicting one
-        // is a usage error naming both values.
-        [flag, value, flag2, value2] if flag == "--root" && flag2 == "--root" => {
-            reconcile_root(Path::new(value), true, value2, "config validate")
-        }
-        [flag, _value, extra, ..] if flag == "--root" => {
-            Err(unknown_argument("config validate", extra))
-        }
-        [other, ..] => Err(unknown_argument("config validate", other)),
+        // #9008/#10542: every repeated `--root` with an identical value is
+        // absorbed for scripted invocations; a conflicting one is a usage
+        // error naming both values.
+        let reconciled = reconcile_root(
+            root.as_deref().unwrap_or(Path::new(".")),
+            root.is_some(),
+            value,
+            "config validate",
+        )?;
+        root = Some(reconciled);
+        rest = after_value;
     }
+    Ok(root.unwrap_or_else(|| PathBuf::from(".")))
 }
 
 fn validate_config(root: &Path) -> Result<String, String> {
@@ -109,6 +114,62 @@ mod tests {
             .map(|duration| duration.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!("ripr-config-{label}-{nonce}"))
+    }
+
+    #[test]
+    fn validate_root_repeats_beyond_two_identical_values_are_absorbed() {
+        // #13326 review: scripted invocations may repeat --root any number
+        // of times; only a conflicting value is a usage error.
+        for repeated in [
+            vec!["--root", "a"],
+            vec!["--root", "a", "--root", "a"],
+            vec!["--root", "a", "--root", "a", "--root", "a"],
+        ] {
+            let parsed = parse_validate_root(&args(&repeated));
+            assert_eq!(parsed, Ok(PathBuf::from("a")), "args: {repeated:?}");
+        }
+    }
+
+    #[test]
+    fn validate_root_conflict_names_both_values() -> Result<(), String> {
+        match parse_validate_root(&args(&["--root", "a", "--root", "b"])) {
+            Ok(root) => Err(format!("conflicting roots must refuse, got {root:?}")),
+            Err(error) => {
+                if !(error.contains("'a'") && error.contains("'b'")) {
+                    return Err(format!("the conflict error must name both values: {error}"));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn validate_root_missing_value_and_unknown_argument_keep_their_errors() -> Result<(), String> {
+        for (case, argv, needle) in [
+            ("bare --root", vec!["--root"], "missing value for --root"),
+            (
+                "--root as the value",
+                vec!["--root", "--root"],
+                "missing value for --root",
+            ),
+            (
+                "a stray token",
+                vec!["--root", "a", "b"],
+                "unknown config validate argument",
+            ),
+        ] {
+            match parse_validate_root(&args(&argv)) {
+                Ok(root) => {
+                    return Err(format!("{case} must refuse, got {root:?}"));
+                }
+                Err(error) => {
+                    if !error.contains(needle) {
+                        return Err(format!("{case} must report '{needle}', got: {error}"));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]
