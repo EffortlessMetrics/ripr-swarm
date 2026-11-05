@@ -120,15 +120,12 @@ fn source_build_doctor_json_refuses_missing_explicit_compiler() -> Result<(), St
     let analysis = doctor_json_output_with_environment(&root, &[], environment);
     let build =
         doctor_json_output_with_environment(&root, &["--profile", "source-build"], environment);
-    let cargo_build = doctor_json_output_with_environment(
-        &root,
-        &["--profile", "source-build"],
-        |command| {
+    let cargo_build =
+        doctor_json_output_with_environment(&root, &["--profile", "source-build"], |command| {
             command
                 .env_remove("RUSTC")
                 .env("CARGO_BUILD_RUSTC", &missing);
-        },
-    );
+        });
     let _ = std::fs::remove_dir_all(&root);
     let analysis = analysis?;
     let analysis: Value =

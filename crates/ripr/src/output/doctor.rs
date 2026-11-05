@@ -2182,11 +2182,14 @@ fn doctor_tool_check_for_root(
     if tool == "rustc" && profile == DoctorProfile::SourceBuild {
         let rustc = std::env::var_os("RUSTC");
         let cargo_build_rustc = std::env::var_os("CARGO_BUILD_RUSTC");
-        let (command, selector) =
-            match source_build_rustc_command(root, rustc.as_deref(), cargo_build_rustc.as_deref()) {
-                Ok(command) => command,
-                Err(evidence) => return (DoctorStatus::Fail, evidence),
-            };
+        let (command, selector) = match source_build_rustc_command(
+            root,
+            rustc.as_deref(),
+            cargo_build_rustc.as_deref(),
+        ) {
+            Ok(command) => command,
+            Err(evidence) => return (DoctorStatus::Fail, evidence),
+        };
         let mut result =
             doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, Some(root));
         if let Some(selector) = selector {
@@ -2195,7 +2198,9 @@ fn doctor_tool_check_for_root(
             }
             result.evidence = format!("{selector} compiler: {}", result.evidence);
             if result.status == DoctorStatus::Fail {
-                result.evidence.push_str(&format!("; fix or unset {selector}"));
+                result
+                    .evidence
+                    .push_str(&format!("; fix or unset {selector}"));
             }
         }
         return result.into_public();
@@ -2231,9 +2236,8 @@ fn source_build_rustc_command(
             format!("{selector} must name one nonempty Unicode executable; fix or unset {selector}")
         })?;
     let program = if program.contains(['/', '\\']) {
-        std::path::absolute(root.join(program)).map_err(|error| {
-            format!("cannot resolve {selector} from the selected root: {error}")
-        })?
+        std::path::absolute(root.join(program))
+            .map_err(|error| format!("cannot resolve {selector} from the selected root: {error}"))?
     } else {
         PathBuf::from(program)
     };
