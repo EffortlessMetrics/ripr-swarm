@@ -787,3 +787,142 @@ fn a_name_bound_earlier_to_a_call_making_closure_is_withheld() {
         assert_eq!(passes_call_making_closure(test, "run"), expected, "{shape}");
     }
 }
+
+#[test]
+fn cloned_callback_names_keep_the_plain_helper_withhold() {
+    for (shape, test, expected) in [
+        (
+            "direct clone",
+            "fn t() { let f = || greet(); run(1, f.clone()); }",
+            true,
+        ),
+        (
+            "cloned callback in the first argument",
+            "fn t() { let f = || greet(); run(f.clone(), 1); }",
+            true,
+        ),
+        (
+            "borrowed parenthesized clone receiver and argument",
+            "fn t() { let f = || greet(); run(1, &((&f).clone())); }",
+            true,
+        ),
+        (
+            "repeated clone",
+            "fn t() { let f = || greet(); run(1, f.clone().clone()); }",
+            true,
+        ),
+        (
+            "bound clone",
+            "fn t() { let f = || greet(); let g = f.clone(); run(1, g); }",
+            true,
+        ),
+        (
+            "mixed alias and clone chain",
+            "fn t() { let f = || greet(); let g = &f; let h = g.clone(); run(1, h.clone()); }",
+            true,
+        ),
+        (
+            "clone of a boxed callback binding",
+            "fn t() { let f = Arc::new(|| greet()); run(1, f.clone()); }",
+            true,
+        ),
+        (
+            "earlier enclosing binding",
+            "fn t() { let f = || greet(); if ready { run(1, f.clone()); } }",
+            true,
+        ),
+        (
+            "shadowing still withholds conservatively",
+            "fn t() { let f = || greet(); let f = 5; run(1, f.clone()); }",
+            true,
+        ),
+        (
+            "sibling binding is not the receiver",
+            "fn t() { { let f = || greet(); } let f = 5; run(1, f.clone()); }",
+            false,
+        ),
+        (
+            "later closure binding is not the receiver",
+            "fn t() { let f = 5; run(1, f.clone()); let f = || greet(); }",
+            false,
+        ),
+        (
+            "clone initializer resolves before its own binding",
+            "fn t() { let f = 5; let g = f.clone(); let f = || greet(); run(1, g); }",
+            false,
+        ),
+        (
+            "sibling clone binding is not the argument",
+            "fn t() { let f = || greet(); { let g = f.clone(); } run(1, g); }",
+            false,
+        ),
+        (
+            "ordinary computed value clone",
+            "fn t() { run(1, greet().clone()); }",
+            false,
+        ),
+        (
+            "ordinary bound value clone",
+            "fn t() { let f = greet(); run(1, f.clone()); }",
+            false,
+        ),
+        (
+            "ordinary bound clone alias",
+            "fn t() { let f = greet(); let g = f.clone(); run(1, g); }",
+            false,
+        ),
+        (
+            "call-less closure clone",
+            "fn t() { let f = || 5; run(1, f.clone()); }",
+            false,
+        ),
+        (
+            "another method is not clone",
+            "fn t() { let f = || greet(); run(1, f.to_owned()); }",
+            false,
+        ),
+        (
+            "clone with an argument is outside the retained-value grammar",
+            "fn t() { let f = || greet(); run(1, f.clone(1)); }",
+            false,
+        ),
+        (
+            "generic clone is outside the retained-value grammar",
+            "fn t() { let f = || greet(); run(1, f.clone::<u32>()); }",
+            false,
+        ),
+        (
+            "a field receiver is not the binding",
+            "fn t() { let f = || greet(); run(1, holder.f.clone()); }",
+            false,
+        ),
+        (
+            "qualified receiver is not the binding",
+            "fn t() { let f = || greet(); run(1, other::f.clone()); }",
+            false,
+        ),
+        (
+            "function item remains a residual",
+            "fn t() { run(1, make.clone()); }",
+            false,
+        ),
+    ] {
+        assert_eq!(passes_call_making_closure(test, "run"), expected, "{shape}");
+    }
+}
+
+#[test]
+fn cloned_callback_binding_chains_keep_the_existing_depth_limit() {
+    // At four alias edges an ordinary value is still established. A fifth
+    // edge withholds even for that value: the existing bounded walk fails closed.
+    for (initializer, aliases, expected) in
+        [("5", 4, false), ("5", 5, true), ("|| greet()", 4, true)]
+    {
+        let mut text = format!("fn t() {{ let c0 = {initializer}; ");
+        for n in 1..=aliases {
+            text.push_str(&format!("let c{n} = c{}.clone(); ", n - 1));
+        }
+        text.push_str(&format!("run(1, c{aliases}.clone()); }}"));
+        assert_eq!(passes_call_making_closure(&text, "run"), expected, "{text}");
+    }
+}

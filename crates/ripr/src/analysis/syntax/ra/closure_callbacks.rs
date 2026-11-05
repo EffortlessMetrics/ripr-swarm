@@ -96,8 +96,9 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
 }
 
 /// Whether any call to `helper` in `test_text`, reached or not, passes an
-/// argument that contains a closure literal whose body holds a call, or a bare
-/// name the test bound earlier to one. The plain-helper path asks this of
+/// argument that contains a closure literal whose body holds a call, or a
+/// name (possibly cloned) the test bound earlier to one. The plain-helper path
+/// asks this of
 /// a helper that never invokes a parameter directly (#9997): such a helper
 /// either never runs the closure or only forwards it, so its assertions cannot
 /// be shown to observe what the closure called. Deliberately broader than
@@ -107,12 +108,15 @@ pub(crate) fn closure_argument_positions(test_text: &str, helper: &str) -> Optio
 ///
 /// A named argument (`c`, `&c`, `(c)`) is withheld when a `let c = <call-making
 /// closure value>` — a closure literal with a call, a `Box`/`Rc`/`Arc::new` of
-/// one, or an alias chain to either (up to four hops, then fail-closed) — (the
+/// one, or an alias/clone chain to either (up to four hops, then fail-closed) — (the
 /// literal bare, `&`-borrowed or parenthesized) precedes the helper call in a
 /// block that encloses it. Rebinding, `mut` and shadowing do not exempt it: any
 /// such earlier binding withholds, so a later `let c = 5` is a missed advisory
 /// rather than a guess about which binding the name reaches. A binding in a
 /// block that does not enclose the call is another name and does not count.
+/// An argument or initializer may retain that name through zero-argument,
+/// nongeneric `.clone()` calls (#13219). This only withholds: recognizing the
+/// spelling neither establishes `Clone` dispatch nor grants callback execution.
 /// Function items passed by name are not recognized.
 pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool {
     let Some(parse) = parse_clean_source_file(test_text) else {
@@ -126,7 +130,7 @@ pub(crate) fn passes_call_making_closure(test_text: &str, helper: &str) -> bool 
             call.arg_list().is_some_and(|arguments| {
                 arguments.args().any(|argument| {
                     holds_call_making_closure(argument.syntax())
-                        || bare_name(argument)
+                        || retained_callback_name(argument)
                             .is_some_and(|name| bound_to_call_making_closure(&call, &name))
                 })
             })
@@ -156,12 +160,22 @@ fn holds_call_making_closure(node: &ra_ap_syntax::SyntaxNode) -> bool {
         })
 }
 
-/// The identifier of an argument that is exactly a single-segment name, through
-/// parentheses and borrows (`c`, `(c)`, `&c`, `&mut c`).
-fn bare_name(argument: ast::Expr) -> Option<String> {
+/// A single-segment source name retained through parentheses, borrows and
+/// argumentless `.clone()` calls. Other methods and computed receivers do not
+/// identify a binding; an ordinary value clone alone must not withhold credit.
+fn retained_callback_name(argument: ast::Expr) -> Option<String> {
     match argument {
-        ast::Expr::ParenExpr(paren) => bare_name(paren.expr()?),
-        ast::Expr::RefExpr(borrow) => bare_name(borrow.expr()?),
+        ast::Expr::ParenExpr(paren) => retained_callback_name(paren.expr()?),
+        ast::Expr::RefExpr(borrow) => retained_callback_name(borrow.expr()?),
+        ast::Expr::MethodCallExpr(method) => {
+            if method.name_ref()?.text() != "clone"
+                || method.generic_arg_list().is_some()
+                || method.arg_list()?.args().next().is_some()
+            {
+                return None;
+            }
+            retained_callback_name(method.receiver()?)
+        }
         ast::Expr::PathExpr(path) => {
             let path = path.path()?;
             if path.qualifier().is_some() {
@@ -175,8 +189,8 @@ fn bare_name(argument: ast::Expr) -> Option<String> {
 
 /// Whether `call` sits after a `let NAME = <call-making closure value>` in a
 /// block that encloses it. The initializer is a closure literal, a smart-pointer
-/// `new` of one, or a bare-name alias chain to either (depth cap four, then
-/// fail-closed withhold).
+/// `new` of one, or a name retained through aliases/clones of either (depth cap
+/// four, then fail-closed withhold).
 fn bound_to_call_making_closure(call: &ast::CallExpr, name: &str) -> bool {
     bound_to_call_making_closure_before(call.syntax().text_range().start(), call.syntax(), name, 0)
 }
@@ -223,7 +237,7 @@ fn call_making_closure_initializer(
     if smart_pointer_new_with_call_making_closure(initializer.clone()) {
         return true;
     }
-    let Some(alias) = bare_name(initializer) else {
+    let Some(alias) = retained_callback_name(initializer) else {
         return false;
     };
     bound_to_call_making_closure_before(
