@@ -70,6 +70,8 @@ fn identity(record: &Value, repo: &str) -> Result<WorkloadIdentity, String> {
         note: String::new(),
         heavy: false,
         ceilings: BTreeMap::new(),
+        size_tier: None,
+        memory_ratchet: None,
     };
     validate_corpus(std::slice::from_ref(&entry))?;
     Ok(WorkloadIdentity {

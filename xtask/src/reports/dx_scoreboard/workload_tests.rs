@@ -47,10 +47,12 @@ fn measured_corpus_retains_the_effective_base_and_partial_contract() -> Result<(
     entry.base_sha = Some(OTHER_SHA.to_string());
     entry.language = Some("typescript".to_string());
     entry.expected_partial = Some("language_scope_unsupported".to_string());
+    entry.size_tier = Some("python_ts".to_string());
     let partial = measure::measured_corpus_entry(&entry, OTHER_SHA);
     assert_eq!(partial["base"], OTHER_SHA);
     assert_eq!(partial["language"], "typescript");
     assert_eq!(partial["expected_partial"], "language_scope_unsupported");
+    assert_eq!(partial["size_tier"], "python_ts");
     Ok(())
 }
 

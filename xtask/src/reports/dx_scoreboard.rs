@@ -69,6 +69,14 @@ const FIRST_RUN_WORKFLOW_LINES: &str = "workflow_lines";
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
+/// Measured warm-check runs per repository after the warm-up run. Three is
+/// the smallest count with a median that survives one outlier; the cold
+/// instruments stay at one run.
+pub(crate) const DEFAULT_WARM_SAMPLES: usize = 3;
+/// Upper bound on `--samples` so a typo cannot hold a hosted runner for hours.
+const MAX_WARM_SAMPLES: usize = 50;
+/// The metric whose peak-memory ceiling a repository's `size_tier` supplies.
+pub(crate) const TIER_RSS_METRIC: &str = "speed.warm_check_peak_rss_mb";
 const BOARDS: [&str; 9] = [
     "speed",
     "ci",
@@ -81,7 +89,7 @@ const BOARDS: [&str; 9] = [
     "repair",
 ];
 
-const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>]
+const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>] [--samples <n>]
 
 Measures the developer-experience scoreboards declared in
 benchmarks/dx_scoreboard/scoreboards.toml and writes
@@ -95,6 +103,10 @@ target/ripr/reports/dx-scoreboard.{json,md}.
   --ripr-bin <path>   measure this binary instead of building release ripr
   --ingest <file>     merge metrics measured by another harness
   --baseline <file>   compare against an earlier dx-scoreboard.json
+  --samples <n>       measured warm-check runs per repository after the warm-up
+                      (default 3, at most 50); speed.warm_check_p50_ms and
+                      speed.warm_check_p95_ms are nearest-rank over them, and
+                      peak memory is the maximum. Cold instruments stay at one run
   --gate              exit nonzero when a metric regresses past its margin
                       or an instrument or case comparison fails";
 
@@ -113,6 +125,23 @@ pub(crate) struct Config {
     pub(crate) corpus: Vec<CorpusEntry>,
     #[serde(default)]
     pub(crate) metric: Vec<MetricDef>,
+    /// Repository-size tiers with the peak-memory bar each one is held to.
+    #[serde(default)]
+    pub(crate) size_tier: Vec<SizeTier>,
+}
+
+/// A repository-size tier. `peak_rss_mb` is the release-ladder bar for warm
+/// `ripr check` peak memory at that size (docs/METRICS.md, R1). A corpus
+/// entry naming the tier is held to it as a hard ceiling on
+/// `speed.warm_check_peak_rss_mb` unless the entry sets a different
+/// ceiling; a looser one needs a dated `memory_ratchet` note.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct SizeTier {
+    pub(crate) id: String,
+    pub(crate) description: String,
+    pub(crate) peak_rss_mb: f64,
+    /// Where the bar comes from: `ladder` or `ladder_hard_cap`.
+    pub(crate) bar_source: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -146,6 +175,14 @@ pub(crate) struct CorpusEntry {
     /// a complete result or any other limit fails the row (#12052).
     #[serde(default)]
     pub(crate) expected_partial: Option<String>,
+    /// Name of a `[[size_tier]]`; supplies the default peak-memory ceiling.
+    #[serde(default)]
+    pub(crate) size_tier: Option<String>,
+    /// Dated note required when this entry's `speed.warm_check_peak_rss_mb`
+    /// ceiling is looser than its tier's bar: current ceiling, ladder bar
+    /// and the date it was set.
+    #[serde(default)]
+    pub(crate) memory_ratchet: Option<String>,
 }
 
 /// Languages a corpus entry may declare.
@@ -205,6 +242,8 @@ pub(crate) struct Options {
     baseline: Option<PathBuf>,
     gate: bool,
     pub(crate) timeout_ms: u64,
+    /// Measured warm-check runs per repository after the warm-up run.
+    pub(crate) samples: usize,
 }
 
 /// One observation of a metric, optionally for one corpus repository.
@@ -340,6 +379,7 @@ pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
         baseline: None,
         gate: false,
         timeout_ms: DEFAULT_TIMEOUT_MS,
+        samples: DEFAULT_WARM_SAMPLES,
     };
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -384,6 +424,18 @@ pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
                         .ok_or_else(|| {
                             format!("--timeout-ms must be a positive integer, got `{raw}`")
                         })?;
+            }
+            "--samples" => {
+                let raw = value("--samples")?;
+                options.samples = raw
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| (1..=MAX_WARM_SAMPLES).contains(n))
+                    .ok_or_else(|| {
+                        format!(
+                            "--samples must be an integer from 1 to {MAX_WARM_SAMPLES}, got `{raw}`"
+                        )
+                    })?;
             }
             other => return Err(format!("unknown dx-scoreboard argument: {other}\n{USAGE}")),
         }
@@ -437,6 +489,8 @@ pub(crate) fn corpus_from_manifest(value: &Value) -> Result<(String, Vec<CorpusE
             // entry in the inline list only.
             ceilings: BTreeMap::new(),
             expected_partial: None,
+            size_tier: None,
+            memory_ratchet: None,
             // A present non-string value is an error, not an absent field:
             // reading it as absent would file the entry under `rust`.
             language: match &repo["language"] {
@@ -506,7 +560,7 @@ pub(crate) fn validate_corpus(corpus: &[CorpusEntry]) -> Result<(), String> {
 }
 
 pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
-    let config: Config =
+    let mut config: Config =
         toml::from_str(text).map_err(|err| format!("parse dx scoreboard config: {err}"))?;
     if config.schema_version != CONFIG_SCHEMA_VERSION {
         return Err(format!(
@@ -570,8 +624,91 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
             ));
         }
     }
+    apply_size_tiers(&mut config)?;
     validate_ceilings(&config)?;
     Ok(config)
+}
+
+/// Resolve each entry's `size_tier` into its peak-memory ceiling. An entry
+/// with no explicit ceiling takes the tier bar. An explicit ceiling tighter
+/// than or equal to the bar stands. A looser one is a ratchet toward the
+/// bar and must say so, with a date, in `memory_ratchet`; a ratchet note on
+/// an entry that meets its bar is stale and refused.
+fn apply_size_tiers(config: &mut Config) -> Result<(), String> {
+    let mut tiers = BTreeMap::new();
+    for tier in &config.size_tier {
+        if tiers.insert(tier.id.clone(), tier.clone()).is_some() {
+            return Err(format!("duplicate size_tier `{}`", tier.id));
+        }
+        if tier.description.trim().is_empty() {
+            return Err(format!("size_tier `{}` needs a description", tier.id));
+        }
+        if !tier.peak_rss_mb.is_finite() || tier.peak_rss_mb <= 0.0 {
+            return Err(format!(
+                "size_tier `{}` peak_rss_mb must be a positive number",
+                tier.id
+            ));
+        }
+        if !["ladder", "ladder_hard_cap"].contains(&tier.bar_source.as_str()) {
+            return Err(format!(
+                "size_tier `{}` bar_source must be `ladder` or `ladder_hard_cap`",
+                tier.id
+            ));
+        }
+    }
+    for entry in &mut config.corpus {
+        let Some(tier_id) = entry.size_tier.clone() else {
+            if entry.memory_ratchet.is_some() {
+                return Err(format!(
+                    "corpus `{}` sets memory_ratchet without a size_tier",
+                    entry.id
+                ));
+            }
+            continue;
+        };
+        let Some(tier) = tiers.get(&tier_id) else {
+            return Err(format!(
+                "corpus `{}` names unknown size_tier `{tier_id}`",
+                entry.id
+            ));
+        };
+        match entry.ceilings.get(TIER_RSS_METRIC).copied() {
+            None => {
+                if entry.memory_ratchet.is_some() {
+                    return Err(format!(
+                        "corpus `{}` has a memory_ratchet note but no explicit `{TIER_RSS_METRIC}` ceiling",
+                        entry.id
+                    ));
+                }
+                entry
+                    .ceilings
+                    .insert(TIER_RSS_METRIC.to_string(), tier.peak_rss_mb);
+            }
+            Some(ceiling) if ceiling > tier.peak_rss_mb => {
+                let note = entry.memory_ratchet.as_deref().unwrap_or_default();
+                let dated = note
+                    .split(|c: char| !(c.is_ascii_digit() || c == '-'))
+                    .any(|word| {
+                        word.len() == 10 && word.as_bytes()[4] == b'-' && word.as_bytes()[7] == b'-'
+                    });
+                if !dated || !note.contains(&format!("{ceiling}")) {
+                    return Err(format!(
+                        "corpus `{}` ceiling {ceiling} MB exceeds size_tier `{tier_id}` bar {} MB; memory_ratchet must state the current ceiling and a YYYY-MM-DD date",
+                        entry.id, tier.peak_rss_mb
+                    ));
+                }
+            }
+            Some(_) => {
+                if entry.memory_ratchet.is_some() {
+                    return Err(format!(
+                        "corpus `{}` meets its size_tier `{tier_id}` bar, so its memory_ratchet note is stale",
+                        entry.id
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Each corpus ceiling must name a measured per-repository metric where
