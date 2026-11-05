@@ -30,12 +30,20 @@ mod tests {{
 
 pub(super) fn entries(test_body: &str) -> Result<Vec<(ClassifiedSeam, ClassifiedSeam)>, String> {
     let index = fixture_index(test_body)?;
-    assert!(index.files().values().all(|file| !file.used_lexical_fallback));
+    assert!(
+        index
+            .files()
+            .values()
+            .all(|file| !file.used_lexical_fallback)
+    );
     let context = CompactGripContext::new(&index);
     let mut entries = Vec::new();
     for seam in inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index) {
         if !seam.owner().ends_with("::make_record")
-            || !matches!(seam.kind(), SeamKind::FieldConstruction | SeamKind::ReturnValue)
+            || !matches!(
+                seam.kind(),
+                SeamKind::FieldConstruction | SeamKind::ReturnValue
+            )
         {
             continue;
         }
@@ -54,7 +62,11 @@ pub(super) fn entries(test_body: &str) -> Result<Vec<(ClassifiedSeam, Classified
             },
         ));
     }
-    assert_eq!(entries.len(), 3, "one return and two field seams: {entries:?}");
+    assert_eq!(
+        entries.len(),
+        3,
+        "one return and two field seams: {entries:?}"
+    );
     Ok(entries)
 }
 
@@ -71,7 +83,11 @@ fn assert_limits(test: &str, expected_fields: [bool; 2]) -> Result<(), String> {
                 9 => expected_fields[1],
                 line => return Err(format!("unexpected fixture seam at line {line}")),
             };
-            assert_eq!(entry.evidence.names_static_limit(LIMIT), expected, "{entry:?}");
+            assert_eq!(
+                entry.evidence.names_static_limit(LIMIT),
+                expected,
+                "{entry:?}"
+            );
             if expected {
                 assert!(matches!(
                     entry.class,
@@ -238,7 +254,10 @@ fn compact_limit_reads_a_snapshot_witness_past_the_related_test_cap() -> Result<
                 test.test.name == "z_snapshot" && *reason == RelationReason::DirectOwnerCall
             })
             .ok_or("missing directly related snapshot witness")?;
-        assert!(position >= COMPACT_RELATED_TEST_LIMIT, "position {position}");
+        assert!(
+            position >= COMPACT_RELATED_TEST_LIMIT,
+            "position {position}"
+        );
         let full = evidence_for_seam(&seam, &index);
         let compact = compact_evidence_for_seam(&seam, &context);
         assert!(full.names_static_limit(LIMIT), "{full:?}");

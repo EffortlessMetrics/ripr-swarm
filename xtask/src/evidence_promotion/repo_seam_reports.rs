@@ -326,7 +326,10 @@ pub(super) fn expected_limitation_violations(
 
 fn normalized_seam_expression(expression: &str) -> &str {
     let expression = expression.trim();
-    expression.strip_suffix(',').unwrap_or(expression).trim_end()
+    expression
+        .strip_suffix(',')
+        .unwrap_or(expression)
+        .trim_end()
 }
 
 /// Older trimmed captures may omit the evidence record. An explicit malformed
@@ -760,8 +763,14 @@ mod tests {
         with_field_limit(&mut ordinary, false);
         let mut marked = ordinary.clone();
         with_field_limit(&mut marked, true);
-        assert_eq!(ordinary["seams"][0]["grip_class"], marked["seams"][0]["grip_class"]);
-        assert_eq!(ordinary["seams"][0]["evidence"], marked["seams"][0]["evidence"]);
+        assert_eq!(
+            ordinary["seams"][0]["grip_class"],
+            marked["seams"][0]["grip_class"]
+        );
+        assert_eq!(
+            ordinary["seams"][0]["evidence"],
+            marked["seams"][0]["evidence"]
+        );
         assert!(field_limit_violations(&ordinary, false).is_empty());
         assert!(field_limit_violations(&marked, true).is_empty());
         assert_eq!(field_limit_violations(&ordinary, true).len(), 1);

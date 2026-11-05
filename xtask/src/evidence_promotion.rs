@@ -991,18 +991,23 @@ fn evidence_promotion_parse_assertion(
                          expected_repo_seam_limitation.present must be a boolean"
                     )
                 })?;
-            Ok(EvidencePromotionSemanticAssertion::ExpectedRepoSeamLimitation {
-                owner: evidence_promotion_required_assertion_string(
-                    case_id, index, assertion, "owner",
-                )?,
-                expression: evidence_promotion_required_assertion_string(
-                    case_id, index, assertion, "expression",
-                )?,
-                category: evidence_promotion_required_assertion_string(
-                    case_id, index, assertion, "category",
-                )?,
-                present,
-            })
+            Ok(
+                EvidencePromotionSemanticAssertion::ExpectedRepoSeamLimitation {
+                    owner: evidence_promotion_required_assertion_string(
+                        case_id, index, assertion, "owner",
+                    )?,
+                    expression: evidence_promotion_required_assertion_string(
+                        case_id,
+                        index,
+                        assertion,
+                        "expression",
+                    )?,
+                    category: evidence_promotion_required_assertion_string(
+                        case_id, index, assertion, "category",
+                    )?,
+                    present,
+                },
+            )
         }
         "must_disclose_witness" => Ok(EvidencePromotionSemanticAssertion::MustDiscloseWitness),
         "must_disclose_limitation_detail" => {

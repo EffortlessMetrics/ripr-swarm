@@ -37,9 +37,9 @@ pub(super) fn withhold<'a>(
         return false;
     }
     let changed_line = seam.display_line();
-    let Some(owner) = owner.filter(|owner| {
-        owner.start_line <= changed_line && changed_line <= owner.end_line
-    }) else {
+    let Some(owner) =
+        owner.filter(|owner| owner.start_line <= changed_line && changed_line <= owner.end_line)
+    else {
         return false;
     };
     let Some(changed_text) = owner.body.lines().nth(changed_line - owner.start_line) else {

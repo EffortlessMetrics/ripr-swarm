@@ -67,7 +67,12 @@ fn t() {{ div(1, 0); }}
             (PathBuf::from("src/lib.rs"), lib),
             (PathBuf::from("tests/t.rs"), tests.as_str()),
         ])?;
-        assert!(index.files().values().all(|file| !file.used_lexical_fallback));
+        assert!(
+            index
+                .files()
+                .values()
+                .all(|file| !file.used_lexical_fallback)
+        );
         let context = CompactGripContext::new(&index);
         let seams: Vec<_> = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index)
             .into_iter()
@@ -102,7 +107,11 @@ fn t() {{ div(1, 0); }}
                 assert_eq!(named[0].stage, "discriminate");
                 assert_eq!(named[0].state, "no");
                 assert_eq!(named[0].reason, entry.evidence.discriminate.summary);
-                assert!(named[0].reason.starts_with(&format!("{}: ", PANIC.as_str())));
+                assert!(
+                    named[0]
+                        .reason
+                        .starts_with(&format!("{}: ", PANIC.as_str()))
+                );
                 assert!(named[0].reason.contains("passes only if something panics"));
             }
         }
@@ -134,7 +143,12 @@ mod tests {
 }
 ";
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
-    assert!(index.files().values().all(|file| !file.used_lexical_fallback));
+    assert!(
+        index
+            .files()
+            .values()
+            .all(|file| !file.used_lexical_fallback)
+    );
     let owner = index
         .functions()
         .iter()
@@ -146,7 +160,8 @@ mod tests {
         .find(|test| test.name == "snapshot_panicking_record")
         .ok_or("missing combined panic and snapshot test")?;
     assert!(
-        insta_field_snapshot_limitation(test, "items: items.iter().count(),", &owner.name).is_some()
+        insta_field_snapshot_limitation(test, "items: items.iter().count(),", &owner.name)
+            .is_some()
     );
     let seams: Vec<_> = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index)
         .into_iter()
@@ -165,8 +180,18 @@ mod tests {
         );
         assert!(evidence.names_static_limit(PANIC), "{evidence:?}");
         assert!(!evidence.names_static_limit(FRAMEWORK));
-        assert!(evidence.discriminate.summary.starts_with(&format!("{}: ", PANIC.as_str())));
-        assert!(evidence.discriminate.summary.contains("snapshot_panicking_record"));
+        assert!(
+            evidence
+                .discriminate
+                .summary
+                .starts_with(&format!("{}: ", PANIC.as_str()))
+        );
+        assert!(
+            evidence
+                .discriminate
+                .summary
+                .contains("snapshot_panicking_record")
+        );
         let original = serde_json::to_value(&evidence).map_err(|error| error.to_string())?;
         assert!(!super::super::framework_snapshot::withhold(
             seam,

@@ -117,7 +117,10 @@ fn pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls() -> R
         let summary = read_json(&summary_path)?;
         let exposure = read_json(&exposure_path)?;
         assert_eq!(summary["status"], "complete", "{summary}");
-        assert_eq!(summary["actionable_seams_total"], actionable, "{name}: {summary}");
+        assert_eq!(
+            summary["actionable_seams_total"], actionable,
+            "{name}: {summary}"
+        );
         assert_eq!(
             summary["withheld_static_limitations_total"],
             limited.iter().filter(|limited| **limited).count(),
@@ -156,7 +159,11 @@ fn pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls() -> R
             }
             assert_eq!(
                 record["evidence_path"]["discriminate"]["state"],
-                if expected_class == "strongly_gripped" { "yes" } else { "weak" },
+                if expected_class == "strongly_gripped" {
+                    "yes"
+                } else {
+                    "weak"
+                },
                 "{record}"
             );
             assert_eq!(
@@ -166,12 +173,22 @@ fn pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls() -> R
             );
             let brief = run_ripr(
                 root,
-                &["agent", "brief", "--root", &root_arg, "--seam-id", seam_id, "--json"],
+                &[
+                    "agent",
+                    "brief",
+                    "--root",
+                    &root_arg,
+                    "--seam-id",
+                    seam_id,
+                    "--json",
+                ],
             )?;
             assert_exit(&brief, 0, "brief on the exact field seam");
-            let brief: serde_json::Value = serde_json::from_slice(&brief.stdout)
-                .map_err(|error| error.to_string())?;
-            let top = brief["top_seams"].as_array().ok_or("missing brief top_seams")?;
+            let brief: serde_json::Value =
+                serde_json::from_slice(&brief.stdout).map_err(|error| error.to_string())?;
+            let top = brief["top_seams"]
+                .as_array()
+                .ok_or("missing brief top_seams")?;
             assert_eq!(top.len(), usize::from(selected[index]), "{name}: {brief}");
             if selected[index] {
                 assert_eq!(top[0]["seam_id"], seam_id);

@@ -102,7 +102,10 @@ fn a_named_field_snapshot_limit_alone_withholds_pilot_brief_and_repair() -> Resu
         if withheld {
             assert_eq!(named[0].state, "weak");
             assert_eq!(named[0].reason, entry.evidence.discriminate.summary);
-            assert_eq!(named[0].repair_route, "analysis/oracle-semantics-audit-fixes");
+            assert_eq!(
+                named[0].repair_route,
+                "analysis/oracle-semantics-audit-fixes"
+            );
         }
         let entries = [entry];
         assert_eq!(
@@ -141,8 +144,14 @@ fn a_named_field_snapshot_limit_alone_withholds_pilot_brief_and_repair() -> Resu
                 record["actionability"]["reason"],
                 "whether the framework oracle notices the changed field is unresolved"
             );
-            assert_eq!(record["canonical_item"]["canonical_item_kind"], "limitation");
-            assert_eq!(record["recommendation"]["action"], "inspect_static_limitation");
+            assert_eq!(
+                record["canonical_item"]["canonical_item_kind"],
+                "limitation"
+            );
+            assert_eq!(
+                record["recommendation"]["action"],
+                "inspect_static_limitation"
+            );
             for command in ["repair_command", "verify_command", "receipt_command"] {
                 assert!(record["canonical_item"][command].is_null(), "{record}");
             }

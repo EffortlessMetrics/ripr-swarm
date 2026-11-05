@@ -321,7 +321,12 @@ fn source_mentions_do_not_manufacture_a_panic_limitation() -> Result<(), String>
                 AgentBriefPolicy::from_config(&config),
             );
             assert_eq!(brief.top_seams.len(), 1);
-            assert!(brief.warnings.iter().all(|warning| !warning.contains("expected panic")));
+            assert!(
+                brief
+                    .warnings
+                    .iter()
+                    .all(|warning| !warning.contains("expected panic"))
+            );
         }
     }
     // An independently unknown stage still has a limitation, but an incidental

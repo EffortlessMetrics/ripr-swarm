@@ -915,10 +915,9 @@ impl AgentBriefOmission {
                 {
                     return Some(Self::PanicOutcomeUnresolved(entry.class));
                 }
-                if entry
-                    .evidence
-                    .names_static_limit(crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved)
-                {
+                if entry.evidence.names_static_limit(
+                    crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved,
+                ) {
                     return Some(Self::FrameworkOracleUnresolved(entry.class));
                 }
                 return Some(Self::EvidenceLimited(entry.class));

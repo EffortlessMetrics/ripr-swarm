@@ -1,5 +1,5 @@
-use super::*;
 use super::field_snapshot::{populate, read_json};
+use super::*;
 
 const PANIC: &str = "rust_panic_outcome_unresolved";
 const FRAMEWORK: &str = "rust_framework_oracle_unresolved";
@@ -29,33 +29,50 @@ fn an_ordinary_panic_token_test_name_keeps_pilot_and_brief_recommendations() -> 
                 assert_eq!(record["evidence_path"][stage]["state"], "yes", "{record}");
             }
             assert_eq!(record["evidence_path"]["discriminate"]["state"], "weak");
-            let limits = record["static_limitations"].as_array().ok_or("missing limits")?;
+            let limits = record["static_limitations"]
+                .as_array()
+                .ok_or("missing limits")?;
             assert!(
-                limits.iter().all(|limit| {
-                    limit["category"] != PANIC && limit["category"] != FRAMEWORK
-                }),
+                limits
+                    .iter()
+                    .all(|limit| { limit["category"] != PANIC && limit["category"] != FRAMEWORK }),
                 "{record}"
             );
         }
         for (line, seam_id) in [(8, "9690b8968d3b2c8e"), (9, "969e35968d468b51")] {
-            let fields: Vec<_> = seams.iter().filter(|seam| seam["seam_id"] == seam_id).collect();
+            let fields: Vec<_> = seams
+                .iter()
+                .filter(|seam| seam["seam_id"] == seam_id)
+                .collect();
             assert_eq!(fields.len(), 1, "one exact field seam");
             assert_eq!(fields[0]["kind"], "field_construction");
             assert_eq!(fields[0]["line"], line);
             let brief = run_ripr(
                 root,
-                &["agent", "brief", "--root", &root_arg, "--seam-id", seam_id, "--json"],
+                &[
+                    "agent",
+                    "brief",
+                    "--root",
+                    &root_arg,
+                    "--seam-id",
+                    seam_id,
+                    "--json",
+                ],
             )?;
             assert_exit(&brief, 0, "brief on the ordinary weak field");
-            let brief: serde_json::Value = serde_json::from_slice(&brief.stdout)
-                .map_err(|error| error.to_string())?;
-            let top = brief["top_seams"].as_array().ok_or("missing brief top_seams")?;
+            let brief: serde_json::Value =
+                serde_json::from_slice(&brief.stdout).map_err(|error| error.to_string())?;
+            let top = brief["top_seams"]
+                .as_array()
+                .ok_or("missing brief top_seams")?;
             assert_eq!(top.len(), 1, "{brief}");
             assert_eq!(top[0]["seam_id"], seam_id);
             assert!(
                 brief["warnings"].as_array().is_some_and(|warnings| {
                     warnings.iter().all(|warning| {
-                        warning.as_str().is_some_and(|warning| !warning.contains("expected panic"))
+                        warning
+                            .as_str()
+                            .is_some_and(|warning| !warning.contains("expected panic"))
                     })
                 }),
                 "{brief}"
@@ -70,7 +87,10 @@ fn an_ordinary_panic_token_test_name_keeps_pilot_and_brief_recommendations() -> 
         assert!(stderr_text(&warm).contains("phase=cache_load status=hit"));
         assert_eq!(read_json(&exposure_path)?["seams"], exposure["seams"]);
         assert_eq!(read_json(&summary_path)?["actionable_seams_total"], 3);
-        assert_eq!(read_json(&summary_path)?["withheld_static_limitations_total"], 0);
+        assert_eq!(
+            read_json(&summary_path)?["withheld_static_limitations_total"],
+            0
+        );
     }
     Ok(())
 }
@@ -92,7 +112,11 @@ fn a_field_snapshot_cannot_replace_an_established_panic_explanation() -> Result<
     git_commit(root, "panic and snapshot coexistence")?;
     let root_arg = root.to_string_lossy().into_owned();
     let pilot = run_ripr(root, &["pilot", "--root", &root_arg, "--quiet"])?;
-    assert_exit(&pilot, 0, "pilot on genuine panic and field snapshot uncertainty");
+    assert_exit(
+        &pilot,
+        0,
+        "pilot on genuine panic and field snapshot uncertainty",
+    );
     let summary = read_json(&root.join("target/ripr/pilot/pilot-summary.json"))?;
     let exposure = read_json(&root.join("target/ripr/pilot/repo-exposure.json"))?;
     assert_eq!(summary["status"], "complete");
@@ -100,14 +124,21 @@ fn a_field_snapshot_cannot_replace_an_established_panic_explanation() -> Result<
     assert_eq!(summary["withheld_static_limitations_total"], 2);
     let seams = exposure["seams"].as_array().ok_or("missing repo seams")?;
     assert_eq!(seams.len(), 2);
-    let fields: Vec<_> = seams.iter().filter(|seam| seam["kind"] == "field_construction").collect();
+    let fields: Vec<_> = seams
+        .iter()
+        .filter(|seam| seam["kind"] == "field_construction")
+        .collect();
     assert_eq!(fields.len(), 1);
     let field = fields[0];
     assert_eq!(field["seam_id"], "96862f968d31ef3e");
     assert_eq!(field["grip_class"], "reachable_unrevealed");
     let limits = field["evidence_record"]["static_limitations"]
-        .as_array().ok_or("missing static limitations")?;
-    let named: Vec<_> = limits.iter().filter(|limit| limit["category"] == PANIC).collect();
+        .as_array()
+        .ok_or("missing static limitations")?;
+    let named: Vec<_> = limits
+        .iter()
+        .filter(|limit| limit["category"] == PANIC)
+        .collect();
     assert_eq!(named.len(), 1);
     assert_eq!(named[0]["stage"], "discriminate");
     assert_eq!(named[0]["state"], "no");
@@ -117,17 +148,35 @@ fn a_field_snapshot_cannot_replace_an_established_panic_explanation() -> Result<
     assert!(limits.iter().all(|limit| limit["category"] != FRAMEWORK));
     let brief = run_ripr(
         root,
-        &["agent", "brief", "--root", &root_arg, "--seam-id", "96862f968d31ef3e", "--json"],
+        &[
+            "agent",
+            "brief",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            "96862f968d31ef3e",
+            "--json",
+        ],
     )?;
     assert_exit(&brief, 0, "brief preserves the genuine panic explanation");
-    let brief: serde_json::Value = serde_json::from_slice(&brief.stdout)
-        .map_err(|error| error.to_string())?;
-    assert_eq!(brief["top_seams"].as_array().ok_or("missing top_seams")?.len(), 0);
+    let brief: serde_json::Value =
+        serde_json::from_slice(&brief.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(
+        brief["top_seams"]
+            .as_array()
+            .ok_or("missing top_seams")?
+            .len(),
+        0
+    );
     assert!(brief["warnings"].as_array().is_some_and(|warnings| {
         warnings.iter().any(|warning| {
-            warning.as_str().is_some_and(|warning| warning.contains("expected panic"))
+            warning
+                .as_str()
+                .is_some_and(|warning| warning.contains("expected panic"))
         }) && warnings.iter().all(|warning| {
-            warning.as_str().is_some_and(|warning| !warning.contains("framework oracle"))
+            warning
+                .as_str()
+                .is_some_and(|warning| !warning.contains("framework oracle"))
         })
     }));
     Ok(())
