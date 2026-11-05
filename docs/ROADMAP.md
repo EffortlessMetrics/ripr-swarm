@@ -1,51 +1,149 @@
 # Roadmap
 
 RIPR helps a developer reviewing changed behavior identify a missing or weak
-test discriminator and carry one bounded test repair through evidence,
-verification, and a receipt. It reports static exposure and explicit
+test discriminator and carry one bounded test improvement through evidence,
+native verification, and an explicit outcome. It reports static exposure and
 limitations; runtime mutation remains a separate confirmation step.
 
+**Next product milestone:** repeat an installed Rust workflow on real changes
+in `ripr-swarm` and `perl-lsp-swarm`: get an honest finding, no-action result,
+or limitation; follow the same subject into a focused native test when useful;
+refresh; and repeat without setup or artifact archaeology.
+[#1693](https://github.com/EffortlessMetrics/ripr-swarm/issues/1693) owns this
+daily-use outcome. An ordinary useful check does not require a governed repair
+transaction, a qualified editor/MCP client, or a new release.
+
+## Choose the right planning surface
+
+| Question | Owner |
+| --- | --- |
+| What user outcome comes next, and why? | This roadmap and the live [daily-use programme #1693](https://github.com/EffortlessMetrics/ripr-swarm/issues/1693). |
+| What bounded change can I implement and how will it finish? | [Implementation plan](IMPLEMENTATION_PLAN.md#current-delivery-priorities), then the linked issue and its existing PR. |
+| Which experience failures need attention? | [Experience roadmap](roadmap/experience.md) and ranked gaps [#9278](https://github.com/EffortlessMetrics/ripr-swarm/issues/9278). |
+| What is measured, supported, or still unestablished? | [Metrics](METRICS.md), [support tiers](status/SUPPORT_TIERS.md), [capability matrix](CAPABILITY_MATRIX.md), and [false-verdict ledger](roadmap/false-verdicts.md). |
+| What belongs to the selected release transaction? | [0.11 execution index](releases/0.11.0-roadmap.md), [cycle tracker #12830](https://github.com/EffortlessMetrics/ripr-swarm/issues/12830), and their governing release receipts. |
+
 For first use, start with the [Quickstart](QUICKSTART.md) or
-[first successful PR workflow](FIRST_PR_WORKFLOW.md). This page is the builder
-entry point. The [retained history](#historical-roadmap-and-campaign-archive)
-preserves earlier campaigns without selecting current work.
+[first successful PR workflow](FIRST_PR_WORKFLOW.md). Earlier campaigns remain
+in the [historical archive](#historical-roadmap-and-campaign-archive); their
+old checkboxes, dates, and PR states do not select today's work.
 
 ## Current product position
 
-The [support tiers](status/SUPPORT_TIERS.md) define what users may rely on.
-The [release ladder](METRICS.md#release-ladder) (R0 installable and honest,
-R1 reliable, R2 useful, R3 critical) gives each level a numeric bar and an
-instrument, and states which level a language must hold for each tier. Its
-bars are working defaults pending the owner's product call. On 2026-11-04 the
-ladder reads: R0 is not yet met because first value across install channels is
-unproven; the largest gaps are recall, Python and TypeScript repair follow-through,
-and speed and memory on large repositories
-([position](METRICS.md#position-on-2026-11-04)).
-The [capability matrix](CAPABILITY_MATRIX.md) and its
-[machine-readable source](../metrics/capabilities.toml) carry the capability
-and proof inventory.
+The [support map](status/SUPPORT_TIERS.md#current-support-map) defines bounded
+current claims. Rust static exposure and bounded repair are documented as
+`usable alpha`; fixture proof, an emitted packet, installed use, and real
+repair success remain different evidence.
 
-Rust static exposure and bounded repair are `usable alpha`. Fixture,
-package, editor, and transaction evidence must remain separate from governed
-real-repository route yield and ordinary-user success. The support-tier
-promotion contract requires real repair and installed-user evidence; adding
-a roadmap entry or passing a fixture does not promote support.
+The [release ladder](METRICS.md#release-ladder) defines R0 installable and
+honest, R1 reliable, R2 useful, and R3 critical. Its numeric bars are working
+defaults pending the owner's product call. The
+[November 4 assessment](METRICS.md#position-on-2026-11-04) reports unmet bars
+and measurement gaps. Existing support labels do not establish that those
+provisional levels are met; any reconciliation or promotion must use the
+support contract and actual evidence. This roadmap changes neither tiers nor
+thresholds and does not treat issue-reported measurements as fresh runs.
 
-The shared product target remains:
+The shared product path is:
 
 ```text
-changed behavior
--> honest diagnostic or named limitation
--> exact evidence and safe test target
--> focused external test edit
--> verification and before/after evidence
--> receipt with an explicit outcome
+changed behavior -> honest result or named limitation
+-> exact evidence and safe test target -> focused external test edit
+-> native verification and current before/after evidence -> explicit outcome
 ```
 
-CLI, CI, editor, and agent surfaces should describe the same canonical item,
-evidence, next action, and limitation. The product stays one published
-`ripr` package with an experimental LSP sidecar; unsupported language or
-analysis behavior remains visible through its documented support boundary.
+CLI, CI, editor, and agent surfaces must preserve the same item, source,
+evidence, action, and limitation. A useful refusal is a valid result, but is
+not a successful repair.
+
+## Now: continue the existing work
+
+Use [#9278](https://github.com/EffortlessMetrics/ripr-swarm/issues/9278)'s
+experience priorities inside [#1693](https://github.com/EffortlessMetrics/ripr-swarm/issues/1693):
+fix demonstrated false reassurance, wrong subjects, unusable actions, and
+repeat-use failures before expanding claims. Reuse each existing candidate.
+The order below describes dependencies of user outcomes, not a global serial
+queue; performance, measurement, documentation, and independent correctness
+work can proceed together.
+
+| Priority and outcome | Existing work | Evidence that advances the outcome |
+| --- | --- | --- |
+| First: trust the result and its next action | [#13096](https://github.com/EffortlessMetrics/ripr-swarm/issues/13096), [#13125](https://github.com/EffortlessMetrics/ripr-swarm/issues/13125), [#13138](https://github.com/EffortlessMetrics/ripr-swarm/issues/13138), and [#6307](https://github.com/EffortlessMetrics/ripr-swarm/issues/6307). | Missing scope, partial analysis, stale input, and bounded output stay visible across affected surfaces; a literal offered action reaches its promised state or a precise stop on the same source. |
+| Then: complete and repeat useful work | Installed journeys under [#4508](https://github.com/EffortlessMetrics/ripr-swarm/issues/4508); real route [#1601](https://github.com/EffortlessMetrics/ripr-swarm/issues/1601) → attempt [#3075](https://github.com/EffortlessMetrics/ripr-swarm/issues/3075); repeat-attempt repair [#13079](https://github.com/EffortlessMetrics/ripr-swarm/issues/13079). | An identified installed artifact completes the public workflow. A counted repair additionally has a safe target, independently justified discriminator, nonzero native test execution, current before/after evidence, and a terminal receipt. Repeat it without deleting retained evidence. |
+| Throughout: make the ordinary edit loop affordable | [#12947](https://github.com/EffortlessMetrics/ripr-swarm/issues/12947), [#12906](https://github.com/EffortlessMetrics/ripr-swarm/issues/12906), and regression owner [#10809](https://github.com/EffortlessMetrics/ripr-swarm/issues/10809). | Matched binary, host, workload, and cache regime; repeated cold/warm and production/test-edit samples; latency, memory, and completed semantic work reported together. Fast refusal does not satisfy a successful-analysis budget. |
+| Next: earn stronger usefulness claims per language | Calibration [#12900](https://github.com/EffortlessMetrics/ripr-swarm/issues/12900)/[#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901); repair yield [#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903); Python [#12956](https://github.com/EffortlessMetrics/ripr-swarm/issues/12956)/[#4518](https://github.com/EffortlessMetrics/ripr-swarm/issues/4518). | Report precision, recall, unmatched/unknown scope, route availability, and completed repairs separately on pinned real inputs. A measurement graph or fixture pass cannot establish installed repair success or stronger language support. |
+| Measure before claiming benefit | Provider/cohort owner [#12902](https://github.com/EffortlessMetrics/ripr-swarm/issues/12902), paired protocol [#12912](https://github.com/EffortlessMetrics/ripr-swarm/issues/12912), and outcome funnel [#6308](https://github.com/EffortlessMetrics/ripr-swarm/issues/6308). | Valid collection and input admission precede a with/without comparison. Retain the full denominator, independent quality oracle, failures, assistance, tool cost, and variance; fewer commands or greener tests alone do not establish benefit. |
+
+The existing personal-adoption targets remain with #1693: eight distinct real
+behavior-changing tasks across four active work weeks by December 31, 2026,
+both primary repositories represented, and at least two independently accepted
+test improvements. Steven's choice to keep using RIPR is a separate condition.
+These are adoption targets, not release gates or permission to manufacture work.
+
+## Next and blocked work
+
+A route observation precedes its governed repair attempt. If the producer cannot
+supply the source, discriminator, safe target, or verification command, retain
+the limitation and repair the named prerequisite; do not guess the missing
+fields. Ordinary check/explain/native-test use can still be useful independently.
+
+Broader language, client, and formal-verification work follows its own existing
+contracts. Exercise one bounded producer/consumer journey with negative controls
+before advertising more support. The
+[Rust repair promotion contract](status/SUPPORT_TIERS.md#rust-gap-repair-promotion-contract)
+owns its corpus and installed-client requirements; a single successful journey
+does not complete that parent.
+
+For operational residuals, read [#11736](https://github.com/EffortlessMetrics/ripr-swarm/issues/11736)
+and the [current cycle tracker](https://github.com/EffortlessMetrics/ripr-swarm/issues/12830).
+The generation-pin gate [#12747](https://github.com/EffortlessMetrics/ripr-swarm/pull/12747),
+hosted formatting route [#12762](https://github.com/EffortlessMetrics/ripr-swarm/pull/12762),
+and discovery refusal [#12822](https://github.com/EffortlessMetrics/ripr-swarm/pull/12822)
+are merged; their former pending entries are retained only in the dated archive.
+A merged route does not establish its live dispatch or close all parent acceptance.
+
+Each blocker belongs to its issue with the unmet input or proof, dependency,
+and next action. A blocked release or client does not block unrelated product
+work. Current-state inventory and drift checking remain with
+[#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330);
+roadmap/lifecycle reconciliation remains with
+[#2324](https://github.com/EffortlessMetrics/ripr-swarm/issues/2324).
+
+## Current work-selection authority
+
+Start with the user-directed outcome, [AGENTS.md](../AGENTS.md), current source,
+and live GitHub issues, all-state PRs, reviews, and checks. The
+[implementation plan](IMPLEMENTATION_PLAN.md#choose-and-finish-one-slice)
+describes how to select and finish one bounded slice. Documents provide
+direction and acceptance links; they do not reserve writers or replace GitHub
+as live execution state.
+
+A slice closes only the acceptance its exact evidence establishes. Record the
+landed commit, covered predicate, residual work, and next owner in the existing
+issue. Keep measured results with their input/build identity and denominator;
+link generated facts instead of copying counts or a volatile PR queue here.
+Retired singleton goal files and proposed portfolio tooling are not execution
+gates.
+
+## Release work and authority
+
+`EffortlessMetrics/ripr-swarm` is development authority;
+`EffortlessMetrics/ripr` is public release authority.
+[Swarm #2379](https://github.com/EffortlessMetrics/ripr-swarm/issues/2379),
+[source #1463](https://github.com/EffortlessMetrics/ripr/issues/1463), and
+[source #1606](https://github.com/EffortlessMetrics/ripr/issues/1606) retain the
+transaction and release acceptance. The
+[release runbook](RELEASE_TRANSACTION.md),
+[0.11 execution index](releases/0.11.0-roadmap.md), and
+[cycle tracker #12830](https://github.com/EffortlessMetrics/ripr-swarm/issues/12830)
+route to the current owners and immutable receipts.
+
+Selected membership, qualification, history-preserving integration, source-side
+release proof, ship authorization, publication, and independent public
+verification remain distinct. Rolling main movement, a roadmap date, a template,
+or a successful ordinary PR selects none of them. Follow the governing
+transaction's order and exact candidate; this roadmap grants no release,
+tagging, signing, marketplace, or registry authority.
 
 ### Decision-first feedback
 
@@ -87,25 +185,32 @@ cohort and installed recipe remain with
 [#10690](https://github.com/EffortlessMetrics/ripr-swarm/issues/10690); this
 direction does not claim that those integrations or their benefits are proven.
 
-## Now: continue the existing work
+## Product boundaries
 
-[#1693](https://github.com/EffortlessMetrics/ripr-swarm/issues/1693) owns the
-usable-to-workable-to-release-ready outcome without authorizing a release.
-Its linked leaf acceptance governs each change. Re-read live issue and
-all-state PR evidence before using an older merge-front snapshot or starting
-a writer.
+RIPR remains a static mutation-exposure analyzer. It does not become a full
+mutation runner, a coverage dashboard, a proof system, a second rust-analyzer,
+or a generic test generator. A strong nearby assertion is not sufficient
+evidence unless it observes the changed behavior. Unknown and limited outcomes
+are useful results when their reason and next step are explicit.
 
-These are entry points into existing work, not a replacement priority list:
+## Historical roadmap and campaign archive
 
-| User outcome | Existing owner and next bounded evidence |
-| --- | --- |
-| One useful Rust repair | [#1601](https://github.com/EffortlessMetrics/ripr-swarm/issues/1601) owns the next selected route observation after closed [#3074](https://github.com/EffortlessMetrics/ripr-swarm/issues/3074); [#3075](https://github.com/EffortlessMetrics/ripr-swarm/issues/3075) consumes a complete route for the first authorized test-only attempt; [#1560](https://github.com/EffortlessMetrics/ripr-swarm/issues/1560) owns the broader corpus and scorecard. Keep route observations distinct from counted repairs. |
-| Trustworthy quiet results | [#3806](https://github.com/EffortlessMetrics/ripr-swarm/issues/3806) remains open for release-challenge consumption of the judged quiet/emitted panel by [#3804](https://github.com/EffortlessMetrics/ripr-swarm/issues/3804) and [#2769](https://github.com/EffortlessMetrics/ripr-swarm/issues/2769). [#3164](https://github.com/EffortlessMetrics/ripr-swarm/issues/3164) delivered the panel (closed). A seed panel does not establish broad accuracy. |
-| A usable editor and bounded agent interface | Follow the existing editor, interface, and real-usefulness leaves linked by [#1693](https://github.com/EffortlessMetrics/ripr-swarm/issues/1693). Acceptance includes honest stale/failure state, exact targets, bounded payloads, refresh, and clean shutdown. |
-| Recoverable documentation and next work | [#2324](https://github.com/EffortlessMetrics/ripr-swarm/issues/2324) owns roadmap, artifact lifecycle/support claims, current-state inventory, and cold-start recovery. This roadmap's owning issue is [#2324](https://github.com/EffortlessMetrics/ripr-swarm/issues/2324); sibling work remains separate. |
-| An installable, qualified release | Use the source [release umbrella](https://github.com/EffortlessMetrics/ripr/issues/1463) and [execution board](https://github.com/EffortlessMetrics/ripr/issues/1606) for distribution, dependency/security decisions, first-hour proof, qualification, publication, and back-sync leaves. Ordinary swarm maintenance does not grant release authority. |
+Everything below is retained planning and campaign history. Original section
+titles and anchors remain for existing links. Statements about then-current
+versions, completed proof, proposed ordering, or earlier selection mechanisms
+describe their historical context; the current sections above and linked live
+authorities govern new work.
+
+- [Earlier product target](#end-goal) and [parallel-lane model](#multi-lane-safe-swarm-autonomy).
+- [Campaign narratives](#current-position) and [release-era context](#release-position).
+- [Earlier strategy](#strategic-sequence), [quality rails](#quality-rail-sequence), and [PR queue](#pr-queue).
+- [Release frames](#release-frames), [canonical acceptance scenario](#canonical-acceptance-scenario), and [validation gate](#validation-gate-before-deeper-semantics).
 
 ### Landed: the Oct 29 - Nov 2 convergence campaign
+
+**Historical snapshot recorded November 3, 2026.** The PR/issue states below
+are retained as observed then. Use the current sections and linked owners for
+remaining work; subsequent merges do not rewrite this campaign record.
 
 Completed arcs, cited per merged PR and current issue state:
 
@@ -130,112 +235,6 @@ Completed arcs, cited per merged PR and current issue state:
 - Operations: the scheduled main-health sentinel landed (#11006, for #10991),
   the in-suite binary-swap fix landed (#11262, for #11197), and the campaign
   learnings are encoded (#12780, #12752 merged).
-
-## Next and blocked work
-
-Preserve each leaf's dependencies and existing candidate. In the real-repair
-lane, route observation precedes an authorized attempt; a packet requiring
-guessed targets or commands cannot satisfy the start condition. Broader corpus
-and installed-client claims require their own retained evidence.
-
-A missing input, source identity, permission, upstream capability, or proof
-remains a named blocker in its owning issue. Resolve an independently
-reviewable prerequisite first, then return to the dependent leaf. Independent
-documentation, correctness, and proof work can continue within its own
-accepted scope; the roadmap does not invent a repository-wide queue.
-
-The current queued and standing items, each owned by its linked object:
-
-- 0.11.0 release path: the history-preserving swarm-to-`ripr` integration
-  plan (#12794, read-only under the
-  [ripr #1768](https://github.com/EffortlessMetrics/ripr/issues/1768) sync
-  contract, swarm #2379, and the #9271 execution roadmap) precedes the
-  source-side release tail and explicit ship authorization; the live-head
-  template has selected no candidate.
-- Queued convergence follow-ups: the shared discovery-gate refusal delta
-  (#12822, under reopened #12417), the design and arming ruling for the hosted
-  formatting-only re-bless route (#12762, Proposal A of #11736), and the
-  cache-generation pin gate review (#12747, Proposal C of #11736).
-- Standing improvement families: finding-quality bugs (the open feel-check
-  round 11 finding #12414 with #12723 in flight, and the abstention-cause
-  attribution wave #12771-#12776 with ledger #12778), and at-scale performance
-  through #12418's open children (#12506, #12508).
-
-Do not infer completion from an old issue checkbox, a merged child, an
-available command, or a green check with no subjects. Current source and
-retained exact-subject receipts decide what is delivered and what remains.
-Frequently changing inventories belong to the current-state work under
-[#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330), not copied
-counts in this document.
-
-## Current work-selection authority
-
-Start with the user-directed outcome, current repository contracts, and the
-live GitHub issue/PR graph. Follow [AGENTS.md](../AGENTS.md) and the narrowest
-repository procedure. Reuse an existing candidate for the same claim, respect
-live ownership, and build one coherent PR with acceptance, negative evidence,
-proof commands, non-goals, and cleanup.
-
-Runtime goal tracking supports the work; it does not replace issue acceptance,
-current-head review, required checks, or release authority. Retired singleton
-goal files and scheduler commands in the archive cannot select work or grant
-permission. Proposed portfolio tooling is also not a current execution gate.
-
-A completed slice records its exact proof and remaining limits, reconciles its
-issue and relevant source-of-truth documents, and removes only its own safe
-worktree, branch, and scratch artifacts. A partial slice keeps its residual
-acceptance visible for the next builder.
-
-## Release work and authority
-
-`EffortlessMetrics/ripr-swarm` is development authority;
-`EffortlessMetrics/ripr` is public release authority. Read the accepted
-immutable transaction receipts under
-[swarm #2379](https://github.com/EffortlessMetrics/ripr-swarm/issues/2379)
-together with [source #1463](https://github.com/EffortlessMetrics/ripr/issues/1463)
-and [source #1606](https://github.com/EffortlessMetrics/ripr/issues/1606)
-before acting on release work.
-
-The [release transaction runbook](RELEASE_TRANSACTION.md) and checked-in
-[live-head selection rule](release-candidates/0.11.0-live-head-selection.md)
-describe the transaction boundary. Current accepted pins and later source
-receipts belong to that transaction; rolling `main` movement or a version
-string does not select a replacement or establish qualification.
-
-The current 0.11.0 sequence is three boundaries in order: the
-history-preserving swarm-to-`ripr` integration, planned read-only in
-#12794 under the
-[source #1768](https://github.com/EffortlessMetrics/ripr/issues/1768) sync
-contract and the #9271 execution roadmap; then the source-side release tail
-(qualification, metadata, artifacts, ship packet); then explicit ship
-authorization. The live-head selection template has selected no candidate.
-
-This roadmap changes no release ordering, candidate membership, support tier,
-or publication permission. Exact artifact qualification, independent public
-verification, and ancestry-preserving back-sync retain their separate owners
-and acceptance. Publication, tagging, signing, and marketplace operations
-require their explicit authority.
-
-## Product boundaries
-
-RIPR remains a static mutation-exposure analyzer. It does not become a full
-mutation runner, a coverage dashboard, a proof system, a second rust-analyzer,
-or a generic test generator. A strong nearby assertion is not sufficient
-evidence unless it observes the changed behavior. Unknown and limited outcomes
-are useful results when their reason and next step are explicit.
-
-## Historical roadmap and campaign archive
-
-Everything below is retained planning and campaign history. Original section
-titles and anchors remain for existing links. Statements about then-current
-versions, completed proof, proposed ordering, or earlier selection mechanisms
-describe their historical context; the current sections above and linked live
-authorities govern new work.
-
-- [Earlier product target](#end-goal) and [parallel-lane model](#multi-lane-safe-swarm-autonomy).
-- [Campaign narratives](#current-position) and [release-era context](#release-position).
-- [Earlier strategy](#strategic-sequence), [quality rails](#quality-rail-sequence), and [PR queue](#pr-queue).
-- [Release frames](#release-frames), [canonical acceptance scenario](#canonical-acceptance-scenario), and [validation gate](#validation-gate-before-deeper-semantics).
 
 ## End Goal
 
