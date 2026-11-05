@@ -6,7 +6,7 @@ Owner: repo-policy / coverage diagnostics
 
 Created: 2026-10-13
 
-Linked issues: #4978, #13116
+Linked issues: #4978, #13116, #13221
 
 Linked PRs: #7579, #13121
 
@@ -29,7 +29,9 @@ Policy impact:
   and the original failure outcome remain unchanged.
 - A focused stable-toolchain job in the existing advisory future-Clippy workflow
   exercises the real compiler/LLVM boundary and isolated fixture activation
-  without running workspace coverage.
+  through the documented pinned/stable upgrade recipe, without running workspace
+  coverage or adding a required check. Its existing 15-minute budget and routing
+  remain unchanged.
 
 ## Problem
 
@@ -125,6 +127,23 @@ coverage failure.
   failed-profile manifest is preserved.
 - Exercise exact ID equality, duplicate ambiguity, root and symlink boundaries,
   and each scan limit.
+- Execute the actual marked `docs/ci/coverage.md` upgrade recipe on native Linux
+  from a stable SDK first on `PATH` and an absolute stable `RUSTC`. Its first
+  pinned check must select the pin despite that initial activation; provisioning
+  explicitly installs the pin even when automatic installation is disabled.
+- Require all four ordered successful commands: pinned diagnostics, stable
+  diagnostics, stable `frontdoor`, and strict stable package Clippy. Each test
+  phase must report exactly one nonempty successful outer summary; each diagnostic
+  phase must report exactly one genuine profile association. Retain compiler,
+  LLVM, raw version/layout and native failure output. Filtered diagnostics and a
+  libtest progress prefix before the association remain valid.
+- Refuse missing, duplicate, empty or malformed recipe boundaries; omitted,
+  commented or dead commands; zero tests, absent or duplicate observations,
+  out-of-order completion, and stale source/run/attempt evidence. Native Cargo
+  or log-capture failure must stop proof and preserve its failure status.
+- Execute the production-block workflow controls before the native recipe.
+  Controlled tools prove selection and refusal semantics only; they do not
+  substitute for the native compiler/LLVM execution required above.
 
 ## Non-Goals
 
@@ -190,12 +209,25 @@ The stable advisory job is covered in `tools/repo-policy/tests/future_clippy.rs`
 
 - `stable_compatibility_requires_matching_tools_and_focused_commands` refuses
   missing tools, incorrect activation, conditional preparation, ignored failures,
-  missing diagnostic, `frontdoor` or Clippy commands, and setup placed after the
-  proof commands.
+  missing diagnostic, `frontdoor` or Clippy commands, duplicate step selection,
+  omitted executed controls, and setup placed after the proof commands.
 - `behavior::stable_identity_uses_matching_llvm_and_preserves_tool_failures`
-  exercises the workflow's identity script with a selected sysroot containing a
-  space, a wrong LLVM tool on `PATH`, and compiler/sysroot/host/LLVM failures.
-  These shell fixtures do not substitute for genuine compiler/LLVM execution.
+  executes the actual extractor, native runner and verifier with synthetic SDK
+  paths containing spaces. It checks exact Cargo order, explicit/PATH/nested
+  compiler selection, matching LLVM, provisioning, missing/nonexecutable/wrong
+  Clippy, original Cargo failure statuses and failed log capture.
+- `behavior::documented_recipe_boundaries_refuse_ambiguous_or_stale_execution`
+  mutates the actual document and refuses malformed boundaries before Cargo,
+  including when an old successful extracted script was present.
+- `behavior::documented_recipe_requires_all_four_native_checks` omits, comments
+  and disables each real recipe call; wrong explicit/PATH/nested selection and
+  omitted explicit pin installation cannot satisfy the independent tool oracle.
+- `behavior::documented_recipe_evidence_refuses_zero_subjects_and_stale_runs`
+  refuses empty, failed or duplicate test/profile evidence, missing Clippy
+  completion, missing/duplicate/reordered command records, a previous phase's
+  summary, stale run identity and a seeded old successful log.
+
+These shell fixtures do not substitute for genuine compiler/LLVM execution.
 
 ## Implementation Mapping
 
@@ -206,8 +238,11 @@ The stable advisory job is covered in `tools/repo-policy/tests/future_clippy.rs`
   is the Linux-only capture machinery submodule gated by #7624 reachability.
 - `docs/ci/coverage.md` documents the failure-manifest output and claim limits.
 - `.github/workflows/future-clippy.yml` runs the bounded stable compatibility
-  check alongside the existing pinned advisory lint scan.
-- `.ripr/traceability.toml` connects this spec's tests, code and outputs.
+  check by extracting the marked documentation recipe alongside the existing
+  pinned advisory lint scan.
+- `.ripr/traceability.toml` and
+  `.ripr/traceability.d/13221-native-coverage-upgrade.toml` connect this spec's
+  tests, code and outputs.
 
 ## Metrics
 
