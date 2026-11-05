@@ -3394,7 +3394,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_directly_delegates_to_spec
 }
 
 /// When the indexed body still carries its item header (`fn name(...) { ... }`),
-/// delegate/call detection must scan only the braced block. Otherwise the
+/// delegate/call detection must scan inside the opening brace. Otherwise the
 /// signature prefix poisons `direct_call_prefix_is_allowed` for calls inside
 /// `{ ... }` (#4681).
 pub(in crate::analysis::test_grip_evidence) fn function_item_executable_region(text: &str) -> &str {
@@ -3411,7 +3411,9 @@ pub(in crate::analysis::test_grip_evidence) fn function_item_executable_region(t
     {
         return text;
     }
-    trimmed.find('{').map_or(text, |open| &trimmed[open..])
+    trimmed
+        .find('{')
+        .map_or(text, |open| trimmed[open + 1..].trim_start())
 }
 
 pub(in crate::analysis::test_grip_evidence) fn call_text_routes_directly_to_named_call(
@@ -3601,7 +3603,11 @@ pub(in crate::analysis::test_grip_evidence) fn direct_delegate_block_prefix_is_a
         return false;
     };
     let open = open.trim_end();
-    open.is_empty() || open == "return" || open.ends_with('=') || open.ends_with("=>")
+    open.is_empty()
+        || open == "return"
+        || open.chars().all(|ch| ch == '(' || ch.is_whitespace())
+        || open.ends_with('=')
+        || open.ends_with("=>")
 }
 
 pub(in crate::analysis::test_grip_evidence) fn direct_delegate_std_identity_prefix_is_allowed(
@@ -4234,6 +4240,35 @@ mod tests {
     use super::*;
     use crate::analysis::facts::{FileFacts, FunctionFact, FunctionSourceRole, RustIndex};
     use crate::domain::SymbolId;
+
+    #[test]
+    fn parent_item_prefix_preserves_eager_returns_and_blocks() {
+        for body in [
+            "compute_value()",
+            "return compute_value();",
+            "let value = compute_value(); value + 1",
+            "compute_value() + 1",
+            "compute_value(); 10",
+            "({ compute_value() }) + 1",
+        ] {
+            let item = format!("pub fn entry() -> i32 {{ {body} }}");
+            assert!(
+                call_text_routes_directly_to_named_call(&item, "compute_value"),
+                "{item}"
+            );
+        }
+        for body in [
+            "|| compute_value()",
+            "async { compute_value() }",
+            "unknown!({ compute_value() })",
+        ] {
+            let item = format!("pub fn entry() {{ {body} }}");
+            assert!(
+                !call_text_routes_directly_to_named_call(&item, "compute_value"),
+                "{item}"
+            );
+        }
+    }
 
     #[test]
     fn crate_qualified_candidate_filter_matches_predecessor_boundaries() {

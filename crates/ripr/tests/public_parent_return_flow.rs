@@ -120,6 +120,8 @@ fn contradictions(seam: &Value) -> Result<u64, String> {
         Some("observes_public_parent"),
         "{seam}"
     );
+    assert_eq!(tests[0]["relation_reason"], "helper_owner_call", "{seam}");
+    assert_eq!(seam["evidence"]["reach"], "yes", "{seam}");
     let record = seam
         .get("evidence_record")
         .and_then(Value::as_object)
