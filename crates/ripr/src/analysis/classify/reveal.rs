@@ -2743,7 +2743,10 @@ fn analyze_related_assertions(
                 // A changed `return Err(..);` is an `error_path` probe; its
                 // pin compares the owner's whole `Err(..)` result.
                 ProbeFamily::ErrorPath => matches!(assertion.kind, OracleKind::ExactErrorVariant),
-                ProbeFamily::Predicate => matches!(assertion.kind, OracleKind::RelationalCheck),
+                ProbeFamily::Predicate => matches!(
+                    assertion.kind,
+                    OracleKind::RelationalCheck | OracleKind::ExactValue
+                ),
                 // #7063: a field of a changed `return Err(E::V { .. })` is
                 // pinned by an `exact_error_variant` `assert_eq!` whose
                 // expected `Err(E::V { .. })` the owner pin's early

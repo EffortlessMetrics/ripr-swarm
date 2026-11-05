@@ -14364,3 +14364,24 @@ fn same_file_trait_empty_string_return_keeps_its_owner_pin() -> Result<(), Strin
     );
     Ok(())
 }
+
+#[test]
+fn same_file_unit_value_imports_keep_the_declared_namespace() {
+    for (import, expected) in [
+        ("use super::Sample;", true),
+        ("use super::{Render, Sample};", true),
+        ("use super::Sample as Sample;", false),
+        ("use super::Other as Sample;", false),
+        ("use std::marker::PhantomPinned as Sample;", false),
+    ] {
+        let source = format!(
+            "pub struct Sample;\npub struct Other;\ntrait Render {{}}\nmod tests {{ {import} #[test] fn subject() {{ let _=Sample; }} }}\n"
+        );
+        let index = index(&[(LIB, &source)]);
+        assert_eq!(
+            unit_struct_value("Sample", Path::new(LIB), &index, &OwnerPinSyntax::default()),
+            expected,
+            "{source}"
+        );
+    }
+}

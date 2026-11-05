@@ -307,3 +307,68 @@ fn effect_assertion_contexts_match_executed_mutant_controls() -> Result<(), Stri
     }
     Ok(())
 }
+
+#[test]
+fn projected_effect_payload_requires_fresh_state_and_a_preserving_map() -> Result<(), String> {
+    let assertion = "assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));";
+    for (label, seeded, constant_map, shadowed_map, exposed) in [
+        ("fresh", false, false, false, true),
+        ("seeded", true, false, false, false),
+        ("constant_map", false, true, false, false),
+        ("shadowed_map", false, false, true, false),
+    ] {
+        let mut source = effect_source(assertion, "direct")?;
+        if seeded {
+            source = source.replace(
+                "RefCell::new(Vec::new())",
+                "RefCell::new(vec![\"order-42\".to_string()])",
+            );
+        }
+        if constant_map {
+            source = source.replace("map(String::as_str)", "map(|_| \"order-42\")");
+        }
+        if shadowed_map {
+            source=source.replace("use super::*;","use super::*;\nmod String { pub fn as_str(_: &std::string::String) -> &'static str { \"order-42\" } }");
+        }
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(
+            scratch.0.join("Cargo.toml"),
+            "[package]\nname=\"projected_effect\"\nversion=\"0.0.0\"\nedition=\"2024\"\n",
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), &source).map_err(|e| e.to_string())?;
+        let diff = scratch.0.join("diff.patch");
+        std::fs::write(&diff, super::effect_assertion_sweep::ALIGNED_DIFF)
+            .map_err(|e| e.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(diff),
+            mode: Mode::Fast,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(report.findings.len(), 2, "nonempty actual effect subjects");
+        for finding in report.findings {
+            assert_eq!(
+                finding.class == ExposureClass::Exposed,
+                exposed,
+                "{label}: {finding:?}"
+            );
+        }
+        for wrong in [false, true] {
+            let runtime = if wrong {
+                source.replace("notifier.send(order_id);", "notifier.send(\"static_msg\");")
+            } else {
+                source.clone()
+            };
+            source_runtime_control(
+                &runtime,
+                &format!("projected_effect/{label}/wrong={wrong}"),
+                1,
+                wrong && exposed,
+            )?;
+        }
+    }
+    Ok(())
+}

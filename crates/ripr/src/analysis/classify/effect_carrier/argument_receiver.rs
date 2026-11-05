@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(in crate::analysis) struct ArgumentReceiver {
     parameter: usize,
     fields: BTreeSet<String>,
+    receiver_type: String,
 }
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
@@ -54,12 +55,35 @@ fn mentions(node: &ra_ap_syntax::SyntaxNode, binding: &str) -> bool {
             })
     })
 }
-fn field_root(mut expression: ast::Expr) -> Option<(String, String)> {
+fn field_root(mut expression: ast::Expr, index: &RustIndex) -> Option<(String, String, bool)> {
+    let mut projected = false;
     for _ in 0..super::MAX_DEPTH {
         expression = match expression {
             ast::Expr::PrefixExpr(prefix) => prefix.expr()?,
             ast::Expr::RefExpr(reference) => reference.expr()?,
             ast::Expr::ParenExpr(paren) => paren.expr()?,
+            ast::Expr::MethodCallExpr(call)
+                if call.name_ref()?.text() == "map"
+                    && call
+                        .arg_list()?
+                        .args()
+                        .map(|arg| compact(&arg.syntax().text().to_string()))
+                        .collect::<Vec<_>>()
+                        == ["String::as_str"]
+                    && !crate::analysis::classify::owner_pin::wrapper_may_be_rebound(
+                        "String", index,
+                    ) =>
+            {
+                projected = true;
+                call.receiver()?
+            }
+            ast::Expr::MethodCallExpr(call)
+                if matches!(call.name_ref()?.text(), "first" | "last")
+                    && call.arg_list()?.args().next().is_none() =>
+            {
+                projected = true;
+                call.receiver()?
+            }
             ast::Expr::MethodCallExpr(call)
                 if call.arg_list()?.args().next().is_none()
                     && call.name_ref().is_some_and(|name| {
@@ -75,6 +99,7 @@ fn field_root(mut expression: ast::Expr) -> Option<(String, String)> {
                 return Some((
                     bare_path(field.expr()?)?,
                     field.name_ref()?.text().to_string(),
+                    projected,
                 ));
             }
             _ => return None,
@@ -355,7 +380,11 @@ impl ArgumentReceiver {
             let carrying = parameter_fields(callee, &parameters)?;
             fields.retain(|field| carrying.contains(field));
         }
-        (!fields.is_empty()).then_some(Self { parameter, fields })
+        (!fields.is_empty()).then_some(Self {
+            parameter,
+            fields,
+            receiver_type: receiver_ty,
+        })
     }
     pub(in crate::analysis) fn admits(
         &self,
@@ -366,6 +395,93 @@ impl ArgumentReceiver {
         syntax: &OwnerPinSyntax,
     ) -> bool {
         self.bound(owner, index, test, assertion, syntax).is_some()
+    }
+    /// A first/last element projection can identify this call's payload
+    /// only on a concrete, freshly empty std vector field. Reuse canonical
+    /// receiver typing; do not credit an element seeded before the owner call.
+    fn starts_empty(
+        &self,
+        index: &RustIndex,
+        test: &TestSummary,
+        owner: &FunctionSummary,
+        root: &str,
+        field: &str,
+        definition: &ast::LetStmt,
+    ) -> bool {
+        use crate::analysis::classify::owner_pin::{
+            OwnerScope, test_receiver_named_type, wrapper_may_be_rebound,
+        };
+        if ["String", "Vec", "RefCell"]
+            .iter()
+            .any(|name| wrapper_may_be_rebound(name, index))
+            || test_receiver_named_type(
+                test,
+                root,
+                OwnerScope::new(&owner.name, owner.start_line, &owner.file),
+                index,
+            )
+            .as_deref()
+                != Some(self.receiver_type.as_str())
+        {
+            return false;
+        }
+        let Some(ast::Expr::CallExpr(call)) = definition.initializer() else {
+            return false;
+        };
+        if call
+            .arg_list()
+            .is_none_or(|args| args.args().next().is_some())
+        {
+            return false;
+        }
+        let Some(ast::Expr::PathExpr(path)) = call.expr() else {
+            return false;
+        };
+        let path = compact(&path.syntax().text().to_string());
+        let Some((ty, ctor)) = path.split_once("::") else {
+            return false;
+        };
+        if ty != self.receiver_type || ctor.contains("::") {
+            return false;
+        }
+        let Some(body) =
+            crate::analysis::classify::builder_override::inherent_method_body(index, ty, ctor)
+        else {
+            return false;
+        };
+        let Some(function) = parse_function(body) else {
+            return false;
+        };
+        let Some(list) = function.body().and_then(|body| body.stmt_list()) else {
+            return false;
+        };
+        if list.statements().next().is_some() {
+            return false;
+        }
+        let Some(ast::Expr::RecordExpr(record)) = list.tail_expr() else {
+            return false;
+        };
+        let record_type = record
+            .path()
+            .map(|path| compact(&path.syntax().text().to_string()));
+        if record_type.as_deref() != Some("Self") && record_type.as_deref() != Some(ty) {
+            return false;
+        }
+        let empty = record.record_expr_field_list().is_some_and(|fields| {
+            fields.fields().any(|entry| {
+                entry.field_name().is_some_and(|name| name.text() == field)
+                    && entry.expr().is_some_and(|expr| {
+                        compact(&expr.syntax().text().to_string()) == "RefCell::new(Vec::new())"
+                    })
+            })
+        });
+        empty && index.files().values().any(|facts| {
+            let Some(parse)=parse_clean_source_file(&facts.source) else { return false };
+            parse.tree().syntax().descendants().filter_map(ast::Struct::cast).any(|item| {
+                item.name().is_some_and(|name|name.text()==ty)
+                    && matches!(item.field_list(),Some(ast::FieldList::RecordFieldList(fields)) if fields.fields().any(|entry|entry.name().is_some_and(|name|name.text()==field) && entry.ty().is_some_and(|ty|compact(&ty.syntax().text().to_string())=="RefCell<Vec<String>>")))
+            })
+        })
     }
     fn bound(
         &self,
@@ -378,15 +494,27 @@ impl ArgumentReceiver {
         if !syntax.admits_effect_assertion(test, assertion, index) {
             return None;
         }
-        let operands = assertion_comparison_operands(&assertion.text)?;
-        let root = operands.iter().find_map(|operand| {
+        let operands = assertion_comparison_operands(&assertion.text)
+            .map(|operands| operands.map(str::to_string).to_vec())
+            .or_else(|| {
+                crate::analysis::classify::owner_pin::equality_condition_operands(&assertion.text)
+                    .map(|operands| operands.to_vec())
+            })
+            .unwrap_or_else(|| {
+                crate::analysis::extract::assertion_observed_operand(&assertion.text)
+                    .into_iter()
+                    .collect()
+            });
+        let (root, field, projected) = operands.iter().find_map(|operand| {
             let function = parse_function(&format!("fn oracle() {{ {operand}; }}"))?;
             let statements: Vec<_> = function.body()?.stmt_list()?.statements().collect();
             let [statement] = statements.as_slice() else {
                 return None;
             };
-            let (root, field) = field_root(expression(statement)?)?;
-            self.fields.contains(&field).then_some(root)
+            let (root, field, projected) = field_root(expression(statement)?, index)?;
+            self.fields
+                .contains(&field)
+                .then_some((root, field, projected))
         })?;
         let function = parse_function(&test.body)?;
         let statements: Vec<_> = function.body()?.stmt_list()?.statements().collect();
@@ -409,6 +537,10 @@ impl ArgumentReceiver {
         let ast::Pat::IdentPat(pattern) = definition.pat()? else {
             return None;
         };
+        if projected && !self.starts_empty(index, test, owner, &root, &field, definition) {
+            return None;
+        }
+
         if pattern.name()?.text() != root || definition.let_else().is_some() {
             return None;
         }

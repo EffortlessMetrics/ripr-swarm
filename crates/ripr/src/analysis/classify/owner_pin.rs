@@ -11154,7 +11154,7 @@ fn strip_type_arguments(self_ty: &str) -> &str {
 /// `static`, `mod`, `trait` or macro of that name, a variant of a workspace
 /// `enum`, a rename to it, or a `use` naming it from outside `std`, `core`
 /// and `alloc`. Lexical and workspace-wide, so it fails closed.
-fn wrapper_may_be_rebound(wrapper: &str, index: &RustIndex) -> bool {
+pub(super) fn wrapper_may_be_rebound(wrapper: &str, index: &RustIndex) -> bool {
     index.files().values().any(|facts| {
         facts.source.contains(wrapper) && {
             let masked = mask_comments_and_strings(&facts.source);
@@ -13527,7 +13527,11 @@ fn let_bound_owner_call<'a>(
             && READ_ONLY_ASSERTION_MACROS
                 .iter()
                 .any(|macro_name| is_plain_macro(&other.text, macro_name));
-        if !(whole_operand || read_only) || other.line <= let_line {
+        if !(whole_operand || read_only)
+            || other.line < let_line
+            || (other.line == let_line
+                && (!scalar || !same_line_scalar_binding_precedes(test, binding_at, other)))
+        {
             return None;
         }
         asserted += in_text;
@@ -13538,9 +13542,13 @@ fn let_bound_owner_call<'a>(
     }
     if scalar {
         let reviewed = mask_comments_and_strings(&assertion.text);
-        return (assertion.line > let_line
-            && whole_word_offsets(&reviewed, operand).len() == 1
-            && same_block_after(&masked, binding_at, test.start_line, assertion))
+        return (whole_word_offsets(&reviewed, operand).len() == 1
+            && if assertion.line == let_line {
+                same_line_scalar_binding_precedes(test, binding_at, assertion)
+            } else {
+                assertion.line > let_line
+                    && same_block_after(&masked, binding_at, test.start_line, assertion)
+            })
         .then(|| let_initializer(binding))
         .flatten();
     }
@@ -13569,6 +13577,57 @@ fn let_bound_owner_call<'a>(
         return None;
     }
     let_initializer(binding)
+}
+
+/// A scalar's once-bound initializer may precede an assertion on the same
+/// line. Bind the exact parser invocation and enclosing statement list;
+/// line equality alone cannot establish order or scope.
+fn same_line_scalar_binding_precedes(
+    test: &TestSummary,
+    binding_at: usize,
+    assertion: &OracleFact,
+) -> bool {
+    let Some(parse) = parse_clean_source_file(&test.body) else {
+        return false;
+    };
+    let root = parse.tree();
+    let Some(binding) = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::LetStmt::cast)
+        .find(|binding| {
+            let range = binding.syntax().text_range();
+            usize::from(range.start()) <= binding_at && binding_at < usize::from(range.end())
+        })
+    else {
+        return false;
+    };
+    let key = |text: &str| {
+        mask_comments_and_strings(text)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    };
+    let expected = key(assertion.text.trim_end_matches(';'));
+    let mut calls = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| {
+            let at = usize::from(call.syntax().text_range().start());
+            test.start_line + test.body[..at].matches('\n').count() == assertion.line
+                && key(&call.syntax().text().to_string()) == expected
+        });
+    let (Some(call), None) = (calls.next(), calls.next()) else {
+        return false;
+    };
+    let list = |node: &SyntaxNode| {
+        node.ancestors()
+            .find(|ancestor| ast::StmtList::can_cast(ancestor.kind()))
+    };
+    call.syntax().text_range().start() >= binding.syntax().text_range().end()
+        && list(call.syntax()).is_some()
+        && list(call.syntax()) == list(binding.syntax())
 }
 
 /// cell-0094 review: whether the line `assertion_line` starts with a
@@ -16312,6 +16371,85 @@ impl UnitStructFacts {
 /// every other pin rule. An item- or statement-position macro whose
 /// definition is not in the indexed workspace text may emit unread items,
 /// so the workspace-wide scan refuses (#7160).
+fn same_file_unit_import_ranges(name: &str, source: &str) -> Vec<std::ops::Range<usize>> {
+    if !source.contains("use") {
+        return Vec::new();
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return Vec::new();
+    };
+    let root = parse.tree();
+    let modules = |node: &SyntaxNode| {
+        let mut path = node
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .filter_map(|m| m.name().map(|n| n.text().to_string()))
+            .collect::<Vec<_>>();
+        path.reverse();
+        path
+    };
+    let mut declarations = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::Struct::cast)
+        .filter(|item| {
+            item.name().is_some_and(|n| n.text() == name)
+                && item.field_list().is_none()
+                && !item
+                    .syntax()
+                    .ancestors()
+                    .any(|node| ast::Fn::can_cast(node.kind()))
+        });
+    let (Some(declaration), None) = (declarations.next(), declarations.next()) else {
+        return Vec::new();
+    };
+    let mut wanted = modules(declaration.syntax());
+    wanted.push(name.to_string());
+    root.syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .filter_map(|item| {
+            let paths = flattened_use_paths(&item.syntax().text().to_string());
+            let named = paths
+                .iter()
+                .filter(|path| {
+                    path.path.split("::").any(|part| part == name)
+                        || path.alias.as_deref() == Some(name)
+                })
+                .collect::<Vec<_>>();
+            if named.is_empty() {
+                return None;
+            }
+            let bound = named.iter().all(|path| {
+                if path.alias.is_some() {
+                    return false;
+                }
+                let mut scope = modules(item.syntax());
+                let mut parts = path.path.split("::").peekable();
+                match parts.peek().copied() {
+                    Some("self") => {
+                        parts.next();
+                    }
+                    Some("super") => {}
+                    _ => return false,
+                }
+                while parts.peek() == Some(&"super") {
+                    parts.next();
+                    if scope.pop().is_none() {
+                        return false;
+                    }
+                }
+                scope.extend(parts.map(str::to_string));
+                scope == wanted
+            });
+            bound.then(|| {
+                let range = item.syntax().text_range();
+                usize::from(range.start())..usize::from(range.end())
+            })
+        })
+        .collect()
+}
+
 pub(super) fn unit_struct_value(
     name: &str,
     test_file: &Path,
@@ -16338,12 +16476,20 @@ pub(super) fn unit_struct_value(
             continue;
         }
         let masked = mask_comments_and_strings(&facts.source);
+        let local_imports = if file.as_path() == test_file {
+            same_file_unit_import_ranges(name, &facts.source)
+        } else {
+            Vec::new()
+        };
         // One spelling in a macro body declares a struct per invocation,
         // so no file that defines a macro may spell the name.
         if unit_struct.macro_files.contains(file) && !whole_word_offsets(&masked, name).is_empty() {
             return false;
         }
         for offset in whole_word_offsets(&masked, name) {
+            if local_imports.iter().any(|range| range.contains(&offset)) {
+                continue;
+            }
             let before = masked[..offset].trim_end();
             let after = masked[offset + name.len()..].trim_start();
             let word_start = before
