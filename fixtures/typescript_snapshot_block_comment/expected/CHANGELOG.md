@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_snapshot_block_comment (3)
+
+Reason:
+RIPR-SPEC-0258: clarify weak snapshot evidence and its limitation
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_block_comment --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -57,7 +57,7 @@ Evidence
   - related test tests/lib.test.ts:3 price uses medium snapshot oracle: expect(...).toMatchSnapshot(...)
 
 Weakness
-  - Related test reaches `price` with snapshot evidence; keep the snapshot as weak preview evidence and add an exact-value assertion for the changed discriminator before routing a repair packet
+  - Related test reaches `price` with snapshot evidence; keep the snapshot as weak preview evidence and add an exact-value assertion for the changed behavior before routing a repair packet
   - missing discriminator return value == amount - 20: changed TypeScript returned-value at line 3 lacks a concrete preview discriminator
 
 TypeScript preview card (advisory)
