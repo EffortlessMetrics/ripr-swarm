@@ -6802,8 +6802,8 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
 }
 "#,
             )?;
-            // A numeric return keeps this policy control independent of
-            // comparison-boundary pairing. Keep its separate arithmetic seam.
+            // A single numeric return keeps this policy control independent
+            // of comparison-boundary pairing. Require that one seam throughout.
             // The committed expected file is what lets the file-backed
             // snapshot discriminate at all (#12189); this test varies only
             // the configured strength.
@@ -6831,8 +6831,8 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
              -> Result<(), String> {
                 assert_eq!(
                     seams.len(),
-                    2,
-                    "snapshot fixture must retain exactly two seams"
+                    1,
+                    "snapshot fixture must retain exactly its return-value seam"
                 );
                 let returned = seams
                     .iter()
@@ -6865,9 +6865,9 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
                 assert_eq!(
                     (strong, weak_count),
                     if class == SeamGripClass::StronglyGripped {
-                        (1, 1)
+                        (1, 0)
                     } else {
-                        (0, 2)
+                        (0, 1)
                     }
                 );
                 Ok(())
@@ -6880,9 +6880,9 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
                 true,
             )?;
             let counts = inventory_seam_grip_class_counts_at_with_config(&root, &medium)?;
-            assert_eq!(counts.analyzed_seams(), 2);
+            assert_eq!(counts.analyzed_seams(), 1);
             assert_eq!(counts.count_for(SeamGripClass::StronglyGripped), 1);
-            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 1);
+            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 0);
             let compact_cold = inventory_compact_classified_seams_at_with_config(&root, &medium)?;
             check(
                 &compact_cold,
@@ -6914,9 +6914,9 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
                 serde_json::to_value(&fresh).map_err(|e| e.to_string())?
             );
             let counts = inventory_seam_grip_class_counts_at_with_config(&root, &weak)?;
-            assert_eq!(counts.analyzed_seams(), 2);
+            assert_eq!(counts.analyzed_seams(), 1);
             assert_eq!(counts.count_for(SeamGripClass::StronglyGripped), 0);
-            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 2);
+            assert_eq!(counts.count_for(SeamGripClass::WeaklyGripped), 1);
             let compact_warm = inventory_compact_classified_seams_at_with_config(&root, &weak)?;
             check(
                 &compact_warm,
