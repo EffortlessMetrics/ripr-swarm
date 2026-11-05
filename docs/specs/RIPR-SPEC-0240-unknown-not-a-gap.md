@@ -1071,6 +1071,10 @@ effective per-file and total byte limits, both environment settings, and a
 narrower root as recovery. TypeScript actionability evidence is refreshed by
 its existing producer to name the same limitation and recovery route;
 canonical repair-gap and TypeScript repair-packet projection remain withheld.
+The shared preview-confidence owner also derives the reasons again for
+`static_unknown`: JSON and human output must say that whether a test checks
+the behavior is unestablished, rather than retain the withheld claim that no
+related test reaches the changed owner.
 
 This rule preserves findings with observed related tests and any named limit
 another producer already established. Discovery withholding runs first, so a
@@ -1302,6 +1306,8 @@ file in scope and leaves the outcome partial).
 child-local byte limits. Both a per-file refusal and an aggregate-budget
 refusal of an existing reachable test withhold the false `no_static_path` and
 expose the named limit, matching actionability, recovery, and partial outcome.
+Both cases check the confidence reason in JSON and the rendered human digest
+and full report, rejecting the stale no-related-test claim.
 Sufficient budgets retain that test's exact-value boundary witness; a finished
 read with no tests retains `no_static_path`; an observed test's whole finding
 is unchanged beside an unread unrelated source; and a refused changed source

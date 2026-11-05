@@ -128,6 +128,17 @@ pub(in crate::analysis) fn withhold_read_limited_workspace_gap(
         next_step,
         &[],
     );
+    // The no-path confidence reason also claimed that no test reaches the
+    // owner. Re-derive it for the withheld class before any output or context
+    // packet consumes it; no related test or strong oracle was established.
+    finding.confidence_basis = ConfidenceCap::for_preview(
+        &finding.class,
+        &ConfidenceBasisInputs {
+            has_related_test: false,
+            strong_oracle_present: false,
+            boundary_input_matched: true,
+        },
+    );
     true
 }
 
@@ -1561,6 +1572,11 @@ mod tests {
         finding.class = ExposureClass::NoStaticPath;
         finding.language = Some(LanguageId::TypeScript);
         finding.related_tests.clear();
+        finding.confidence_basis = vec![
+            ConfidenceCap::PreviewStagesNotModeled,
+            ConfidenceCap::SyntaxFirstNoTypeResolution,
+            ConfidenceCap::NoRelatedTest,
+        ];
         assert!(withhold_read_limited_workspace_gap(
             &mut finding,
             2,
@@ -1568,6 +1584,14 @@ mod tests {
             2048
         ));
         assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(
+            finding.confidence_basis,
+            vec![
+                ConfidenceCap::PreviewStagesNotModeled,
+                ConfidenceCap::SyntaxFirstNoTypeResolution,
+                ConfidenceCap::DiscriminatorNotEstablished,
+            ]
+        );
         assert_eq!(
             finding.static_limit_kind,
             Some(StaticLimitKind::TypescriptWorkspaceReadLimited)

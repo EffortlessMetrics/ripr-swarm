@@ -75,17 +75,18 @@ impl Workspace {
         self.write(path, &text)
     }
 
-    fn check_json(
+    fn check_output(
         &self,
         file_cap: u64,
         workspace_budget: u64,
-    ) -> Result<serde_json::Value, String> {
+        format: &str,
+    ) -> Result<Vec<u8>, String> {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(["check", "--root"])
             .arg(&self.root)
             .arg("--diff")
             .arg(self.root.join("diff.patch"))
-            .args(["--mode", "fast", "--format", "json"])
+            .args(["--mode", "fast", "--format", format])
             .env("RIPR_TS_MAX_WORKSPACE_FILES", "20000")
             .env("RIPR_TS_MAX_FILE_READ_BYTES", file_cap.to_string())
             .env(
@@ -101,7 +102,38 @@ impl Workspace {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-        serde_json::from_slice(&output.stdout).map_err(|error| format!("parse json: {error}"))
+        Ok(output.stdout)
+    }
+
+    fn check_json(
+        &self,
+        file_cap: u64,
+        workspace_budget: u64,
+    ) -> Result<serde_json::Value, String> {
+        let output = self.check_output(file_cap, workspace_budget, "json")?;
+        serde_json::from_slice(&output).map_err(|error| format!("parse json: {error}"))
+    }
+
+    fn assert_read_limit_human_confidence(
+        &self,
+        file_cap: u64,
+        workspace_budget: u64,
+    ) -> Result<(), String> {
+        for format in ["human", "human-full"] {
+            let output = self.check_output(file_cap, workspace_budget, format)?;
+            let text =
+                String::from_utf8(output).map_err(|error| format!("decode {format}: {error}"))?;
+            let why_capped = text
+                .lines()
+                .find(|line| line.trim_start().starts_with("Why capped:"))
+                .ok_or_else(|| format!("{format} has no confidence explanation: {text}"))?;
+            assert_unknown_confidence_reason(why_capped);
+            assert!(
+                !text.contains("no related test reaches the changed owner"),
+                "{format} repeats the withheld absence claim: {text}"
+            );
+        }
+        Ok(())
     }
 }
 
@@ -140,12 +172,42 @@ fn named_refusal<'a>(
         .ok_or_else(|| format!("missing {reason} on {path}: {limitations:?}"))
 }
 
+fn assert_unknown_confidence_reason(reason: &str) {
+    assert!(
+        reason.contains("whether a test checks this behavior is not established"),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains("no related test reaches the changed owner"),
+        "{reason}"
+    );
+}
+
 fn assert_read_limit(report: &serde_json::Value, knob: &str) -> Result<(), String> {
     let finding = only_finding(report)?;
     assert_eq!(finding["classification"], "static_unknown", "{finding}");
     assert_eq!(
         finding["static_limit_kind"], "typescript_workspace_read_limited",
         "{finding}"
+    );
+    let basis = finding["confidence_basis"]
+        .as_array()
+        .ok_or("withheld finding has no confidence basis")?;
+    assert!(
+        basis.iter().any(|entry| {
+            entry["code"] == "discriminator_not_established"
+                && entry["summary"] == "whether a test checks this behavior is not established"
+        }),
+        "{basis:?}"
+    );
+    assert!(
+        basis.iter().all(|entry| entry["code"] != "no_related_test"),
+        "{basis:?}"
+    );
+    assert_unknown_confidence_reason(
+        finding["confidence_why_capped"]
+            .as_str()
+            .ok_or("withheld finding has no confidence explanation")?,
     );
     let next = finding["recommended_next_step"]
         .as_str()
@@ -190,7 +252,8 @@ fn a_capped_test_file_withholds_no_static_path() -> Result<(), String> {
     workspace.write_large("tests/discount.test.ts", TEST)?;
     let report = workspace.check_json(SMALL_CAP, LARGE_CAP)?;
     named_refusal(&report, "tests/discount.test.ts", "file_read_capped:")?;
-    assert_read_limit(&report, "RIPR_TS_MAX_FILE_READ_BYTES")
+    assert_read_limit(&report, "RIPR_TS_MAX_FILE_READ_BYTES")?;
+    workspace.assert_read_limit_human_confidence(SMALL_CAP, LARGE_CAP)
 }
 
 #[test]
@@ -203,7 +266,8 @@ fn an_exhausted_workspace_budget_withholds_no_static_path() -> Result<(), String
         "tests/discount.test.ts",
         "workspace_read_budget_exhausted:",
     )?;
-    assert_read_limit(&report, "RIPR_TS_MAX_WORKSPACE_READ_BYTES")
+    assert_read_limit(&report, "RIPR_TS_MAX_WORKSPACE_READ_BYTES")?;
+    workspace.assert_read_limit_human_confidence(LARGE_CAP, SMALL_CAP)
 }
 
 #[test]
