@@ -91,8 +91,12 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckPythonJudgedPanel => super::check_python_judged_panel(),
         XtaskCommand::PythonRepairTrust(args) => super::reports::python_repair_trust(&args),
         XtaskCommand::VerdictCorpus(args) => super::reports::verdict_corpus(&args),
+        XtaskCommand::VerificationPlanCorpus(args) => {
+            super::reports::verification_plan_corpus_command(&args)
+        }
         XtaskCommand::TestOracleReport => super::reports::test_oracle_report(),
         XtaskCommand::TestEfficiencyReport => super::reports::test_efficiency_report(),
+        XtaskCommand::SlowTestReport(args) => super::reports::slow_test_report(&args),
         XtaskCommand::BadgeArtifacts => super::reports::badge_artifacts(),
         XtaskCommand::RepoBadgeArtifacts(args) => super::reports::repo_badge_artifacts(&args),
         XtaskCommand::BadgeBasis(args) => super::reports::badge_basis(&args),
@@ -117,6 +121,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RustCorpus(args) => super::reports::rust_corpus(&args),
         XtaskCommand::BenchAgentSurfaces(args) => super::reports::bench_agent_surfaces(&args),
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
+        XtaskCommand::CurrentState(args) => super::current_state::current_state_command(&args),
         XtaskCommand::EvidenceHealth => super::reports::evidence_health_report(),
         XtaskCommand::Lane1EvidenceAudit => super::reports::lane1_evidence_audit_report(),
         XtaskCommand::EvidenceQualityScorecard => {
@@ -242,6 +247,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::policy::check_changelog_fragments_with_args(&args)
         }
         XtaskCommand::FoldChangelog(args) => super::policy::fold_changelog(&args),
+        XtaskCommand::InstallReceipt(args) => super::policy::install_receipt(&args),
         XtaskCommand::CheckReadmeState => super::check_readme_state(),
         XtaskCommand::MarkdownLinks => super::markdown_links(),
         XtaskCommand::CheckPrShape(args) => super::check_pr_shape_with_args(&args),

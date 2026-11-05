@@ -60,7 +60,7 @@ const KNOWN_ORACLE_ALIGNMENTS: [&str; 3] = ["changed_sink_token", "orthogonal", 
 pub(crate) const KNOWN_LIMITATION_QUALITIES: [&str; 4] =
     ["precise", "imprecise", "wrong_kind", "over_limited"];
 /// The product-contract StaticLimitKind vocabulary, mirrored exactly from
-/// `crates/ripr/src/domain/language.rs` (`StaticLimitKind::as_str`). Do not
+/// `crates/ripr-contract/src/domain/language.rs` (`StaticLimitKind::as_str`). Do not
 /// invent kinds here; extend the product enum first, then this mirror.
 const KNOWN_STATIC_LIMIT_KINDS: [&str; 33] = [
     "dynamic_dispatch",

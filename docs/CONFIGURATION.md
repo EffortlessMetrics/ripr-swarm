@@ -265,6 +265,7 @@ that needs the tuning.
 | `RIPR_PILOT_REPO_EXPOSURE_BYTES` | `8000000` | Byte budget for the `seams[]` entries of the `ripr pilot` `repo-exposure.json` (#12108). `RIPR_PILOT_SEAM_BUDGET` bounds the seam count only: at the default 2000 seams the file measured 13.1 MB on this repository (about 6.6 KB per seam, mostly each seam's `evidence_record`). When the entries exceed the budget, the file keeps the current-change seams first, then the remaining seams in pilot ranking order, then the rest in inventory order (written in inventory order); a seam that does not fit is skipped (counted in `seams_skipped_over_budget` when a later seam of its group was kept), and a group that skipped a seam ends the selection. It sets `run_status = "limited_repo_exposure_bytes"` (a seam limit keeps `seam_limit_applied`), adds a `limitations[]` entry `pilot_repo_exposure_byte_bound_applied` with `seams_rendered`, `seams_total`, `seam_bytes_rendered`, `byte_budget`, `limit_source`, `control` and `repair_route`, drops the `artifact` identity, and `pilot-summary.json` carries `repo_exposure_byte_bound`. A bounded file is not a comparable snapshot: `ripr outcome` and `ripr agent verify` refuse it by name. `agent-seam-packets.json`, `repo-exposure.md` and the ranking still cover every seam. Set to `0` to write every seam; any other value that is not a positive integer exits `2` and names the variable. Agents should read `pilot-summary.json` and `agent-seam-packets.json` first, and treat `repo-exposure.json` as the bounded seam listing. The budget counts each kept entry's bytes plus the 2-byte `,\n` separator the writer adds between entries, so the written `seams[]` content never exceeds it; the document adds a few KB of metadata and array framing. Sizing renders every seam once before the cut (the same per-seam serialization the writer performs), so the control bounds output bytes, not analysis time. Because a bounded file is not a comparable baseline, `ripr pilot` then prints `before_snapshot_command` (`ripr check --format repo-exposure-json` to `before.repo-exposure.json`) and points `outcome_command` at that file; `ripr calibrate cargo-mutants` also refuses a bounded file. |
 | `RIPR_PILOT_SEAM_BUDGET` | `2000` | Maximum seams written to `ripr pilot` artifacts (`repo-exposure.json`, `agent-seam-packets.json`). Set to `0` to disable the budget and write all seams, which may produce very large files; any other value that is not a positive integer exits `2` and names the variable. When the budget applies, both artifacts carry a `limitations[]` disclosure naming the variable and a repair route. The budget bounds seam count, not bytes: measured on this repository (181,217 seams, budget 2000) `repo-exposure.json` is 13.1 MB (about 6.6 KB per seam on disk, dominated by each seam's `evidence_record`), so size scales roughly as 6.6 KB times the budget (#11951). It is the `ripr outcome --before/--after` snapshot, not a file to read end to end; an agent should follow `next.inspect_packet` to `agent-seam-packets.json` (bounded by `RIPR_PILOT_PACKET_BUDGET`) or `pilot-summary.json`. `RIPR_PILOT_REPO_EXPOSURE_BYTES` now bounds the bytes of `repo-exposure.json` `seams[]` (#12108); a byte-bounded file is no longer a comparable `ripr outcome` snapshot. A file cut by this budget (or by `RIPR_REPO_EXPOSURE_SEAM_LIMIT`) keeps a prefix of the inventory, so `ripr outcome`, `ripr agent verify` and `ripr calibrate cargo-mutants` refuse it by name and control (#12150); `ripr pilot` then points `outcome_command` at a full `before.repo-exposure.json` baseline. |
 | `RIPR_CHECK_FINDINGS_BYTES` | `1000000` | Byte budget for the findings array in `ripr check --format json`. When it engages, the document carries a `limited_findings_bound` run limitation naming the variable and `analysis_outcome.document_complete: false` with rendered/total counts. The budget keeps the highest-priority findings (candidate-current, then the strongest gap classes) and the limitation names the dropped counts per class and file. Set to `0` to remove the cap; an unparseable value fails the run. |
+| `RIPR_SARIF_RESULTS_BYTES` | `1000000` | Byte budget for the results array in `ripr check --format sarif` and `--format repo-sarif`. When it engages, the run properties carry `results_rendered`, `results_total`, `results_omitted`, `results_byte_budget`, `limited_results_bound: true` and `document_complete: false`; the first result always renders. Set to `0` to remove the cap; an unparseable value fails the run. |
 | `RIPR_PYTHON_MAX_WORKSPACE_FILES` | `4000` | Maximum `.py` files discovered in one diff-mode Python walk; exceeding it produces a named limitation, and changed `.py` files are kept past it (the byte budgets still apply). Sized so a Django-sized workspace (about 2,900 files) completes in diff mode; separate from the repo-mode `RIPR_MAX_REPO_INDEX_FILES` working set. Invalid or zero values use the default bound. |
 | `RIPR_PYTHON_MAX_FILE_READ_BYTES` | `16777216` (16 MiB) | Maximum bytes accepted from one Python source file; an oversized file is refused with a named limitation. Invalid or zero values use the default bound. |
 | `RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES` | `67108864` (64 MiB) | Aggregate Python source-read budget per analysis run. Invalid or zero values use the default bound. |
@@ -443,6 +444,16 @@ Reports local tooling and workspace shape. Takes no analysis-shaping flags.
 `--profile analysis` (the default) keeps a missing or old toolchain advisory;
 `--profile source-build` makes it a failure. See
 [Exit codes](EXIT_CODES.md#ripr-doctor-exit-codes).
+
+For source-build diagnosis, `tool_rustc` probes the explicit `RUSTC` executable,
+then `CARGO_BUILD_RUSTC` when `RUSTC` is unset, otherwise `rustc` on PATH. A bare
+override name uses PATH; an override containing a path separator resolves from
+the selected root. Paths containing spaces remain one executable, without shell
+expansion. An explicit missing, failing or incompatible compiler fails the check
+and names the override to fix or unset. Empty or non-Unicode selected values are
+refused rather than replaced by a healthy PATH compiler. This bounded check does
+not evaluate Cargo configuration files or compiler wrappers, install a toolchain,
+or establish that a build succeeds. The analysis profile keeps its PATH probe.
 
 Use `--json` for the same core checks as the human report when onboarding an
 agent, editor, or CI wrapper:
@@ -1046,6 +1057,54 @@ smoke-only assertions remain smoke.
 | `mock_expectation_strength` | same enum | `medium` | Strength assigned to mock/side-effect expectation oracles. |
 | `broad_error_strength` | same enum | `weak` | Strength assigned to broad error checks such as `is_err()`. |
 
+### `[[overrides]]`
+
+Optional. Absent or empty means every crate uses the repo-wide `[severity]`
+and `[oracles]` values — existing configs stay byte-identical. Each row
+selects **exactly one** of `crate` or `path` and overrides **only** nested
+`severity` and/or `oracles` fields; unspecified nested keys keep the
+repo-wide value. Other `ripr.toml` sections cannot be overridden here.
+
+| Field | Type | Effect |
+| --- | --- | --- |
+| `crate` | Cargo package name | Matches one workspace package (`letters`, digits, `_`, `-`). Unknown names fail closed at load with a diagnostic that lists known packages. |
+| `path` | repository-relative glob | Matches `/`-separated paths with `*`, `?`, and `**` (the same dialect as generated-file patterns). |
+| `severity` | table | Partial `[severity.findings]` / `[severity.seams]` overlay. Render-only, like repo-wide severity. |
+| `oracles` | table | Partial `[oracles]` overlay. Finding-affecting: it joins the check-artifact config identity. |
+
+Resolution: the most specific matching row wins, otherwise the repo-wide
+default. A `crate` selector outranks a `path` glob. Among path globs, more
+literal path segments win. Equal specificity keeps the later matching row;
+that later-row order is part of the oracle overlay identity, so swapping two
+equally specific oracle rows is a finding-affecting change.
+
+Crate names resolve from the `Cargo.toml` workspace that owns the discovered
+`ripr.toml` (including nested `members` globs such as `crates/*/plugins/*`,
+and `workspace.exclude`). A crate selector applies to that package's files
+only; nested workspace packages keep their own match. Unknown names fail
+closed at load, including `--candidate-tree` runs, which bind names against
+manifests in that immutable tree rather than the worktree.
+
+Oracle overlays apply on the Rust adapter, which is the only language adapter
+that currently consumes `[oracles]` / `OraclePolicy`. Python, TypeScript, and
+Perl adapters ignore `OraclePolicy` today (repo-wide and overlay alike).
+Severity overlays still apply at render time for every language.
+
+```toml
+[severity.findings]
+weakly_exposed = "warning"
+
+[[overrides]]
+crate = "xtask"
+severity.findings.weakly_exposed = "note"
+
+[[overrides]]
+path = "crates/preview/**"
+oracles.snapshot_strength = "weak"
+```
+
+`ripr init` still writes defaults only; it does not add `[[overrides]]`.
+
 ### `[severity.findings]`
 
 Finding severities affect human output, JSON `severity`, GitHub annotations,
@@ -1304,6 +1363,10 @@ static_unknown = "note"
 [severity.seams]
 weakly_gripped = "warning"
 opaque = "info"
+
+[[overrides]]
+crate = "xtask"
+severity.findings.weakly_exposed = "note"
 
 [lsp]
 seam_diagnostics = true

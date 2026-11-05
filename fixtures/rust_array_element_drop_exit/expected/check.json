@@ -46,7 +46,7 @@
         {"kind":"struct_field","text":"total: a + b","line":12}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: total: a + b", "Discriminator unconfirmed: no field-value assertion observes the constructed field", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach rows: pins_second_row"],
-      "missing": ["Missing discriminator value: total: a + b", "No strong discriminator was detected"],
+      "missing": ["Missing check value: total: a + b", "No strong discriminator was detected"],
       "assertion_texts": {
         "21": "let rows = rows(30, 3);",
         "22": "assert_eq!(rows[1].total, 33);"

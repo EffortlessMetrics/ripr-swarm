@@ -71,6 +71,7 @@ mod call_removal_tests;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod catch_arm_guard;
+mod changed_return;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
@@ -90,6 +91,7 @@ mod fact_store;
 mod fast_check;
 #[cfg(test)]
 mod fast_check_tests;
+mod push_argument_guard;
 pub(crate) use fact_store::TypeScriptFileFactStore;
 mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
@@ -1861,7 +1863,8 @@ pub(in crate::analysis::language::typescript) fn typescript_adapter_excludes_pat
 ) -> bool {
     is_detectable_generated_typescript_path(path)
         || crate::config::path_matches_preview_excluded_patterns(excluded_file_patterns, path)
-        || (is_detectable_excluded_typescript_path(path)
+        || ((is_detectable_excluded_typescript_path(path)
+            || crate::config::is_typescript_docs_site_path(path))
             && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
 }
 
