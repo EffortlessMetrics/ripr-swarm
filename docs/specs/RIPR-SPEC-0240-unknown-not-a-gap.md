@@ -412,7 +412,11 @@ non-ignored related test matches one of these shapes:
   on a changed `field:` initializer that no redaction selector (a literal
   keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
   keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
-  does a redacted field (`lib-insta-json-redacted-id`).
+  does a redacted field (`lib-insta-json-redacted-id`). Selector scanning preserves UTF-8
+  boundaries through Unicode whitespace and uses Rust expression syntax for
+  redaction values, including generic calls, closures and comment trivia.
+  An unreadable map or nonliteral key does not establish that a changed field
+  is unredacted; it cannot justify this gap-withholding rule.
 - **fixture receiver** (#9609): a `return_value` probe whose changed line
   holds a closure (`|..|`, `move |..|` or `|| ..` opening an argument; a boolean or bitwise `||` / `|` is not one) in a `&self` method, and a `direct_owner_call` test
   with a strong assertion: an `assert_eq!` with a literal (number, string,

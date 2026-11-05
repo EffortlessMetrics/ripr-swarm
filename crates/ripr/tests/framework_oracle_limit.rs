@@ -433,6 +433,40 @@ fn an_unredacted_insta_field_is_withheld() -> Result<(), String> {
 }
 
 #[test]
+fn insta_redaction_selectors_survive_unicode_and_nested_values() -> Result<(), String> {
+    let edit = diff(
+        9,
+        "        items: items.len(),",
+        "        items: items.iter().count(),",
+    );
+    for map in [
+        "{\u{0085}\".items\" => \"[n]\" }",
+        "{ \".id\" => \"[id]\",\u{200e}r#\".items\"# => \"[n]\" }",
+        "{ \".id\" => insta::dynamic_redaction(|value, _| value), \".items\" => \"[n]\" }",
+        "{ \".id\" => insta::rounded_redaction(2), \".items\" => \"[n]\" }",
+        "{ \".id\" => choose::<u8, u16>(), \".items\" => \"[n]\" }",
+        "{ /* key */ \".items\" /* arrow */ => /* value */ 0 }",
+        "{ SELECTOR => 0 }",
+        "match /* redactions */ .. { \".items\" => 0 }",
+        "{ \".id\" => -1.5, \".items\" => \"[n]\" }",
+        "{ \".id\" => réponse, \".items\" => \"[n]\" }",
+    ] {
+        let assertion = format!("insta::assert_json_snapshot!(record, {map});");
+        keeps_gap(&insta_source(&assertion), &edit, 9, &assertion)?;
+    }
+    // The map still withholds an unredacted sibling.
+    withheld(
+        &insta_source(
+            "insta::assert_json_snapshot!(record, { \".id\" => insta::rounded_redaction(2) });",
+        ),
+        &edit,
+        9,
+        "unredacted sibling beside an expression value",
+    )?;
+    Ok(())
+}
+
+#[test]
 fn an_insta_shape_that_differs_keeps_the_gap() -> Result<(), String> {
     // The redaction names the changed field.
     let items = diff(

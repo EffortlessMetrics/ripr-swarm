@@ -783,7 +783,12 @@ fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &st
             // snapshot, so the gap stays; an unredacted sibling beside a map,
             // or no map at all, is serialized into a committed file ripr does
             // not read, so it is withheld (#6642).
-            if redaction_selectors(&raw[from..to])
+            let Some(selectors) = redaction_selectors(&raw[from..to]) else {
+                // Unreadable redaction configuration does not establish that
+                // the changed field survives into the snapshot.
+                continue;
+            };
+            if selectors
                 .iter()
                 .any(|selector| selector.split(boundary).any(|s| s == field))
             {
@@ -828,56 +833,53 @@ fn macro_arguments(rest: &str) -> Option<&str> {
 
 /// Top-level braced argument of an insta macro call, if any.
 fn insta_redaction_map(arguments: &str) -> Option<&str> {
-    split_arguments(arguments)
-        .into_iter()
-        .map(|(start, end)| arguments[start..end].trim())
-        .find(|part| part.starts_with('{'))
+    let code = masked(arguments);
+    split_arguments(&code).into_iter().find_map(|(start, end)| {
+        let part = &code[start..end];
+        let trimmed = part.trim_start();
+        let trimmed = trimmed
+            .strip_prefix("match")
+            .and_then(|rest| rest.trim_start().strip_prefix(".."))
+            .map_or(trimmed, str::trim_start);
+        trimmed
+            .starts_with('{')
+            .then(|| &arguments[start + part.len() - trimmed.len()..end])
+    })
 }
 
-/// Path literals in the macro's redaction map (`".id" => ..`), if present.
-fn redaction_selectors(arguments: &str) -> Vec<&str> {
+/// `Some([])` means no map; `None` means a present map is unreadable.
+fn redaction_selectors(arguments: &str) -> Option<Vec<&str>> {
     let Some(map) = insta_redaction_map(arguments) else {
-        return Vec::new();
+        return Some(Vec::new());
     };
     redaction_map_selectors(map)
 }
 
 /// Selector path literals inside a braced insta redaction map.
-fn redaction_map_selectors(map: &str) -> Vec<&str> {
-    let mut selectors = Vec::new();
-    let mut offset = 0usize;
-    if map.as_bytes().get(offset) == Some(&b'{') {
-        offset += 1;
-    }
-    while offset < map.len() {
-        while map[offset..]
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_whitespace() || ch == ',')
-        {
-            offset += 1;
-        }
-        if offset >= map.len() || map.as_bytes()[offset] == b'}' {
-            break;
-        }
-        let Some((path, next)) = redaction_map_key(map, offset) else {
-            break;
-        };
-        selectors.push(path);
-        offset = next;
-    }
-    selectors
-}
-
-/// A redaction-map key and the offset after its `=>` value.
-fn redaction_map_key(map: &str, start: usize) -> Option<(&str, usize)> {
-    let (path, after_key) = string_literal_in_redaction_map(map, start)?;
-    let rest = map[after_key..].trim_start();
-    if !rest.starts_with("=>") {
-        return None;
-    }
-    let after_arrow = after_key + (map[after_key..].len() - rest.len()) + "=>".len();
-    Some((path, skip_redaction_value(map, after_arrow)))
+fn redaction_map_selectors(map: &str) -> Option<Vec<&str>> {
+    use ra_ap_syntax::{AstNode, ast};
+    // Insta's literal-key => expression entries have the same syntax as match
+    // arms. Reuse the Rust parser so expression commas (including turbofish
+    // arguments and closure parameters) and comment trivia retain their roles.
+    const PREFIX: &str = "fn redactions() { match () ";
+    let source = format!("{PREFIX}{map} }}");
+    let parse = crate::analysis::syntax::parse_clean_source_file(&source)?;
+    let arms = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::MatchArmList::cast)?;
+    arms.arms()
+        .map(|arm| {
+            let pattern = arm.pat()?;
+            if !matches!(pattern, ast::Pat::LiteralPat(_)) {
+                return None;
+            }
+            let start =
+                usize::from(pattern.syntax().text_range().start()).checked_sub(PREFIX.len())?;
+            string_literal_in_redaction_map(map, start).map(|(path, _)| path)
+        })
+        .collect()
 }
 
 fn string_literal_in_redaction_map(map: &str, start: usize) -> Option<(&str, usize)> {
@@ -918,28 +920,6 @@ fn raw_string_literal(text: &str) -> Option<(&str, usize)> {
     Some((&open[..content_end], end))
 }
 
-fn skip_redaction_value(map: &str, start: usize) -> usize {
-    let tail = map[start..].trim_start();
-    let value_start = start + (map[start..].len() - tail.len());
-    if tail.is_empty() {
-        return value_start;
-    }
-    if let Some((_, end)) = string_literal_in_redaction_map(map, value_start) {
-        return end;
-    }
-    let ch = tail.chars().next().unwrap_or('\0');
-    if ch.is_ascii_digit() || matches!(ch, '-' | '+') {
-        return value_start + tail.chars().take_while(|c| c.is_ascii_digit()).count();
-    }
-    if tail.starts_with("true") {
-        return value_start + 4;
-    }
-    if tail.starts_with("false") {
-        return value_start + 5;
-    }
-    value_start + 1
-}
-
 /// `name` of a struct-literal field initializer line (`name: expr,`).
 fn field_name(line: &str) -> Option<&str> {
     let (name, rest) = line.trim().split_once(':')?;
@@ -964,15 +944,16 @@ mod tests {
             redaction_selectors(
                 "record, { \".id\" => \"[id]\", \".meta.at\" => \"[t]\", \"[].n\" => 1 }"
             ),
-            vec![".id", ".meta.at", "[].n"]
+            Some(vec![".id", ".meta.at", "[].n"])
         );
-        assert!(redaction_selectors("record").is_empty());
+        assert!(redaction_selectors("record") == Some(vec![]));
     }
 
     #[test]
     fn redaction_selectors_ignore_match_arms_in_the_snapshotted_value() {
         assert!(
-            redaction_selectors("make_record(match kind { \"small\" => 2, _ => 3 })").is_empty()
+            redaction_selectors("make_record(match kind { \"small\" => 2, _ => 3 })")
+                == Some(vec![])
         );
         assert!(
             insta_redaction_map("make_record(match kind { \"small\" => 2, _ => 3 })").is_none()
@@ -983,8 +964,50 @@ mod tests {
     fn redaction_selectors_read_raw_string_map_keys() {
         assert_eq!(
             redaction_selectors("record, { r#\".id\"# => \"[id]\" }"),
-            vec![".id"]
+            Some(vec![".id"])
         );
+    }
+
+    #[test]
+    fn redaction_selectors_handle_unicode_whitespace_and_expression_values() {
+        assert_eq!(
+            redaction_selectors(
+                "record, {\u{0085}\".id\" => \"[id]\",\u{200e}r#\".items\"# => 1 }"
+            ),
+            Some(vec![".id", ".items"])
+        );
+        assert_eq!(
+            redaction_selectors(
+                "record, { /* before key */ \".id\" /* before arrow */ => /* value */ 0, \".items\" => 1 }"
+            ),
+            Some(vec![".id", ".items"])
+        );
+        assert_eq!(
+            redaction_selectors("record, match /* trivia */ .. { \".id\" => 0 }"),
+            Some(vec![".id"])
+        );
+        assert_eq!(redaction_selectors("record, { SELECTOR => 0 }"), None);
+        assert_eq!(redaction_selectors("record, { \".id\" => }"), None);
+        assert_eq!(redaction_selectors("record"), Some(vec![]));
+        for value in [
+            "insta::dynamic_redaction(|value, _| value)",
+            "insta::rounded_redaction(2)",
+            "choose::<u8, u16>()",
+            "|left, right| left + right",
+            "-1",
+            "1.5",
+            "réponse",
+            "[1, 2]",
+            "{ let text = r#\"}, \".fake\" =>\"#; text }",
+            "(/* comma, brace } */ 1, 2)",
+        ] {
+            let arguments = format!("record, {{ \".first\" => {value}, \".id\" => \"[id]\" }}");
+            assert_eq!(
+                redaction_selectors(&arguments),
+                Some(vec![".first", ".id"]),
+                "{value}"
+            );
+        }
     }
 
     #[test]
