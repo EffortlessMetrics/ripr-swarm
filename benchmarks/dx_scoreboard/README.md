@@ -9,6 +9,22 @@ regression margin. The report lands at
 The definitions live in [`scoreboards.toml`](scoreboards.toml). Changing a
 target, margin, or corpus pin is a reviewed edit to that file.
 
+## Input validity
+
+A comparison baseline must contain at least one metric row, and every row must
+be an object with a nonblank, unique string `id`. Empty inventories and duplicate
+IDs are rejected before comparison, so row order cannot select a favorable
+baseline. This validates metric identity, not every field in historical reports.
+A baseline may still cover only some configured metrics; new metrics and
+repositories retain their existing comparison policy.
+
+File-backed rates use nonnegative integer `numerator` and `denominator` counts,
+with numerator no greater than denominator. Exactly `0/0` means `not_measured`.
+Negative, fractional, missing, wrongly typed or impossible counts (including
+nonzero divided by zero) fail the instrument and `--gate`; they cannot become a
+favorable rate or an empty-population result. Valid endpoint rates remain `0/N = 0`
+and `N/N = 1` for positive `N`.
+
 ## Boards
 
 | Board | What a developer feels | Metrics |
@@ -85,6 +101,19 @@ latency ceilings until a bar is accepted. Today's measured position against
 those bars is in docs/METRICS.md.
 
 ## How each instrument works
+
+Corpus measurements use a private checkout of the pinned commit in run-owned
+scratch. Untracked and ignored files in the cached corpus checkout are not
+copied into that checkout; the cached working tree and generated files are
+left in place. The private checkout must contain the pinned commit, its
+effective base, and their tree objects; preparation failures are reported as
+instrument failures. The scratch checkout is removed after the run.
+New `--clone` corpus caches include full Git objects; this costs more network
+and disk space than a blob-filtered clone. If an existing partial cache lacks
+objects for the selected pin or base, `--clone` allows an unfiltered refetch;
+without it the instrument fails instead of fetching missing objects.
+Corpus preparation requires Git's `--no-lazy-fetch` global option; if the
+installed Git does not support it, preparation fails with the Git error.
 
 - **Cold pilot.** Fresh `RIPR_CACHE_DIR`, no `target/ripr` in the checkout,
   then the exact invocation the generated CI workflow runs:
@@ -311,6 +340,16 @@ baseline" instead of failing the gate; one that does not complete still fails.
 A repository that completes again after an incomplete baseline sample has no
 value to compare, so it is listed as "completed again" and left out of the
 compared worst.
+A passing gate is named honestly. When the missing-evidence counts the
+headline prints — `not_measured` plus the not-compared list — exceed half
+of the selected metrics, the gate status is `pass_with_gaps` instead of
+plain `pass`, and the headline rollup (in the Markdown report, on the
+console, and as `gate.counts` in the JSON) prints the meets-target,
+below-target, not-measured, failed and not-compared counts.
+`pass_with_gaps` still exits zero; only `fail` exits nonzero, because the
+gate judges regressions, not completeness. The committed baseline, for
+example, records 37 `not_measured` and 17 uncompared of 66 metrics, so a
+run matching it would headline `pass_with_gaps`, not `pass`.
 Metrics the baseline measured that a run cannot compare, such as ingested
 metrics without a receipt, are listed as not compared. One exception: when
 every selected metric has no value this run and nothing comparable (as

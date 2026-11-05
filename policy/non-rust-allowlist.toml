@@ -176,6 +176,29 @@ classification = "config"
 reason = "Product-independent workflow and agent policy package manifest."
 covered_by = ["cargo check -p repo-policy --locked"]
 
+[[allow]]
+glob = "tools/activate-rust.sh"
+kind = "shell_activation"
+owner = "rust"
+surface = "rust"
+classification = "tooling"
+reason = "A sourced Bash boundary must export installed exact Rust tools into its caller; Rust subprocesses cannot do that. No installation or network operation; bounded exception for #13123."
+covered_by = ["cargo xtask check-file-policy"]
+covered_by_unix = ["cargo test -p xtask --test rust_activation"]
+
+[[allow]]
+glob = "tools/test-activate-rust.sh"
+kind = "shell_activation_test"
+owner = "rust"
+surface = "rust"
+classification = "test"
+reason = "Fresh-shell behavioral proof for the #13123 Bash activation boundary, including parent environment, fixture inheritance and failure atomicity; executable on supported Bash hosts without Rust."
+covered_by = ["cargo xtask check-file-policy"]
+covered_by_unix = ["cargo test -p xtask --test rust_activation"]
+
+# The harness can also run directly as `bash tools/test-activate-rust.sh`.
+# Unix workspace tests own behavioral coverage; native Windows is not claimed.
+
 # ---------------------------------------------------------------------------
 # Distribution adapters
 # ---------------------------------------------------------------------------
@@ -768,6 +791,24 @@ reason = "Committed developer-experience scoreboard baseline the nightly regress
 covered_by = ["cargo xtask dx-scoreboard --baseline metrics/dx-scoreboard/baseline.json --gate", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "benchmarks/repair_start/*.json"
+kind = "benchmark_fixture"
+owner = "dx-scoreboard"
+surface = "fixtures"
+classification = "fixture"
+reason = "Pinned 24-diff repair-start case trees and the bars and regression floor read by cargo xtask repair-start-page (#12903)."
+covered_by = ["cargo test -p xtask --bin xtask outcome_page", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/outcome/seed/*.json"
+kind = "benchmark_receipt"
+owner = "dx-scoreboard"
+surface = "repo"
+classification = "metadata"
+reason = "Dated manual-harness repair-start receipts that seed the outcome page trend before the nightly lane records its own."
+covered_by = ["cargo test -p xtask --bin xtask outcome_page", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "benchmarks/targeted_rerun_benchmark/**"
 kind = "benchmark_fixture"
 owner = "targeted-rerun"
@@ -900,6 +941,15 @@ covered_by = [
     "cargo test -p ripr --test mcp_stdio unsupported_inline_version_is_rejected_and_next_request_recovers",
     "cargo xtask check-file-policy",
 ]
+
+[[allow]]
+glob = "tools/python/installed-provider-recovery/run.py"
+kind = "installed_wheel_recovery_control"
+owner = "release-engineering"
+surface = "ci"
+classification = "test"
+reason = "The isolated pip-wheel consumer has Python and native Cargo but no source checkout or xtask executable; this stdlib harness observes the installed payload and private fixture/cache recovery (#10864)."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]
 
 [[allow]]
 glob = "tools/python/portable-ripr-consumer/**/*.py"

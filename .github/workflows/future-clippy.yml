@@ -119,24 +119,66 @@ jobs:
           toolchain: stable
           components: clippy, llvm-tools-preview
 
-      - name: Record stable compiler and LLVM identity
+      - name: Check stable workflow controls
+        run: cargo +stable test --locked -p repo-policy --test future_clippy
+
+      - name: Extract documented coverage upgrade recipe
         shell: bash
         run: |
-          compiler=$(rustc -vV)
-          printf '%s\n' "$compiler"
-          sysroot=$(rustc --print sysroot)
-          host=$(sed -n 's/^host: //p' <<< "$compiler")
-          test -n "$sysroot"
-          test -n "$host"
-          profdata="$sysroot/lib/rustlib/$host/bin/llvm-profdata"
-          printf 'llvm-profdata=%s\n' "$profdata"
-          "$profdata" --version
+          recipe="$RUNNER_TEMP/ripr-coverage-upgrade.sh"
+          rm -f "$recipe" "$recipe.md"
+          awk '
+            !copying && $0 == "### Validate locally" { headings++; selected=1; next }
+            !copying && /^#/ { selected=0 }
+            $0 == "<!-- ripr:coverage-upgrade:start -->" { starts++; if (!selected) bad=1; copying=1; next }
+            $0 == "<!-- ripr:coverage-upgrade:end -->" { ends++; copying=0; next }
+            copying { print }
+            END { if (headings != 1 || starts != 1 || ends != 1 || copying || bad) exit 1 }
+          ' docs/ci/coverage.md > "$recipe.md"
+          [[ $(head -n 1 "$recipe.md") == '```bash' ]]
+          [[ $(tail -n 1 "$recipe.md") == '```' ]]
+          [[ $(grep -Ec '^[[:space:]]*```' "$recipe.md") == 2 ]]
+          sed '1d;$d' "$recipe.md" > "$recipe"
+          test -s "$recipe"
+          bash -n "$recipe"
+          sha256sum docs/ci/coverage.md "$recipe"
 
-      - name: Check stable coverage diagnostics
-        run: cargo +stable test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
+      - name: Run documented coverage upgrade with native SDKs
+        shell: bash
+        run: |
+          compiler=$(rustup which --toolchain stable rustc)
+          export RUSTC="$compiler" RUSTUP_TOOLCHAIN=stable RUSTUP_AUTO_INSTALL=0
+          export PATH="${RUSTC%/*}:$PATH"
+          test "$(command -v rustc)" = "$RUSTC"
+          test "$(command -v cargo)" = "${RUSTC%/*}/cargo"
+          log="$RUNNER_TEMP/ripr-coverage-upgrade.log"
+          rm -f "$log"
+          printf 'initial_sdk_rustc=%s\ninitial_sdk_cargo=%s\n' "$RUSTC" "${RUSTC%/*}/cargo"
+          set +e
+          bash --noprofile --norc -e -o pipefail "$RUNNER_TEMP/ripr-coverage-upgrade.sh" 2>&1 | tee "$log"
+          native_status=("${PIPESTATUS[@]}")
+          set -e
+          if (( native_status[0] != 0 )); then exit "${native_status[0]}"; fi
+          if (( native_status[1] != 0 )); then exit "${native_status[1]}"; fi
+          printf 'recipe_completed source_sha=%s run_id=%s run_attempt=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" | tee -a "$log"
 
-      - name: Check stable isolated workflow fixtures
-        run: cargo +stable test --locked -p repo-policy --test frontdoor
-
-      - name: Check stable repo-policy Clippy
-        run: cargo +stable clippy --locked -p repo-policy --all-targets -- -D warnings
+      - name: Verify documented coverage upgrade execution
+        shell: bash
+        run: |
+          awk -v source="recipe_completed source_sha=$GITHUB_SHA run_id=$GITHUB_RUN_ID run_attempt=$GITHUB_RUN_ATTEMPT" '
+            BEGIN {
+              expected[1]="Completed: 1.95.0 cargo test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture"
+              expected[2]="Completed: stable cargo test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture"
+              expected[3]="Completed: stable cargo test --locked -p repo-policy --test frontdoor"
+              expected[4]="Completed: stable cargo clippy --locked -p repo-policy --all-targets -- -D warnings"
+            }
+            /^recipe_completed / { fresh++; if ($0 != source || n != 4) bad=1 }
+            /^test result:/ { tested++; if ($0 !~ /^test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;/) bad=1 }
+            /real LLVM association:/ { profile++; if ($0 !~ /real LLVM association: raw_version=(10, layout=llvm_raw64_le_v10|11, layout=llvm_raw64_le_v11), build-id=[0-9a-f]+, retained=[1-9][0-9]*, mapping="matched", original=failure, replay=1$/) bad=1 }
+            /Finished.*`dev` profile/ { compiled++ }
+            /^Completed: / {
+              n++; if ($0 != expected[n] || (n <= 3 && tested != 1) || (n <= 2 && profile != 1) || (n == 3 && profile) || (n == 4 && (tested || profile || compiled != 1))) bad=1
+              tested=profile=compiled=0
+            }
+            END { if (fresh != 1 || n != 4 || tested || profile || compiled || bad) exit 1 }
+          ' "$RUNNER_TEMP/ripr-coverage-upgrade.log"

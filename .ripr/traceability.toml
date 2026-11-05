@@ -8406,6 +8406,9 @@ id = "RIPR-SPEC-0088"
 name = "TypeScript repair-packet surface projection"
 spec = "docs/specs/RIPR-SPEC-0088-typescript-repair-packet-projection.md"
 tests = [
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_family_unknown_preserves_advisory_limit",
+  "crates/ripr/tests/first_pr_run_chain.rs::run_chain_retains_javascript_unknown_as_advisory_limitation",
+  "crates/ripr/tests/first_pr_run_chain.rs::run_chain_retains_typescript_unknown_as_advisory_limitation",
   "crates/ripr/src/output/human.rs::tests::preview_limited_named_limitation_has_terminal_observation_check",
   # Human surface â€” field-note and named limitation
   "crates/ripr/src/app/explain.rs::tests::explain_finding_renders_typescript_actionable_packet_field_note",
@@ -8433,6 +8436,7 @@ fixtures = [
   "fixtures/ts_already_observed"
 ]
 code = [
+  "crates/ripr/src/output/gap_decision_ledger.rs",
   "crates/ripr/src/output/human/triage.rs",
   "crates/ripr/src/app/explain.rs",
   "crates/ripr/src/output/human/sections.rs",
@@ -14414,6 +14418,16 @@ tests = [
   "xtask/src/tests.rs::file_policy_allowlist_toml_preserves_value_admission_for_ignored_metadata",
   "xtask/src/tests.rs::file_policy_allowlist_toml_keeps_governed_field_refusals",
   "xtask/src/tests.rs::policy_checker_facade_runs_current_repo_checks",
+  "xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_uses_fresh_host_scoped_inventory",
+  "xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_rejects_nonzero_neighbor_inventory",
+  "xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_rejects_selector_and_host_drift",
+  "xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_rejects_malformed_extra_identities",
+  "xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_preserves_enumerator_failure",
+  "xtask/tests/file_policy_packet_acceptance.rs::file_policy_packet_inventory_reaches_actual_cli_acceptance",
+  "xtask/src/tests.rs::packet_coverage_report_accepts_exact_selected_names",
+  "xtask/src/tests.rs::packet_coverage_report_rejects_unpinned_or_wrong_common_binary",
+  "xtask/src/tests.rs::packet_coverage_report_rejects_neighboring_selected_names",
+  "xtask/src/tests.rs::packet_coverage_report_rejects_invalid_selected_fields",
   "xtask/src/policy/file_policy.rs::tests::test_covered_by_host_selection_retains_common_and_discloses_inapplicable",
   "xtask/src/policy/file_policy.rs::tests::test_covered_by_empty_applicable_host_selector_is_rejected",
   "xtask/src/policy/file_policy.rs::tests::test_covered_by_unknown_host_family_is_rejected",
@@ -19673,6 +19687,14 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/tests/typescript_read_budget.rs::a_capped_test_file_withholds_no_static_path",
+  "crates/ripr/tests/typescript_read_budget.rs::an_exhausted_workspace_budget_withholds_no_static_path",
+  "crates/ripr/tests/typescript_read_budget.rs::enough_budget_reads_the_test_and_retains_its_boundary_witness",
+  "crates/ripr/tests/typescript_read_budget.rs::a_finished_read_without_tests_keeps_no_static_path",
+  "crates/ripr/tests/typescript_read_budget.rs::an_observed_test_keeps_its_finding_beside_unread_sources",
+  "crates/ripr/tests/typescript_read_budget.rs::a_refused_changed_source_does_not_invent_a_finding",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::a_read_limit_withholds_only_untyped_no_path_findings",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_typescript_workspace_read_limit",
   "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_literal_pin_reads_helper_data",
   "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_credit_requires_readable_carried_data",
   "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_projection_edit_needs_distinct_literal_totals",
@@ -19730,6 +19752,9 @@ tests = [
   "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::a_mock_closure_counts_only_when_it_reads_a_named_argument",
   "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::literal_call_names_read_the_first_literal_of_whole_callees",
   "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::redaction_selectors_are_the_path_literals_of_the_argument_list",
+  "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::redaction_selectors_handle_unicode_whitespace_and_expression_values",
+  "crates/ripr/tests/framework_oracle_limit.rs::insta_redaction_selectors_survive_unicode_and_nested_values",
+  "crates/ripr/tests/framework_oracle_limit.rs::unread_insta_selectors_withhold_changed_fields",
   "crates/ripr/src/analysis/classify/caller_loop_selector.rs::tests::the_domain_bound_is_exact",
   "crates/ripr/src/analysis/classify/caller_loop_selector.rs::tests::unreadable_loops_are_refused",
   "crates/ripr/src/analysis/classify/caller_loop_selector.rs::tests::only_a_direct_collect_compared_whole_is_a_consumer",
@@ -19853,6 +19878,10 @@ fixtures = [
   "fixtures/gap_kept_ignored_test",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/mod.rs",
+  "crates/ripr/src/analysis/language/typescript/actionability.rs",
+  "crates/ripr-contract/src/domain/language.rs",
+  "crates/ripr-contract/src/domain/limit_guidance.rs",
   "crates/ripr/src/analysis/classify/owner_pin/fixture_receiver.rs",
   "crates/ripr/src/analysis/classify/owner_pin/fixture_receiver/dispatch.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
