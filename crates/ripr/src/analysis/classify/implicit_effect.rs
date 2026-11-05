@@ -170,7 +170,7 @@ impl ImplicitExpansionMemo {
 pub(super) fn standard_bool_clone_view(index: &RustIndex) -> bool {
     // Manifest authority may change independently of immutable source memos.
     if !super::call_identity::closed_method_dispatch_imports(index)
-        || !index.files().keys().all(|file| {
+        || !index.files().iter().all(|(file, _)| {
             ["std", "core"]
                 .into_iter()
                 .all(|name| index.drop_in_manifests.unbound_standard_root(file, name))
