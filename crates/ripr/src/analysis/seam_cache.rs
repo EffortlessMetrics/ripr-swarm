@@ -680,7 +680,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// statement through the same owner-pin decision as `ripr check` (#12394).
 /// `1.158`: a bounded `.map(owner)` chain is credited at the first input where
 /// the change is visible (#12841).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
+/// `1.160`: source-bound failed property verification is an opaque repo limit,
+/// with distinct typed failure outcomes in the provider identity (#10864).
+/// `1.159` is reserved by the existing asserted-helper candidate.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.160";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -880,7 +883,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
+// Same provider-failure semantics as full 1.160 (#10864); 0.161 is the helper candidate.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1082,7 +1086,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
+/// `0.162`: same provider-failure limitation as full `1.160` (#10864).
+/// `0.161` is reserved by the existing asserted-helper candidate.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1871,11 +1877,10 @@ impl WorkspaceKeyContext<'_> {
         };
         let workspace_manifests_hash =
             if super::workspace::eligible_proptest_root(self.workspace_root) {
-                let identity = super::workspace::verified_proptest_identity(self.workspace_root)
-                    .map_or_else(
-                        || "unverified".to_string(),
-                        |receipt| receipt.validation_digest,
-                    );
+                let identity = proptest_cache_identity(
+                    super::workspace::verified_proptest_identity_result(self.workspace_root)
+                        .map(|identity| identity.map(|receipt| receipt.validation_digest)),
+                );
                 hash_str(&format!(
                     "{workspace_manifests_hash}:proptest-1.11-singleton:{identity}"
                 ))
@@ -4737,6 +4742,18 @@ fn ignore_remove_dir_all(path: &std::path::Path) {
     if let Ok(()) = std::fs::remove_dir_all(path) {}
 }
 
+/// Operationally different provider refusals require different classified
+/// evidence: a capture failure must not retain missing-input recovery advice.
+fn proptest_cache_identity(
+    identity: Result<Option<String>, super::workspace::MetadataProbeFailure>,
+) -> String {
+    match identity {
+        Ok(Some(digest)) => digest,
+        Ok(None) => "unverified".to_string(),
+        Err(failure) => format!("unverified:{failure:?}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4747,6 +4764,26 @@ mod tests {
     use crate::analysis::test_grip_evidence::TestGripEvidence;
     use crate::domain::{Confidence, StageEvidence, StageState};
     use std::path::PathBuf;
+
+    #[test]
+    fn property_cache_identity_separates_operational_failure_recovery() {
+        use crate::analysis::workspace::MetadataProbeFailure;
+        let missing =
+            proptest_cache_identity(Err(MetadataProbeFailure::UnsuccessfulExit(Some(101))));
+        let capture = proptest_cache_identity(Err(MetadataProbeFailure::CaptureCreate(
+            std::io::ErrorKind::NotFound,
+        )));
+        assert_ne!(missing, capture);
+        assert_ne!(missing, proptest_cache_identity(Ok(None)));
+        assert_ne!(
+            missing,
+            proptest_cache_identity(Ok(Some("verified-generation".into())))
+        );
+        assert_eq!(
+            missing,
+            proptest_cache_identity(Err(MetadataProbeFailure::UnsuccessfulExit(Some(101))))
+        );
+    }
 
     #[test]
     fn folding_file_fact_key_digests_matches_folding_bytes() {

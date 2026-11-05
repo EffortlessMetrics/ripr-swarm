@@ -190,7 +190,7 @@ pub(super) fn apply_cross_language_limit(finding: &mut Finding, probe: &Probe, i
 /// Borrowed, pass-local lookup. Each source identifier is indexed once, never
 /// by copying a function/body. Empty inputs make every later lookup constant
 /// time; no-path findings do not rescan all files or macro token trees.
-pub(super) struct PropertyMacroMentionIndex<'a> {
+pub(in crate::analysis) struct PropertyMacroMentionIndex<'a> {
     captured_root: Option<&'a std::path::Path>,
     selected_root: &'a std::path::Path,
     by_identifier: std::collections::BTreeMap<&'a str, Vec<PropertyMacroLocation<'a>>>,
@@ -243,6 +243,50 @@ impl<'a> PropertyMacroMentionIndex<'a> {
         }
     }
 
+    /// Repo seam owners use root-relative indexed paths. This is the same
+    /// source/package authority as the Finding consumer, with no new resolver.
+    pub(in crate::analysis) fn for_index(index: &'a RustIndex) -> Self {
+        Self::new(index, std::path::Path::new(""))
+    }
+
+    fn selected(
+        &self,
+        owner_name: &str,
+        owner_file: &std::path::Path,
+    ) -> Option<&PropertyMacroLocation<'a>> {
+        let owner_package = self.owner_package(owner_file);
+        self.by_identifier
+            .get(owner_name)?
+            .iter()
+            .filter(|location| {
+                match (owner_package, self.known_package(location.file)) {
+                    (Some(owner), Some(mentioned)) => owner == mentioned,
+                    // Unresolved package identity cannot prove unrelatedness.
+                    _ => true,
+                }
+            })
+            .min_by_key(|location| location.metadata_failure.is_none())
+    }
+
+    /// A source-bound failed provider verification, projected once by the
+    /// same sanitized diagnosis/recovery owner used by the diff pipeline.
+    pub(in crate::analysis) fn provider_failure_summary(
+        &self,
+        owner_name: &str,
+        owner_file: &std::path::Path,
+    ) -> Option<String> {
+        let location = self.selected(owner_name, owner_file)?;
+        let failure = location.metadata_failure?;
+        Some(format!(
+            "Reach unresolved ({}): property macro `{}!` at {}:{} lexically mentions `{owner_name}`; offline provider verification; {failure}. {} No generated test, observed value, owner execution or missing-test certainty is established.",
+            StaticLimitKind::RustMacroReachUnresolved.as_str(),
+            location.witness.name,
+            location.file.display().to_string().replace('\\', "/"),
+            location.witness.line,
+            provider_metadata::recovery_step(failure),
+        ))
+    }
+
     fn known_package(&self, indexed_file: &std::path::Path) -> Option<&str> {
         self.package_authority?
             .get(indexed_file)
@@ -273,26 +317,11 @@ pub(super) fn apply_unresolved_property_macro_limit(
     let Some(locations) = mentions.by_identifier.get(owner_name) else {
         return false;
     };
-    // This is retained manifest/source authority, not a path-layout guess.
-    // No per-finding filesystem reads or manifest resolution are performed.
-    let owner_package = mentions.owner_package(owner_file);
-    // Prefer a relevant invocation whose actual verification failed over an
-    // earlier opaque sibling. The diagnostic stays attached to its own witness;
-    // it must never be copied onto the unsupported sibling's source pointer.
     let Some(PropertyMacroLocation {
         file,
         witness,
         metadata_failure,
-    }) = locations
-        .iter()
-        .filter(|location| {
-            match (owner_package, mentions.known_package(location.file)) {
-                (Some(owner), Some(mentioned)) => owner == mentioned,
-                // An unresolved package identity cannot prove unrelatedness.
-                _ => true,
-            }
-        })
-        .min_by_key(|location| location.metadata_failure.is_none())
+    }) = mentions.selected(owner_name, owner_file)
     else {
         return false;
     };

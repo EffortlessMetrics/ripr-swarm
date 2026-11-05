@@ -10677,6 +10677,8 @@ tests = [
   "crates/ripr/src/analysis/probes/macro_definition.rs::tests::raw_identifier_macro_names_are_definitions",
   "crates/ripr/src/analysis/probes/macro_definition.rs::tests::a_mixed_line_is_owned_by_no_definition",
   "fixtures/rust_mixed_direct_macro_reach/expected/check.json",
+  "crates/ripr/src/analysis/facts/proptest/metadata_failure_tests.rs::repository_provider_failure_uses_the_same_source_bound_diagnosis",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::property_cache_identity_separates_operational_failure_recovery",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -10698,6 +10700,13 @@ code = [
   "crates/ripr/src/analysis/classify/owner_pin.rs",
   "crates/ripr/src/analysis/probes/macro_definition.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/analysis/language/rust/oracles.rs",
+  "crates/ripr/src/analysis/language/rust/oracles/provider_metadata.rs",
+  "crates/ripr/src/analysis/facts/proptest.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+  "crates/ripr/src/output/evidence_record.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0117-rust-macro-reach-limitation.md",

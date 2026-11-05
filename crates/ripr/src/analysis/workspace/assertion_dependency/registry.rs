@@ -85,6 +85,7 @@ pub(crate) fn locked_at_audited_version(root: &Path, name: &str, audited: &[&str
 /// The function macro, Just strategy and assertion failure path audited in
 /// proptest 1.11.0. Cargo/cache integrity has the same instrument assumptions
 /// as the other registry receipts; a matching spelling is never authority.
+#[cfg(test)]
 pub(crate) fn verified_proptest_identity(root: &Path) -> Option<RegistryIdentity> {
     verified_proptest_identity_result(root).ok().flatten()
 }

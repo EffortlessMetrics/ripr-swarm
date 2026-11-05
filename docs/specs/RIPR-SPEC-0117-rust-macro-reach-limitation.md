@@ -579,6 +579,48 @@ and custom inequality refusals, and native original/wrong-owner, zero-cases,
 diagnostic-return and weak-check controls. Native runtime truth stays separate
 from static exposure.
 
+### Repository provider-failure evidence (#10864)
+
+A supported property invocation whose existing offline provider verification
+failed carries that source-bound failure into both full and compact repository
+seam evidence. The shared property-mention selector uses the same retained
+package authority and failure preference as the finding pipeline. It creates
+no new resolver or provider admission.
+
+When no independent owner path is established, the repository reach is opaque
+with `rust_macro_reach_unresolved`; activation, propagation, observation and
+discrimination remain unknown. No related test, observed value, missing
+boundary discriminator or proposed new test target may be borrowed from the
+unverified invocation or nearby tests. An established ordinary owner path keeps
+its existing evidence independently of the failed property registration.
+
+The full evidence record retains the sanitized operational diagnosis and exact
+recovery guidance produced by the existing provider-diagnostic owner. Its
+canonical item is a static limitation, rather than advice to add a missing
+test. The compact summary carries matching class/limitation aggregates; it does
+not expose per-seam diagnosis text. A metadata capture failure recommends
+repairing temporary-directory access, while an unsuccessful metadata exit keeps
+the same-root offline/locked inspection command. Neither guesses a package
+name from exit 101 or starts an online retry.
+
+Classified cache identity distinguishes these existing typed failure outcomes;
+unchanged source alone cannot retain the previous failure's recovery advice.
+A complete admitted provider identity continues using its existing validation
+digest. Both full and compact semantic cache generations change together.
+
+Source-backed controls:
+
+- `facts/proptest/metadata_failure_tests.rs::repository_provider_failure_uses_the_same_source_bound_diagnosis`
+  covers both evidence paths, no borrowed evidence, full-record actionability,
+  changed-source refusal and the independent ordinary owner path.
+- `seam_cache.rs::property_cache_identity_separates_operational_failure_recovery`
+  distinguishes unsuccessful metadata, capture failure, refused eligibility and
+  verified identity.
+
+Installed healthy/withheld/repeat/restored qualification remains an execution
+requirement on the identified wheel and unchanged fixture/Cargo home/RIPR cache.
+Source tests and cache-key checks do not establish that installed journey.
+
 ### Original empty-string property (#10843)
 
 An additional closed profile reads the unchanged `empty_string` function in
