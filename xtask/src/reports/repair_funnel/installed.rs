@@ -649,6 +649,33 @@ mod tests {
     }
 
     #[test]
+    fn repair_funnel_conflicting_views_reject_missing_native() -> Result<(), String> {
+        let path = manifest_path();
+        let mut value: Value = serde_json::from_slice(
+            &fs::read(&path).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        let mut missing_native = value["bundles"][0].clone();
+        missing_native["files"]
+            .as_object_mut()
+            .ok_or("files")?
+            .remove("journey/native-after.json");
+        value["bundles"]
+            .as_array_mut()
+            .ok_or("bundles")?
+            .push(missing_native);
+        let result = report_bytes(
+            &path,
+            &serde_json::to_vec(&value).map_err(|e| e.to_string())?,
+        );
+        let Err(error) = result else {
+            return Err("conflicting duplicate silently hid missing native execution".into());
+        };
+        assert_eq!(error, "conflicting duplicate opportunity views");
+        Ok(())
+    }
+
+    #[test]
     fn repair_funnel_duplicate_channel_views_count_one_opportunity() -> Result<(), String> {
         let path = manifest_path();
         let mut value: Value = serde_json::from_slice(&fs::read(&path)

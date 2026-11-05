@@ -1,4 +1,4 @@
-# Repair Funnel Control Fixture Corpus
+# Repair Funnel Controls and Retained Receipt Inputs
 
 Spec: RIPR-SPEC-0410
 
