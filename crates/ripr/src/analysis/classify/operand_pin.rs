@@ -13,7 +13,10 @@
 
 mod primitive_binding;
 use primitive_binding::TypeSite;
-pub(super) use primitive_binding::{callable_context_is_closed, enum_constructor_context_is_closed};
+pub(super) use primitive_binding::{
+    callable_context_is_closed, closed_primitive_parameters, declared_return_is_primitive,
+    enum_constructor_context_is_closed,
+};
 
 use super::super::rust_index::{RustIndex, TestSummary};
 use crate::analysis::facts::{FunctionContainer, FunctionSummary};

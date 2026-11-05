@@ -77,6 +77,8 @@ type SharedOwnerScopes = BTreeMap<PathBuf, (Arc<str>, Option<Arc<super::owner_pi
 
 type SharedIdentities = BTreeMap<(bool, String), Option<std::sync::Arc<OwnerCallIdentity>>>;
 type SoloIdentities = BTreeMap<String, Option<std::sync::Arc<OwnerCallIdentity>>>;
+type DeriveBindingSites = Arc<Vec<(String, Option<(usize, usize)>)>>;
+type DeriveBindingMemo = BTreeMap<(Arc<str>, Vec<String>), DeriveBindingSites>;
 
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
@@ -146,6 +148,10 @@ pub(crate) struct CallIdentityMemos {
     rebound_scans: std::sync::atomic::AtomicUsize,
     /// #8917: whether a type name carries a unique workspace `Default` derive.
     pub(in crate::analysis) type_derives_default: Mutex<BTreeMap<String, bool>>,
+    /// Exact-source, requested-name binding scans used by the closed assertion
+    /// value check. Different source bytes or trusted names never share a result;
+    /// the whole memo expires with this analysis index, including on clone.
+    pub(super) standard_derive_bindings: Mutex<DeriveBindingMemo>,
 }
 
 impl CallIdentityMemos {

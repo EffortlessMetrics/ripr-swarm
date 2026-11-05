@@ -751,7 +751,11 @@ fn cloned_unused_callbacks_have_no_public_observation_or_oracle() -> Result<(), 
                 ExposureClass::ReachableUnrevealed,
                 "{calls}: {finding:?}"
             );
-            assert_eq!(state(&finding.ripr.observe.state), "No", "{finding:?}");
+            assert_eq!(
+                state(&finding.ripr.reveal.observe.state),
+                "No",
+                "{finding:?}"
+            );
             let test = &finding.related_tests[0];
             assert_eq!(test.oracle.as_deref(), None, "{finding:?}");
             assert_eq!(state(&test.oracle_strength), "None", "{finding:?}");
@@ -778,7 +782,11 @@ fn invoked_literal_and_ordinary_value_clones_keep_public_oracles() -> Result<(),
         ),
     ] {
         for finding in callback_findings(helper, calls)? {
-            assert_eq!(state(&finding.ripr.observe.state), "Yes", "{finding:?}");
+            assert_eq!(
+                state(&finding.ripr.reveal.observe.state),
+                "Yes",
+                "{finding:?}"
+            );
             let test = &finding.related_tests[0];
             assert_eq!(test.oracle.as_deref(), Some("assert_eq!(got, want);"));
             assert_eq!(state(&test.oracle_strength), "Strong", "{finding:?}");

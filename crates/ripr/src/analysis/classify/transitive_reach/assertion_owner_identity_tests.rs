@@ -528,3 +528,42 @@ fn assertion_target_identity_is_local_to_each_oracle() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn opposite_kind_value_dependencies_keep_owner_uncertainty() -> Result<(), String> {
+    for (method_body, extra, assertion) in [
+        (
+            "EXPECTED",
+            "const EXPECTED: u32 = 4;",
+            "assert_eq!(widget.consume(1), 4)",
+        ),
+        (
+            "let result = value + 2; result",
+            "",
+            "assert_eq!(widget.consume(1), 3)",
+        ),
+        (
+            "value + 2",
+            "const ACTUAL: u32 = 4;",
+            "assert_eq!(widget.consume(1) + ACTUAL, 7)",
+        ),
+        (
+            "value + 2",
+            "const ACTUAL: u32 = 1;",
+            "assert_eq!(widget.consume(ACTUAL), 3)",
+        ),
+        ("value + 2", "", "assert_eq!(widget.consume(1 + 0), 3)"),
+        (
+            "value + 2",
+            "",
+            "assert_eq!(if true { widget.consume(1) } else { 0 }, 3)",
+        ),
+    ] {
+        let index = parsed_index(&source("value + 1", method_body, extra))?;
+        assert!(
+            !pins_other_in_test(&index, owner(&index, true)?, assertion)?,
+            "unresolved value must retain uncertainty: {method_body} / {assertion}"
+        );
+    }
+    Ok(())
+}

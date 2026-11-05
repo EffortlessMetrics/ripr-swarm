@@ -602,6 +602,114 @@ mod tests {
 }
 "##,
         ),
+        (
+            "const_owner_result",
+            "src/lib.rs::consume",
+            r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+
+pub const fn consume(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+
+const EXPECTED: Reduction = consume(1);
+
+pub struct Widget;
+impl Widget {
+    pub fn consume(&self) -> Reduction {
+        EXPECTED
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        assert_eq!(widget.consume(), Reduction::Over(16));
+    }
+}
+"##,
+        ),
+        (
+            "assertion_const_value_flow",
+            "src/lib.rs::consume",
+            r##"pub const fn consume(value: u32) -> u32 {
+    match value {
+        0 => 0,
+        _ => 16,
+    }
+}
+
+const ACTUAL: u32 = consume(1);
+
+pub struct Widget;
+impl Widget {
+    pub fn consume(&self, value: u32) -> u32 {
+        match value {
+            0 => 0,
+            _ => 1,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        assert_eq!(widget.consume(1) + ACTUAL, 17);
+    }
+}
+"##,
+        ),
+        (
+            "assertion_equality_const_flow",
+            "src/lib.rs::consume",
+            r##"#[derive(Debug)]
+pub enum Reduction { Over(u32), Empty }
+
+pub const fn consume(value: u32) -> u32 {
+    match value {
+        0 => 0,
+        _ => 16,
+    }
+}
+
+const ACTUAL: u32 = consume(1);
+
+impl PartialEq for Reduction {
+    fn eq(&self, _other: &Self) -> bool {
+        ACTUAL == 16
+    }
+}
+
+pub struct Widget;
+impl Widget {
+    pub fn consume(&self, value: u32) -> Reduction {
+        match value {
+            0 => Reduction::Empty,
+            _ => Reduction::Over(15),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        assert_eq!(widget.consume(1), Reduction::Over(15));
+    }
+}
+"##,
+        ),
     ] {
         let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
         let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);

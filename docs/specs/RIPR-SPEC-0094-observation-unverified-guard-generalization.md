@@ -556,27 +556,38 @@ in that assertion must agree. Another call elsewhere in the test cannot
 supply this authority; local callable bindings and unindexed receivers
 remain uncertain.
 
-The candidate's actual function and enclosing impl scopes must preserve the
-read source before any callable absence can be inferred. An unread rewriting
+The candidate's actual function and enclosing impl scopes, including the
+associated-item list, must preserve the read source. An unread rewriting
 attribute retains uncertainty even when the source body has no calls.
-The refusal also keeps uncertainty whenever the established candidate makes an
-outgoing call, including calls to indexed helpers or uppercase callable
-parameters. Only actual parsed `Enum::Variant` constructors are treated as
-non-calling: the enum and function must be established in the same file-root
-scope, no indexed callable may compete for the variant name, and the existing
-enum-declaration and rebinding authority must accept the path. The existing
-closed-scope authority establishes standard derive bindings; generic function
-or impl contexts remain uncertain. The general entry-type declaration guard
-is unchanged. This
-intentionally leaves unrelated wrapper chains conservative rather than
-using name-only reach to prove absence. Returned-function invocation,
-opaque or unsupported assertion syntax, ambiguous dispatch and implicit
-owner paths also retain uncertainty. Generic, raw and Unicode function
-values inside genuine wrappers retain their previous evidence without a
-new function-value name resolver. Qualified and unread call paths retain
-their previous behavior, including UFCS. This bounded refusal reuses
-existing binding readers and does not broaden the seam kinds to which
-the per-assertion guard applies.
+Call absence alone is insufficient: a constant, field or local can carry an
+owner-produced value. The refusal therefore requires a closed value grammar.
+The selected assertion's evaluated operands must be direct candidate calls
+with literal inputs, literals, or established enum values; arithmetic around
+calls, conditions, nonliteral inputs and other value reads retain uncertainty.
+The candidate body may read only established primitive parameters, literals,
+built-in primitive expressions and literal/wildcard match arms. Locals, fields,
+globals, indirect values and outgoing callables remain uncertain.
+
+Only actual parsed `Enum::Variant` constructors are treated as non-calling:
+the enum and function must be established in the same file-root scope, no
+indexed callable may compete for the variant name, and the existing declaration
+and rebinding authority must accept the path. The complete asserted value also
+requires primitive comparison or the existing enum value-equality and closed
+Drop authority. Manual equality that reads a constant cannot be dismissed
+because the candidate's source body is independent. The existing closed-scope
+authority establishes standard derive bindings; generic function or impl
+contexts remain uncertain. Its binding scan is memoized by exact source bytes
+and requested names within the analysis index. The general entry-type
+declaration guard is unchanged.
+
+Unrelated wrapper chains intentionally retain uncertainty. Returned-function
+invocation, opaque or unsupported assertion syntax, ambiguous dispatch and
+implicit owner paths also retain uncertainty. Generic, raw and Unicode function
+values inside genuine wrappers retain their previous evidence without a new
+function-value name resolver. Qualified and unread call paths retain their
+previous behavior, including UFCS. This bounded refusal reuses existing binding
+readers and does not broaden the seam kinds to which the per-assertion guard
+applies.
 
 The full and compact repo views and their published related-test oracle
 read the same refusal. Proof: `assertion_call_kind_separates_same_named_free_and_receiver_owners`,
@@ -589,6 +600,7 @@ read the same refusal. Proof: `assertion_call_kind_separates_same_named_free_and
 `opposite_kind_callback_values_keep_owner_uncertainty`,
 `assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain`,
 `assertion_target_identity_is_local_to_each_oracle`,
+`opposite_kind_value_dependencies_keep_owner_uncertainty`,
 `same_named_call_kinds_refuse_only_wrong_owner_repo_oracles`,
 `same_named_call_kinds_keep_diff_owner_observation_scoped`, and
 `same_named_call_kinds_preserve_real_wrapper_and_binding_paths`. The independent

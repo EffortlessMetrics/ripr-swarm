@@ -1185,6 +1185,14 @@ impl OwnerReach<'_, '_> {
                 if candidates.next().is_some()
                     || candidate.id == owner.id
                     || !self.assertion_names_candidate(test, assertion, candidate)
+                    || !self.opposite_kind_return_is_closed(candidate)
+                    || !super::related_tests::assertion_has_closed_candidate_values(
+                        test,
+                        assertion,
+                        candidate,
+                        self.index,
+                        &|path| self.opposite_kind_enum_value_is_closed(candidate, path),
+                    )
                     || self.opposite_kind_function_may_run_owner(candidate)
                 {
                     // Ambiguous dispatch, implicit/unknown code and a real
@@ -1239,23 +1247,93 @@ impl OwnerReach<'_, '_> {
         }
     }
 
-    /// A callable beyond this established target can reach the owner through
-    /// bindings or dispatch the name graph cannot settle. Inspect actual syntax,
-    /// including unnamed invocations; absent lexical call facts prove nothing.
-    /// Only established enum constructors have no function body to execute.
+    /// Absence of calls is insufficient: a global/field/local can carry the
+    /// owner's result. Admit only primitive signature inputs, literal values,
+    /// built-in primitive expressions and declared enum construction. Every
+    /// other value, callable, binding or expansion preserves uncertainty.
     fn opposite_kind_function_may_run_owner(&self, function: &FunctionSummary) -> bool {
-        use ra_ap_syntax::{AstNode, ast, ast::HasName};
+        use ra_ap_syntax::{AstNode, ast, ast::HasArgList};
         if function.item.container == FunctionContainer::Unknown
             || !super::operand_pin::callable_context_is_closed(function, self.index)
         {
             return true;
         }
+        let Some(parameters) = super::operand_pin::closed_primitive_parameters(function, self.index)
+        else {
+            return true;
+        };
         let Some(parse) = self.index.source_syntax.parse_fragment(&function.body) else {
             return true;
         };
-        let syntax = parse.tree().syntax().clone();
-        let Some(definition) = syntax.children().find_map(ast::Fn::cast) else {
+        let Some(body) = parse
+            .tree()
+            .syntax()
+            .children()
+            .find_map(ast::Fn::cast)
+            .and_then(|definition| definition.body())
+        else {
             return true;
+        };
+        let primitive =
+            |expression: &ast::Expr| closed_primitive_expression(expression, &parameters, 32);
+        body.syntax().descendants().any(|node| {
+            if ast::Attr::can_cast(node.kind())
+                || ast::Item::can_cast(node.kind())
+                || ast::LetStmt::can_cast(node.kind())
+                || ast::MacroCall::can_cast(node.kind())
+            {
+                return true;
+            }
+            if let Some(pattern) = ast::Pat::cast(node.clone()) {
+                return !matches!(pattern, ast::Pat::LiteralPat(_) | ast::Pat::WildcardPat(_));
+            }
+            let Some(expression) = ast::Expr::cast(node) else {
+                return false;
+            };
+            match &expression {
+                ast::Expr::Literal(_) | ast::Expr::ParenExpr(_) | ast::Expr::BlockExpr(_) => false,
+                ast::Expr::BinExpr(_) | ast::Expr::PrefixExpr(_) => !primitive(&expression),
+                ast::Expr::PathExpr(path) => {
+                    !primitive(&expression)
+                        && !path
+                            .path()
+                            .is_some_and(|path| {
+                                self.opposite_kind_enum_path_is_closed(function, &path)
+                            })
+                }
+                ast::Expr::CallExpr(call) => {
+                    let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                        return true;
+                    };
+                    !callee
+                        .path()
+                        .is_some_and(|path| self.opposite_kind_enum_path_is_closed(function, &path))
+                        || call
+                            .arg_list()
+                            .is_none_or(|list| !list.args().all(|arg| primitive(&arg)))
+                }
+                ast::Expr::MatchExpr(expression) => {
+                    expression.expr().is_none_or(|expr| !primitive(&expr))
+                }
+                _ => true,
+            }
+        })
+    }
+
+    fn opposite_kind_enum_path_is_closed(
+        &self,
+        function: &FunctionSummary,
+        path: &ra_ap_syntax::ast::Path,
+    ) -> bool {
+        use ra_ap_syntax::{AstNode, ast, ast::HasName};
+        let Some(qualifier) = path.qualifier() else {
+            return false;
+        };
+        let (Some(enum_name), Some(variant)) = (
+            qualifier.segment().and_then(|segment| segment.name_ref()),
+            path.segment().and_then(|segment| segment.name_ref()),
+        ) else {
+            return false;
         };
         let snapshot = self.index.source_syntax.get(self.index, &function.file);
         let root_scope = snapshot
@@ -1264,61 +1342,86 @@ impl OwnerReach<'_, '_> {
                 snapshot.item_nesting(&function.name, function.start_line, true)
             })
             .is_some_and(|scope| scope.modules.is_empty() && !scope.cfg_gated);
-        syntax.descendants().any(|node| {
-            if ast::MethodCallExpr::can_cast(node.kind())
-                || ast::MacroCall::can_cast(node.kind())
-                || (ast::Item::can_cast(node.kind()) && node != *definition.syntax())
-            {
-                return true;
-            }
-            let Some(call) = ast::CallExpr::cast(node) else {
-                return false;
-            };
-            let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
-                return true;
-            };
-            let Some(path) = callee.path() else {
-                return true;
-            };
-            let Some(qualifier) = path.qualifier() else {
-                return true;
-            };
-            let (Some(enum_name), Some(variant)) = (
-                qualifier.segment().and_then(|segment| segment.name_ref()),
-                path.segment().and_then(|segment| segment.name_ref()),
-            ) else {
-                return true;
-            };
-            // The older enum helper establishes declarations and rebinding,
-            // not this occurrence's namespace. Restrict the exception to a
-            // bare Enum::Variant and an enum in this function's own file-root
-            // scope. Modules, constants, aliases and nested owners stay unknown.
-            let local_enum = root_scope
-                && qualifier.qualifier().is_none()
-                && !self.graph.by_name.contains_key(&*variant.text())
-                && snapshot
-                    .as_ref()
-                    .and_then(|snapshot| snapshot.tree())
-                    .is_some_and(|tree| {
-                        tree.syntax()
-                            .children()
-                            .filter_map(ast::Enum::cast)
-                            .any(|item| {
-                                item.name().is_some_and(|name| name.text() == enum_name.text())
-                                    && super::call_identity::data_declaration_name_is_unambiguous(
-                                        item.syntax(),
-                                    )
-                                    && super::operand_pin::enum_constructor_context_is_closed(
-                                        &item, function, self.index,
-                                    )
-                            })
-                    });
-            !local_enum || !super::owner_pin::owner_builds_declared_error_variant(
+        // The older enum helper establishes declarations and rebinding,
+        // not this occurrence's namespace. Restrict the exception to a
+        // bare Enum::Variant and an enum in this function's own file-root
+        // scope. Modules, constants, aliases and nested owners stay unknown.
+        root_scope
+            && qualifier.qualifier().is_none()
+            && !self.graph.by_name.contains_key(&*variant.text())
+            && snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.tree())
+                .is_some_and(|tree| {
+                    tree.syntax()
+                        .children()
+                        .filter_map(ast::Enum::cast)
+                        .any(|item| {
+                            item.name().is_some_and(|name| name.text() == enum_name.text())
+                                && super::call_identity::data_declaration_name_is_unambiguous(
+                                    item.syntax(),
+                                )
+                                && super::operand_pin::enum_constructor_context_is_closed(
+                                    &item, function, self.index,
+                                )
+                        })
+                })
+            && super::owner_pin::owner_builds_declared_error_variant(
                 &path.syntax().text().to_string(),
                 function,
                 self.index,
             )
-        })
+    }
+
+    fn opposite_kind_enum_value_is_closed(
+        &self,
+        function: &FunctionSummary,
+        path: &ra_ap_syntax::ast::Path,
+    ) -> bool {
+        self.opposite_kind_enum_path_is_closed(function, path)
+            && path
+                .qualifier()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|name| {
+                    let name = name.text();
+                    super::owner_pin::error_enum_compares_payload(&name, self.index)
+                        && super::element_field_pin::drop_is_plain_in_closed_sources(
+                            self.index,
+                            &name,
+                        )
+                })
+    }
+
+    /// Comparing or dropping the returned value can execute code too. A
+    /// primitive return or an actual constructed enum with established value
+    /// equality and plain Drop is the whole admission; aliases stay unknown.
+    fn opposite_kind_return_is_closed(&self, function: &FunctionSummary) -> bool {
+        use ra_ap_syntax::{AstNode, ast};
+        if super::operand_pin::declared_return_is_primitive(function, self.index) {
+            return true;
+        }
+        let Some(parse) = self.index.source_syntax.parse_fragment(&function.body) else {
+            return false;
+        };
+        let Some(definition) = parse.tree().syntax().children().find_map(ast::Fn::cast) else {
+            return false;
+        };
+        let Some(returned) = definition.ret_type().and_then(|returned| returned.ty()) else {
+            return false;
+        };
+        let returned = returned.syntax().text().to_string();
+        definition
+            .syntax()
+            .descendants()
+            .filter_map(ast::PathExpr::cast)
+            .any(|value| {
+                value.path().is_some_and(|path| {
+                    path.qualifier()
+                        .is_some_and(|qualifier| qualifier.syntax().text() == returned.trim())
+                        && self.opposite_kind_enum_value_is_closed(function, &path)
+                })
+            })
     }
 
     /// Whether `test` may run the owner, by name only (#6297). It may when
@@ -1345,6 +1448,52 @@ impl OwnerReach<'_, '_> {
                     || (!self.graph.by_name.contains_key(name)
                         && name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')))
         })
+    }
+}
+
+/// A small value grammar, not a type or value-flow resolver. Every name is an
+/// established primitive parameter; overloaded operators and indirect reads
+/// therefore have no admission. The bound retains uncertainty on deep syntax.
+fn closed_primitive_expression(
+    expression: &ra_ap_syntax::ast::Expr,
+    parameters: &std::collections::BTreeSet<String>,
+    remaining: usize,
+) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    let Some(remaining) = remaining.checked_sub(1) else {
+        return false;
+    };
+    match expression {
+        ast::Expr::Literal(_) => true,
+        ast::Expr::PathExpr(path) => path.path().is_some_and(|path| {
+            path.qualifier().is_none()
+                && path
+                    .segment()
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| parameters.contains(name.text().trim_start_matches("r#")))
+        }),
+        ast::Expr::ParenExpr(paren) => paren
+            .expr()
+            .is_some_and(|expr| closed_primitive_expression(&expr, parameters, remaining)),
+        ast::Expr::PrefixExpr(prefix) => {
+            prefix
+                .syntax()
+                .children_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| matches!(token.text(), "-" | "!"))
+                && prefix
+                    .expr()
+                    .is_some_and(|expr| closed_primitive_expression(&expr, parameters, remaining))
+        }
+        ast::Expr::BinExpr(binary) => {
+            binary
+                .lhs()
+                .is_some_and(|expr| closed_primitive_expression(&expr, parameters, remaining))
+                && binary
+                    .rhs()
+                    .is_some_and(|expr| closed_primitive_expression(&expr, parameters, remaining))
+        }
+        _ => false,
     }
 }
 

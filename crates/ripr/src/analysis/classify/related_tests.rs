@@ -5677,6 +5677,123 @@ fn assertion_calls_resolve(
     }) && assertion_arguments_resolve_with(&call, Some(index), false, Some(method), resolves)
 }
 
+/// Negative oracle authority needs the whole evaluated value, not merely one
+/// resolved call inside it. Read only direct candidate invocations with literal
+/// arguments and literal/declared-enum comparison values. Locals, constants,
+/// fields, arithmetic around calls and conditional expressions stay uncertain.
+pub(in crate::analysis::classify) fn assertion_has_closed_candidate_values(
+    test: &TestSummary,
+    assertion: &OracleFact,
+    candidate: &FunctionSummary,
+    index: &RustIndex,
+    enum_value: &dyn Fn(&ast::Path) -> bool,
+) -> bool {
+    if test.file != candidate.file {
+        return false;
+    }
+    let text = format!("fn ripr_closed_assertion() {{ {}; }}", assertion.text);
+    let Some(parse) = index.source_syntax.parse_fragment(&text) else {
+        return false;
+    };
+    let Some(call) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::MacroCall::cast)
+    else {
+        return false;
+    };
+    let Some(path) = call.path() else {
+        return false;
+    };
+    let name = path.syntax().text().to_string();
+    let name =
+        crate::analysis::syntax::ra::drop_in_assertion_leaf(name.trim()).unwrap_or(name.trim());
+    let operands = match name {
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+        "assert" | "debug_assert" => 1,
+        _ => return false,
+    };
+    let Some(tree) = call.token_tree() else {
+        return false;
+    };
+    let text = tree.syntax().text().to_string();
+    let Some(arguments) = text
+        .get(1..text.len().saturating_sub(1))
+        .and_then(super::reveal::split_top_level_arguments)
+    else {
+        return false;
+    };
+    if arguments.len() < operands {
+        return false;
+    }
+    let declared_enum = |path: &ast::Path| {
+        let Some(name) = path
+            .qualifier()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+        else {
+            return false;
+        };
+        enum_value(path)
+            && !file_rebinds_type(index, &test.file, &name.text())
+            && !super::owner_pin::targeted_type_name_is_unresolved(test, index, &name.text())
+    };
+    let mut candidate_seen = false;
+    arguments.into_iter().take(operands).all(|argument| {
+        let text = format!("fn ripr_closed_operand() {{ let _ = {argument}; }}");
+        let Some(parse) = index.source_syntax.parse_fragment(&text) else {
+            return false;
+        };
+        let Some(value) = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::LetStmt::cast)
+            .and_then(|binding| binding.initializer())
+        else {
+            return false;
+        };
+        match value {
+            ast::Expr::Literal(_) => true,
+            ast::Expr::PathExpr(value) => value.path().is_some_and(|path| declared_enum(&path)),
+            ast::Expr::MethodCallExpr(call) => {
+                let candidate_call = call
+                    .name_ref()
+                    .is_some_and(|name| name.text() == candidate.name);
+                candidate_seen |= candidate_call;
+                candidate_call
+                    && matches!(call.receiver(), Some(ast::Expr::PathExpr(_)))
+                    && call
+                        .arg_list()
+                        .is_some_and(|list| {
+                            list.args().all(|arg| matches!(arg, ast::Expr::Literal(_)))
+                        })
+            }
+            ast::Expr::CallExpr(call) => {
+                let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                    return false;
+                };
+                let Some(path) = callee.path() else {
+                    return false;
+                };
+                let candidate_call = path
+                    .segment()
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| name.text() == candidate.name);
+                candidate_seen |= candidate_call;
+                (candidate_call || declared_enum(&path))
+                    && call
+                        .arg_list()
+                        .is_some_and(|list| {
+                            list.args().all(|arg| matches!(arg, ast::Expr::Literal(_)))
+                        })
+            }
+            _ => false,
+        }
+    }) && candidate_seen
+}
+
 /// Walk only syntax executed by the outer function. Item declarations,
 /// closures and async blocks do not execute their bodies by being declared.
 /// Even an invoked nested function stays unresolved here; its body cannot

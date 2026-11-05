@@ -9828,7 +9828,7 @@ fn workspace_enum_declares_variant(qualifier: &str, variant: &str, index: &RustI
 /// #7063: whether `qualifier` names one workspace type whose `==` is the
 /// derived one over fields that each compare by value, so an equality
 /// against one constructed variant compares that variant's payload.
-fn error_enum_compares_payload(qualifier: &str, index: &RustIndex) -> bool {
+pub(super) fn error_enum_compares_payload(qualifier: &str, index: &RustIndex) -> bool {
     derived_equality(qualifier, index).is_some_and(|(facts, declaring)| {
         facts.fields.iter().all(|field| {
             !field.has_attributes && type_compares_by_value(&field.ty, declaring, index, 0)
