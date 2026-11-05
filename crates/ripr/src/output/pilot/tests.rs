@@ -4655,6 +4655,13 @@ fn pilot_deleted_expression_tail_and_unrelated_adjacent_statement_13098() {
     );
     assert!(!far.may_touch_seam(&surviving));
     assert!(!tail_change.may_touch_seam(&seam("src/other.rs", 2, "x > 0")));
+    let replacement = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        None,
+        "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -2 +2 @@\n-old\n+new\n",
+    );
+    assert!(replacement.touches_seam(&surviving));
+    assert!(replacement.may_touch_seam(&surviving));
 }
 
 #[test]
@@ -4683,30 +4690,51 @@ fn pilot_renderers_disclose_adjacent_deletion_uncertainty_13098() -> Result<(), 
         vec![],
         vec![],
     )];
-    let diff = "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -3 +2,0 @@\n-        && x < 10\n";
-    let change = PilotCurrentChange::from_diff_text(Path::new("."), None, diff)
-        .with_seams_counted(&entries, None);
+    for diff in [
+        "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -3 +2,0 @@\n-        && x < 10\n",
+        "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -2 +1,0 @@\n-    audit();\n",
+        "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -2 +1,0 @@\n-    x > 0 &&\n",
+    ] {
+        let change = PilotCurrentChange::from_diff_text(Path::new("."), None, diff)
+            .with_seams_counted(&entries, None);
+        let mut context = pilot_context(&artifacts);
+        context.current_change = Some(&change);
+        let report: serde_json::Value =
+            serde_json::from_str(&render_pilot_summary_json(&entries, context))
+                .map_err(|error| error.to_string())?;
+        assert!(report["current_change"]["top_recommendation_in_change"].is_null());
+        assert!(report["current_change"]["actionable_seams_in_change"].is_null());
+        assert!(report["current_change"]["withheld_seams_in_change"].is_null());
+        for text in [
+            render_pilot_terminal(&entries, context),
+            render_pilot_summary_md(&entries, context),
+        ] {
+            assert!(
+                text.contains("pilot cannot tell whether it changed the gap"),
+                "{text}"
+            );
+            assert!(
+                !text.contains("this gap is not on a line you changed"),
+                "{text}"
+            );
+        }
+    }
+    let replacement = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        None,
+        "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -2 +2 @@\n-old\n+new\n",
+    )
+    .with_seams_counted(&entries, None);
     let mut context = pilot_context(&artifacts);
-    context.current_change = Some(&change);
+    context.current_change = Some(&replacement);
     let report: serde_json::Value =
         serde_json::from_str(&render_pilot_summary_json(&entries, context))
             .map_err(|error| error.to_string())?;
-    assert!(report["current_change"]["top_recommendation_in_change"].is_null());
-    assert!(report["current_change"]["actionable_seams_in_change"].is_null());
-    assert!(report["current_change"]["withheld_seams_in_change"].is_null());
-    for text in [
-        render_pilot_terminal(&entries, context),
-        render_pilot_summary_md(&entries, context),
-    ] {
-        assert!(
-            text.contains("pilot cannot tell whether it changed the gap"),
-            "{text}"
-        );
-        assert!(
-            !text.contains("this gap is not on a line you changed"),
-            "{text}"
-        );
-    }
+    assert_eq!(
+        report["current_change"]["top_recommendation_in_change"],
+        true
+    );
+    assert_eq!(report["current_change"]["actionable_seams_in_change"], 1);
     Ok(())
 }
 
@@ -4714,8 +4742,10 @@ fn pilot_renderers_disclose_adjacent_deletion_uncertainty_13098() -> Result<(), 
 fn pilot_deletion_gap_uses_next_line_13098() {
     let diff = "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -20 +19,0 @@\n-old\n";
     let change = PilotCurrentChange::from_diff_text(Path::new("."), None, diff);
-    assert!(change.touches_seam(&seam("src/b.rs", 20, "x")));
+    assert!(!change.touches_seam(&seam("src/b.rs", 20, "x")));
+    assert!(change.may_touch_seam(&seam("src/b.rs", 20, "x")));
     assert!(!change.touches_seam(&seam("src/b.rs", 19, "x")));
+    assert!(change.may_touch_seam(&seam("src/b.rs", 19, "x")));
 }
 
 #[test]

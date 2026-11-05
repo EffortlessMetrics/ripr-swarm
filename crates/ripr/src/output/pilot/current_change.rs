@@ -25,7 +25,7 @@ pub(crate) enum PilotCurrentChange {
         root: PathBuf,
         /// The base the diff was taken against, when the loader reported one.
         base: Option<String>,
-        /// Root-relative path (slash separated) to changed new-side lines.
+        /// Root-relative path (slash separated) to added new-side lines.
         lines: BTreeMap<String, BTreeSet<usize>>,
         /// New-side gaps for removed lines, distinct from added lines.
         deletion_gaps: BTreeMap<String, BTreeSet<usize>>,
@@ -94,10 +94,9 @@ impl PilotCurrentChange {
         let mut deletion_gaps: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
         for file in crate::analysis::parse_unified_diff(text) {
             let entry = lines.entry(normalized(&file.path)).or_default();
-            // Added lines name themselves; a removal is anchored at the
-            // new-side position where the removed text used to be.
+            // Only an addition proves a changed new-side line. A removal
+            // names a gap whose ownership is not established by coordinates.
             entry.extend(file.added_lines.iter().map(|line| line.new_side_line));
-            entry.extend(file.removed_lines.iter().map(|line| line.new_side_line));
             deletion_gaps
                 .entry(normalized(&file.path))
                 .or_default()
@@ -362,8 +361,8 @@ impl PilotCurrentChange {
         self.touches_seam(&entry.seam)
     }
 
-    /// A deletion immediately after the seam may have removed its last
-    /// expression line, but may instead belong to a following statement.
+    /// A gap within or immediately after a seam may represent a deleted
+    /// expression line, or instead belong to an unrelated statement.
     pub(crate) fn may_touch_seam(&self, seam: &RepoSeam) -> bool {
         let Self::Changed {
             root,
@@ -378,14 +377,14 @@ impl PilotCurrentChange {
         let Some(gaps) = deletion_gaps.get(&normalized(relative)) else {
             return false;
         };
-        let (_, end) = seam.source_lines().unwrap_or_else(|| {
+        let (start, end) = seam.source_lines().unwrap_or_else(|| {
             let start = seam.display_line();
             (
                 start,
                 start.saturating_add(seam.expression().lines().count().saturating_sub(1)),
             )
         });
-        end.checked_add(1).is_some_and(|gap| gaps.contains(&gap))
+        gaps.range(start..=end.saturating_add(1)).next().is_some()
     }
 
     /// [`Self::touches`] for a seam not yet classified, so the change's own
@@ -428,7 +427,7 @@ pub(crate) struct ChangeClassification<'a> {
 pub(crate) struct ChangeSeams {
     /// Seams whose span overlaps a changed new-side line.
     pub(crate) touched: usize,
-    /// Seams adjacent to a deletion whose ownership is unknown.
+    /// Seams at or next to a deletion whose ownership is unknown.
     pub(crate) uncertain: usize,
     /// Of those, the ones pilot withholds as static limitations
     /// (`opaque` or an `*_unknown` class).

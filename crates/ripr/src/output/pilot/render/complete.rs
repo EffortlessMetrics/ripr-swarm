@@ -1237,7 +1237,7 @@ fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Optio
     let diff_only = DiffOnlyNote::of(change);
     if seams.uncertain > 0 {
         return Some(
-            "A deletion is adjacent to a spot; pilot cannot tell whether it changed that spot."
+            "A deletion is at or next to a spot; pilot cannot tell whether it changed that spot."
                 .to_string(),
         );
     }
@@ -1291,7 +1291,7 @@ impl CurrentChangeLabel {
             unanalyzed,
         } = seams;
         if uncertain > 0 && touched == 0 {
-            return "A deletion is adjacent to a spot; pilot cannot tell whether it changed that spot.".to_string();
+            return "A deletion is at or next to a spot; pilot cannot tell whether it changed that spot.".to_string();
         }
         let lines = |count| Self::changed_lines(base, code, count);
         // Seams past the inventory limit were never classified, so a reason
@@ -1356,7 +1356,7 @@ impl CurrentChangeLabel {
             reason.push_str(&unseen);
         }
         if uncertain > 0 {
-            reason.push_str("; a deletion is adjacent to another spot, but pilot cannot tell whether it changed that spot");
+            reason.push_str("; a deletion is at or next to another spot, but pilot cannot tell whether it changed that spot");
         }
         reason.push('.');
         reason
@@ -1365,7 +1365,7 @@ impl CurrentChangeLabel {
     fn terminal(&self) -> String {
         match self {
             Self::Uncertain => {
-                "a deletion is adjacent to this gap; pilot cannot tell whether it changed the gap"
+                "a deletion is at or next to this gap; pilot cannot tell whether it changed the gap"
                     .to_string()
             }
             Self::PartOfChange { base } => format!(
@@ -1387,7 +1387,7 @@ impl CurrentChangeLabel {
     fn markdown(&self) -> String {
         match self {
             Self::Uncertain => {
-                "a deletion is adjacent to this gap; pilot cannot tell whether it changed the gap"
+                "a deletion is at or next to this gap; pilot cannot tell whether it changed the gap"
                     .to_string()
             }
             Self::PartOfChange { base } => format!(
