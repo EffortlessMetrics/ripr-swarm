@@ -856,6 +856,22 @@ general combinator, callback or mutation adequacy.
    or `return Ok(..);`. An early `return None;` keeps its earlier rule: it
    does not read the binding scan, so an owner file's opaque glob does not
    withdraw a pin it already earned.
+   A changed whole decimal scalar literal exit — an early
+   `return <lit>;` or a scalar tail — beside early returns that each build a
+   different whole decimal scalar literal is the owner's only source of
+   `<lit>` (#13037 Defect A): every other exit would return its own
+   distinct literal and fail an exact pin at `<lit>`, so a passing pin on an
+   owner call proves the changed exit ran. This early-scalar gate reads both
+   directions (the changed early return and the changed tail) and stays fail
+   closed: a second exit producing the same literal (a duplicated `return
+   0; .. 0`), a parameter or computed exit (which may alias `<lit>` for an
+   input the gate does not read), a `?`, a `return` inside a nested closure,
+   an unbounded macro, or a conditionally-evaluated changed value refuses
+   the pin. A pin whose expected value is a sibling exit's literal does not
+   confirm the changed exit's probe: only the pin at `<lit>` observes it.
+   A zero-fee `return 0;` beside a parameter or computed tail keeps the
+   existing under-credit, since a passing pin at `0` there never proves the
+   changed exit ran (boundary-input evaluation remains a later authority).
    A bare `None` (or `Ok`, `Err`, `Some`) in a `match` arm or `if let`
    pattern names the variant, since a pattern may not shadow it (E0530), so
    it is not such a binding unless the file carries a
