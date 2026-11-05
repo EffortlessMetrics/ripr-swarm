@@ -11,3 +11,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_effect_receiver_intercepted_first (2)
+
+Reason:
+RIPR-SPEC-0108: retain composed producer refusal of intercepted first observers with native correct/wrong controls; no exposure promotion
+
+Command:
+`cargo xtask goldens bless rust_effect_receiver_intercepted_first --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

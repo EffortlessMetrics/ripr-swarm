@@ -1526,3 +1526,16 @@ Reproduce producer:
 
 Updated:
 - `expected/lsp-diagnostics.json` (`discriminate`: `yes` to `weak`; all other data unchanged).
+
+## Pending — boundary_gap (36)
+
+Reason:
+RIPR-SPEC-0020: retain composed producer boundary/oracle pairing and cache identity; unchanged portable chain remains weak with verification not run
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
