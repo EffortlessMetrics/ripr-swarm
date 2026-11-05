@@ -308,3 +308,56 @@ fn a_shadowed_success_constructor_keeps_the_boundary_below_exposed() -> Result<(
     assert_ne!(predicates[0].class, ExposureClass::Exposed, "{findings:?}");
     Ok(())
 }
+
+/// A derive expands in the owner's module and can supply an otherwise invisible
+/// Result constructor. The local proc-macro dependency is real Rust source;
+/// native paired witnesses are retained separately from this analyzer oracle.
+#[test]
+fn a_procedural_derive_cannot_supply_an_unchecked_result_constructor() -> Result<(), String> {
+    let assertions = "        assert_eq!(chunk_size(&[b'f'; 16]), Ok(16));\n        assert_eq!(chunk_size(&[b'f'; 17]), Err(ChunkError::TooLong));";
+    let base = source("count >= 17", assertions)
+        .replace("    Ok(size)", "    Ok(count)")
+        .replace(
+            "    use super::*;",
+            "    use super::*;\n    use std::result::Result::{Ok, Err};",
+        );
+    for producer in [
+        "#[derive(ctor_macros::InjectOk)] struct Generated;",
+        "use ctor_macros::InjectOk as Debug; #[derive(Debug)] struct Generated;",
+    ] {
+        // Avoid a conflicting alias on the error enum's builtin Debug derive.
+        let lib = format!(
+            "{}\n{producer}\n",
+            base.replace("#[derive(Debug, PartialEq)]", "#[derive(PartialEq)]")
+        );
+        // Standard Debug on the error is retained by an explicit implementation.
+        let lib = format!(
+            "{lib}\nimpl std::fmt::Debug for ChunkError {{ fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{ f.write_str(\"ChunkError\") }} }}\n"
+        );
+        let line = lib
+            .lines()
+            .position(|line| line.contains("if count >= 17"))
+            .ok_or("missing predicate")?
+            + 1;
+        let patch = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-        if count > 17 {{\n+        if count >= 17 {{\n"
+        );
+        let repo = TempRepo::create(&lib, &patch)?;
+        std::fs::create_dir_all(repo.root.join("ctor-macros/src")).map_err(|e| e.to_string())?;
+        std::fs::write(repo.root.join("ctor-macros/Cargo.toml"), "[package]\nname='ctor-macros'\nversion='0.0.0'\nedition='2024'\n[lib]\nproc-macro=true\n").map_err(|e| e.to_string())?;
+        std::fs::write(repo.root.join("ctor-macros/src/lib.rs"), "extern crate proc_macro;\n#[proc_macro_derive(InjectOk)]\npub fn inject_ok(_: proc_macro::TokenStream) -> proc_macro::TokenStream { \"fn Ok(n:u64)->Result<u64,ChunkError>{if n==17{Err(ChunkError::TooLong)}else{std::result::Result::Ok(n)}}\".parse().unwrap_or_default() }\n").map_err(|e| e.to_string())?;
+        std::fs::write(repo.root.join("Cargo.toml"), "[package]\nname='slice-counter'\nversion='0.0.0'\nedition='2024'\n[dependencies]\nctor-macros={path='ctor-macros'}\n[workspace]\n").map_err(|e| e.to_string())?;
+        let findings = repo.findings()?;
+        let predicates = findings
+            .iter()
+            .filter(|finding| finding.probe.family == ProbeFamily::Predicate)
+            .collect::<Vec<_>>();
+        assert_eq!(predicates.len(), 1, "{findings:?}");
+        assert_ne!(predicates[0].class, ExposureClass::Exposed, "{findings:?}");
+    }
+    assert_eq!(
+        class_for("16 < count", &format!("{FF16}\n{FF17}"))?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

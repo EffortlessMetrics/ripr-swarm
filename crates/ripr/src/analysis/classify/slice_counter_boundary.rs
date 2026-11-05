@@ -657,7 +657,7 @@ fn result_constructors_unshadowed(function: &ast::Fn, retained_source: &str) -> 
             )
         })
     };
-    !source
+    let scoped = source
         .tree()
         .syntax()
         .descendants()
@@ -668,28 +668,116 @@ fn result_constructors_unshadowed(function: &ast::Fn, retained_source: &str) -> 
                 .any(|scope| Some(scope) == node.parent())
                 || node.ancestors().any(|ancestor| ancestor == *owner.syntax())
         })
-        .any(|node| {
-            ast::MacroCall::can_cast(node.kind())
-                || ast::ExternBlock::can_cast(node.kind())
-                || ast::Use::cast(node.clone()).is_some_and(|item| {
-                    item.syntax()
-                        .descendants_with_tokens()
-                        .filter_map(|entry| entry.into_token())
-                        .any(|token| {
-                            matches!(
-                                token.text().trim_start_matches("r#"),
-                                "Ok" | "Err" | "Result" | "*"
-                            )
-                        })
-                })
-                || ast::Fn::cast(node.clone()).is_some_and(|item| constructor(item.name()))
-                || ast::Struct::cast(node.clone()).is_some_and(|item| constructor(item.name()))
-                || ast::Enum::cast(node.clone()).is_some_and(|item| constructor(item.name()))
-                || ast::TypeAlias::cast(node.clone()).is_some_and(|item| constructor(item.name()))
-                || ast::Const::cast(node.clone()).is_some_and(|item| constructor(item.name()))
-                || ast::Static::cast(node.clone()).is_some_and(|item| constructor(item.name()))
-                || ast::IdentPat::cast(node).is_some_and(|item| constructor(item.name()))
-        })
+        .collect::<Vec<_>>();
+    // Attribute expansion can add bindings without a visible declaration. Do
+    // not evaluate cfg here: library and integration-test builds differ.
+    if scoped
+        .iter()
+        .chain(owner.syntax().ancestors().collect::<Vec<_>>().iter())
+        .flat_map(|node| node.children().filter_map(ast::Attr::cast))
+        .any(|attr| !constructor_scope_attribute_is_inert(&attr))
+    {
+        return false;
+    }
+    !scoped.into_iter().any(|node| {
+        ast::MacroCall::can_cast(node.kind())
+            || ast::ExternCrate::can_cast(node.kind())
+            || ast::ExternBlock::can_cast(node.kind())
+            || ast::Use::cast(node.clone()).is_some_and(|item| {
+                item.syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|entry| entry.into_token())
+                    .any(|token| {
+                        matches!(
+                            token.text().trim_start_matches("r#"),
+                            "Ok" | "Err"
+                                | "Result"
+                                | "*"
+                                | "Clone"
+                                | "Copy"
+                                | "Debug"
+                                | "Default"
+                                | "Eq"
+                                | "PartialEq"
+                                | "Ord"
+                                | "PartialOrd"
+                                | "Hash"
+                        )
+                    })
+            })
+            || ast::Fn::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+            || ast::Struct::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+            || ast::Enum::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+            || ast::TypeAlias::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+            || ast::Const::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+            || ast::Static::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+            || ast::IdentPat::cast(node).is_some_and(|item| constructor(item.name()))
+    })
+}
+
+/// Only source-inert builtins are understood here. A custom derive (even
+/// conditionally present) can emit a module-level `Ok` or `Err`. Builtin derive
+/// names additionally require the import/macro namespace checks above.
+fn constructor_scope_attribute_is_inert(attr: &ast::Attr) -> bool {
+    let Some(name) = attr.simple_name() else {
+        return false;
+    };
+    if name != "derive" {
+        return matches!(
+            name.as_str(),
+            "cfg"
+                | "test"
+                | "should_panic"
+                | "ignore"
+                | "doc"
+                | "repr"
+                | "inline"
+                | "cold"
+                | "must_use"
+                | "allow"
+                | "warn"
+                | "deny"
+                | "forbid"
+                | "expect"
+                | "deprecated"
+                | "non_exhaustive"
+                | "track_caller"
+                | "automatically_derived"
+        );
+    }
+    let Some((_, tree)) = attr.as_simple_call() else {
+        return false;
+    };
+    let mut expect_name = true;
+    for token in tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|entry| entry.into_token())
+    {
+        if token.kind().is_trivia() || matches!(token.text(), "(" | ")") {
+            continue;
+        }
+        if expect_name {
+            if !matches!(
+                token.text().trim_start_matches("r#"),
+                "Clone"
+                    | "Copy"
+                    | "Debug"
+                    | "Default"
+                    | "Eq"
+                    | "PartialEq"
+                    | "Ord"
+                    | "PartialOrd"
+                    | "Hash"
+            ) {
+                return false;
+            }
+        } else if token.text() != "," {
+            return false;
+        }
+        expect_name = !expect_name;
+    }
+    true
 }
 
 /// `?` is admitted only when it cannot convert an intermediate error into
@@ -1114,6 +1202,36 @@ mod tests {
             per_byte_counter_shape(&owner_body(GRID_BITS), "16 < count", &unrelated).is_some(),
             "a sibling test import cannot shadow the production owner"
         );
+    }
+
+    #[test]
+    fn opaque_attributes_cannot_generate_result_constructors() {
+        for extra in [
+            "#[derive(InjectOk)] struct Generated;",
+            "#[derive(macros::InjectOk)] struct Generated;",
+            "#[derive(Debug)] struct Generated; use macros::InjectOk as Debug;",
+            "#[derive(Debug)] struct Generated; use macros::InjectOk as r#Debug;",
+            "#[derive(Debug)] struct Generated; use macros::*;",
+            "#[cfg_attr(test, derive(InjectOk))] struct Generated;",
+            "#[cfg_attr(not(test), derive(InjectOk))] struct Generated;",
+            "#[cfg(any())] #[derive(InjectOk)] struct Generated;",
+            "#[inject_ok] struct Generated;",
+            "#[macro_use] extern crate macros;",
+            "#[macro_use] mod macros {}",
+        ] {
+            let source = format!("enum ChunkError {{ TooLong, BadDigit }}\n{GRID_BITS}\n{extra}");
+            assert!(
+                per_byte_counter_shape(&owner_body(GRID_BITS), "16 < count", &source).is_none(),
+                "{extra}"
+            );
+        }
+        let source = format!(
+            "#[derive(Debug, PartialEq, Eq)] enum ChunkError {{ TooLong, BadDigit }}\n{GRID_BITS}"
+        );
+        assert!(per_byte_counter_shape(&owner_body(GRID_BITS), "16 < count", &source).is_some());
+        let unrelated =
+            format!("{source}\n#[cfg(test)] mod tests {{ #[derive(Unknown)] struct Local; }}");
+        assert!(per_byte_counter_shape(&owner_body(GRID_BITS), "16 < count", &unrelated).is_some());
     }
 
     #[test]

@@ -377,3 +377,11 @@ aliases, glob or macro ambiguity. Raw identifier spellings have the same name
 identity. A sibling test-module import does not shadow the production owner.
 A callable named `Ok` can otherwise manufacture the firing error after the loop,
 so differing asserted result spellings do not establish predicate causality.
+
+Unknown attribute and derive producers in the owner's lexical scopes also
+withhold specialized counter credit: expansion may introduce a Result
+constructor without a visible source declaration. Only known inert builtin
+attributes and unambiguous builtin derives are admitted. Imported aliases,
+globs and extern-crate macro namespaces remain unknown. Conditional expansion
+is not assumed absent based on the analyzer's build configuration; library
+code consumed by integration tests does not globally have `cfg(test)`.

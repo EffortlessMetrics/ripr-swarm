@@ -17076,6 +17076,19 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "must_not_promote" }
       ]
+    },
+    {
+      "id": "rust_slice_counter_derived_result_constructor",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_counter_derived_result_constructor",
+      "probe_family": "predicate",
+      "vector": "procedural_derive_supplies_hidden_result_constructor",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
+      ]
     }
   ]
 }
