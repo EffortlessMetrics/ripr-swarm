@@ -1,0 +1,22 @@
+{
+  "candidate": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+  "tree": "5aae12cc27ea06c637879f94ce07695aeb471124",
+  "command": [
+    "/workspace/12010-proof/target/debug/xtask",
+    "ci-policy"
+  ],
+  "native_exit": 0,
+  "observation": {
+    "utc": "2026-11-05T07:51:08.316473+00:00",
+    "policy_pid": 59150,
+    "state": "Z",
+    "cgroup_memory_bytes": 4045713408,
+    "native_exit": 0
+  },
+  "seconds_until_observed_terminal": 1549.67,
+  "peak_cgroup_memory_bytes_observed_during_pause": 15535579136,
+  "log_sha256": "5ce406f5cb852376628fa06cfc24487c5abb05254eb1e5c524b4a725b49df75f",
+  "driver_state": "paused for video priority window; native child terminal; driver will reap on resume",
+  "boundary": "aggregate policy pass only; check-fast, focused controls, reveal and full runtime remain pending",
+  "supplemental_samples": "video-priority-samples.jsonl"
+}

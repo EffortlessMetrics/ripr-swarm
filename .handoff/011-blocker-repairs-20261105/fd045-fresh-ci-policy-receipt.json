@@ -1,0 +1,237 @@
+{
+  "stage": "fresh-ci-policy",
+  "candidate": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+  "tree": "5aae12cc27ea06c637879f94ce07695aeb471124",
+  "command": [
+    "/workspace/12010-proof/target/debug/xtask",
+    "ci-policy"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 2131.86,
+  "counts": null,
+  "log_sha256": "5ce406f5cb852376628fa06cfc24487c5abb05254eb1e5c524b4a725b49df75f",
+  "peak_cgroup_memory_bytes": 7186051072,
+  "samples": [
+    {
+      "utc": "2026-11-05T07:25:18.646124+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 1420894208,
+      "workspace_free_bytes": 23051419648,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:25:28.648006+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 2350604288,
+      "workspace_free_bytes": 23051415552,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:25:38.650465+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 20.01,
+      "cgroup_memory_bytes": 2351124480,
+      "workspace_free_bytes": 23051415552,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:25:48.651647+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 30.01,
+      "cgroup_memory_bytes": 2328297472,
+      "workspace_free_bytes": 23051415552,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:25:58.653216+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 40.01,
+      "cgroup_memory_bytes": 1543774208,
+      "workspace_free_bytes": 23051415552,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:26:08.655370+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 50.01,
+      "cgroup_memory_bytes": 1574813696,
+      "workspace_free_bytes": 23051415552,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:26:18.659042+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 60.01,
+      "cgroup_memory_bytes": 1583800320,
+      "workspace_free_bytes": 23051378688,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:26:28.660680+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 70.02,
+      "cgroup_memory_bytes": 1528750080,
+      "workspace_free_bytes": 23051378688,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:26:38.661819+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 80.02,
+      "cgroup_memory_bytes": 1542451200,
+      "workspace_free_bytes": 23051378688,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:26:48.662840+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 90.02,
+      "cgroup_memory_bytes": 2928099328,
+      "workspace_free_bytes": 23516917760,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:26:58.664735+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 100.02,
+      "cgroup_memory_bytes": 3458752512,
+      "workspace_free_bytes": 23516917760,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:27:08.666111+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 110.02,
+      "cgroup_memory_bytes": 3433111552,
+      "workspace_free_bytes": 23516917760,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:27:18.668615+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 120.02,
+      "cgroup_memory_bytes": 3724636160,
+      "workspace_free_bytes": 23516917760,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:27:28.669220+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 130.02,
+      "cgroup_memory_bytes": 4105256960,
+      "workspace_free_bytes": 23516917760,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:27:38.669872+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 140.02,
+      "cgroup_memory_bytes": 4499816448,
+      "workspace_free_bytes": 23516917760,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:27:48.670375+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 150.03,
+      "cgroup_memory_bytes": 4895621120,
+      "workspace_free_bytes": 23516917760,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:27:58.670956+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 160.03,
+      "cgroup_memory_bytes": 5288988672,
+      "workspace_free_bytes": 23516917760,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:28:08.675053+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 170.03,
+      "cgroup_memory_bytes": 5712474112,
+      "workspace_free_bytes": 23516917760,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:28:18.675720+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 180.03,
+      "cgroup_memory_bytes": 6220787712,
+      "workspace_free_bytes": 23448440832,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:28:28.678228+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 190.03,
+      "cgroup_memory_bytes": 6650097664,
+      "workspace_free_bytes": 23448440832,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:28:38.680939+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 200.04,
+      "cgroup_memory_bytes": 7018778624,
+      "workspace_free_bytes": 23448440832,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T07:28:48.682156+00:00",
+      "stage": "fresh-ci-policy",
+      "head": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+      "pid": 59150,
+      "elapsed": 210.04,
+      "cgroup_memory_bytes": 7186051072,
+      "workspace_free_bytes": 23495467008,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "candidate": "d074c3662cf10d7a4c5324bec5b2045534486ddc",
+  "tree": "117cc677de3052e9a63a248fa6d94a86bccf4793",
+  "branch": "successor/011-integration-20261105",
+  "product_source_review": {
+    "candidate": "c0287c53f83aee5db1b74862ff10701612303bc6",
+    "result": "narrow independent source review clean, per coordinator; no merge authority inferred"
+  },
+  "product_controls": {
+    "candidate": "c0287c53f83aee5db1b74862ff10701612303bc6",
+    "production_passed": 10,
+    "native_paths_passed": 4,
+    "failed": 0,
+    "log": "c028-production-controls.log",
+    "carried_forward_limit": "current later delta changes comments, command catalog and narrow retained-surface policy inventories; not relabeled as exact-current full qualification"
+  },
+  "current_delta": {
+    "base": "c0287c53f83aee5db1b74862ff10701612303bc6",
+    "path": "integration-policy-review-delta.patch",
+    "bytes": 5780,
+    "sha256": "50ab42b95d424ed86cd437fcc10e07e17c7fb6558c140475599a1ee358eb7615",
+    "meaning": "three comment synonyms; remove inherited duplicate check-fast help/catalog entry; count one inert lint-attribute fixture string; declare existing bounded anonymous npm metadata reader; changelog"
+  },
+  "retained_policy_leaves": {
+    "allow_attributes": 0,
+    "network_policy": 0,
+    "changelog": 0,
+    "full_policy": "pending fresh tooling; earlier advisory scan found only the two declared retained-surface counts before later gates"
+  },
+  "qualification": {
+    "status": "running locally",
+    "tool_session": 29822,
+    "driver": "/workspace/011-integration-proof/run-local-qualification.py",
+    "sequence": [
+      "fresh xtask build",
+      "command catalog",
+      "ci-policy",
+      "check-fast",
+      "default-feature reveal",
+      "full library harness using same artifact"
+    ],
+    "guard": "one heavy process group at a time, 15 GiB cgroup memory budget, disk/temp reserves and stage timeouts; stop on failure",
+    "remote_actions": "none"
+  },
+  "history": {
+    "public_source": "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a",
+    "public_source_current_default_tip_verified": true,
+    "declared_destination_base": "984c69a290486b1da9d91700a6f771045ab079e1",
+    "both_ancestors_of_candidate": true,
+    "source_already_in_base": false
+  },
+  "holds": [
+    "protected merge paused pending explicit coordinator authorization clarification",
+    "promotion trust hold",
+    "release selection scope_pending"
+  ],
+  "status": "not fully qualified; no remote CI request, protected merge, settings change or release performed"
+}

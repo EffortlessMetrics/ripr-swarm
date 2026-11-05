@@ -1,6 +1,6 @@
 {
-  "candidate": "d074c3662cf10d7a4c5324bec5b2045534486ddc",
-  "tree": "117cc677de3052e9a63a248fa6d94a86bccf4793",
+  "candidate": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+  "tree": "683dd80fb6023057d82350b1acf2e52f5a6510b8",
   "branch": "successor/011-integration-20261105",
   "product_source_review": {
     "candidate": "c0287c53f83aee5db1b74862ff10701612303bc6",
@@ -12,47 +12,54 @@
     "native_paths_passed": 4,
     "failed": 0,
     "log": "c028-production-controls.log",
-    "carried_forward_limit": "current later delta changes comments, command catalog and narrow retained-surface policy inventories; not relabeled as exact-current full qualification"
+    "carried_forward_limit": "ten production plus four native subjects ran on c028, before canonical cfg authority integration and equivalent Clippy refactor; not relabeled current qualification"
   },
   "current_delta": {
-    "base": "c0287c53f83aee5db1b74862ff10701612303bc6",
-    "path": "integration-policy-review-delta.patch",
-    "bytes": 5780,
-    "sha256": "50ab42b95d424ed86cd437fcc10e07e17c7fb6558c140475599a1ee358eb7615",
-    "meaning": "three comment synonyms; remove inherited duplicate check-fast help/catalog entry; count one inert lint-attribute fixture string; declare existing bounded anonymous npm metadata reader; changelog"
+    "base": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+    "path": "41e36-clippy-composition-delta.patch",
+    "bytes": 2742,
+    "sha256": "e024010ac36061de29eb98788eedb5b45bc2abe681abe1a50195339872c1bf86",
+    "meaning": "equivalent boolean simplification; group existing shared tree indexes behind one borrowed context; no lint suppression"
   },
   "retained_policy_leaves": {
     "allow_attributes": 0,
     "network_policy": 0,
     "changelog": 0,
-    "full_policy": "pending fresh tooling; earlier advisory scan found only the two declared retained-surface counts before later gates"
+    "full_policy": "FD045 aggregate ci-policy exit 0; exact current refresh pending"
   },
   "qualification": {
-    "status": "running locally",
-    "tool_session": 29822,
-    "driver": "/workspace/011-integration-proof/run-local-qualification.py",
+    "status": "current sequential guarded qualification running",
+    "tool_session": 7838,
     "sequence": [
-      "fresh xtask build",
-      "command catalog",
+      "workspace Clippy",
       "ci-policy",
       "check-fast",
-      "default-feature reveal",
-      "full library harness using same artifact"
+      "cfg authority controls",
+      "macro binding controls",
+      "enum production",
+      "reveal",
+      "full library"
     ],
-    "guard": "one heavy process group at a time, 15 GiB cgroup memory budget, disk/temp reserves and stage timeouts; stop on failure",
-    "remote_actions": "none"
+    "prior_candidate": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+    "prior_policy_native_exit": 0,
+    "prior_check_fast_exit": 1,
+    "prior_check_fast_reason": "two Clippy diagnostics, now repaired in current delta",
+    "runtime_tests_prior_pipeline": "not reached; one help/parser selected subject passed",
+    "video_pause": "driver paused for coordinator resource priority; supplemental process-terminal and memory samples retained; FD policy driver wall duration includes pause",
+    "remote_actions": "ordinary successor and evidence branch publication only; no remote CI/settings/merge/release"
   },
   "history": {
     "public_source": "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a",
-    "public_source_current_default_tip_verified": true,
     "declared_destination_base": "984c69a290486b1da9d91700a6f771045ab079e1",
     "both_ancestors_of_candidate": true,
-    "source_already_in_base": false
+    "source_already_in_base": false,
+    "source_default_tip_observation": "Earlier connector observation only; current public-main freshness is not inferred."
   },
   "holds": [
     "protected merge paused pending explicit coordinator authorization clarification",
     "promotion trust hold",
     "release selection scope_pending"
   ],
-  "status": "not fully qualified; no remote CI request, protected merge, settings change or release performed"
+  "status": "not fully qualified; no remote CI request, protected merge, settings change or release performed",
+  "subsequent_delta_review": "FD cfg authority and 41 shared-index context patches are available for affected source review; no new independent acceptance inferred."
 }
