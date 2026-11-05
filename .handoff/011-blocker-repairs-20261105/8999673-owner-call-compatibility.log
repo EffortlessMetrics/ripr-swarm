@@ -1,0 +1,139 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-integration/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 3m 20s
+     Running tests/crate_qualified_entry_reach.rs (/workspace/12010-proof/target/debug/deps/crate_qualified_entry_reach-ce245d87877f290b)
+
+running 44 tests
+test a_closure_shadow_does_not_veto_commented_outer_calls ... ok
+test a_hyphenated_package_links_through_its_underscored_name ... ok
+test a_lib_name_is_the_only_admitted_spelling ... ok
+test a_longer_path_does_not_link ... ok
+test a_module_path_that_is_not_the_entrys_does_not_link ... ok
+test a_module_qualified_call_fails_closed_on_rebinding_and_include ... ok
+test a_module_qualified_own_crate_call_links ... ok
+test a_nearer_binding_inside_the_test_body_shadows_the_import ... ok
+test a_nearer_binding_or_same_line_non_code_does_not_admit_a_bare_call ... ok
+test a_quoted_own_crate_call_beside_a_foreign_call_does_not_link ... ok
+test a_rebindable_crate_name_does_not_link ... ok
+test a_relative_import_resolved_to_the_entrys_module_links ... ok
+test a_relative_import_that_does_not_name_the_entrys_module_stays_refused ... ok
+test a_test_module_child_does_not_link ... ok
+test a_unit_test_inside_src_does_not_link ... ok
+test a_workspace_member_does_not_link ... ok
+test an_absolute_import_prefix_goes_through_the_same_proof ... ok
+test an_entry_in_a_binary_crate_does_not_link ... ok
+test an_entry_outside_the_crate_root_does_not_link ... ok
+test an_imported_suffix_must_spell_the_entrys_module_path ... ok
+test an_in_file_relative_import_of_another_scope_stays_refused ... ok
+test an_in_file_test_module_import_resolves_from_its_own_scope ... ok
+test an_inline_module_entry_reexported_at_the_root_links_only_by_import ... ok
+test an_item_position_macro_in_the_test_crate_fails_closed ... ok
+test an_own_looking_import_prefix_must_name_the_library ... ok
+test an_unplaceable_module_does_not_link ... ok
+test another_crate_qualifier_does_not_link ... ok
+test bare_spelling_in_non_code_text_does_not_admit_an_import ... ok
+test cfg_on_module_declarations_is_read_from_the_syntax_tree ... ok
+test conditional_remapped_and_duplicate_chains_keep_a_relative_import_refused ... ok
+test imported_spelling_is_the_linked_baseline ... ok
+test include_spellings_in_the_test_crate_or_library_fail_closed ... ok
+test multiline_non_code_text_does_not_admit_a_foreign_call ... ok
+test nearer_bindings_and_scope_changes_keep_a_relative_import_refused ... ok
+test nested_cfg_and_shadowing_module_shapes_fail_closed ... ok
+test own_crate_qualified_entry_call_links ... ok
+test qualified_wrapper_boundary_credit_stays_on_the_observed_call ... ok
+test relative_and_reexport_import_routes_are_refused ... ok
+test test_crate_reexport_module_routes_link_through_self ... ok
+test test_crate_reexport_module_routes_refuse_shadow_and_cycle ... ok
+test the_declaration_chain_must_reach_the_definitions_file ... ok
+test the_library_must_bind_the_imported_module_path_to_the_entrys_file ... ok
+test type_namespace_items_do_not_shadow_the_imported_call ... ok
+test unit_crate_imports_scoped_bindings_and_inline_ancestors ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.87s
+
+     Running tests/glob_call_identity.rs (/workspace/12010-proof/target/debug/deps/glob_call_identity-7ad64fc9dd8174ec)
+
+running 6 tests
+test a_dependency_glob_still_leaves_the_call_unsettled ... ok
+test a_glob_bound_rival_call_is_still_dropped_without_an_outer_import ... ok
+test a_glob_import_does_not_credit_a_test_of_the_other_module ... ok
+test a_glob_import_keeps_the_credit_for_a_test_of_the_changed_module ... ok
+test a_rebound_crate_name_does_not_make_a_glob_prefix_the_owners_crate ... ok
+test an_outer_import_of_the_rival_does_not_hide_a_glob_bound_owner_call ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/owner_pin_execution.rs (/workspace/12010-proof/target/debug/deps/owner_pin_execution-fc73420b2f1915cf)
+
+running 69 tests
+test a_leading_colon_thread_path_refuses_spawned_thread_credit ... ok
+test aliased_outside_module_beside_a_same_named_module_is_not_credited ... ok
+test an_extern_crate_named_thread_refuses_spawned_thread_credit ... ok
+test an_out_of_line_super_glob_refuses_spawned_thread_credit ... ok
+test awaited_predicate_identity_does_not_credit_discarded_or_overwritten_results ... ok
+test bool_owner_assert_pin_matched_static_and_runtime_controls ... ok
+test boundary_call_identity::boundary_pairing_keeps_the_asserted_calls_definition ... ok
+test boundary_call_identity::element_boundary_pairing_keeps_the_asserted_calls_definition ... ok
+test boundary_call_identity::runtime_controls_distinguish_sibling_boundary_oracles ... ok
+test cfg_if_macro_use::cfg_if_macro_use_module_admission_matches_runtime ... ok
+test constant_row_table_pairs_each_row_with_its_boundary_input ... ok
+test default_trait_ufcs_result_pins_do_not_lend_identity_to_other_oracles ... ok
+test drop_in_crate_admission_matches_cargo_resolution ... ok
+test effect_assertion_sweep::effect_assertion_dead_context_sweep_refuses_every_never_run_assertion ... ok
+test effect_assertions::compound_effect_refusal_discloses_an_unidentified_assertion_honestly ... ok
+test effect_assertions::effect_assertion_contexts_match_executed_mutant_controls ... ok
+test effect_assertions::effect_assertions_require_execution_but_keep_reachable_oracles ... ok
+test effect_assertions::projected_effect_payload_requires_fresh_state_and_a_preserving_map ... ok
+test empty_macro_arguments_cannot_activate_a_real_far_oracle ... ok
+test equality_execution_uses_statement_prefix_and_closure_invocation ... ok
+test equality_family_admission_preserves_mixed_oracle_identity_and_projection ... ok
+test equality_oracle_family_matched_static_and_runtime_controls ... ok
+test exact_error_kind_projection_keeps_its_own_result_identity ... ok
+test fallible_literal_cli_preserves_unrelated_os_bytes_and_refuses_relevant_inputs ... ok
+test fallible_literal_runtime_pair_and_message_escape_execute_the_real_test ... ok
+test field_projected_collection::field_projected_collection_compiling_behavioral_mutants ... ok
+test field_projected_collection::field_projected_collection_public_check_pins_exact_observation ... ok
+test function_pointer::function_pointer_constant_readers_relate_without_promoting ... ok
+test function_pointer::function_pointer_invisible_inputs_withhold_exposure ... ok
+test function_pointer::function_pointer_invisible_runtime_controls_match_the_input ... ok
+test function_pointer::function_pointer_mask_pins_require_an_individually_discriminating_input ... ok
+test function_pointer::function_pointer_mask_runtime_controls_match_the_selected_input ... ok
+test function_pointer::function_pointer_pins_only_the_observed_owner_value ... ok
+test function_pointer::function_pointer_rebound_mask_inputs_do_not_pin_the_changed_mask ... ok
+test function_pointer::function_pointer_rebound_mask_runtime_controls_miss_the_narrower_mask ... ok
+test function_pointer::function_pointer_runtime_controls_observe_the_same_value ... ok
+test function_pointer::function_pointer_shared_targets_require_binary_assertion_trust ... ok
+test function_pointer::function_pointer_standard_glob_keeps_observation_and_macro_refusal ... ok
+test glob_imported_module_refuses_qualified_drop_in_assertions ... ok
+test lexical_source_values_do_not_claim_observed_oracles ... ok
+test literal_json_constructor_matches_real_callback_and_runtime_controls ... ok
+test local_empty_macro_preserves_independent_equality_execution ... ok
+test macro_use_module_admission_matches_runtime ... ok
+test matches_panic::matches_expected_panic_native_outcomes_are_not_support_promotion ... ok
+test member_crate_import_admission_matches_cargo_resolution ... ok
+test operand_callee_identity::compiled_operator_removal_controls_match_observed_effects ... ok
+test out_of_workspace_item_macro_emits_unread_unit_binding ... ok
+test owner_pin_matched_static_and_runtime_controls ... ok
+test owner_pin_refused_rows_do_not_crowd_out_admitted_oracles ... ok
+test owner_pin_review_admission_controls ... ok
+test owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle ... ok
+test owner_pin_token_overlap_cannot_bypass_oracle_admission ... ok
+test path_value::change_visible_at_a_later_input_is_credited ... ok
+test path_value::path_value_pins_only_the_observed_owner ... ok
+test path_value::refused_chains_stay_static_unknown ... ok
+test polling_helper::a_trait_intercepted_helper_has_no_completed_runtime_discriminator ... ok
+test polling_helper::polling_helper_runtime_controls_observe_the_polled_owner ... ok
+test predicate_pairing_cannot_reuse_refused_boundary_equalities ... ok
+test primitive_inherent_method_does_not_pin_same_named_trait_owner ... ok
+test raw_path_shadow_module_keeps_the_mutant_green ... ok
+test reexported_value_under_a_unit_struct_name_is_not_credited ... ok
+test shared_execution::shared_target_macro_context_matches_executed_binary_controls ... ok
+test spawned_thread_assertion_matched_static_and_runtime_controls ... ok
+test tokio_spawned_task_counts_only_when_joined_and_unwrapped ... ok
+test tokio_test_regains_the_exact_oracle_but_not_the_boundary ... ok
+test trait_shadow_corpus_matches_compiled_owner_dispatch ... ok
+test unit_struct_receiver_matched_static_and_runtime_controls ... ok
+test unstable_is_partitioned_custom_default_matched_controls ... ok
+test wrapper_argument_admission_matches_runtime ... ok
+
+test result: ok. 69 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 148.34s
+

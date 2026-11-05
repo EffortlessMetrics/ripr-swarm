@@ -1,6 +1,6 @@
 {
-  "candidate": "b6ae31e7a6553346340ca9aff468f9e4d30267f7",
-  "tree": "3972cdd3f1e2cf5b4afcc80c9be03211c8e26898",
+  "candidate": "89996734794fe94d19d50a7fa6014d9fc36b7532",
+  "tree": "15780a938b6a327541bdb8ae09d1909d3a0f7556",
   "branch": "successor/011-integration-20261105",
   "product_source_review": {
     "candidate": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
@@ -17,9 +17,9 @@
   },
   "current_delta": {
     "base": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
-    "path": "b6ae31-observer-complete.patch",
-    "bytes": 61492,
-    "sha256": "79f04d7d6afbc0c647d117daa15a90a8bba47c5b2e7cf47538644f3e3351a2f2"
+    "path": "8999673-observer-complete.patch",
+    "bytes": 81041,
+    "sha256": "92a086a166e8875df506cf0ea15b350fa17b7ac3866bf484fe54fe0f7e7ef8df"
   },
   "retained_policy_leaves": {
     "allow_attributes": 0,
@@ -28,8 +28,7 @@
     "full_policy": "FD045 aggregate ci-policy exit 0; exact current refresh pending"
   },
   "qualification": {
-    "status": "current guarded compatibility-first pipeline running",
-    "tool_session": 25920,
+    "status": "compatibility batch terminal pass; broader exact-current qualification pending",
     "prior_exact_candidate": "2ed9a70d5dcfe9e396d126c5a5e27cacac969dc1",
     "prior_full_library": {
       "passed": 18087,
@@ -54,20 +53,15 @@
       "promotion honesty"
     ],
     "current_compatibility": {
-      "qualified_entry": [
-        44,
-        0
-      ],
-      "glob_identity": [
-        6,
-        0
-      ],
-      "owner_pin_execution": [
-        55,
-        9
-      ],
-      "receipt": "cdbb570-owner-call-compatibility-receipt.json",
-      "native_exit": 101
+      "candidate": "89996734794fe94d19d50a7fa6014d9fc36b7532",
+      "qualified_entry_passed": 44,
+      "glob_identity_passed": 6,
+      "owner_execution_passed": 69,
+      "failed": 0,
+      "native_exit": 0,
+      "receipt": "8999673-owner-call-compatibility-receipt.json",
+      "log_sha256": "73fe9a10de2da6b7114e63a91558cb520f80882179618ba72afcb458cea2a369",
+      "limits": "includes native positive/negative dispatch controls and intercepted first refusal; no full-current qualification claim"
     },
     "current_phase": "owner-call compatibility compile; current producer/goldens and full/native qualification pending",
     "previous_consumer_results": {
