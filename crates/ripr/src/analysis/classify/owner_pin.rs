@@ -9192,16 +9192,6 @@ fn local_variant_path(path: &str) -> Option<(String, String)> {
         .then(|| (qualifier.to_string(), variant.to_string()))
 }
 
-/// #7063: the enum and variant of a changed `[return ]Err(Type::Variant(..))`
-/// or `Err(Type::Variant { .. })` whose variant carries a payload.
-fn payload_variant_construction(expression: &str) -> Option<(String, String)> {
-    let text = expression.trim().trim_end_matches(';').trim_end();
-    let text = text.strip_prefix("return ").map_or(text, str::trim);
-    let key = error_variant_key(text)?;
-    let argument = text.strip_prefix("Err(")?.strip_suffix(')')?;
-    argument.trim_end().ends_with([')', '}']).then_some(key)
-}
-
 /// #7063: a changed early `return Err(Type::Variant ..);` beside other
 /// `return Err(..)` exits. A pin expecting `Err(Type::Variant ..)` observes
 /// the changed return when no other exit can build that variant: every other
