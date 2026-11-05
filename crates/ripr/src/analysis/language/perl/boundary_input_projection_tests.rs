@@ -137,6 +137,9 @@ fn spaced_receiver_honesty_projection_matches_production() -> Result<(), String>
         "perl-threshold-spaced-receiver-expected-projection.json"
     )))
     .map_err(|error| format!("parse expected threshold-receiver projection: {error}"))?;
-    assert_eq!(actual, expected, "the corpus projection must match the mapper");
+    assert_eq!(
+        actual, expected,
+        "the corpus projection must match the mapper"
+    );
     Ok(())
 }
