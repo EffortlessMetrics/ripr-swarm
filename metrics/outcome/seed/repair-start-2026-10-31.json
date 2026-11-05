@@ -1,0 +1,12 @@
+{
+  "schema_version": "ripr-repair-start-receipt-v1",
+  "date": "2026-10-31",
+  "source": "manual_harness",
+  "ripr_version": "ripr (see audit/not-ready-burndown-2026-10-31.md)",
+  "cases": 24,
+  "started": 5,
+  "not_ready": 19,
+  "check_ms_p50": null,
+  "instrument_failures": [],
+  "note": "Manual audit harness after #11377; 4/24 earlier the same day."
+}

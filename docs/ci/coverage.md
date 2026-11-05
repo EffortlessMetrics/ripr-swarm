@@ -105,10 +105,11 @@ both the repository pin and stable. Install matching LLVM tools for each
 selected compiler; a system `llvm-profdata` from another LLVM release is not a
 substitute for the tool in that compiler's sysroot.
 
+<!-- ripr:coverage-upgrade:start -->
 ```bash
 (
     set -e
-    rustup component add --toolchain 1.95.0 clippy llvm-tools-preview
+    rustup toolchain install 1.95.0 --profile minimal --component clippy --component llvm-tools-preview
     rustup update stable
     rustup component add --toolchain stable clippy llvm-tools-preview
 
@@ -147,26 +148,33 @@ substitute for the tool in that compiler's sysroot.
         printf 'Selected toolchain: %s\n%s\n' "$ripr_channel" "$ripr_identity"
         "$LLVM_COV" --version >/dev/null || exit $?
         "$LLVM_PROFDATA" --version || exit $?
-        exec "$ripr_cargo" "$@"
+        "$ripr_cargo" "$@" || exit $?
+        printf -v ripr_command ' %q' "$@"
+        printf 'Completed: %s cargo%s\n' "$ripr_channel" "$ripr_command"
     )
 
-    ripr_cargo_for 1.95.0 test --locked -p repo-policy --lib coverage_diagnostics
+    ripr_cargo_for 1.95.0 test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
     ripr_cargo_for stable test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
     ripr_cargo_for stable test --locked -p repo-policy --test frontdoor
     ripr_cargo_for stable clippy --locked -p repo-policy --all-targets -- -D warnings
 )
 ```
+<!-- ripr:coverage-upgrade:end -->
 
-`rustup update stable` refreshes an already installed channel; adding components
-alone does not establish that its compiler is current. Retain the compiler and
-LLVM identities and the test's reported raw version/layout with the results.
+The explicit pin installation also works when activation disabled automatic
+installation. `rustup update stable` deliberately refreshes the stable channel;
+adding components alone does not establish that its compiler is current. Retain
+the compiler and LLVM identities and the test's reported raw version/layout with
+the results.
 The subshell resolves the requested compiler and Cargo with `rustup which`, invokes
 Cargo by its absolute path, and selects the same compiler for both `RUSTC` and
 literal `rustc` subprocesses through `PATH`. The LLVM paths come from that compiler's
 sysroot. This supports a shell that already activated either the pin or stable,
 including activation that prepends SDK binaries and exports an absolute `RUSTC`.
 Each command leaves the caller's activation unchanged. Missing tools and failed
-version probes stop before Cargo runs; Cargo failures stop the remaining checks.
+version probes stop before Cargo runs; Cargo failures keep their original status
+and stop the remaining checks. A `Completed:` line follows each successful Cargo
+command; a missing check cannot be inferred from another command's success.
 
 `RUSTUP_TOOLCHAIN` also follows subprocesses into temporary fixture repositories,
 where a directory-local override alone does not apply. Setting it alone does not
@@ -177,10 +185,15 @@ Selecting these together keeps the policy helper's build-time and runtime compil
 identities aligned. The checks retain their compiler-identity refusals.
 
 The `stable-repo-policy` job in the existing advisory Future Clippy workflow
-runs the focused diagnostic tests, the isolated `frontdoor` target and Clippy on
-the moving stable channel with matching `llvm-tools-preview`. It records the
-actual compiler and LLVM tool versions. It follows that workflow's existing
-main-push, manual-dispatch and
+executes this marked recipe with genuine pin/stable toolchains and matching
+`llvm-tools-preview`, starting with the stable SDK first on `PATH` and an absolute
+`RUSTC`. It first runs the workflow controls, then requires all four ordered
+completion records, nonempty successful test runs, genuine LLVM association
+observations for both diagnostics checks, and successful Clippy completion.
+Missing, ambiguous or malformed recipe boundaries, partial execution and stale
+run evidence fail the job. Native compiler, LLVM and profile observations stay
+in the job output. This route replaces the duplicate stable Cargo commands. It
+follows that workflow's existing main-push, manual-dispatch and
 `clippy-future`/`full-ci` plus `merge-ready` PR routing. A failure stays visible;
 the job does not become a required merge gate or run full workspace coverage.
 The existing future-Clippy job continues to inspect deferred lints on Rust

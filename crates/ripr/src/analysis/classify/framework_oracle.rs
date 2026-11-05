@@ -12,7 +12,7 @@
 //!   whole debug text of the owner's result;
 //! - **insta**: `assert_json_snapshot!(value)` compares a snapshot kept in a
 //!   committed file ripr does not read, and no redaction names the changed
-//!   field, or the map's selectors cannot be read;
+//!   field, or active settings/redactions are unread;
 //! - **fixture receiver**: the changed tail is a closure over a field of
 //!   `self`, and the test pins `helper().owner(..)` or `let x = helper();
 //!   x.owner(..)` to a literal, so the closure runs over data ripr does not
@@ -732,20 +732,13 @@ fn expect_debug_literal(test: &TestFact, owner: &str) -> bool {
         .starts_with(|ch: char| ch.is_alphanumeric() || matches!(ch, '[' | '(' | '{' | '-'))
 }
 
-/// An owner-bound field snapshot with unread selectors, or with an unredacted
-/// field whose external expected bytes are unread. Literal selectors keep the
-/// existing redacted-field gap. Unknown selectors cannot establish that gap,
-/// including beside inline expected text (#6642, #13035).
+/// An owner-bound field snapshot with unread settings/selectors, or with an
+/// unredacted field whose external expected bytes are unread. Literal selectors
+/// keep the redacted-field gap only when settings are readable. Unknown
+/// configuration also withholds beside inline expected text (#6642, #13035).
 fn insta_field_snapshot_limit(test: &TestFact, changed_text: &str, owner: &str) -> Option<Idiom> {
     let raw: &str = &test.body;
     let code = masked(raw);
-    // Redactions and filters set outside the macro are not read.
-    if ["add_redaction", "with_settings", "Settings"]
-        .iter()
-        .any(|name| code.contains(name))
-    {
-        return None;
-    }
     // Only a struct field the snapshot serializes: other changed lines keep
     // their existing disposition. An unread map alone is not a witness.
     let field = field_name(changed_text)?;
@@ -759,6 +752,11 @@ fn insta_field_snapshot_limit(test: &TestFact, changed_text: &str, owner: &str) 
                 continue;
             };
             let arguments = &code[from..to];
+            // Preserve accepted Settings admission: only executable whole names
+            // before this assertion can affect its comparison.
+            let unread_settings = ["add_redaction", "with_settings", "Settings"]
+                .iter()
+                .any(|name| contains_name(&code[..at], name));
             // The snapshotted value follows an optional literal name; the
             // masked text hides a literal, so the original shows it.
             let parts = split_arguments(arguments);
@@ -776,6 +774,9 @@ fn insta_field_snapshot_limit(test: &TestFact, changed_text: &str, owner: &str) 
             };
             if !derives_from_owner(&code, at, &arguments[start..end], owner) {
                 continue;
+            }
+            if unread_settings {
+                return Some(Idiom::InstaSettings);
             }
             // A redaction map that names the field replaces it in the
             // snapshot, so the gap stays; an unredacted sibling beside a map,

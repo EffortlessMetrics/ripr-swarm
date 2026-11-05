@@ -78,6 +78,13 @@ Today, retained programming surfaces are:
   to run in Python-capable agent environments that cannot compile RIPR or
   search PATH for it. Packet staging and oracles stay in Rust/`xtask`.
 
+The exact `tools/activate-rust.sh` and `tools/test-activate-rust.sh` paths are also
+retained for #13123. Activation must source exports into its Bash caller before
+Cargo is usable. Its Bash controls inspect caller options, positional arguments
+and variable attributes directly; `cargo test -p xtask --test rust_activation`
+owns their Unix test integration. This exception does not retain other scripts
+under `tools/`.
+
 Other repo automation, release helpers, fixture runners, and policy checks
 should be converted to Rust/`xtask` rather than newly allowlisted.
 
