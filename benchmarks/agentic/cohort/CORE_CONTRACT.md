@@ -40,7 +40,7 @@ execution and records the remaining intended mutants as not run. Invalid,
 duplicate, no-op and unresolved mutations do not shrink a frozen denominator.
 
 Complete quality requires a nonempty fully accounted population containing only
-caught or survived outcomes. Retained-evidence validators check the joins between
+caught or escaped outcomes. Retained-evidence validators check the joins between
 labels, phases, native exits, test counts, identities and aggregate counters.
 A fabricated receipt can still be internally consistent: this is not independent
 producer authentication or a security sandbox. Custom harnesses, doctests,
