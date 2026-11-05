@@ -50,7 +50,14 @@ pub(crate) fn run() -> Result<(), String> {
     result
 }
 
-fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
+/// Package `ripr-contract` and then `ripr` against a vendored source tree
+/// holding the packaged contract. Returns the two `.crate` paths. This is
+/// the only local route that can produce the `ripr` package before
+/// `ripr-contract` exists on crates.io.
+pub(crate) fn vendored_ripr_crate(
+    scratch: &Path,
+    version: &str,
+) -> Result<(PathBuf, PathBuf), String> {
     let target = scratch.join("target");
     let target_arg = target.to_string_lossy().into_owned();
 
@@ -100,6 +107,11 @@ fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
     }
     packaged?;
     let ripr_crate = pick_crate_file(&target.join("package"), "ripr", version)?;
+    Ok((contract_crate, ripr_crate))
+}
+
+fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
+    let (contract_crate, ripr_crate) = vendored_ripr_crate(scratch, version)?;
 
     let extract = scratch.join("extract");
     let contract_dir = format!("ripr-contract-{version}");
@@ -161,7 +173,7 @@ fn run_cargo(
     }
 }
 
-fn extract_crate(krate: &Path, dest: &Path, top_dir: &str) -> Result<(), String> {
+pub(crate) fn extract_crate(krate: &Path, dest: &Path, top_dir: &str) -> Result<(), String> {
     let file =
         fs::File::open(krate).map_err(|e| format!("cannot open {}: {e}", krate.display()))?;
     let gz = flate2::read::GzDecoder::new(file);
