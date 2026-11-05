@@ -426,6 +426,8 @@ impl TempRepo {
         let output = Command::new("git")
             .args(args)
             .current_dir(&self.root)
+            // POSIX null device; this suite runs in the Linux fuzz lane. A
+            // Windows run would need `NUL` here.
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("LC_ALL", "C")
