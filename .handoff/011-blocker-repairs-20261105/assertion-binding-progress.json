@@ -50,5 +50,20 @@
     "commit": "327ff755cf8c36ed4cc417940a19eaa6adea1a84",
     "tree": "2cff466edf6bc15de985d877f9ac578179c52677",
     "qualification": "workspace regression build in progress; corrected-fixture reveal compile terminated/reaped for resource guard, not a test outcome"
+  },
+  "review_delta": {
+    "base": "d1bef96f582a0df8ed627481d808e1f72a25acc0",
+    "head": "327ff755cf8c36ed4cc417940a19eaa6adea1a84",
+    "path": "assertion-binding-review-delta.patch",
+    "sha256": "96aa5a2121440ea541a2bc79bb76c5c71181f3ab3f05fd3566981d92d13c31fd",
+    "qualification": "new workspace pipeline test currently compiling; previous 136/23 result retained separately"
+  },
+  "composed_cache_generation": {
+    "path": "composed-cache-generation.patch",
+    "full": "1.160",
+    "sharded": "0.162",
+    "compact": "0.162",
+    "tests": "separate synthesized favorable shared-generation payloads tagged for 7490 and 12010; not actual historical cache captures",
+    "qualification": "not run; integration merge retains 27 generated-output conflicts awaiting producer regeneration"
   }
 }
