@@ -585,6 +585,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-fast",
         "ci-policy",
         "check-pr",
+        "check-fast",
         "fixtures [name]",
         "fixtures new <name>",
         "fixtures refresh-identity <typescript|python>",
@@ -1029,6 +1030,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Review-ready gate; must not mutate tracked files.",
+        ),
+        command_entry(
+            "check-fast",
+            "non_mutating_check",
+            "target/ripr/reports/check-fast.md and target/ripr/reports/check-fast-selector.md",
+            false,
+            false,
+            "Local-only diff-aware gates selected from the committed origin/main...HEAD change set; fails closed with a selector report when that base cannot be resolved (fetch origin/main and rerun). Not complete dirty-worktree validation, not all tests, and not a substitute for precommit or CI.",
         ),
         command_entry(
             "fixtures [name]",
