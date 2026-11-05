@@ -72,12 +72,14 @@ Inventory coverage and checked-drift gaps remain with
 [#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330), using the
 existing artifact/support collectors. Authored lifecycle and support decisions
 remain with [#2328](https://github.com/EffortlessMetrics/ripr-swarm/issues/2328).
-The closed synthetic orientation proof [#2331](https://github.com/EffortlessMetrics/ripr-swarm/issues/2331)
-and its oracle follow-up [#13074](https://github.com/EffortlessMetrics/ripr-swarm/issues/13074)
-retain their boundaries; neither establishes the integrated cold-start outcome
-under [#2324](https://github.com/EffortlessMetrics/ripr-swarm/issues/2324).
-Consume their existing candidates rather than starting another orientation
-implementation from this planning page.
+The closed synthetic orientation proof [#2331](https://github.com/EffortlessMetrics/ripr-swarm/issues/2331),
+its oracle follow-up [#13074](https://github.com/EffortlessMetrics/ripr-swarm/issues/13074)
+and routing-precedence continuation [#13083](https://github.com/EffortlessMetrics/ripr-swarm/pull/13083)
+retain their boundaries. In the synthetic proof, historical refusal, unavailable
+live state and candidate constraints precede source-release hints. None of these
+slices establishes the integrated cold-start outcome under
+[#2324](https://github.com/EffortlessMetrics/ripr-swarm/issues/2324).
+Reuse the existing implementation for further orientation work.
 
 ## Choose and finish one slice
 
