@@ -1555,12 +1555,12 @@ impl McpServer {
         recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        // Resources pretty-print their document text while tool payloads
-        // serialize compact (`bounded_tool_envelope`): the encodings differ
-        // by design, and tool/resource equivalence (#7145) is pinned over the
-        // parsed document, never over the wire bytes. Do not reformat either
-        // side to match the other.
-        let text = serde_json::to_string_pretty(&document)
+        // Resource payloads serialize compact, the same encoding tool
+        // payloads use (`bounded_tool_envelope`): a resource is LLM-facing
+        // text, and pretty-print inflation spends tokens on whitespace a
+        // JSON parser discards. Tool/resource equivalence (#7145) stays
+        // pinned over the parsed document, never over the wire bytes.
+        let text = serde_json::to_string(&document)
             .map_err(|_error| ErrorData::internal_error("serialize resource", None))?;
         let envelope = json_envelope(uri, text);
         let bytes = serde_json::to_vec(&envelope)

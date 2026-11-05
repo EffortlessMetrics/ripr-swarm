@@ -723,13 +723,10 @@ fn gap_evidence_core(
         "readiness": {
             "repair_packet_ready": readiness.ready,
             "reason": readiness.detail(),
-            "prepared_by": "#3090",
-            "evaluation_basis": "producer facts on the committed finding: candidate actionability (#3281), the canonical gap's normalized discriminator (a producer-named missing discriminator is accepted only on a weakly exposed finding, where it is the repair target), and the strongest directly-related related-test grip; conjoined with the shared seam-level repair validator behind `ripr repair`, which must admit the item's seam (#8717)",
         },
         "repair_boundary": {
             "allowed_edit_surface": "none_declared",
             "must_not_change": "none_declared",
-            "prepared_by": "#3090",
         },
     }))
 }
@@ -1507,12 +1504,21 @@ mod tests {
         if reason.is_empty() {
             return Err("readiness reason must not be empty".to_string());
         }
-        if document
-            .pointer("/item/readiness/prepared_by")
-            .and_then(Value::as_str)
-            != Some("#3090")
+        // Internal slice provenance (`prepared_by`, `evaluation_basis`) stays
+        // out of the MCP-facing document: it names the producing repair
+        // slice, not a fact about the gap, and no documented MCP consumer
+        // reads it.
+        if document.pointer("/item/readiness/prepared_by").is_some()
+            || document
+                .pointer("/item/readiness/evaluation_basis")
+                .is_some()
+            || document
+                .pointer("/item/repair_boundary/prepared_by")
+                .is_some()
         {
-            return Err("readiness lost the repair-slice owner".to_string());
+            return Err(
+                "internal provenance fields must not leak into the MCP gap document".to_string(),
+            );
         }
         if document.pointer("/item/repair_boundary/allowed_edit_surface")
             != Some(&serde_json::json!("none_declared"))
