@@ -92,6 +92,7 @@ REPORT="$RESULTS_DIR/$RUN_ID.md"
 TMP_REPORT="$RESULTS_DIR/.${RUN_ID}.md.tmp$$"
 trap 'rm -f "$TMP_REPORT" "$TMP_CSV"; rmdir "$LOCK"' EXIT
 TMP_CSV="$RESULTS_DIR/.summary.csv.tmp$$"
+[ ! -e "$REPORT" ] || fail "report already exists for run-id $RUN_ID; choose a new run-id"
 
 {
   printf 'run_id: %s\n' "$RUN_ID"

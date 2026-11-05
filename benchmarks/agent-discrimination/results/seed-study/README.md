@@ -5,7 +5,7 @@ seed study: **5 of 9 solver runs** (3 scenarios × 3 variants). The 4
 unretained records (the three `ripr-context` variant cells and
 `silent-return-vanilla`) were not written before the harness was reworked and
 are not recoverable; that recording loss is defect 4 of issue #13113 and
-`record-run.sh` exists so future runs cannot lose rows. Do not average over
+`record-run.sh` exists so successful future writes rebuild the summary from retained reports. Do not average over
 the missing cells. All 5 retained records scored `discriminates: yes` with
 `rounds: 1`; the uplift finding and small-n caveats live in the benchmark
 `README.md`.

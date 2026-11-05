@@ -39,6 +39,8 @@ run_expect 0 "${record[@]}" --final-test "$crate/tests/b.rs"
 mkdir "$root/results/.record-run.lock"
 run_expect 2 "${record[@]}" --final-test "$crate/tests/b.rs"
 rmdir "$root/results/.record-run.lock"
+run_expect 2 "${record[@]}" --final-test "$crate/tests/b.rs"
+grep -q 'report already exists' "$root/output.log"
 mv "$crate/tests/b.rs" "$root/b.rs"
 mv "$root/a.rs" "$crate/tests/a.rs"
 run_expect 1 bash "$bench/eval.sh" "$crate" same_name
@@ -50,4 +52,20 @@ run_expect 2 bash "$bench/build-contexts.sh" "$root/nested/inserted-guard" "$rip
 [ ! -e "$root/refused" ]
 run_expect 0 bash "$bench/build-contexts.sh" "$crate" "$ripr" "$root/new-context" inserted-guard test-r01
 [ -s "$root/new-context/vanilla.txt" ]
+grep -q 'explain captured: yes' "$root/output.log"
+[ -s "$root/new-context/ripr-explain.txt" ]
+mkdir -p "$root/space parent"
+cp -a "$crate" "$root/space parent/inserted-guard"
+run_expect 0 bash "$bench/build-contexts.sh" "$root/space parent/inserted-guard" "$ripr" "$root/space output" inserted-guard test-r01
+grep -q 'explain captured: yes' "$root/output.log"
+[ -s "$root/space output/ripr-explain.txt" ]
+cat > "$root/failing-ripr" <<'STUB'
+#!/usr/bin/env bash
+if [ "$1" = --version ]; then echo test-ripr; exit 0; fi
+echo "forced check failure" >&2
+exit 2
+STUB
+chmod +x "$root/failing-ripr"
+run_expect 2 bash "$bench/build-contexts.sh" "$crate" "$root/failing-ripr" "$root/failed-check" inserted-guard test-r01
+grep -q 'ripr check failed' "$root/output.log"
 echo "Harness controls passed; artifacts retained at $root"

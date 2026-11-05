@@ -70,22 +70,26 @@ echo "ripr: $RIPR_VERSION"
 } > "$OUT/vanilla.txt"
 
 # ---- ripr-context.txt -------------------------------------------------------
-"$RIPR_BIN" check --root "$CRATE" --base HEAD~1 --format agent \
-  > "$OUT/ripr-check-agent.txt" 2> "$OUT/ripr-check-agent.stderr.txt" \
-  || echo "ripr check exited nonzero" >> "$OUT/ripr-check-agent.stderr.txt"
+if ! "$RIPR_BIN" check --root "$CRATE" --base HEAD~1 --format agent \
+  > "$OUT/ripr-check-agent.txt" 2> "$OUT/ripr-check-agent.stderr.txt"; then
+  echo "ERROR: ripr check failed; inspect $OUT/ripr-check-agent.stderr.txt" >&2
+  exit 2
+fi
 
-next_cmd="$(tr -d '\r' < "$OUT/ripr-check-agent.txt" | grep -m1 '^next=ripr ' | sed 's/^next=ripr //' || true)"
-# Unquoted expansion below does not re-parse quoting, so the literal quotes
-# ripr prints around "HEAD~1" must be stripped before invoking.
-next_cmd="${next_cmd//\"/}"
+next_cmd="$(tr -d '\r' < "$OUT/ripr-check-agent.txt" | grep -m1 '^next=ripr explain ' | sed 's/^next=ripr //' || true)"
+# Only extract the opaque final finding ID; construct known arguments as an
+# array of shell words rather than evaluating or splitting rendered shell text.
 if [ -n "$next_cmd" ]; then
-  # Run exactly the follow-up command ripr nominates (substituting our
-  # absolute binary path for the bare `ripr` it assumes on PATH).
-  "$RIPR_BIN" $next_cmd > "$OUT/ripr-explain.txt" 2> "$OUT/ripr-explain.stderr.txt" \
-    || echo "ripr explain exited nonzero" >> "$OUT/ripr-explain.stderr.txt"
-  had_explain=yes
+  finding_id="${next_cmd##* }"
+  if [[ "$finding_id" =~ ^[a-zA-Z0-9_:.-]+$ ]] &&
+     "$RIPR_BIN" explain --root "$CRATE" --base HEAD~1 --committed "$finding_id" > "$OUT/ripr-explain.txt" 2> "$OUT/ripr-explain.stderr.txt"; then
+    had_explain=yes
+  else
+    echo "ripr explain failed or supplied an unsupported finding ID; inspect stderr" >> "$OUT/ripr-explain.stderr.txt"
+    had_explain=no
+  fi
 else
-  echo "no next= line in check output; explain not captured" > "$OUT/ripr-explain.txt"
+  echo "no supported explain next= line in check output; explain not captured" > "$OUT/ripr-explain.txt"
   had_explain=no
 fi
 
@@ -103,24 +107,30 @@ fi
     echo
     echo "===== ripr explain (top finding): $next_cmd ====="
     cat "$OUT/ripr-explain.txt"
+  else
+    echo
+    echo "WARNING: ripr explain was not captured; inspect the explain sidecars."
   fi
 } > "$OUT/ripr-context.txt"
 
 # ---- tool-note.txt ----------------------------------------------------------
+printf -v RIPR_SHELL '%q' "$RIPR_BIN"
+printf -v CRATE_SHELL '%q' "$CRATE"
+printf -v OUT_SHELL '%q' "$OUT/ripr-run-output-$RUN_ID.txt"
 cat > "$OUT/tool-note.txt" <<EOF
 # TOOL NOTE: the ripr analyzer
 
 ripr ($RIPR_VERSION) is available at: $RIPR_BIN
 Run it from any shell. Verified invocations for this crate:
 
-  $RIPR_BIN check --root $CRATE --base HEAD~1 --format agent
+  $RIPR_SHELL check --root $CRATE_SHELL --base HEAD~1 --format agent
 
 That prints a compact agent-format advisory for the changed behavior between
 HEAD~1 and HEAD. Each finding line ends with id=... . The output also contains
 a 'next=ripr ...' line nominating the exact follow-up command for the top
 finding. Run it by substituting the absolute binary path for 'ripr', e.g.:
 
-  $RIPR_BIN explain --root $CRATE --base "HEAD~1" --committed <FINDING_ID>
+  $RIPR_SHELL explain --root $CRATE_SHELL --base "HEAD~1" --committed <FINDING_ID>
 
 ripr is a static advisory analyzer: it reports exposure evidence and draft
 test intent (classifications such as exposed / weakly_exposed /
@@ -128,7 +138,7 @@ reachable_unrevealed). It does not write or run tests, and it never promotes
 static evidence to killed/survived/proven.
 
 If you run ripr, save the output you used to:
-  $OUT/ripr-run-output-$RUN_ID.txt
+  $OUT_SHELL
 EOF
 
 echo "    vanilla.txt      $(wc -c < "$OUT/vanilla.txt") bytes"
