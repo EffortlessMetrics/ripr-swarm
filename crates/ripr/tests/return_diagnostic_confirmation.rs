@@ -294,8 +294,53 @@ fn persisted_effect_observer_retains_identity_without_lending_it_to_another_inst
         "let other = Notifier::new();\n    assert_eq!(*other.sent.borrow(), Vec::<String>::new());",
     );
     assert_ne!(unrelated, test);
-    for (test, expected) in [(test, "exposed"), (unrelated.as_str(), "weakly_exposed")] {
+    let renamed = test.replace("notifier", "changed");
+    let coincident_name = test
+        .replace(
+            "process_order(&notifier, \"order-42\");",
+            "let changed = Notifier::new();\n    process_order(&changed, \"order-42\");",
+        )
+        .replace("vec![\"order-42\".to_string()]", "Vec::<String>::new()");
+    let cleared = test.replace(
+        "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
+        "notifier.sent.borrow_mut().clear();\n    assert_eq!(*notifier.sent.borrow(), Vec::<String>::new());",
+    );
+    assert_ne!(renamed, test);
+    assert_ne!(coincident_name, test);
+    assert_ne!(cleared, test);
+    for (test, expected) in [
+        (test, "exposed"),
+        (renamed.as_str(), "exposed"),
+        (unrelated.as_str(), "weakly_exposed"),
+        (coincident_name.as_str(), "weakly_exposed"),
+        (cleared.as_str(), "weakly_exposed"),
+    ] {
         let report = check_report(source, test, manifest, diff)?;
+        let finding = report["findings"]
+            .as_array()
+            .ok_or("missing findings")?
+            .iter()
+            .find(|finding| finding["probe"]["family"] == "side_effect")
+            .ok_or("side-effect row missing")?;
+        assert_eq!(finding["classification"], expected, "{report}");
+    }
+    Ok(())
+}
+
+#[test]
+fn established_effect_carrier_binds_the_called_instance_only() -> Result<(), String> {
+    let source = "#[derive(Debug, PartialEq)]\npub struct Store { pub written: Vec<u8>, pub unrelated: Vec<u8> }\nimpl Store {\n    pub fn new() -> Self { Self { written: vec![], unrelated: vec![] } }\n    pub fn record(&mut self, value: u8) {\n        self.apply(value);\n    }\n    fn apply(&mut self, value: u8) { self.written.push(value); }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -5,3 +5,3 @@\n     pub fn record(&mut self, value: u8) {\n-        self.apply(0);\n+        self.apply(value);\n     }\n";
+    for (observed, expected) in [("store", "exposed"), ("other", "weakly_exposed")] {
+        let value = if observed == "store" {
+            "vec![2]"
+        } else {
+            "vec![]"
+        };
+        let test = format!(
+            "use rust_catalog_description_structural_oracle::Store;\n#[test]\nfn records() {{\n    let mut store = Store::new();\n    let other = Store::new();\n    store.record(2);\n    assert_eq!({observed}, Store {{ written: {value}, unrelated: vec![] }});\n}}\n"
+        );
+        let report = check_report(source, &test, MANIFEST, diff)?;
         let finding = report["findings"]
             .as_array()
             .ok_or("missing findings")?

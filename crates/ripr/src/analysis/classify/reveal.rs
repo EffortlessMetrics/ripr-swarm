@@ -104,6 +104,8 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// the changed effect writes (`EffectStateCarrier::admits`). Consulted
     /// only for effect families after `effect_observer_confirms`.
     pub(in crate::analysis) effect_state_carried: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// Affirmative call-site/established-carrier binding, never absence of a veto.
+    pub(in crate::analysis) effect_observer_identity: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// RIPR-SPEC-0040 builder override (#6613): whether the owner type's
     /// method `(type, setter, field)` plainly stores its argument in the
     /// field (`builder_override::setter_plainly_writes`). Only a verified
@@ -189,6 +191,7 @@ fn reveal_evidence(
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
             effect_state_carried: &|_, _| true,
+            effect_observer_identity: &|_, _| false,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
             pushed_literal_observed: &|_, _| false,
@@ -238,6 +241,7 @@ fn reveal_evidence_with_exit(
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
             effect_state_carried: &|_, _| true,
+            effect_observer_identity: &|_, _| false,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
             pushed_literal_observed: &|_, _| false,
@@ -307,6 +311,7 @@ fn reveal_evidence_proximity_reach_pinning(
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
             effect_state_carried: &|_, _| true,
+            effect_observer_identity: &|_, _| false,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
             pushed_literal_observed: &|_, _| false,
@@ -2868,7 +2873,14 @@ fn analyze_related_assertions(
                 && !match_context.owner_shadowed
                 && !test_is_should_panic(test)
                 && (return_admission.recording_double_observed)(test, assertion);
+            let effect_receiver_read = is_effect_family(&probe.family)
+                && *reason == RelationReason::DirectOwnerCall
+                && !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
+                && (return_admission.effect_observer_identity)(test, assertion);
             let matched = matched
+                || effect_receiver_read
                 || recording_double_read
                 || field_collection_read
                 || collection_argument_read
@@ -3062,6 +3074,7 @@ fn analyze_related_assertions(
                             ) || field_collection_read
                                 || collection_argument_read
                                 || out_parameter_confirmed
+                                || effect_receiver_read
                                 || recording_double_read
                                 || captured_log_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
@@ -3155,15 +3168,7 @@ fn analyze_related_assertions(
                     || out_parameter_confirmed
                     || captured_log_read
                     || collection_read
-                    // Preserve the existing effect-family token witness when
-                    // the same assertion passes its carrier and kind gates.
-                    // A relation or unrelated whole-object oracle alone still
-                    // cannot acquire identity through this path.
-                    || (is_effect_family(&probe.family)
-                        && !is_proximity_only(*reason)
-                        && has_token_match
-                        && observation_confirmed
-                        && (return_admission.effect_state_carried)(test, assertion));
+                    || effect_receiver_read;
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated
                 // one regardless of encounter order; a weaker oracle cannot.
@@ -6678,6 +6683,7 @@ mod tests {
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
             effect_state_carried: &|_, _| true,
+            effect_observer_identity: &|_, _| false,
             setter_writes_field: &|_, _, _| false,
             getter_reads_field: &|_, _, _| false,
             collection_argument_observed: &|_, _| false,
@@ -8157,6 +8163,7 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -8257,6 +8264,7 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
+                    effect_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
@@ -8444,6 +8452,7 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
+                    effect_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
@@ -8558,6 +8567,7 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
+                    effect_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
@@ -8990,6 +9000,7 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -9086,6 +9097,7 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -10905,6 +10917,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -10980,6 +10993,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -11026,6 +11040,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -11091,6 +11106,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -11158,6 +11174,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -11405,6 +11422,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -11454,6 +11472,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -11931,6 +11950,7 @@ return Err(\"typed pin\".into());
                         owner_parameters: &[],
                         expected_reaches_owner: &|_, _| false,
                         effect_state_carried: &|_, _| true,
+                        effect_observer_identity: &|_, _| false,
                         setter_writes_field: &|_, _, _| false,
                         getter_reads_field: &|_, _, _| false,
                     },
@@ -12016,6 +12036,7 @@ return Err(\"typed pin\".into());
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
+                    effect_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| false,
                     getter_reads_field: &|_, _, _| false,
                 },
@@ -12446,6 +12467,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -12556,6 +12578,7 @@ return Err(\"typed pin\".into());
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
+                    effect_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
@@ -12609,6 +12632,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -13113,6 +13137,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -13665,6 +13690,7 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: reaches,
                 expected_operand_value: operand_value,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,

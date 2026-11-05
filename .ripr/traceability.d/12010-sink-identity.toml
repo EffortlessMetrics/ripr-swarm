@@ -7,4 +7,6 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token",
   "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_real_parser_discarded_return_cannot_lend_identity_to_another_assertion",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::persisted_effect_observer_retains_identity_without_lending_it_to_another_instance",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::established_effect_carrier_binds_the_called_instance_only",
 ]

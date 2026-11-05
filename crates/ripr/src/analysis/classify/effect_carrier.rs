@@ -55,7 +55,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+mod argument_receiver;
 mod recording;
+pub(in crate::analysis) use argument_receiver::ArgumentReceiver;
 
 /// Bound on transitive `self.method(..)` resolution and on `let` chains.
 const MAX_DEPTH: usize = 6;
@@ -925,6 +927,19 @@ impl EffectStateCarrier {
             .borrow_mut()
             .insert(key, Arc::clone(&tokens));
         tokens
+    }
+
+    /// Affirmative identity requires a compared binding on which the owner
+    /// was called. `admits` alone is only a permissive carrier veto.
+    pub(in crate::analysis) fn identifies(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+    ) -> bool {
+        matches!(assertion.kind, OracleKind::WholeObjectEquality)
+            && self.admits(test, assertion)
+            && !Self::compared_bindings_in_whole_object_assertion(&assertion.text)
+                .is_disjoint(&self.bindings_calling_owner_before_assertion(test, assertion.line))
     }
 
     /// Whether `assertion` may observe the written state. Only a whole-object

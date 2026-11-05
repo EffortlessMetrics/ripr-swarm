@@ -1,21 +1,22 @@
 use crate::analysis::classify::{
-    ASSERTION_CONTEXT_UNESTABLISHED, ArmSelector, AssertionRefusal, BindingReturnFlow, ConstFlow,
-    EffectStateCarrier, HELPER_RESULT_NOT_FORWARDED, OwnerInputs, OwnerPinSyntax, OwnerReturnPin,
-    ProbeContext, PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex,
-    WrapperEntryPairing, activation_and_boundary_input, assertion_compares_hand_built_field,
-    assertion_observes_collection_argument, assertion_observes_scope_end, assertion_out_parameter,
-    assertion_pins_pushed_collection_count, body_contains_owner_call, call_parameter_names,
-    callee_is_unique, chain_entry_pin_admits, chain_forwards_to_observed_hops,
-    chain_passes_effect_target_to_observed_hops, classify, confidence_score,
-    constructor_starts_empty, contains_as_whole_word, current_path_witness_with, direct_call_name,
-    direct_collection_mutation_receiver, error_path_arm_probe, expected_operand_value,
-    fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
-    getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
-    method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
-    parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
-    pushed_literal_path, reach_evidence, returned_array_construction_plain, reveal_outcome,
+    ASSERTION_CONTEXT_UNESTABLISHED, ArgumentReceiver, ArmSelector, AssertionRefusal,
+    BindingReturnFlow, ConstFlow, EffectStateCarrier, HELPER_RESULT_NOT_FORWARDED, OwnerInputs,
+    OwnerPinSyntax, OwnerReturnPin, ProbeContext, PropagationWitnessV1, ReturnOracleAdmission,
+    TransitiveReachIndex, WrapperEntryPairing, activation_and_boundary_input,
+    assertion_compares_hand_built_field, assertion_observes_collection_argument,
+    assertion_observes_scope_end, assertion_out_parameter, assertion_pins_pushed_collection_count,
+    body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
+    chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
+    confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
+    direct_call_name, direct_collection_mutation_receiver, error_path_arm_probe,
+    expected_operand_value, fallible_check_receipt, fallible_literal_witness,
+    function_returns_value, getter_plainly_reads, getter_plainly_reads_key,
+    has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
+    infection_evidence_for_owner, is_drop_destructor, local_flow_sinks, method_cannot_store,
+    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
+    outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
+    propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
+    reach_evidence, returned_array_construction_plain, reveal_outcome,
     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
     unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
 };
@@ -850,6 +851,14 @@ impl ClassifiedProbeEvidence {
                 context.workspace_complete,
             )
         });
+        let effect_argument_receiver = context.owner_fn.and_then(|owner| {
+            ArgumentReceiver::establish(
+                context.probe,
+                owner,
+                context.index,
+                context.workspace_complete,
+            )
+        });
         let package_defeats_by_file = FileDefeatMemo::default();
         // The run-level graph is lazy and shared with reach-limit disclosure
         // (#6778). Keep this owner walk local to the probe; unused proximity
@@ -1207,6 +1216,17 @@ impl ClassifiedProbeEvidence {
                     effect_carrier
                         .as_ref()
                         .is_none_or(|carrier| carrier.admits(test, assertion))
+                },
+                effect_observer_identity: &|test, assertion| {
+                    effect_carrier
+                        .as_ref()
+                        .is_some_and(|carrier| carrier.identifies(test, assertion))
+                        || context
+                            .owner_fn
+                            .zip(effect_argument_receiver.as_ref())
+                            .is_some_and(|(owner, receiver)| {
+                                receiver.admits(owner, context.index, test, assertion, pin_syntax)
+                            })
                 },
                 setter_writes_field: &|impl_type, setter, field| {
                     setter_plainly_writes(context.index, impl_type, setter, field)
