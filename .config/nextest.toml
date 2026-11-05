@@ -24,6 +24,11 @@ slow-timeout = { period = "120s", terminate-after = 3 }
 [profile.ci.junit]
 path = "junit.xml"
 
+# Retain the real SDK identities and opposing-pin observation for #13123.
+[[profile.ci.overrides]]
+filter = 'package(=xtask) & binary(=rust_activation) & test(=installed_rustup_activation_keeps_the_exact_fixture_compiler)'
+junit.store-success-output = true
+
 # #2695: Fast iteration path for local development.
 # Skip slow server-spawning tests with:
 #   cargo nextest run --skip framed_lsp_ --skip editor_agent_loop_

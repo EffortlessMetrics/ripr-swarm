@@ -61,6 +61,7 @@ mod issue_lifecycle_real_rows;
 mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
+mod outcome_page;
 mod output_enum_contracts;
 #[cfg(test)]
 mod output_properties;
@@ -23811,6 +23812,16 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if path == "tools/activate-rust.sh" {
+        return Some(
+            "Sourced Bash must update the caller's environment before Cargo is available; a Rust subprocess cannot export into its parent shell (#13123).",
+        );
+    }
+    if path == "tools/test-activate-rust.sh" {
+        return Some(
+            "Bash controls directly inspect source-time caller options, arguments and variable attributes; the Rust-owned rust_activation integration test executes this exact harness (#13123).",
+        );
+    }
     if path == ".ci/contabo-result.sh" {
         return Some(
             "Pinned EM CI requires a Bash result script; this lightweight jq consumer accepts only centrally authenticated exact-subject product imports without compiling or executing product code (#4988).",
@@ -23831,6 +23842,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(
             "VS Code extension source and tests must run in the VS Code Extension Host TypeScript API.",
+        );
+    }
+
+    if path == "tools/python/installed-provider-recovery/run.py" {
+        return Some(
+            "Installed pip-wheel recovery control runs without a source checkout or xtask executable, using the consumer's stdlib Python and qualified installed payload (#10864).",
         );
     }
 
@@ -23865,6 +23882,18 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     {
         return Some(
             "Fixture workspaces may contain TypeScript / JavaScript / Python source as analyzed inputs for the Campaign 27 preview adapters (RIPR-SPEC-0027 / RIPR-SPEC-0028).",
+        );
+    }
+
+    if path.starts_with("benchmarks/muse-plugin/fixtures/")
+        && (path.ends_with(".ts")
+            || path.ends_with(".tsx")
+            || path.ends_with(".js")
+            || path.ends_with(".jsx")
+            || path.ends_with(".py"))
+    {
+        return Some(
+            "Muse plugin evaluation fixtures are analyzed inputs for the plugin scenarios (#13106); the TypeScript weak-assertion fixture must stay TypeScript to exercise the analyzer honestly.",
         );
     }
 

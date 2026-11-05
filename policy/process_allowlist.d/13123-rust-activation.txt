@@ -1,0 +1,2 @@
+xtask/tests/rust_activation.rs|Command::new|2|rust/setup|#13123: Runs controlled Bash fixtures and installed-Rustup identity probes with null stdin, no installation, network or workspace build; the existing Nextest CI timeout owns the outer execution bound, with no per-launch deadline here.
+xtask/tests/rust_activation.rs|use std::process::Command|1|rust/setup|#13123: Imports the standard process owner for the controlled and native Bash activation checks.

@@ -11,6 +11,9 @@ use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspa
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "framework_oracle_limit/insta_settings.rs"]
+mod insta_settings;
+
 struct TempRepo {
     root: PathBuf,
 }

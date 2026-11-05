@@ -1843,7 +1843,15 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             json!(snapshot.source == RefreshSource::Worktree || !snapshot.scope.uncommitted_edits)
         }
     };
-    document["verify"] = super::repair::verify_after_editing_tests();
+    // The re-check follows the analysed subject: the retained snapshot's base,
+    // else the caller's latest request (#13196).
+    // Select the snapshot first and keep its `None`: a retained default-base
+    // snapshot must not inherit a later failed request's base.
+    document["verify"] =
+        super::repair::verify_after_editing_tests(match session.last_good.as_ref() {
+            Some(snapshot) => snapshot.base.as_deref(),
+            None => session.desired_base.as_deref(),
+        });
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
     }
@@ -5341,6 +5349,41 @@ mod tests {
             let named = refresh_document(&session)["empty_scope_hint"]["why"].to_string();
             if !named.contains("origin/main") {
                 return Err(format!("requested base must be named: {named}"));
+            }
+            // #13196: the post-edit re-check follows the retained snapshot's
+            // base, never a later request's.
+            // Retained default-base snapshot (`base: None`) keeps the base-less
+            // route even though a later (failed) request named a base.
+            let retained_none = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            if retained_none != json!({ "source": "worktree" }) {
+                return Err(format!(
+                    "retained default-base snapshot inherited the request base: {retained_none}"
+                ));
+            }
+            // Retained explicit-base snapshot keeps its own base, not the later request's.
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("snapshot should be uniquely owned in the test")?;
+            snapshot.base = Some("snapshot-base".to_string());
+            let retained_some = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            if retained_some != json!({ "source": "worktree", "base": "snapshot-base" }) {
+                return Err(format!(
+                    "retained snapshot base was replaced: {retained_some}"
+                ));
+            }
+            // No snapshot: fall back to the request's base.
+            let snapshot_slot = session.last_good.take();
+            let no_snapshot = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            if no_snapshot != json!({ "source": "worktree", "base": "origin/main" }) {
+                return Err(format!(
+                    "no-snapshot fallback lost the request base: {no_snapshot}"
+                ));
+            }
+            session.last_good = snapshot_slot;
+            if let Some(snapshot) = session.last_good.as_mut().and_then(Arc::get_mut) {
+                snapshot.base = None;
             }
         }
         for (kind, findings) in [

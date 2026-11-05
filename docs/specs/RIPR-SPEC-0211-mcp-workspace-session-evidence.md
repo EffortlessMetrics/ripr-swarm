@@ -557,6 +557,20 @@ near-miss id, as does a slash that would leave the id empty
 `receipt`) stay strict inside the id, and this tolerance never turns an
 unknown route into a recognized one.
 
+### Snapshot URI-template expansion (#13229)
+
+The `ripr://snapshot/{snapshot_id}` template uses RFC 6570 simple expansion,
+which percent-encodes the colons in `snapshot:sha256:<digest>`. The resource
+parser decodes only the captured id, exactly once, accepting either hex case
+and retaining raw URI compatibility. The shared session still checks the
+decoded identity against the current snapshot, and successful contents echo
+the original request URI. A wrong namespace is never decoded into a route.
+Malformed escapes remain literal; a non-UTF-8 decode retains the raw capture.
+Neither those spellings nor double-encoded or stale ids resolve to the current
+snapshot. Encoded slashes remain stale identities; literal interior slashes
+remain invalid routes. Tool `snapshot_id` arguments are plain canonical JSON
+strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
+
 ## Required Evidence
 
 - `cargo test -p ripr --lib mcp::workspace` — session state machine,
@@ -595,7 +609,11 @@ unknown route into a recognized one.
   `resource_reads_match_tools_after_refresh` pins gap tool/resource
   parsed-document equality plus the snapshot envelope
   (`ripr-mcp-snapshot-v1`, identity, typed outcome) after refresh
-  (#7145), and the #9895 trailing-slash tolerance: one appended slash on
+  (#7145). Its #13229 controls compare raw and encoded snapshot documents,
+  preserve the original URI, reject invalid or double-encoded identities
+  with typed recovery, keep namespace routing strict and tool ids exact,
+  and complete a valid pinned read after the refusals. It also pins the
+  #9895 trailing-slash tolerance: one appended slash on
   the snapshot, gap, and repair-card URIs returns the identical document,
   while a second slash fails closed. Resource payloads are pretty-printed
   while tool payloads are compact by design, so the control compares
