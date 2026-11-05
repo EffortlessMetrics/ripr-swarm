@@ -109,6 +109,7 @@ published-versus-development split and build times.
 | Review a change | Inspect possible assertion gaps and the evidence behind them. | [CLI quickstart](docs/QUICKSTART.md#cli-first-hour) |
 | Analyze a Python change (preview) | Auto-enable the preview from project markers, inspect the advisory boundary gap, and follow the printed pytest/unittest route. | [Python first hour](docs/QUICKSTART.md#python-first-hour-preview) |
 | Write a focused test | Prepare a supported repair, edit the test yourself or with an agent, and compare the static evidence afterward. | [Repair a gap](docs/QUICKSTART.md#agent-or-reviewer-first-hour) |
+| Work in Muse | Install the native plugin, approve its MCP server, and use guided setup and test repair with an MCP-capable development build. | [Muse plugin guide](plugins/muse/ripr/README.md) |
 | Work in VS Code | Inspect saved-workspace diagnostics, open a related test, and copy a test brief. | [Editor quickstart](docs/QUICKSTART.md#vs-code-first-hour) |
 | Review in GitHub | Run `ripr init --ci github` to generate an advisory PR workflow with a summary and downloadable evidence. | [CI quickstart](docs/QUICKSTART.md#ci-first-hour) |
 
@@ -149,6 +150,8 @@ Under the hood, ripr follows the path from a changed behavior through test
 inputs and observable effects to an assertion. When that path becomes opaque,
 it reports the limitation. See the [static exposure model](docs/STATIC_EXPOSURE_MODEL.md)
 and [terminology](docs/TERMINOLOGY.md) for the precise model and classifications.
+[Why ripr](docs/WHY_RIPR.md) compares it with coverage, mutation testing and
+formal verification.
 
 ## Status
 

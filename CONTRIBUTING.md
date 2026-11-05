@@ -20,6 +20,10 @@ traceability without reconstructing intent from chat history.
    cd ripr-swarm
    ```
 
+   For a managed image, a restored task, or qualification with a newer stable
+   compiler, use [repeatable Rust activation](#repeatable-rust-activation-in-bash)
+   before invoking Cargo.
+
 3. For workflow-policy, agent-skill or executable-file edits, get focused feedback
    before building the product:
 
@@ -84,6 +88,145 @@ traceability without reconstructing intent from chat history.
    That is a different workload. Its default human guidance can still
    build a repository-wide evidence index, so it is not the quick setup
    check and is not covered by the fixture budget.
+
+### Repeatable Rust activation in Bash
+
+On Linux or macOS, source the repository's activation boundary in the **same Bash
+shell** that will run Cargo. No shell profile or earlier setup process is assumed
+to have configured a later task:
+
+```bash
+source tools/activate-rust.sh --pinned &&
+mkdir -p target
+```
+
+With `--pinned`, activation reads the exact repository pin from
+`rust-toolchain.toml`. Bare sourcing is unsupported: Bash inherits the caller's
+positional arguments when a file is sourced without arguments. The explicit
+selector leaves those caller arguments unchanged. Activation selects already
+installed tools and never downloads anything. If the requested toolchain is
+absent, run the explicit
+`rustup toolchain install ... --profile minimal` repair command it prints during
+online image preparation, then source the file again. This keeps the optional
+prebuilt Rust HTML documentation out of the installation.
+
+Activation preserves absolute `CARGO_HOME` and `RUSTUP_HOME` overrides, defaulting
+to `$HOME/.cargo` and `$HOME/.rustup` only when unset. Relative or empty homes are
+refused because fixture commands change directories. It exports an exact
+`RUSTUP_TOOLCHAIN`, the resolved `RUSTC`, and `RUSTUP_AUTO_INSTALL=0`; nested
+fixtures inherit the selected compiler even when they contain their own pin.
+Directories added to `PATH` must not contain colons, which separate PATH entries.
+Activation refuses colons in the configured Cargo-home PATH entry and in the
+physical sysroot before changing exports. The physical-sysroot check also catches
+colons hidden by a symlink. Spaces and symlinked homes remain supported when the
+selected PATH entries are representable.
+Existing conflicting `RUSTC` / `CARGO_BUILD_RUSTC` or compiler-wrapper environment
+variables cause a refusal with an explicit repair. Remove an override deliberately
+when switching compilers. Shell functions or aliases named `cargo` or `rustc`
+also cause a refusal and remain intact. Remove them explicitly or use a fresh
+Bash shell. Variables activation exports must be ordinary scalars, optionally
+exported; arrays, integer, nameref, case-transform and readonly attributes are
+refused before their values are read or any exports are applied. Cargo
+configuration files can also define wrappers; review those separately when
+using a custom build environment.
+
+Every tool probe finishes before activation changes the parent environment.
+The selected absolute Cargo must also complete `cargo -vV`; an executable path
+whose native version command fails is refused before any activation exports.
+Repeated activation does not grow `PATH` or change shell options or the current
+directory. Relative sourcing preserves an exported or readonly `CDPATH` and
+does not use it to find the repository. Running `bash tools/activate-rust.sh` is
+rejected because a child process cannot activate its caller. The existing policy
+executable's compiler identity guard remains in force: rebuild through
+`cargo policy` after changing compilers.
+
+To select the installed current stable compiler for later qualification, source
+with `stable` **during image preparation**:
+
+```bash
+source tools/activate-rust.sh stable
+```
+
+The helper resolves stable's exact release and host, requires that exact
+toolchain to be installed, and compares the complete `rustc -vV` identities.
+If only the rolling alias is installed, run the printed command to install the
+exact release once and retry. Store the printed exact selector in the task's
+startup command, for example
+`source tools/activate-rust.sh 1.95.0-x86_64-unknown-linux-gnu` for that release
+and host. Reuse the exact selector on restored tasks; using `stable` again
+deliberately resolves the alias again. This does not change the repository's
+toolchain pin or MSRV obligation.
+
+For development that needs standard-library source and LLVM coverage tools,
+install those components once while online, then activate again:
+
+```bash
+rustup component add --toolchain "$RUSTUP_TOOLCHAIN" rust-src llvm-tools-preview &&
+source tools/activate-rust.sh "$RUSTUP_TOOLCHAIN"
+```
+
+`LLVM_COV` and `LLVM_PROFDATA` always name absolute paths under the selected
+compiler's sysroot. When both tools are present, activation checks their native
+version commands against the compiler's LLVM version. When they are absent,
+ordinary Rust activation succeeds with **coverage tools unavailable**, and the
+exports still name those missing paths so consumers of the exports cannot fall
+back to an unrelated LLVM on `PATH`. This does not prove that coverage production
+or merging succeeds.
+
+Run the tools needed by your next lane before scheduling expensive builds:
+
+```bash
+cargo fmt --version
+cargo clippy --version
+cargo nextest --version
+```
+
+For coverage work, also probe both selected sysroot tools:
+
+```bash
+"$LLVM_COV" --version
+"$LLVM_PROFDATA" --version
+```
+
+Nextest is a separate prerequisite; provision it in the selected Cargo home using
+the version chosen for the environment, then retain `cargo nextest --version`
+with the setup evidence. Activation does not install it. Continue with the
+[focused testing commands](docs/TESTING.md#focused-local-iteration) and preserve
+the [Nextest and doctest distinction](docs/TESTING.md#ci-test-results).
+Use an already built `ripr doctor --profile source-build --root . --json` for the
+existing typed setup diagnosis. Activation is compiler selection, not a second
+doctor or a passing build/test result.
+
+Create the checkout's `target/` even when `CARGO_TARGET_DIR` points elsewhere:
+`.cargo/config.toml` redirects temporary files there. Keep a candidate's target
+directory stable and serialize Cargo writers sharing it or a constrained host;
+an earlier warm cache does not prove a later cold link will fit.
+
+After restoration, repeat activation and the required capability probes in the
+new task. Record the actual compiler identity, native command results, and
+selected test scope. Until those commands finish, builds, full tests, coverage,
+editor-host execution, and restoration proof remain **not run**. The Bash
+boundary has a local behavioral check that needs no Rust installation:
+
+```bash
+bash tools/test-activate-rust.sh
+```
+
+That harness uses controlled tool fixtures in fresh Bash shells. It tests
+activation and refusal behavior on the host and Bash version that execute it;
+it does not compile Rust or establish native macOS/Bash 3.2 or restored-task
+qualification. On Unix, `cargo test -p xtask --test rust_activation` runs the
+same harness and a separate check against the run's already installed exact
+Rustup SDK. The native check sources the real helper in a fresh Bash child and
+compares compiler/Cargo identity at the repository root and in an isolated
+nested directory with an opposing pin. It disables automatic installation and
+runs version/identity probes only, with no workspace build. This requires the
+exact release/host SDK to be installed already; missing prerequisites fail the
+check. CI retains that native test's identity/probe output in the existing JUnit
+report. Hosted fresh-shell evidence does not establish saved-cloud restoration.
+Native Windows shells keep their existing setup route.
+
+### Fixture preparation
 
 Before fixture or golden checks, prepare the canonical locked Rust fixture:
 
