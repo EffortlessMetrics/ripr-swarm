@@ -50,10 +50,13 @@ Recover three kinds of evidence before selecting the next change:
    parent still needs each required outcome.
 2. **Repository facts and structural health.** Use the existing collectors in
    [Metrics](METRICS.md#current-baseline). `cargo xtask current-state --json`
-   supplies the bootstrap identity/version/catalog/retired-marker inventory;
-   `cargo xtask repo-contract-report` supplies the registered artifact and
-   support graph. Their check commands cover their declared scopes. A pass
-   does not establish semantic lifecycle completion or live GitHub state.
+   supplies checkout identity/version/catalog/retired-marker facts, registered
+   artifact/status and support-tier counts, existing structural violations and
+   named coverage gaps. It reuses the collectors behind
+   `cargo xtask repo-contract-report`, which supplies the registered artifact
+   and support graph. Their check commands cover their declared scopes. A pass
+   does not establish semantic lifecycle completion, earned support or live
+   GitHub state.
 3. **Live execution and available inputs.** Read the issue, all-state equivalent
    PRs, current heads, reviews, checks, and applicable receipts. A complete
    source change can still lack installed execution or independent acceptance.
