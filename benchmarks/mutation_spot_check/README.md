@@ -58,6 +58,23 @@ cargo xtask mutation-spot-check --repo zola=../corpus/zola --run-mutants \
   --mutants-arg zola=--workspace --mutants-arg zola=--file=components/site/src/queue.rs
 ```
 
+## Derived summary rows
+
+The v2 receipt also carries two additive rows derived from
+`outcomes_by_disposition_and_grip_class` (no schema bump; consumers that read
+other keys are unaffected):
+
+- `recall_of_missed`: runtime-missed mutants across every disposition, counted
+  by ripr grip class (`ungripped`, `activation_unknown`, `strongly_gripped`,
+  `opaque`, `weakly_gripped`, `no_joined_seam`) and the share flagged
+  `ungripped`.
+- `seam_coverage`: mutants total, caught and missed counts, `canonical_precise`
+  and no-containing-seam counts, and their shares of all recorded mutants.
+
+Both are advisory, bound to the recorded revisions, and not suite adequacy. To
+refresh a recorded receipt without re-running mutation testing:
+`cargo xtask mutation-spot-check --rederive-summaries metrics/public-proof/mutation-spot-check.json`.
+
 ## What is scored
 
 The receipt is `ripr-mutation-spot-check-v2`. `ripr calibrate cargo-mutants`
