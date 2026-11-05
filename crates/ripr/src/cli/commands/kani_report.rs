@@ -9,6 +9,13 @@ use std::path::{Path, PathBuf};
 const DEFAULT_JSON: &str = "target/ripr/reports/kani.json";
 const DEFAULT_MARKDOWN: &str = "target/ripr/reports/kani.md";
 
+/// Help route these argument errors point at. The kani options are documented
+/// only behind the command's own `--help` (#13237); the top-level `ripr help`
+/// overview names the command but none of its flags.
+fn help_pointer() -> String {
+    crate::cli::suggest::help_pointer("reports kani")
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
     root: PathBuf,
@@ -64,6 +71,7 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
 }
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
+    let pointer = help_pointer();
     let mut root = None;
     let mut input = None;
     let mut binding = None;
@@ -82,14 +90,14 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         };
         if slot.is_some() {
             return Err(format!(
-                "reports kani does not accept duplicate {flag}; see `ripr help`"
+                "reports kani does not accept duplicate {flag}; see `{pointer}`"
             ));
         }
         index += 1;
         let value = expect_value(args, index, flag)?;
         if value.trim().is_empty() {
             return Err(format!(
-                "reports kani {flag} requires a non-empty path; see `ripr help`"
+                "reports kani {flag} requires a non-empty path; see `{pointer}`"
             ));
         }
         *slot = Some(PathBuf::from(value));
@@ -97,9 +105,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     }
 
     let input =
-        input.ok_or_else(|| "reports kani requires --input PATH; see `ripr help`".to_string())?;
-    let binding = binding
-        .ok_or_else(|| "reports kani requires --binding PATH; see `ripr help`".to_string())?;
+        input.ok_or_else(|| format!("reports kani requires --input PATH; see `{pointer}`"))?;
+    let binding =
+        binding.ok_or_else(|| format!("reports kani requires --binding PATH; see `{pointer}`"))?;
     let root = root.unwrap_or_else(|| PathBuf::from("."));
     let uses_default_output = out.is_none() || out_md.is_none();
     let out = out.unwrap_or_else(|| root.join(DEFAULT_JSON));
@@ -125,12 +133,13 @@ fn read_input(path: &Path, flag: &str, limit: u64) -> Result<String, String> {
 }
 
 fn validate_output_paths(options: &Options, checked_sources: &[PathBuf]) -> Result<(), String> {
+    let pointer = help_pointer();
     let out = output_identity(&options.out)?;
     let out_md = output_identity(&options.out_md)?;
     if paths_alias(&out, &out_md) {
-        return Err(
-            "reports kani requires distinct --out and --out-md paths; see `ripr help`".to_string(),
-        );
+        return Err(format!(
+            "reports kani requires distinct --out and --out-md paths; see `{pointer}`"
+        ));
     }
     for (flag, input) in [("--input", &options.input), ("--binding", &options.binding)] {
         let identity = std::fs::canonicalize(input).map_err(|error| {
@@ -141,7 +150,7 @@ fn validate_output_paths(options: &Options, checked_sources: &[PathBuf]) -> Resu
         })?;
         if paths_alias(&identity, &out) || paths_alias(&identity, &out_md) {
             return Err(format!(
-                "reports kani output must not replace the {flag} artifact; see `ripr help`"
+                "reports kani output must not replace the {flag} artifact; see `{pointer}`"
             ));
         }
     }
@@ -149,10 +158,9 @@ fn validate_output_paths(options: &Options, checked_sources: &[PathBuf]) -> Resu
         .iter()
         .any(|source| paths_alias(source, &out) || paths_alias(source, &out_md))
     {
-        return Err(
-            "reports kani output must not replace a checked source file; see `ripr help`"
-                .to_string(),
-        );
+        return Err(format!(
+            "reports kani output must not replace a checked source file; see `{pointer}`"
+        ));
     }
     Ok(())
 }
@@ -174,9 +182,10 @@ fn paths_alias(left: &Path, right: &Path) -> bool {
 /// Resolve existing aliases while allowing report directories not yet created.
 /// The ordinary atomic output writer still owns destination acquisition.
 fn output_identity(path: &Path) -> Result<PathBuf, String> {
+    let pointer = help_pointer();
     let absolute = std::path::absolute(path).map_err(|error| {
         format!(
-            "reports kani resolve output {} failed: {error}; see `ripr help`",
+            "reports kani resolve output {} failed: {error}; see `{pointer}`",
             path.display()
         )
     })?;
@@ -193,7 +202,7 @@ fn output_identity(path: &Path) -> Result<PathBuf, String> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(format!(
-                    "reports kani resolve output {} failed: {error}; see `ripr help`",
+                    "reports kani resolve output {} failed: {error}; see `{pointer}`",
                     path.display()
                 ));
             }
@@ -247,27 +256,35 @@ mod tests {
     fn required_artifacts_are_enforced_through_reports_dispatch() {
         assert_eq!(
             super::super::reports(&args(&["kani"])),
-            Err("reports kani requires --input PATH; see `ripr help`".to_string())
+            Err("reports kani requires --input PATH; see `ripr reports kani --help`".to_string())
         );
         assert_eq!(
             super::super::reports(&args(&["kani", "--input", "native.json"])),
-            Err("reports kani requires --binding PATH; see `ripr help`".to_string())
+            Err("reports kani requires --binding PATH; see `ripr reports kani --help`".to_string())
         );
     }
 
     #[test]
     fn duplicate_blank_missing_and_unknown_options_are_refused() -> Result<(), String> {
+        // #13237: every hand-written argument error names the command's own
+        // help route (the same pointer `unknown_argument` emits), never the
+        // top-level `ripr help` overview, which documents no kani options.
+        assert_eq!(
+            help_pointer(),
+            "ripr reports kani --help",
+            "hand-written errors must share the unknown-flag help pointer"
+        );
         for flag in ["--input", "--binding", "--root", "--out", "--out-md"] {
             assert_eq!(
                 parse_options(&args(&[flag, "first", flag, "second"])),
                 Err(format!(
-                    "reports kani does not accept duplicate {flag}; see `ripr help`"
+                    "reports kani does not accept duplicate {flag}; see `ripr reports kani --help`"
                 ))
             );
             assert_eq!(
                 parse_options(&args(&[flag, " "])),
                 Err(format!(
-                    "reports kani {flag} requires a non-empty path; see `ripr help`"
+                    "reports kani {flag} requires a non-empty path; see `ripr reports kani --help`"
                 ))
             );
             assert_eq!(
@@ -347,7 +364,7 @@ mod tests {
                 assert_eq!(
                     super::super::reports(&arguments),
                     Err(format!(
-                        "reports kani output must not replace {reason}; see `ripr help`"
+                        "reports kani output must not replace {reason}; see `ripr reports kani --help`"
                     ))
                 );
                 assert_eq!(
@@ -361,7 +378,7 @@ mod tests {
         arguments.extend(args(&["--out", text(&output)?, "--out-md", text(&output)?]));
         assert_eq!(
             super::super::reports(&arguments),
-            Err("reports kani requires distinct --out and --out-md paths; see `ripr help`".into())
+            Err("reports kani requires distinct --out and --out-md paths; see `ripr reports kani --help`".into())
         );
         assert!(!root.join(DEFAULT_JSON).exists());
         assert!(!root.join(DEFAULT_MARKDOWN).exists());
