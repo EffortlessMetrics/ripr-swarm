@@ -783,7 +783,10 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
             }
         }
     }
-    assert!(early_host_checked, "early editor host was not failure-injected");
+    assert!(
+        early_host_checked,
+        "early editor host was not failure-injected"
+    );
     assert_eq!(count, 14, "nonempty payload denominator");
     Ok(())
 }
