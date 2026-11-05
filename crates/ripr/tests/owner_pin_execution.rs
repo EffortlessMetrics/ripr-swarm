@@ -4163,3 +4163,118 @@ fn primitive_inherent_method_does_not_pin_same_named_trait_owner() -> Result<(),
     )?;
     Ok(())
 }
+
+#[test]
+fn external_collection_trait_cannot_supply_payload_identity() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/rust_effect_receiver_intercepted_first");
+    let original =
+        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
+    let start = original
+        .find("trait First")
+        .ok_or("missing local trait control")?;
+    let end = original[start..]
+        .find("\n\n#[test]")
+        .ok_or("missing test boundary")?
+        + start;
+    let scratch = Scratch::create()?;
+    let subject = scratch.0.join("subject");
+    let external = scratch.0.join("external");
+    std::fs::create_dir_all(subject.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(external.join("src")).map_err(|e| e.to_string())?;
+    std::fs::write(subject.join("Cargo.toml"), "[package]\nname=\"subject\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n[dependencies]\nexternal_first={path=\"../external\"}\n").map_err(|e| e.to_string())?;
+    std::fs::write(
+        external.join("Cargo.toml"),
+        "[package]\nname=\"external_first\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let external_source = external.join("src/lib.rs");
+    std::fs::write(&external_source, "pub trait First { fn first(&self)->Option<&String>; fn last(&self)->Option<&String>; }\nimpl First for std::cell::Ref<'_,Vec<String>> { fn first(&self)->Option<&String> { static FIXED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| \"order-42\".to_string()); Some(&FIXED) } fn last(&self)->Option<&String> { self.first() } }\n").map_err(|e| e.to_string())?;
+    let library = external.join("libexternal_first.rlib");
+    compiles(
+        run(
+            Path::new("rustc"),
+            &[
+                "--edition=2024".as_ref(),
+                "--crate-name=external_first".as_ref(),
+                "--crate-type=rlib".as_ref(),
+                external_source.as_os_str(),
+                "-o".as_ref(),
+                library.as_os_str(),
+            ],
+        )?,
+        "external observer library",
+    )?;
+    for method in ["first", "last"] {
+        for (import, exposed) in [
+            ("", true),
+            ("use std::fmt::Debug as _;", true),
+            ("use external_first::First;", false),
+            ("use external_first::First as _;", false),
+            ("use external_first::*;", false),
+        ] {
+            let input = format!("{}{}{}", &original[..start], import, &original[end..])
+                .replace(".first()", &format!(".{method}()"));
+            std::fs::write(subject.join("src/lib.rs"), &input).map_err(|e| e.to_string())?;
+            let report = check_workspace(CheckInput {
+                root: subject.clone(),
+                diff_file: Some(fixture.join("diff.patch")),
+                mode: Mode::Fast,
+                include_unchanged_tests: true,
+                ..CheckInput::default()
+            })?;
+            assert_eq!(
+                report.findings.len(),
+                2,
+                "nonempty payload and call subjects"
+            );
+            assert!(
+                report
+                    .findings
+                    .iter()
+                    .all(|f| (f.class == ExposureClass::Exposed) == exposed),
+                "{method}/{import}: {:?}",
+                report.findings
+            );
+            for wrong in [false, true] {
+                let source = scratch.0.join("runtime.rs");
+                let text = if wrong {
+                    input.replace("notifier.send(order_id);", "notifier.send(\"static_msg\");")
+                } else {
+                    input.clone()
+                };
+                std::fs::write(&source, text).map_err(|e| e.to_string())?;
+                let executable = subject.join(format!("control{}", std::env::consts::EXE_SUFFIX));
+                let binding = format!("external_first={}", library.display());
+                compiles(
+                    run(
+                        Path::new("rustc"),
+                        &[
+                            "--edition=2024".as_ref(),
+                            "--test".as_ref(),
+                            source.as_os_str(),
+                            "--extern".as_ref(),
+                            binding.as_ref(),
+                            "-o".as_ref(),
+                            executable.as_os_str(),
+                        ],
+                    )?,
+                    "external observer subject",
+                )?;
+                let result = run(&executable, &["--test-threads=1".as_ref()])?;
+                let failed = usize::from(wrong && exposed);
+                assert!(
+                    String::from_utf8_lossy(&result.stdout)
+                        .contains(&format!("{} passed; {failed} failed;", 1 - failed)),
+                    "{method}/{import}/wrong={wrong}: {}",
+                    String::from_utf8_lossy(&result.stdout)
+                );
+                assert_eq!(
+                    result.status.code(),
+                    Some(if failed == 1 { 101 } else { 0 })
+                );
+            }
+        }
+    }
+    Ok(())
+}

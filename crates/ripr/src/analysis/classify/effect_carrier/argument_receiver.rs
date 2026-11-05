@@ -18,6 +18,7 @@ pub(in crate::analysis) struct ArgumentReceiver {
     parameter: usize,
     fields: BTreeSet<String>,
     receiver_type: String,
+    projection_imports_closed: bool,
 }
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
@@ -55,7 +56,54 @@ fn mentions(node: &ra_ap_syntax::SyntaxNode, binding: &str) -> bool {
             })
     })
 }
-fn field_root(mut expression: ast::Expr, index: &RustIndex) -> Option<(String, String, bool)> {
+// A trait on Ref<Vec<_>> can intercept first/last before dereferencing to
+// the slice, even when its method declaration is outside the index. The
+// workspace import closure is deliberately conservative: an unread external
+// import (including a re-export in another indexed file) withholds this
+// projection witness. Ordinary field identity and closed standard imports
+// keep their existing admission.
+fn projection_imports_closed(index: &RustIndex) -> bool {
+    let known = |root: &str| {
+        matches!(root, "std" | "core" | "alloc" | "crate" | "self" | "super")
+            || index
+                .package_names
+                .iter()
+                .any(|name| name.replace('-', "_") == root)
+    };
+    index.files().values().all(|facts| {
+        if crate::analysis::classify::reveal::flattened_use_paths(&facts.source)
+            .iter()
+            .any(|import| {
+                !known(
+                    import
+                        .path
+                        .trim_start_matches("::")
+                        .split("::")
+                        .next()
+                        .unwrap_or_default(),
+                )
+            })
+        {
+            return false;
+        }
+        if !facts.source.contains("extern") {
+            return true;
+        }
+        let Some(file) = parse_clean_source_file(&facts.source) else {
+            return false;
+        };
+        file.tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::ExternCrate::cast)
+            .all(|item| item.name_ref().is_some_and(|name| known(name.text())))
+    })
+}
+fn field_root(
+    mut expression: ast::Expr,
+    index: &RustIndex,
+    closed_imports: bool,
+) -> Option<(String, String, bool)> {
     let mut projected = false;
     for _ in 0..super::MAX_DEPTH {
         expression = match expression {
@@ -78,7 +126,8 @@ fn field_root(mut expression: ast::Expr, index: &RustIndex) -> Option<(String, S
                 call.receiver()?
             }
             ast::Expr::MethodCallExpr(call)
-                if matches!(call.name_ref()?.text(), "first" | "last")
+                if closed_imports
+                    && matches!(call.name_ref()?.text(), "first" | "last")
                     && call.arg_list()?.args().next().is_none()
                     && !crate::analysis::classify::owner_pin::wrapper_may_be_rebound(
                         call.name_ref()?.text(),
@@ -388,6 +437,7 @@ impl ArgumentReceiver {
             parameter,
             fields,
             receiver_type: receiver_ty,
+            projection_imports_closed: projection_imports_closed(index),
         })
     }
     pub(in crate::analysis) fn admits(
@@ -515,7 +565,11 @@ impl ArgumentReceiver {
             let [statement] = statements.as_slice() else {
                 return None;
             };
-            let (root, field, projected) = field_root(expression(statement)?, index)?;
+            let (root, field, projected) = field_root(
+                expression(statement)?,
+                index,
+                self.projection_imports_closed,
+            )?;
             self.fields
                 .contains(&field)
                 .then_some((root, field, projected))

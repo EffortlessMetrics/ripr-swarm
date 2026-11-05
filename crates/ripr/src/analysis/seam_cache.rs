@@ -685,7 +685,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.159`: proximity-only and unchanged-return-token oracles cannot discriminate (#12010).
 /// `1.160`: compose #7490 boundary pairing with #12010 assertion-local sink identity
 /// and return-delta confirmation; neither independent `1.159` is reusable.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.160";
+/// `1.161`: external imported observers cannot inherit collection sink identity.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.161";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -888,7 +889,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.160";
 /// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
 /// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
 /// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
+/// `0.163`: same external-observer refusal as full `1.161`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1093,7 +1095,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
 /// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
 /// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
 /// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
+/// `0.163`: same external-observer refusal as full `1.161`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5211,7 +5214,8 @@ mod tests {
         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
         // 1.158 -> 1.159: boundary and oracle must be paired in the same test (#7490).
         // 1.159 -> 1.160: both independent predecessor semantics must be invalidated.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.160");
+        // 1.160 -> 1.161: unread external collection-observer interception.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.161");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5353,8 +5357,9 @@ mod tests {
         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
         // 0.160 -> 0.161: same boundary-oracle pairing as full 1.159 (#7490).
         // 0.161 -> 0.162: compose both independent semantic generations.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.162");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.162");
+        // 0.162 -> 0.163: same external-observer refusal as full 1.161.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
     }
 
     #[test]
@@ -5679,6 +5684,7 @@ mod tests {
             // Independent successors shared version numbers but not semantics.
             ("7490-boundary-pairing", "1.159", "0.161"),
             ("12010-sink-identity", "1.159", "0.161"),
+            ("external-observer-interception", "1.160", "0.162"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -5752,7 +5758,7 @@ mod tests {
     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
         for previous in [
             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
-            "0.161",
+            "0.161", "0.162",
         ] {
             for compact in [false, true] {
                 let scratch = integrity_scratch("property-shard-generation")?;
