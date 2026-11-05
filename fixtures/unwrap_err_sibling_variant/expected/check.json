@@ -46,7 +46,7 @@
         {"kind":"error_variant","text":"Result::Err(CalcError::TooLarge)","line":11}
       ],
       "evidence": ["Complete propagation witness reaches error variant: Result::Err(CalcError::TooLarge)", "No assertion found on related tests", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach compute: negative_input_rejects_with_negative_error", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
-      "missing": ["Missing discriminator value: CalcError::TooLarge", "No detected assertion observes the changed value, error, field, or effect", "No exact error variant discriminator was detected", "No relevant oracle was detected"],
+      "missing": ["Missing check value: CalcError::TooLarge", "No detected assertion observes the changed value, error, field, or effect", "No exact error variant discriminator was detected", "No relevant oracle was detected"],
       "assertion_texts": {
         "6": "let err = compute(-1).unwrap_err();",
         "7": "assert_eq!(err, CalcError::Negative);"
@@ -151,7 +151,7 @@
         {"kind":"error_variant","text":"Result::Err(CalcError::TooLarge)","line":11}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(CalcError::TooLarge)", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach compute: negative_input_rejects_with_negative_error"],
-      "missing": ["Missing discriminator value: CalcError::TooLarge", "No strong discriminator was detected"],
+      "missing": ["Missing check value: CalcError::TooLarge", "No strong discriminator was detected"],
       "assertion_texts": {
         "6": "let err = compute(-1).unwrap_err();",
         "7": "assert_eq!(err, CalcError::Negative);"

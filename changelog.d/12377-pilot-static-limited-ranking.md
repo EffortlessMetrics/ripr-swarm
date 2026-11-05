@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr pilot` and `ripr agent brief`: a seam whose evidence stages are opaque or unknown is withheld as a static limitation and no longer ranked as a repair, so the top-10 list is not filled with picks ripr cannot ground. An unknown activation behind an absent reach does not count as a limitation by itself. On the pilot-ranking answer key, top-10 precision moves from 28.0% to 37.5% (top-5 from 17.6% to 22.2%) at the cost of one confirmed pick; the 0.6 target is still unmet (#5497, #12377).

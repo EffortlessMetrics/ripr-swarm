@@ -42,7 +42,7 @@ Policy impact:
 - Register this spec in `docs/spec-index.d/`, `policy/doc-artifacts.d/`,
   `.ripr/traceability.d/`, and verdict-corpus `spec-scopes/` fragments.
 - Implementation PRs register capability cells in
-  `crates/ripr/src/domain/language_capability.rs` and
+  `crates/ripr-contract/src/domain/language_capability.rs` and
   `metrics/capabilities.toml` without changing this document's normative
   cell identities.
 - No parser dependency, adapter code, routing enablement, or support-tier
@@ -367,7 +367,7 @@ See `.ripr/traceability.d/5839-dart-preview-spec-0396.toml`.
 - `docs/specs/RIPR-SPEC-0396-dart-preview-static-facts.md` — normative contract
   (this file)
 - Future: `crates/ripr/src/analysis/language/dart/` — adapter implementation
-- Future: `crates/ripr/src/domain/language_capability.rs` — cell registration
+- Future: `crates/ripr-contract/src/domain/language_capability.rs` — cell registration
 - Future: `metrics/capabilities.toml` — product capability join (#6148)
 - Shared: `crates/ripr/src/provider_contract/cross_language_edge/` — edge law
   (#5559 / RIPR-SPEC-0378)

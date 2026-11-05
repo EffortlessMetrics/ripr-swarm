@@ -209,13 +209,13 @@ join does not authenticate a reviewer or independently analyze a repository.
 
 ## Test Mapping
 
-- `crates/ripr/src/domain/feedback.rs::tests::every_reason_maps_onto_one_of_the_five_judgments`
-- `crates/ripr/src/domain/feedback.rs::tests::snapshot_is_required_and_file_line_is_not_identity`
-- `crates/ripr/src/domain/feedback.rs::tests::useful_limitation_may_omit_canonical_item`
-- `crates/ripr/src/domain/feedback.rs::tests::other_requires_a_note_and_explicit_judgment`
-- `crates/ripr/src/domain/feedback.rs::tests::closed_reason_rejects_a_mismatched_judgment`
-- `crates/ripr/src/domain/feedback.rs::tests::a_later_attempt_keeps_the_historical_reference`
-- `crates/ripr/src/domain/feedback.rs::tests::absent_live_identity_is_current_not_staleness`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::every_reason_maps_onto_one_of_the_five_judgments`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::snapshot_is_required_and_file_line_is_not_identity`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::useful_limitation_may_omit_canonical_item`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::other_requires_a_note_and_explicit_judgment`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::closed_reason_rejects_a_mismatched_judgment`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::a_later_attempt_keeps_the_historical_reference`
+- `crates/ripr-contract/src/domain/feedback.rs::tests::absent_live_identity_is_current_not_staleness`
 - `crates/ripr/src/app/feedback.rs::tests::recording_the_same_key_and_payload_is_idempotent`
 - `crates/ripr/src/app/feedback.rs::tests::matching_explicit_judgment_is_idempotent_with_the_derived_class`
 - `crates/ripr/src/app/feedback.rs::tests::same_key_with_a_different_payload_is_a_conflict`
@@ -240,7 +240,7 @@ join does not authenticate a reviewer or independently analyze a repository.
 
 ## Implementation Mapping
 
-- `crates/ripr/src/domain/feedback.rs` — typed identity, reason taxonomy, and
+- `crates/ripr-contract/src/domain/feedback.rs` — typed identity, reason taxonomy, and
   reference-state classification
 - `crates/ripr/src/app/feedback.rs` — record, load, privacy, join
 - `crates/ripr/src/output/feedback.rs` — JSON receipt and join rendering

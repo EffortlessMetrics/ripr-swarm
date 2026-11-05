@@ -1,28 +1,28 @@
 [[extend]]
 id = "RIPR-SPEC-0371"
 code = [
-  "crates/ripr/src/domain/proof_domains.rs",
-  "crates/ripr/src/domain/feedback_kani.rs",
-  "crates/ripr/src/domain/executed_control_kani.rs",
-  "crates/ripr/src/domain/causal_delta_kani.rs",
-  "crates/ripr/src/domain/probe_kani.rs",
+  "crates/ripr-contract/src/domain/proof_domains.rs",
+  "crates/ripr-contract/src/domain/feedback_kani.rs",
+  "crates/ripr-contract/src/domain/executed_control_kani.rs",
+  "crates/ripr-contract/src/domain/causal_delta_kani.rs",
+  "crates/ripr-contract/src/domain/probe_kani.rs",
 ]
 tests = [
-  "crates/ripr/src/domain/proof_domains.rs::tests::symbolic_domains_are_nonempty_and_unique",
-  "crates/ripr/src/domain/proof_domains.rs::tests::every_feedback_reason_has_its_contract_judgment_and_note_rule",
-  "crates/ripr/src/domain/proof_domains.rs::tests::every_result_state_claims_exactly_its_contract_satisfaction",
-  "crates/ripr/src/domain/executed_control.rs::tests::every_substitute_outcome_has_its_contract_execution_partition",
+  "crates/ripr-contract/src/domain/proof_domains.rs::tests::symbolic_domains_are_nonempty_and_unique",
+  "crates/ripr-contract/src/domain/proof_domains.rs::tests::every_feedback_reason_has_its_contract_judgment_and_note_rule",
+  "crates/ripr-contract/src/domain/proof_domains.rs::tests::every_result_state_claims_exactly_its_contract_satisfaction",
+  "crates/ripr-contract/src/domain/executed_control.rs::tests::every_substitute_outcome_has_its_contract_execution_partition",
 ]
 
 [[extend]]
 id = "RIPR-SPEC-0179"
 tests = [
-  "crates/ripr/src/domain/proof_domains.rs::tests::every_feedback_reason_has_its_contract_judgment_and_note_rule",
+  "crates/ripr-contract/src/domain/proof_domains.rs::tests::every_feedback_reason_has_its_contract_judgment_and_note_rule",
 ]
 
 [[extend]]
 id = "RIPR-SPEC-0183"
 tests = [
-  "crates/ripr/src/domain/proof_domains.rs::tests::every_result_state_claims_exactly_its_contract_satisfaction",
-  "crates/ripr/src/domain/executed_control.rs::tests::every_substitute_outcome_has_its_contract_execution_partition",
+  "crates/ripr-contract/src/domain/proof_domains.rs::tests::every_result_state_claims_exactly_its_contract_satisfaction",
+  "crates/ripr-contract/src/domain/executed_control.rs::tests::every_substitute_outcome_has_its_contract_execution_partition",
 ]
