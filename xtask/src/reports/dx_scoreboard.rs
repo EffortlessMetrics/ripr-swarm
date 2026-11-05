@@ -24,6 +24,7 @@
 
 mod measure;
 mod population;
+mod workloads;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -2154,6 +2155,22 @@ pub(crate) fn build_report(
                 })
             })
         }))
+        .chain(metrics.iter().flat_map(|row| {
+            row["baseline"]["uncompared_repos"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(move |entry| {
+                    Some(json!({
+                        "metric": row["id"],
+                        "reason": format!(
+                            "repository {}: {}",
+                            entry["repo"].as_str()?,
+                            entry["reason"].as_str()?,
+                        ),
+                    }))
+                })
+        }))
         .collect();
     let review: Vec<Value> = metrics
         .iter()
@@ -2494,10 +2511,16 @@ fn worsening(def: &MetricDef, base: f64, current: f64) -> f64 {
 /// Repositories whose own sample worsened past the margin against the same
 /// repository's baseline sample. The metric value is the worst sample, so
 /// without this a regression on any repository but the worst would pass.
-fn repo_regressions(def: &MetricDef, row: &Value, base_row: &Value) -> Vec<Value> {
+fn repo_regressions(
+    def: &MetricDef,
+    row: &Value,
+    base_row: &Value,
+    workloads: &workloads::WorkloadPairs,
+) -> Vec<Value> {
     let base = completed_repo_values(base_row);
     completed_repo_values(row)
         .into_iter()
+        .filter(|(repo, _)| workloads.includes(repo))
         .filter_map(|(repo, current)| {
             let (_, before) = base.iter().find(|(id, _)| *id == repo)?;
             let allowed =
@@ -2555,10 +2578,16 @@ fn repo_pick_growth(def: &MetricDef, row: &Value, base_row: &Value, repo: &str) 
 /// margin is for display only; a metric with `pick_growth_allowance` fails on
 /// its own repositories' verdicts, so an unchanged repository cannot revoke
 /// another's allowance.
-fn pick_growth(def: &MetricDef, row: &Value, base_row: &Value) -> Option<f64> {
+fn pick_growth(
+    def: &MetricDef,
+    row: &Value,
+    base_row: &Value,
+    workloads: &workloads::WorkloadPairs,
+) -> Option<f64> {
     let base = completed_repo_values(base_row);
     completed_repo_values(row)
         .iter()
+        .filter(|(repo, _)| workloads.includes(repo))
         .filter(|(repo, _)| base.iter().any(|(id, _)| id == repo))
         .map(|(repo, _)| repo_pick_growth(def, row, base_row, repo))
         .reduce(f64::min)
@@ -2580,7 +2609,11 @@ fn completed_repo_values(r: &Value) -> Vec<(String, f64)> {
 
 /// Repositories that completed in this run but not in the baseline. They have
 /// no comparable baseline value, so they are listed rather than dropped.
-fn recovered_repos(row: &Value, base_row: &Value) -> Vec<String> {
+fn recovered_repos(
+    row: &Value,
+    base_row: &Value,
+    workloads: &workloads::WorkloadPairs,
+) -> Vec<String> {
     let completed_base = completed_repo_values(base_row);
     let base_repos: Vec<&str> = base_row["samples"]
         .as_array()
@@ -2592,7 +2625,9 @@ fn recovered_repos(row: &Value, base_row: &Value) -> Vec<String> {
         .into_iter()
         .map(|(repo, _)| repo)
         .filter(|repo| {
-            base_repos.contains(&repo.as_str()) && !completed_base.iter().any(|(id, _)| id == repo)
+            workloads.includes(repo)
+                && base_repos.contains(&repo.as_str())
+                && !completed_base.iter().any(|(id, _)| id == repo)
         })
         .collect()
 }
@@ -2602,7 +2637,11 @@ fn recovered_repos(row: &Value, base_row: &Value) -> Vec<String> {
 /// no completed baseline sample (new to the corpus, or unmeasured then).
 /// Checked per repository because another repository may already have been
 /// incomplete in the baseline.
-fn repo_completion_losses(row: &Value, base_row: &Value) -> Vec<Value> {
+fn repo_completion_losses(
+    row: &Value,
+    base_row: &Value,
+    workloads: &workloads::WorkloadPairs,
+) -> Vec<Value> {
     let statuses = |r: &Value| -> Vec<(String, String)> {
         r["samples"]
             .as_array()
@@ -2626,7 +2665,10 @@ fn repo_completion_losses(row: &Value, base_row: &Value) -> Vec<Value> {
                 .find(|(id, _)| *id == repo)
                 .map(|(_, b)| b.as_str());
             let reason = match before {
-                Some("incomplete") => return None,
+                Some("incomplete") if workloads.includes(&repo) => return None,
+                Some("incomplete") => {
+                    "did not complete; baseline workload identity is unavailable or different"
+                }
                 Some("meets_target" | "below_target") => "did not complete where the baseline did",
                 Some(_) => "did not complete; the baseline has no completed sample for it",
                 None => "new in this run and did not complete; no baseline sample",
@@ -2644,7 +2686,12 @@ type CommonWorst = (Option<(f64, f64)>, Vec<String>);
 /// measured to completion, plus the repositories only this run measured. A repository new to
 /// the corpus is not a regression, so it must not move the compared worst.
 /// `None` when the samples carry no repositories.
-fn common_repo_worst(def: &MetricDef, row: &Value, base_row: &Value) -> Option<CommonWorst> {
+fn common_repo_worst(
+    def: &MetricDef,
+    row: &Value,
+    base_row: &Value,
+    workloads: &workloads::WorkloadPairs,
+) -> Option<CommonWorst> {
     let values = |r: &Value| -> Vec<(String, f64)> {
         r["samples"]
             .as_array()
@@ -2663,6 +2710,7 @@ fn common_repo_worst(def: &MetricDef, row: &Value, base_row: &Value) -> Option<C
     let completed_base = completed_repo_values(base_row);
     let common: Vec<(f64, f64)> = completed_repo_values(row)
         .iter()
+        .filter(|(repo, _)| workloads.includes(repo))
         .filter_map(|(repo, now)| {
             completed_base
                 .iter()
@@ -2760,7 +2808,9 @@ pub(crate) fn compare_with_baseline(
     // A run that stops completing is broken on every runner class, and its
     // elapsed time can look faster than the baseline, so check it first, per
     // repository as well as for the metric.
-    let lost = repo_completion_losses(row, base_row);
+    let workloads = workloads::pair(def, row, base_row, context, baseline);
+    let missing = missing_repos(row, base_row);
+    let lost = repo_completion_losses(row, base_row, &workloads);
     if !lost.is_empty() || (incomplete(row) && !incomplete(base_row)) {
         // Repositories that completed but got worse would otherwise be hidden
         // behind the lost completion; list them too where values compare.
@@ -2768,13 +2818,13 @@ pub(crate) fn compare_with_baseline(
         if !def.runner_dependent
             || baseline["runner_class"].as_str() == Some(context.runner_class.as_str())
         {
-            for regression in repo_regressions(def, row, base_row) {
+            for regression in repo_regressions(def, row, base_row, &workloads) {
                 if !lost.iter().any(|entry| entry["repo"] == regression["repo"]) {
                     lost.push(regression);
                 }
             }
         }
-        return json!({
+        return workloads.retain_exclusions(json!({
             "comparable": true,
             "value": base_row["value"],
             "delta": Value::Null,
@@ -2782,13 +2832,14 @@ pub(crate) fn compare_with_baseline(
             "regressed": true,
             "reason": "a repository stopped completing or regressed; see each repository below",
             "regressed_repos": lost,
-            "recovered_repos": recovered_repos(row, base_row),
-        });
+            "missing_repos": missing,
+            "recovered_repos": recovered_repos(row, base_row, &workloads),
+        }));
     }
     if def.runner_dependent
         && baseline["runner_class"].as_str() != Some(context.runner_class.as_str())
     {
-        return json!({
+        return workloads.retain_exclusions(json!({
             "comparable": false,
             "value": base_row["value"],
             "reason": format!(
@@ -2796,32 +2847,37 @@ pub(crate) fn compare_with_baseline(
                 baseline["runner_class"].as_str().unwrap_or("unknown"),
                 context.runner_class
             ),
-        });
+            "missing_repos": missing,
+        }));
     }
-    let (values, new_repos) = match common_repo_worst(def, row, base_row) {
+    let (values, new_repos) = match common_repo_worst(def, row, base_row, &workloads) {
         Some((pair, new_repos)) => (pair, new_repos),
+        None if workloads.enforced() => (None, Vec::new()),
         None => (
             base_row["value"].as_f64().zip(row["value"].as_f64()),
             Vec::new(),
         ),
     };
-    let recovered = recovered_repos(row, base_row);
+    let recovered = recovered_repos(row, base_row, &workloads);
     let Some((base, current)) = values else {
-        return json!({
+        return workloads.retain_exclusions(json!({
             "comparable": false,
             "value": base_row["value"],
-            "reason": if new_repos.is_empty() && recovered.is_empty() {
+            "reason": if workloads.enforced() {
+                "no repository with matching workload identity completed in both reports"
+            } else if new_repos.is_empty() && recovered.is_empty() {
                 "baseline or current value is missing"
             } else {
                 "no repository completed in both reports"
             },
             "new_repos": new_repos,
+            "missing_repos": missing,
             "recovered_repos": recovered,
-        });
+        }));
     };
-    let growth = pick_growth(def, row, base_row);
+    let growth = pick_growth(def, row, base_row, &workloads);
     let allowed = allowed_worsening(def, base) + growth.unwrap_or(0.0);
-    let by_repo = repo_regressions(def, row, base_row);
+    let by_repo = repo_regressions(def, row, base_row, &workloads);
     // Each repository's own verdict decides a growth-allowance metric: the
     // worst values compared above can come from different repositories.
     let aggregate_regressed = worsening(def, base, current) > allowed;
@@ -2830,8 +2886,7 @@ pub(crate) fn compare_with_baseline(
     } else {
         aggregate_regressed || !by_repo.is_empty()
     };
-    let missing = missing_repos(row, base_row);
-    json!({
+    workloads.retain_exclusions(json!({
         "comparable": true,
         "value": round(base),
         "delta": round(current - base),
@@ -2841,7 +2896,7 @@ pub(crate) fn compare_with_baseline(
         "new_repos": new_repos,
         "missing_repos": missing,
         "recovered_repos": recovered,
-    })
+    }))
 }
 
 /// Repositories the baseline measured that this run has no value for. Their
@@ -3248,7 +3303,8 @@ fn baseline_cell(baseline: &Value) -> String {
             "ok"
         };
         let new_note = repo_note(baseline, "new_repos", "not in baseline")
-            + &repo_note(baseline, "recovered_repos", "completed again");
+            + &repo_note(baseline, "recovered_repos", "completed again")
+            + &workloads::comparison_note(baseline);
         format!(
             "{} (Δ {}) {verdict}{new_note}",
             display_value(&baseline["value"]),
@@ -3259,7 +3315,9 @@ fn baseline_cell(baseline: &Value) -> String {
             .as_str()
             .unwrap_or("not compared")
             .to_string()
+            + &repo_note(baseline, "new_repos", "not in baseline")
             + &repo_note(baseline, "recovered_repos", "completed again")
+            + &workloads::comparison_note(baseline)
     }
 }
 

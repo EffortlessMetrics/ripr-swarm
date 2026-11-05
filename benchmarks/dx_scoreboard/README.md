@@ -240,6 +240,27 @@ baseline" instead of failing the gate; one that does not complete still fails.
 A repository that completes again after an incomplete baseline sample has no
 value to compare, so it is listed as "completed again" and left out of the
 compared worst.
+
+Built-in measured per-repository metrics pair numeric samples only when the
+retained `corpus` entries agree on URL, full head SHA, effective base,
+language and `expected_partial` (#13177). The producer records `HEAD~1`
+explicitly when no base SHA is configured; that recipe is bound to the exact
+head. It also records an explicit `null` when only complete analysis is admitted.
+A changed pin or scope under the same display ID is not a speed trend.
+Missing, malformed or duplicate identity is excluded from the common subset,
+including legacy reports that lack these fields. JSON and Markdown name each
+excluded repository and reason, even when another unchanged repository still
+compares. The current measurements and target status remain visible.
+
+Incomplete measurements still fail independently when a repository stopped
+completing. An incomplete baseline sample only excuses an already incomplete
+row when its workload identity matches; unknown or changed identity cannot
+hide a current failure. Absolute ceilings remain independent of baseline
+comparability. Ingested per-repository sources keep their own population
+contracts. These fields establish workload and scope, not sampling-method
+equivalence; the repeated-warm measurement work in #13076 owns that separate
+contract. No baseline is rewritten or accepted by this check.
+
 Metrics the baseline measured that a run cannot compare, such as ingested
 metrics without a receipt, are listed as not compared. One exception: when
 every selected metric has no value this run and nothing comparable (as

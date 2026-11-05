@@ -11,6 +11,9 @@ use super::measure::{
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
 
+#[path = "workload_tests.rs"]
+mod workload_tests;
+
 /// The committed config, resolved from the crate root so a test that moves
 /// the working directory cannot break the lookup.
 fn committed_config() -> PathBuf {
@@ -84,6 +87,27 @@ fn context(runner: &str) -> RunContext {
         runner_class: runner.to_string(),
         ..RunContext::default()
     }
+}
+
+/// Explicit retained workload metadata for numeric comparison controls. Tests
+/// of missing evidence continue to use `context`, whose corpus is empty.
+fn pinned_context(runner: &str, repos: &[&str]) -> RunContext {
+    let mut context = context(runner);
+    context.corpus = repos
+        .iter()
+        .map(|repo| {
+            json!({
+                "id": repo,
+                "url": format!("https://example.invalid/{repo}"),
+                "sha": "dd18663450ec3ee38e35e3a4ee141932614e662c",
+                "base": "HEAD~1",
+                "language": "rust",
+                "expected_partial": null,
+                "status": "measured",
+            })
+        })
+        .collect();
+    context
 }
 
 fn metric<'a>(report: &'a Value, id: &str) -> Result<&'a Value, String> {
@@ -239,7 +263,7 @@ fn gate_uses_the_larger_margin_and_skips_other_runner_classes() -> Result<(), St
         &config,
         &all_boards(),
         &baseline_samples,
-        &context("runner-a"),
+        &pinned_context("runner-a", &["a"]),
         None,
         false,
     );
@@ -257,7 +281,7 @@ fn gate_uses_the_larger_margin_and_skips_other_runner_classes() -> Result<(), St
         &config,
         &all_boards(),
         &within,
-        &context("runner-a"),
+        &pinned_context("runner-a", &["a"]),
         Some(&baseline),
         true,
     );
@@ -276,7 +300,7 @@ fn gate_uses_the_larger_margin_and_skips_other_runner_classes() -> Result<(), St
         &config,
         &all_boards(),
         &worse,
-        &context("runner-a"),
+        &pinned_context("runner-a", &["a"]),
         Some(&baseline),
         true,
     );
@@ -291,7 +315,7 @@ fn gate_uses_the_larger_margin_and_skips_other_runner_classes() -> Result<(), St
         &config,
         &all_boards(),
         &worse,
-        &context("runner-b"),
+        &pinned_context("runner-b", &["a"]),
         Some(&baseline),
         true,
     );
@@ -2021,7 +2045,7 @@ fn losing_completion_is_judged_per_repo() -> Result<(), String> {
         &config,
         &all_boards(),
         &base,
-        &context("runner-a"),
+        &pinned_context("runner-a", &["a", "b"]),
         None,
         false,
     );
@@ -2042,7 +2066,7 @@ fn losing_completion_is_judged_per_repo() -> Result<(), String> {
             &config,
             &all_boards(),
             &current,
-            &context(runner),
+            &pinned_context(runner, &["a", "b"]),
             Some(&baseline),
             true,
         );
@@ -2065,7 +2089,14 @@ fn a_repo_new_to_the_corpus_is_listed_not_gated_unless_it_stops_short() -> Resul
         Some("a"),
         SampleOutcome::Value(1000.0),
     )];
-    let baseline = build_report(&config, &all_boards(), &base, &context("r"), None, false);
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &base,
+        &pinned_context("r", &["a"]),
+        None,
+        false,
+    );
     let run = |new: SampleOutcome| {
         let current = vec![
             sample(
@@ -2079,7 +2110,7 @@ fn a_repo_new_to_the_corpus_is_listed_not_gated_unless_it_stops_short() -> Resul
             &config,
             &all_boards(),
             &current,
-            &context("r"),
+            &pinned_context("r", &["a", "c"]),
             Some(&baseline),
             true,
         )
@@ -2340,7 +2371,7 @@ fn gate_compares_every_repository_not_just_the_worst() -> Result<(), String> {
         &config,
         &all_boards(),
         &samples(4000.0, 100.0),
-        &context("r"),
+        &pinned_context("r", &["a", "b"]),
         None,
         false,
     );
@@ -2349,7 +2380,7 @@ fn gate_compares_every_repository_not_just_the_worst() -> Result<(), String> {
         &config,
         &all_boards(),
         &samples(4000.0, 3000.0),
-        &context("r"),
+        &pinned_context("r", &["a", "b"]),
         Some(&baseline),
         true,
     );
@@ -2496,7 +2527,14 @@ fn a_baseline_repo_missing_from_the_run_is_listed_not_passed() -> Result<(), Str
             SampleOutcome::Value(1000.0),
         ),
     ];
-    let baseline = build_report(&config, &all_boards(), &base, &context("r"), None, false);
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &base,
+        &pinned_context("r", &["a", "b"]),
+        None,
+        false,
+    );
     let current = vec![sample(
         "speed.warm_check_ms",
         Some("a"),
@@ -2506,7 +2544,7 @@ fn a_baseline_repo_missing_from_the_run_is_listed_not_passed() -> Result<(), Str
         &config,
         &all_boards(),
         &current,
-        &context("r"),
+        &pinned_context("r", &["a"]),
         Some(&baseline),
         true,
     );
@@ -2836,7 +2874,14 @@ fn the_gate_message_reports_the_compared_value_not_a_new_repos_worst() -> Result
         Some("a"),
         SampleOutcome::Value(1000.0),
     )];
-    let baseline = build_report(&config, &all_boards(), &base, &context("r"), None, false);
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &base,
+        &pinned_context("r", &["a"]),
+        None,
+        false,
+    );
     let current = vec![
         sample(
             "speed.warm_check_ms",
@@ -2853,7 +2898,7 @@ fn the_gate_message_reports_the_compared_value_not_a_new_repos_worst() -> Result
         &config,
         &all_boards(),
         &current,
-        &context("r"),
+        &pinned_context("r", &["a", "new"]),
         Some(&baseline),
         true,
     );
@@ -4047,7 +4092,7 @@ fn an_injected_empty_json_child_cannot_beat_a_valid_warm_baseline() -> Result<()
             Some("serde"),
             SampleOutcome::Value(8_000.0),
         )],
-        &context("runner-a"),
+        &pinned_context("runner-a", &["serde"]),
         None,
         false,
     );
@@ -4055,7 +4100,7 @@ fn an_injected_empty_json_child_cannot_beat_a_valid_warm_baseline() -> Result<()
         &config,
         &all_boards(),
         &samples,
-        &context("runner-a"),
+        &pinned_context("runner-a", &["serde"]),
         Some(&baseline),
         true,
     );
@@ -4075,7 +4120,7 @@ fn an_injected_empty_json_child_cannot_beat_a_valid_warm_baseline() -> Result<()
             Some("serde"),
             SampleOutcome::Value(5.0),
         )],
-        &context("runner-a"),
+        &pinned_context("runner-a", &["serde"]),
         Some(&baseline),
         true,
     );

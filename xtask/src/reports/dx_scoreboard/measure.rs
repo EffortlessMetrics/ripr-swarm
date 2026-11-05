@@ -481,11 +481,19 @@ fn measure_corpus_entry(
 
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));
+    measured_corpus_entry(entry, &editor_base)
+}
+
+/// Retain the workload actually selected by the corpus producer. The effective
+/// base is shared with the check/editor argv, not recovered from a later config.
+pub(super) fn measured_corpus_entry(entry: &CorpusEntry, base: &str) -> Value {
     json!({
         "id": entry.id,
         "sha": entry.sha,
         "url": entry.url,
         "language": entry.language(),
+        "base": base,
+        "expected_partial": entry.expected_partial,
         "status": "measured",
     })
 }
