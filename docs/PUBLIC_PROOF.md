@@ -23,7 +23,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-54 bars. ripr meets 28, is below the bar on 21, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them. First-run bars are recomputed by this page from the raw walk receipts; an ingested scoreboard value owns its bar once one lands.
+55 bars. ripr meets 29, is below the bar on 21, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them. First-run bars are recomputed by this page from the raw walk receipts; an ingested scoreboard value owns its bar once one lands.
 
 By board, so the weak areas show before the full table:
 
@@ -31,7 +31,7 @@ By board, so the weak areas show before the full table:
 | --- | --- | --- | --- | --- |
 | Speed and memory | 0 | 4 | 0 | 0 |
 | CI adoption | 1 | 1 | 1 | 0 |
-| Trust | 18 | 6 | 2 | 0 |
+| Trust | 19 | 6 | 2 | 0 |
 | Pasted commands | 2 | 0 | 0 | 0 |
 | First run | 3 | 3 | 2 | 0 |
 | corpus | 2 | 0 | 0 | 0 |
@@ -54,6 +54,7 @@ By board, so the weak areas show before the full table:
 | Trust | Hand-checked edits where ripr gives no specific verdict | **37.1%** | <= 20.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **1.2%** | <= 0.0% | below the bar | no earlier measurement (observed at 2af3f38) |
+| Trust | In-scope numbered spec acceptance examples (minus waived) that a runtime-labeled verdict-corpus case cites | 100.0% | >= 100.0% | meets the bar | no earlier measurement |
 | Trust | When ripr says a test discriminates, real mutants are caught | 96.8% | >= 95.0% | meets the bar | first receipt (mutation spot check, 63 of 63 canonical-precise `strongly_gripped` mutants scored; 0 unscored) |
 | Trust | When ripr reports a gap, real mutants survive | 100.0% | >= 80.0% | meets the bar | first receipt (mutation spot check, 12 of 12 canonical-precise `ungripped` mutants scored; 0 unscored) |
 | Trust | Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap | 5.0% | <= 5.0% | meets the bar | no earlier measurement (observed at 76651d1) |
