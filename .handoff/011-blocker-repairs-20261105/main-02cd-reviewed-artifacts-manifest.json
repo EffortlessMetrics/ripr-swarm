@@ -1,0 +1,16 @@
+{
+  "base": "95b4ebfba2f2d0294ccde20fe9994b45b01faf28",
+  "candidate": "b2ee66a10760e9765ef246de69ec1471b2a3789a",
+  "tree": "8853b95ab9e69a9856c967ec2b4e6d0dafc7bdac",
+  "branch": "successor/011-pr13325-composition-02cddbb27",
+  "patch_bytes": 628635,
+  "patch_sha256": "a3f56c924a385b8bed1c444eda055fd314bc2be31c3df6521445f1e504fec69c",
+  "delta": "25 actual M-producer artifacts,60 reviewed native golden refreshes, two fixture contract clarifications; no analyzer or workflow source change from95b. Full current library and downstream local gates now running on frozen b2ee.",
+  "proof": "M producer build passed; regeneration passed24commands, all25artifacts;60golden blessings succeeded. Rerun reduced61fixtures/133surfaces to one held fixture/two surfaces. No full qualification yet.",
+  "golden_hold": {
+    "fixture": "error_return_unresolved_guard",
+    "reason": "Historical SPEC forbids imprecise/actionable result but old golden exposed it; current conservative identity refusal is weakly_exposed without required precise limitation. Not blessed. #1579 is already an explicit0.13 policy target, not a new0.11gate invented here; native golden gate still red pending proper reconciliation."
+  },
+  "other_holds": "Exact source/current-head review and hosted native history qualification, promotion trust/public1893, release selection and final installed acceptance; no merge/release occurred.",
+  "prerequisite_transfer": "Library exact file ID/7680byte metadata resolved, download helper failed; receiver archive/bundle byte verification pending, nothing imported; public1889 remains unchanged f38978fb Draft with explicit trust hold."
+}

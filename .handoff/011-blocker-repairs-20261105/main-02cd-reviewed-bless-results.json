@@ -1,0 +1,908 @@
+{
+  "candidate": "95b4ebfba2f2d0294ccde20fe9994b45b01faf28",
+  "rows": [
+    {
+      "fixture": "boundary_gap_equality_closed",
+      "reason": "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "boundary_gap_equality_closed",
+        "--reason",
+        "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.915,
+      "output_sha256": "b5182665cdf6d7f0c32de39f5a98a8e5e68263b5c028844cf411655f7c4ce471"
+    },
+    {
+      "fixture": "boundary_operand_unresolved",
+      "reason": "RIPR-SPEC-0158 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "boundary_operand_unresolved",
+        "--reason",
+        "RIPR-SPEC-0158 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 1.049,
+      "output_sha256": "a63de4b0829a8e60fa18a12edefce48029ab231dc0dec8fc5a56c3b03ea624ab"
+    },
+    {
+      "fixture": "boundary_pairing_sibling_element",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "boundary_pairing_sibling_element",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 1.276,
+      "output_sha256": "6a12b631bb2afc92831b5f68828073e6018c2930e11a5e5b7869f41fbe4a4819"
+    },
+    {
+      "fixture": "boundary_pairing_sibling_owner",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "boundary_pairing_sibling_owner",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 1.012,
+      "output_sha256": "d5d8b739a37354f59c94e386be8dc600df54340e0dcbd502aa0941ec07cdf31c"
+    },
+    {
+      "fixture": "cross_crate_trait_impl_direct_owner_positive",
+      "reason": "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "cross_crate_trait_impl_direct_owner_positive",
+        "--reason",
+        "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 1.609,
+      "output_sha256": "05892d6bab3c0d696a522d22bfe253b87442a679287a762234798f8f8d5446a8"
+    },
+    {
+      "fixture": "error_variant_boxed_wrapper_downcast_witness",
+      "reason": "RIPR-SPEC-0106: refuse owner-level credit for two ambiguous early-return sites; real native branch controls change the first return outcome but not the second; preserve boxed binding limitations and discarded-witness refusal",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "error_variant_boxed_wrapper_downcast_witness",
+        "--reason",
+        "RIPR-SPEC-0106: refuse owner-level credit for two ambiguous early-return sites; real native branch controls change the first return outcome but not the second; preserve boxed binding limitations and discarded-witness refusal"
+      ],
+      "exit": 0,
+      "seconds": 1.872,
+      "output_sha256": "a63de4b0829a8e60fa18a12edefce48029ab231dc0dec8fc5a56c3b03ea624ab"
+    },
+    {
+      "fixture": "helper_chain_one_hop",
+      "reason": "RIPR-SPEC-0159 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "helper_chain_one_hop",
+        "--reason",
+        "RIPR-SPEC-0159 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.968,
+      "output_sha256": "a3cdf89a99a3743b82a4c476073b1981fa8ec715da0eb6508eaf7886d84d5f92"
+    },
+    {
+      "fixture": "human_full_shared_parse_port",
+      "reason": "RIPR-SPEC-0122 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "human_full_shared_parse_port",
+        "--reason",
+        "RIPR-SPEC-0122 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.694,
+      "output_sha256": "2717efb30687d5beaf3cb6442f09a6efdd8b54389f9c17b76fed042d1c88ae48"
+    },
+    {
+      "fixture": "match_arm_proximity_bound_other_function_not_credited",
+      "reason": "RIPR-SPEC-0094 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "match_arm_proximity_bound_other_function_not_credited",
+        "--reason",
+        "RIPR-SPEC-0094 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.841,
+      "output_sha256": "f9143200a85bcbf866d63e98139d04b516882664282504a64a9d02730d1b9a12"
+    },
+    {
+      "fixture": "match_arm_proximity_other_function_not_credited",
+      "reason": "RIPR-SPEC-0094 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "match_arm_proximity_other_function_not_credited",
+        "--reason",
+        "RIPR-SPEC-0094 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.723,
+      "output_sha256": "a63de4b0829a8e60fa18a12edefce48029ab231dc0dec8fc5a56c3b03ea624ab"
+    },
+    {
+      "fixture": "member_reexport_foreign_trait_keeps_dispatch_allowance",
+      "reason": "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "member_reexport_foreign_trait_keeps_dispatch_allowance",
+        "--reason",
+        "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.755,
+      "output_sha256": "050d352498773cc0f036110b755e522a583a5d2761d6f3d48f98ff8bd098ee73"
+    },
+    {
+      "fixture": "module_reach_control_qualified",
+      "reason": "RIPR-SPEC-0159: retain canonical qualified helper reach and same-test returned-boundary oracle; real parser/native controls preserve owner and sibling refusals",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "module_reach_control_qualified",
+        "--reason",
+        "RIPR-SPEC-0159: retain canonical qualified helper reach and same-test returned-boundary oracle; real parser/native controls preserve owner and sibling refusals"
+      ],
+      "exit": 0,
+      "seconds": 0.8,
+      "output_sha256": "d5d8b739a37354f59c94e386be8dc600df54340e0dcbd502aa0941ec07cdf31c"
+    },
+    {
+      "fixture": "module_reach_super_import_in_file_wrong_module",
+      "reason": "RIPR-SPEC-0159 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "module_reach_super_import_in_file_wrong_module",
+        "--reason",
+        "RIPR-SPEC-0159 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.602,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "observation_verified_field_construction",
+      "reason": "RIPR-SPEC-0094 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "observation_verified_field_construction",
+        "--reason",
+        "RIPR-SPEC-0094 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.657,
+      "output_sha256": "f9143200a85bcbf866d63e98139d04b516882664282504a64a9d02730d1b9a12"
+    },
+    {
+      "fixture": "owner_self_body_same_name_with_caller_control",
+      "reason": "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "owner_self_body_same_name_with_caller_control",
+        "--reason",
+        "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.772,
+      "output_sha256": "f5c52a64dd23557dfbdf37b9869bc8d60e2838fb35ea4f92e6d29326f3eea5d4"
+    },
+    {
+      "fixture": "predicate_boundary_oracle_refused",
+      "reason": "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "predicate_boundary_oracle_refused",
+        "--reason",
+        "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.625,
+      "output_sha256": "2717efb30687d5beaf3cb6442f09a6efdd8b54389f9c17b76fed042d1c88ae48"
+    },
+    {
+      "fixture": "predicate_oracle_execution_false_branch",
+      "reason": "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "predicate_oracle_execution_false_branch",
+        "--reason",
+        "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.655,
+      "output_sha256": "752742515c6b2d4252912c14c564775fa97d2d69235a7d7659c0f85aacbbabf6"
+    },
+    {
+      "fixture": "predicate_oracle_execution_reached_uncalled",
+      "reason": "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "predicate_oracle_execution_reached_uncalled",
+        "--reason",
+        "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.787,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "predicate_oracle_execution_shadowed",
+      "reason": "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "predicate_oracle_execution_shadowed",
+        "--reason",
+        "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.871,
+      "output_sha256": "1ff24275f3591b9b9c597618f1bf2fd37f2c9b62e6a260567522369d1da8e87a"
+    },
+    {
+      "fixture": "predicate_oracle_execution_uncalled",
+      "reason": "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "predicate_oracle_execution_uncalled",
+        "--reason",
+        "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.635,
+      "output_sha256": "8eecad186e77bbc6e35d126cbfe750a520aabe704c67304b3721237ee6fcb983"
+    },
+    {
+      "fixture": "predicate_pairing_compound_assigned_binding",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "predicate_pairing_compound_assigned_binding",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.765,
+      "output_sha256": "752742515c6b2d4252912c14c564775fa97d2d69235a7d7659c0f85aacbbabf6"
+    },
+    {
+      "fixture": "predicate_pairing_mutably_borrowed_binding",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "predicate_pairing_mutably_borrowed_binding",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.611,
+      "output_sha256": "f9143200a85bcbf866d63e98139d04b516882664282504a64a9d02730d1b9a12"
+    },
+    {
+      "fixture": "predicate_pairing_newline_split_reassigned_binding",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "predicate_pairing_newline_split_reassigned_binding",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.588,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "predicate_pairing_reassigned_binding",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "predicate_pairing_reassigned_binding",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.819,
+      "output_sha256": "8c20b02e115f9195fd673e1e0cdfd0a14be3b6426d9494225d300a4ae883f3ef"
+    },
+    {
+      "fixture": "returned_comparison_boundary_gap",
+      "reason": "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "returned_comparison_boundary_gap",
+        "--reason",
+        "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.661,
+      "output_sha256": "f9143200a85bcbf866d63e98139d04b516882664282504a64a9d02730d1b9a12"
+    },
+    {
+      "fixture": "returned_comparison_rival_import",
+      "reason": "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "returned_comparison_rival_import",
+        "--reason",
+        "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.763,
+      "output_sha256": "752742515c6b2d4252912c14c564775fa97d2d69235a7d7659c0f85aacbbabf6"
+    },
+    {
+      "fixture": "returned_explicit_comparison_boundary_gap",
+      "reason": "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "returned_explicit_comparison_boundary_gap",
+        "--reason",
+        "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.804,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "rust_array_element_drop_exit",
+      "reason": "RIPR-SPEC-0225 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_array_element_drop_exit",
+        "--reason",
+        "RIPR-SPEC-0225 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.608,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "rust_array_sibling_exit_field",
+      "reason": "RIPR-SPEC-0225 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_array_sibling_exit_field",
+        "--reason",
+        "RIPR-SPEC-0225 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.601,
+      "output_sha256": "b716d9bc0acf0c8def10c29e78fcf66068ced6a13917447e064e96e64858ec8e"
+    },
+    {
+      "fixture": "rust_constructor_field_observation",
+      "reason": "RIPR-SPEC-0005 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_constructor_field_observation",
+        "--reason",
+        "RIPR-SPEC-0005 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.71,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "rust_copy_builder_field_write",
+      "reason": "RIPR-SPEC-0228 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_copy_builder_field_write",
+        "--reason",
+        "RIPR-SPEC-0228 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.741,
+      "output_sha256": "dfe62f9c839269a3d73596c9e588793c2c0a111a89a2cd52d536412c36a643bb"
+    },
+    {
+      "fixture": "rust_field_construction_token_coincidence",
+      "reason": "RIPR-SPEC-0094 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_field_construction_token_coincidence",
+        "--reason",
+        "RIPR-SPEC-0094 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.781,
+      "output_sha256": "548e8c7677921e36264343cad1bb7873f491cc8fedf64f7eed3a78c80eb52449"
+    },
+    {
+      "fixture": "rust_let_literal_pattern_rebound",
+      "reason": "RIPR-SPEC-0158 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_let_literal_pattern_rebound",
+        "--reason",
+        "RIPR-SPEC-0158 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.732,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "rust_returned_error_drop_exit",
+      "reason": "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_returned_error_drop_exit",
+        "--reason",
+        "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.705,
+      "output_sha256": "752742515c6b2d4252912c14c564775fa97d2d69235a7d7659c0f85aacbbabf6"
+    },
+    {
+      "fixture": "rust_returned_type_drop_exit",
+      "reason": "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_returned_type_drop_exit",
+        "--reason",
+        "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.637,
+      "output_sha256": "2717efb30687d5beaf3cb6442f09a6efdd8b54389f9c17b76fed042d1c88ae48"
+    },
+    {
+      "fixture": "rust_returned_type_drop_wrapped_ok",
+      "reason": "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_returned_type_drop_wrapped_ok",
+        "--reason",
+        "RIPR-SPEC-0197 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.749,
+      "output_sha256": "a5f285920fd518fba19b62f6bfade5c343754861d6d4b4ec1f6641c8a29d80fb"
+    },
+    {
+      "fixture": "rust_slice_table_boundary",
+      "reason": "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_slice_table_boundary",
+        "--reason",
+        "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.748,
+      "output_sha256": "f9143200a85bcbf866d63e98139d04b516882664282504a64a9d02730d1b9a12"
+    },
+    {
+      "fixture": "rust_slice_table_call_exit",
+      "reason": "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_slice_table_call_exit",
+        "--reason",
+        "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.764,
+      "output_sha256": "8eecad186e77bbc6e35d126cbfe750a520aabe704c67304b3721237ee6fcb983"
+    },
+    {
+      "fixture": "rust_slice_table_try_exit",
+      "reason": "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_slice_table_try_exit",
+        "--reason",
+        "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 1.07,
+      "output_sha256": "f9143200a85bcbf866d63e98139d04b516882664282504a64a9d02730d1b9a12"
+    },
+    {
+      "fixture": "rust_slice_table_zero_elements",
+      "reason": "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_slice_table_zero_elements",
+        "--reason",
+        "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.877,
+      "output_sha256": "e75529d07a6e886d1b4de0be675f38e2a884e4fc53b72733de06fcc3999af19b"
+    },
+    {
+      "fixture": "rust_wrapper_boolean_return_discarded",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_wrapper_boolean_return_discarded",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.744,
+      "output_sha256": "a5f285920fd518fba19b62f6bfade5c343754861d6d4b4ec1f6641c8a29d80fb"
+    },
+    {
+      "fixture": "rust_wrapper_closure_shadowed_callee",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_wrapper_closure_shadowed_callee",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.692,
+      "output_sha256": "f9143200a85bcbf866d63e98139d04b516882664282504a64a9d02730d1b9a12"
+    },
+    {
+      "fixture": "rust_wrapper_crate_alias_logging_macro",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_wrapper_crate_alias_logging_macro",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.674,
+      "output_sha256": "a5f285920fd518fba19b62f6bfade5c343754861d6d4b4ec1f6641c8a29d80fb"
+    },
+    {
+      "fixture": "rust_wrapper_macro_bang_bidi_whitespace",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_wrapper_macro_bang_bidi_whitespace",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.832,
+      "output_sha256": "f5c52a64dd23557dfbdf37b9869bc8d60e2838fb35ea4f92e6d29326f3eea5d4"
+    },
+    {
+      "fixture": "rust_wrapper_static_shadowed_callee",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_wrapper_static_shadowed_callee",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.657,
+      "output_sha256": "8eecad186e77bbc6e35d126cbfe750a520aabe704c67304b3721237ee6fcb983"
+    },
+    {
+      "fixture": "rust_wrapper_unicode_macro_suffix",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_wrapper_unicode_macro_suffix",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.636,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "rust_wrapper_user_macro_guard",
+      "reason": "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "rust_wrapper_user_macro_guard",
+        "--reason",
+        "RIPR-SPEC-0186 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.636,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "source_promotion_verification",
+      "reason": "RIPR-SPEC-0149 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "source_promotion_verification",
+        "--reason",
+        "RIPR-SPEC-0149 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.669,
+      "output_sha256": "dfe62f9c839269a3d73596c9e588793c2c0a111a89a2cd52d536412c36a643bb"
+    },
+    {
+      "fixture": "source_role_harness_suppression",
+      "reason": "RIPR-SPEC-0155 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "source_role_harness_suppression",
+        "--reason",
+        "RIPR-SPEC-0155 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.801,
+      "output_sha256": "2717efb30687d5beaf3cb6442f09a6efdd8b54389f9c17b76fed042d1c88ae48"
+    },
+    {
+      "fixture": "split_test_boundary_oracle",
+      "reason": "RIPR-SPEC-0186: retain same-test and same-owner boundary-oracle pairing on returned comparisons; separate tests do not establish the joined witness",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "split_test_boundary_oracle",
+        "--reason",
+        "RIPR-SPEC-0186: retain same-test and same-owner boundary-oracle pairing on returned comparisons; separate tests do not establish the joined witness"
+      ],
+      "exit": 0,
+      "seconds": 0.774,
+      "output_sha256": "33138fa8c3d571394800e17cc242185010573cb0cc535da3c998936b94700139"
+    },
+    {
+      "fixture": "tail_comparison_boundary",
+      "reason": "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "tail_comparison_boundary",
+        "--reason",
+        "RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.848,
+      "output_sha256": "f5c52a64dd23557dfbdf37b9869bc8d60e2838fb35ea4f92e6d29326f3eea5d4"
+    },
+    {
+      "fixture": "test_cast_to_integer_not_exact",
+      "reason": "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "test_cast_to_integer_not_exact",
+        "--reason",
+        "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.588,
+      "output_sha256": "8eecad186e77bbc6e35d126cbfe750a520aabe704c67304b3721237ee6fcb983"
+    },
+    {
+      "fixture": "test_compared_with_non_literal_not_exact",
+      "reason": "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "test_compared_with_non_literal_not_exact",
+        "--reason",
+        "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.558,
+      "output_sha256": "f9143200a85bcbf866d63e98139d04b516882664282504a64a9d02730d1b9a12"
+    },
+    {
+      "fixture": "test_from_trait_conversion_not_exact",
+      "reason": "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "test_from_trait_conversion_not_exact",
+        "--reason",
+        "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.71,
+      "output_sha256": "120b6c9a882a99465f09946a10ad5e02dbaf2c0e485b55d7a1aa039c5d110455"
+    },
+    {
+      "fixture": "test_in_index_read_not_exact",
+      "reason": "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "test_in_index_read_not_exact",
+        "--reason",
+        "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.637,
+      "output_sha256": "a5f285920fd518fba19b62f6bfade5c343754861d6d4b4ec1f6641c8a29d80fb"
+    },
+    {
+      "fixture": "test_in_struct_literal_not_exact",
+      "reason": "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "test_in_struct_literal_not_exact",
+        "--reason",
+        "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.557,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "test_wrapped_in_some_not_exact",
+      "reason": "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "test_wrapped_in_some_not_exact",
+        "--reason",
+        "RIPR-SPEC-0231 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.68,
+      "output_sha256": "f9143200a85bcbf866d63e98139d04b516882664282504a64a9d02730d1b9a12"
+    },
+    {
+      "fixture": "unwrap_err_variant_positive",
+      "reason": "RIPR-SPEC-0106: correct the real Git diff hunk to the actual Err line; preserve exact unit-variant positive and native wrong-variant refusal",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "unwrap_err_variant_positive",
+        "--reason",
+        "RIPR-SPEC-0106: correct the real Git diff hunk to the actual Err line; preserve exact unit-variant positive and native wrong-variant refusal"
+      ],
+      "exit": 0,
+      "seconds": 0.57,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "wildcard_oracle_wildcard_original",
+      "reason": "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "wildcard_oracle_wildcard_original",
+        "--reason",
+        "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.571,
+      "output_sha256": "0867afc1e0258e2fbed054837aab5b9d551d9db94b2a7394128efa2d560172eb"
+    },
+    {
+      "fixture": "wildcard_oracle_wildcard_wrong",
+      "reason": "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit",
+      "command": [
+        "/workspace/12010-proof/target/debug/xtask",
+        "goldens",
+        "bless",
+        "wildcard_oracle_wildcard_wrong",
+        "--reason",
+        "RIPR-SPEC-0108 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit"
+      ],
+      "exit": 0,
+      "seconds": 0.73,
+      "output_sha256": "050d352498773cc0f036110b755e522a583a5d2761d6f3d48f98ff8bd098ee73"
+    }
+  ],
+  "held": [
+    "error_return_unresolved_guard: historical SPEC requires precise typed limitation; existing0.13policy target, no silent acceptance of unmet normative requirement"
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "candidate": "95b4ebfba2f2d0294ccde20fe9994b45b01faf28",
+  "fixtures": 61,
+  "surfaces": 133,
+  "added": [],
+  "removed": [],
+  "per_finding_class_changes": [
+    [
+      "error_return_unresolved_guard",
+      "probe:src_lib.rs:field_construction:7f5ec100",
+      "exposed",
+      "weakly_exposed"
+    ],
+    [
+      "error_return_unresolved_guard",
+      "probe:src_lib.rs:return_value:fb9a56e1",
+      "exposed",
+      "weakly_exposed"
+    ],
+    [
+      "error_return_unresolved_guard",
+      "probe:src_lib.rs:error_path:83bc8d6f",
+      "exposed",
+      "weakly_exposed"
+    ],
+    [
+      "error_variant_boxed_wrapper_downcast_witness",
+      "probe:src_lib.rs:return_value:f573bd5d.2",
+      "exposed",
+      "weakly_exposed"
+    ],
+    [
+      "error_variant_boxed_wrapper_downcast_witness",
+      "probe:src_lib.rs:error_path:5c979117.2",
+      "exposed",
+      "weakly_exposed"
+    ],
+    [
+      "error_variant_boxed_wrapper_downcast_witness",
+      "probe:src_lib.rs:error_path:5c979117",
+      "exposed",
+      "weakly_exposed"
+    ],
+    [
+      "error_variant_boxed_wrapper_downcast_witness",
+      "probe:src_lib.rs:return_value:f573bd5d",
+      "exposed",
+      "weakly_exposed"
+    ],
+    [
+      "module_reach_control_qualified",
+      "probe:src_inner.rs:return_value:438cae72",
+      "weakly_exposed",
+      "exposed"
+    ],
+    [
+      "split_test_boundary_oracle",
+      "probe:src_lib.rs:return_value:c71d52af",
+      "exposed",
+      "weakly_exposed"
+    ]
+  ]
+}

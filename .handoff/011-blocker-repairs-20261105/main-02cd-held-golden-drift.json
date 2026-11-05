@@ -1,0 +1,61 @@
+{
+  "schema_version": "0.1",
+  "status": "warn",
+  "drift_count": 2,
+  "provenance": {
+    "binary": "/workspace/12010-proof/target/debug/ripr",
+    "ripr_version": "ripr 0.11.0 (95b4ebfba2f2d0294ccde20fe9994b45b01faf28)",
+    "revision": "95b4ebfba2f2d0294ccde20fe9994b45b01faf28"
+  },
+  "entries": [
+    {
+      "fixture": "error_return_unresolved_guard",
+      "surface": "check.json",
+      "expected": "fixtures/error_return_unresolved_guard/expected/check.json",
+      "actual": "target/ripr/fixtures/error_return_unresolved_guard/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (95b4ebfba2f2d0294ccde20fe9994b45b01faf28)",
+        "revision": "95b4ebfba2f2d0294ccde20fe9994b45b01faf28"
+      },
+      "changed_line_count": 28,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": ["expected [exposed] -> actual [weakly_exposed]"],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": ["expected [] -> actual [Strengthen the related assertion so it discriminates the changed behavior., The related test `cancelled_return_is_exact` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces., The related test `cancelled_return_is_exact` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.]"],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "error_return_unresolved_guard",
+      "surface": "human.txt",
+      "expected": "fixtures/error_return_unresolved_guard/expected/human.txt",
+      "actual": "target/ripr/fixtures/error_return_unresolved_guard/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (95b4ebfba2f2d0294ccde20fe9994b45b01faf28)",
+        "revision": "95b4ebfba2f2d0294ccde20fe9994b45b01faf28"
+      },
+      "changed_line_count": 42,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    }
+  ],
+  "violations": ["check.json drift for fixture `error_return_unresolved_guard`\n  expected: fixtures/error_return_unresolved_guard/expected/check.json\n  actual:   target/ripr/fixtures/error_return_unresolved_guard/check.json\n  diff:    line 6 expected `  \\\"summary\\\": {\\\"changed_rust_files\\\":1,\\\"probes\\\":3,\\\"findings\\\":3,\\\"exposed\\\":3,\\\"weakly_exposed\\\":0,\\\"reachable_unre…` vs actual `  \\\"summary\\\": {\\\"changed_rust_files\\\":1,\\\"probes\\\":3,\\\"findings\\\":3,\\\"exposed\\\":0,\\\"weakly_exposed\\\":3,\\\"reachable_unre…`", "human.txt drift for fixture `error_return_unresolved_guard`\n  expected: fixtures/error_return_unresolved_guard/expected/human.txt\n  actual:   target/ripr/fixtures/error_return_unresolved_guard/human.txt\n  diff:    line 5 expected `Summary: 3 changed behaviors checked: 3 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test …` vs actual `Summary: 3 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed, 0 reached but not noticed, 0 no test …`"]
+}
