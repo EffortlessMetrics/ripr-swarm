@@ -36,7 +36,9 @@ const ROUTES: &[(&str, &str, &str)] = &[
     ),
 ];
 
-fn marked_block<'a>(doc: &'a str, kind: &str, id: &str, language: &str) -> Result<&'a str, String> {
+fn marked_block(doc: &str, kind: &str, id: &str, language: &str) -> Result<String, String> {
+    // Source checkouts can use CRLF; example identity is independent of it.
+    let doc = doc.replace("\r\n", "\n");
     let marker = format!("<!-- agent-doc-{kind}: {id} -->");
     if doc.matches(&marker).count() != 1 {
         return Err(format!("expected exactly one example marker `{marker}`"));
@@ -50,13 +52,13 @@ fn marked_block<'a>(doc: &'a str, kind: &str, id: &str, language: &str) -> Resul
     let (code, _) = body
         .split_once("\n```")
         .ok_or_else(|| format!("unterminated example `{marker}`"))?;
-    Ok(code)
+    Ok(code.to_string())
 }
 
 fn check_routes(doc: &str) -> Result<(), String> {
     for (id, language, command) in ROUTES {
         let actual = marked_block(doc, "command", id, language)?;
-        if normalized(actual) != *command {
+        if normalized(&actual) != *command {
             return Err(format!("dispatch route `{id}` changed: `{actual}`"));
         }
     }
@@ -65,7 +67,8 @@ fn check_routes(doc: &str) -> Result<(), String> {
 
 #[test]
 fn dispatch_examples_keep_the_installed_compact_attempt_routes() -> Result<(), String> {
-    check_routes(DISPATCH)
+    check_routes(DISPATCH)?;
+    check_routes(&DISPATCH.replace("\r\n", "\n").replace('\n', "\r\n"))
 }
 
 #[test]
@@ -196,6 +199,15 @@ fn require_one_pass(output: &Output) -> Result<(), String> {
 #[test]
 fn documented_boundary_oracle_rejects_wrong_behavior_and_zero_subjects() -> Result<(), String> {
     let source = marked_block(DISPATCH, "example", "threshold-oracle", "rust")?;
+    let windows_source = marked_block(
+        &DISPATCH.replace("\r\n", "\n").replace('\n', "\r\n"),
+        "example",
+        "threshold-oracle",
+        "rust",
+    )?;
+    if source != windows_source {
+        return Err("CRLF changed the documented oracle source".to_string());
+    }
     let comparison = "total >= 100";
     let equality = "    assert_eq!(shipping_fee(100), 0);\n";
     if source.matches(comparison).count() != 1 || source.matches(equality).count() != 1 {
@@ -204,7 +216,7 @@ fn documented_boundary_oracle_rejects_wrong_behavior_and_zero_subjects() -> Resu
         );
     }
     let scratch = Scratch::new("agent-doc-oracle")?;
-    let correct = compile_example(&scratch.0, "correct", source)?;
+    let correct = compile_example(&scratch.0, "correct", &source)?;
     require_one_pass(&execute_example(&correct, "threshold_contract")?)?;
 
     // The negative implementation must compile. Its behavioral assertion,
