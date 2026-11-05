@@ -1,0 +1,18 @@
+[
+  {
+    "wrong": false,
+    "source_sha256": "99c5f88b4431d493bc1fe8c8942c6c621dbc910ab688aecba8760e47ae150cd0",
+    "compile_exit": 0,
+    "run_exit": 0,
+    "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+    "compile_stderr": ""
+  },
+  {
+    "wrong": true,
+    "source_sha256": "0df265c11b2621cb22842869225027fc1920b7b6d3b13dc97307de0e069738b7",
+    "compile_exit": 0,
+    "run_exit": 0,
+    "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+    "compile_stderr": "warning: unused variable: `order_id`\n  --> /workspace/011-integration-proof/compat-diagnostics/intercepted_first/wrong.rs:17:43\n   |\n17 | pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n   |                                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_order_id`\n   |\n   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: 1 warning emitted\n\n"
+  }
+]

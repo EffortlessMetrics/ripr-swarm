@@ -1,6 +1,6 @@
 {
-  "candidate": "2ed9a70d5dcfe9e396d126c5a5e27cacac969dc1",
-  "tree": "bdb5e6f6e0450824f4fa5e4269ce860a2b339c1a",
+  "candidate": "b6ae31e7a6553346340ca9aff468f9e4d30267f7",
+  "tree": "3972cdd3f1e2cf5b4afcc80c9be03211c8e26898",
   "branch": "successor/011-integration-20261105",
   "product_source_review": {
     "candidate": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
@@ -17,9 +17,9 @@
   },
   "current_delta": {
     "base": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
-    "path": "2ed9-observer-complete.patch",
-    "bytes": 38521,
-    "sha256": "05563047c55da918bf06c9e13b699883d52dd2882a0f62f48e6237f95ca5b34a"
+    "path": "b6ae31-observer-complete.patch",
+    "bytes": 61492,
+    "sha256": "79f04d7d6afbc0c647d117daa15a90a8bba47c5b2e7cf47538644f3e3351a2f2"
   },
   "retained_policy_leaves": {
     "allow_attributes": 0,
@@ -29,8 +29,8 @@
   },
   "qualification": {
     "status": "current guarded compatibility-first pipeline running",
-    "tool_session": 24700,
-    "prior_exact_candidate": "0f518bf51755f9a1ad4306cea5087b5162ce343c",
+    "tool_session": 25920,
+    "prior_exact_candidate": "2ed9a70d5dcfe9e396d126c5a5e27cacac969dc1",
     "prior_full_library": {
       "passed": 18087,
       "failed": 0,
@@ -43,7 +43,7 @@
       "receipt": "2de344-owner-call-compatibility-receipt.json",
       "cause": "valid qualified wrapper boundary assertions rejected by bare-call-only identity pin"
     },
-    "current_repairs": "bool exact-value canonical pin; parser-bound same-line scalar order/scope; resolved same-file relative unit-value imports; concrete fresh empty RefCell<Vec<String>> element observation with preserving std map; seeded/constant/shadowed map runtime negatives",
+    "current_repairs": "canonical same-file module resolver for return pins; whole bound bool operand using existing boundary/block-tail producer; typed root unit and trait parent import proof; refusal of intercepted first/last methods; honesty corpus and paired native controls",
     "pending": [
       "current compatibility",
       "affected library",
@@ -69,7 +69,7 @@
       "receipt": "cdbb570-owner-call-compatibility-receipt.json",
       "native_exit": 101
     },
-    "current_phase": "owner-call compatibility compile; focused pin/import controls then affected scoped/full library and native aggregate pipeline",
+    "current_phase": "owner-call compatibility compile; current producer/goldens and full/native qualification pending",
     "previous_consumer_results": {
       "lsp": [
         21,
@@ -96,18 +96,11 @@
         0
       ],
       "owner_pin_execution": [
-        62,
-        4
+        64,
+        3
       ],
-      "canonical_trait_pin": [
-        0,
-        1
-      ],
-      "receipts": [
-        "0f518-owner-call-compatibility-receipt.json",
-        "0f518-trait-return-pin-control-receipt.json"
-      ],
-      "diagnosis": "six original failures fixed; remaining qualified-bool exact-value pin gate, unit-value redundant relative import, collection projection observer; new control exposed same-line scalar binding refusal"
+      "receipt": "2ed9-owner-call-compatibility-receipt.json",
+      "remaining": "mixed same-line boundary pairing in new control; same-file module and block-tail bool identity; out-of-line parent trait/unit imports"
     }
   },
   "history": {
@@ -123,7 +116,7 @@
     "release selection scope_pending"
   ],
   "status": "not fully qualified; no remote CI request, protected merge, settings change or release performed",
-  "subsequent_delta_review": "cdbb-to-2ed9 cumulative observer delta published for narrow affected review",
+  "subsequent_delta_review": "cdbb-to-b6ae31 cumulative observer delta published; independent affected review pending",
   "clippy_diagnostic": {
     "base": "b135d8cf382821bcd6deafff8ca50dc02547d852",
     "frozen_patch_sha256": "75deb16a077b004d5d53f8353b85599532e39afc17cf0902c5f2a4fcd235622d",
@@ -131,5 +124,18 @@
     "workspace_all_targets_keep_going_exit": 0,
     "receipt": "342455-source-clippy-all-targets-diagnostic-receipt.json",
     "scope": "diagnostic exact source bytes; current commit qualification and native check-fast still pending"
-  }
+  },
+  "counterexample": {
+    "candidate": "2ed9a70d5dcfe9e396d126c5a5e27cacac969dc1",
+    "static_report": "2ed9-intercepted-first-red.json",
+    "static_result": "both effect families exposed",
+    "native_receipt": "2ed9-intercepted-first-native.json",
+    "native_result": "correct and changed-to-static payload producer each compile0/run0, one test passed in each",
+    "new_fixture": "fixtures/rust_effect_receiver_intercepted_first",
+    "current_repair_result": "pending current test execution; no inferred pass"
+  },
+  "limitations": [
+    "standalone same-line scalar binding is supported; mixed same-line oracle/boundary pairing remains conservative and assertion-order controls use separate statements/lines",
+    "new fixture goldens must come from the corrected production producer; not generated from the red candidate"
+  ]
 }
