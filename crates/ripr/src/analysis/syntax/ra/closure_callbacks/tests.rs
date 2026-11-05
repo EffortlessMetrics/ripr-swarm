@@ -714,6 +714,16 @@ fn a_name_bound_earlier_to_a_call_making_closure_is_withheld() {
             true,
         ),
         (
+            "std arc named closure is withheld",
+            "fn t() { let f = std::sync::Arc::new(|| greet()); run(1, f); }",
+            true,
+        ),
+        (
+            "std rc named closure is withheld",
+            "fn t() { let f = std::rc::Rc::new(|| greet()); run(1, f); }",
+            true,
+        ),
+        (
             "boxed closure without a call",
             "fn t() { let f = Box::new(|| 5); run(1, f); }",
             false,
@@ -827,6 +837,21 @@ fn cloned_callback_names_keep_the_plain_helper_withhold() {
             true,
         ),
         (
+            "clone of a std arc callback binding",
+            "fn t() { let f = std::sync::Arc::new(|| greet()); run(1, f.clone()); }",
+            true,
+        ),
+        (
+            "clone of a std rc callback binding",
+            "fn t() { let f = std::rc::Rc::new(|| greet()); run(1, f.clone()); }",
+            true,
+        ),
+        (
+            "bound clone of a std arc callback",
+            "fn t() { let f = std::sync::Arc::new(|| greet()); let g = f.clone(); run(1, g); }",
+            true,
+        ),
+        (
             "earlier enclosing binding",
             "fn t() { let f = || greet(); if ready { run(1, f.clone()); } }",
             true,
@@ -874,6 +899,21 @@ fn cloned_callback_names_keep_the_plain_helper_withhold() {
         (
             "call-less closure clone",
             "fn t() { let f = || 5; run(1, f.clone()); }",
+            false,
+        ),
+        (
+            "std arc ordinary value clone",
+            "fn t() { let f = std::sync::Arc::new(greet()); run(1, f.clone()); }",
+            false,
+        ),
+        (
+            "std rc ordinary value clone",
+            "fn t() { let f = std::rc::Rc::new(greet()); run(1, f.clone()); }",
+            false,
+        ),
+        (
+            "std arc call-less closure clone",
+            "fn t() { let f = std::sync::Arc::new(|| 5); run(1, f.clone()); }",
             false,
         ),
         (
