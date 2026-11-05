@@ -1606,6 +1606,11 @@ fn gap_list_output_schema() -> Value {
                     "eligible": { "type": "integer", "minimum": 0 },
                     "selected": { "type": "integer", "minimum": 0 },
                     "filtered": { "type": "integer", "minimum": 0 },
+                    "proof_harness_only": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Present only when greater than zero: filtered items reached solely by a proof harness ripr does not evaluate. A subset of no_static_path items; a proof harness is not test coverage."
+                    },
                     "filters": {
                         "type": "object",
                         "properties": {

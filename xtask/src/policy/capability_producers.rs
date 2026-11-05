@@ -45,7 +45,7 @@ mod tests;
 
 const REGISTRY_KIND: &str = "ripr_language_capabilities";
 const REGISTRY_SCHEMA: &str = "0.1";
-const LANGUAGE_ID_SOURCE: &str = "crates/ripr/src/domain/language.rs";
+const LANGUAGE_ID_SOURCE: &str = "crates/ripr-contract/src/domain/language.rs";
 const RIPR_CARGO_TOML: &str = "crates/ripr/Cargo.toml";
 const ADAPTER_ROOT: &str = "crates/ripr/src/analysis/language";
 const SPEC_DIR: &str = "docs/specs";

@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- Python and TypeScript unit tests pin named fixtures only: two Python rebind inputs and three TypeScript floating-promise inputs read `static_unknown` (not `exposed`), beside `exposed` controls, and none of the fixtures reads `propagation_unknown` (Python also not `reachable_unrevealed` or `infection_unknown`). They do not enumerate every classifier entry point (#12922 slice 1).

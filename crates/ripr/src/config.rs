@@ -16,11 +16,17 @@ use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
 mod diagnostic;
+pub(crate) mod language_detection;
 mod model;
 #[cfg(test)]
+mod override_tests;
+mod overrides;
+#[cfg(test)]
 mod perl_executable_tests;
+mod preview_excluded;
 mod python;
 mod toolchain_file;
+pub(crate) mod verification_contract;
 // The exclusion path authorities are pure predicates, needed by the
 // diff-scope guard's admission counting in every feature lane (mirroring the
 // always-compiled Python authorities), so the module compiles unconditionally.
@@ -44,9 +50,15 @@ pub use model::{
     TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
 pub(crate) use model::{
-    HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig, perl_executable_opt_in,
+    HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, PythonLanguageConfig, RustLanguageConfig,
+    TypescriptLanguageConfig, canonical_test_harnesses_identity, perl_executable_opt_in,
+    test_harness_registration_canonical_identity,
 };
+use overrides::discover_workspace_crates;
 
+pub(crate) use preview_excluded::{
+    is_probable_fixture_or_data_path, path_matches_preview_excluded_patterns,
+};
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
 pub(crate) use python::{
@@ -74,7 +86,8 @@ pub(crate) use typescript::{
 // rust-only build as in a full build (#10730).
 pub(crate) use typescript::{
     is_declared_handwritten_typescript_path, is_detectable_excluded_typescript_path,
-    is_detectable_generated_typescript_path, is_typescript_excluded_dir_everywhere,
+    is_detectable_generated_typescript_path, is_typescript_docs_site_path,
+    is_typescript_excluded_dir_everywhere,
 };
 
 /// Without `lang-typescript` no-config detection never selects the adapter,
@@ -336,8 +349,29 @@ pub(crate) fn load_for_root_failure(root: &Path) -> Result<RiprConfig, ConfigLoa
     // Identity stays the discovered canonical path: symlink equality and
     // `source_path` consumers compare filesystem identity, not the display
     // spelling (#7652).
-    config.source_path = Some(path);
+    config.source_path = Some(path.clone());
     config.source_text = Some(text);
+    // Crate names belong to the workspace that owns ripr.toml, not the
+    // selected member root that discovered it by walking ancestors.
+    let crate_root = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(root);
+    config
+        .bind_workspace_crates(discover_workspace_crates(crate_root))
+        .map_err(|err| {
+            ConfigLoadFailure::Read(config_load_parse_error_for_host(&path, &err, cfg!(windows)))
+        })?;
+    config.verification_contract_decision = Some(
+        verification_contract::compile_repository_verification_contract(
+            verification_contract::VerificationContractCompileInput {
+                repository_root: root,
+                ripr_toml_path: config.source_path.as_deref(),
+                ripr_toml_content_digest: loaded_config_identity(&config),
+                config: &config,
+            },
+        ),
+    );
     Ok(config)
 }
 
@@ -409,7 +443,6 @@ const CONFIG_LOAD_READ_HINT: &str = concat!(
     config_removal_advice!()
 );
 
-#[cfg(test)]
 fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
     format!(
         "{}: {}\n{CONFIG_LOAD_PARSE_HINT}",
@@ -574,6 +607,11 @@ pub(crate) fn check_artifact_config_identity_hash(config: &RiprConfig) -> String
         .check_artifact_identity_fields()
         .into_iter()
         .filter(|field| field.role == ConfigIdentityRole::FindingAffecting)
+        // A config without oracle overlays keeps its pre-override identity so
+        // adding the override model does not invalidate existing artifacts.
+        .filter(|field| {
+            !(field.name == "overrides.oracles" && field.value.as_deref() == Some("0\u{0}"))
+        })
         .map(|field| format!("{}={}", field.name, field.value.clone().unwrap_or_default()))
         .collect::<Vec<_>>();
     pairs.sort();
@@ -605,10 +643,12 @@ pub(crate) fn loaded_config_identity(config: &RiprConfig) -> Option<String> {
 /// differing only in an unconsumed setting stay comparable). Closed set:
 /// when the producer starts consuming another config field, add it here in
 /// the same PR; do not widen the filter to whole sections.
-pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 7] = [
+pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 8] = [
     "oracles.broad_error_strength",
     "oracles.mock_expectation_strength",
     "oracles.snapshot_strength",
+    // Per-crate/path oracle overlays change classification evidence (#2671).
+    "overrides.oracles",
     // The production-like opt-in changes which files are production
     // subjects in the repo seam inventory (#3283).
     "analysis.production_like_targets",
@@ -641,6 +681,9 @@ pub(crate) fn repo_exposure_config_identity_hash(config: &RiprConfig) -> String 
         .filter(|field| {
             field.role == ConfigIdentityRole::FindingAffecting
                 && REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS.contains(&field.name)
+                // Same rule as the diff-check hash: no oracle overlay, no pair.
+                && !(field.name == "overrides.oracles"
+                    && field.value.as_deref() == Some("0\u{0}"))
         })
         .map(|field| format!("{}={}", field.name, field.value.clone().unwrap_or_default()))
         .collect::<Vec<_>>();
@@ -981,25 +1024,37 @@ impl RiprConfig {
                     )?;
                 }
             }
-            if let Some(python) = languages.python
-                && let Some(paths) = python.handwritten_files
-            {
-                config.languages.python.handwritten_files = parse_handwritten_files(
-                    &paths,
-                    "languages.python.handwritten_files",
-                    "a Python `.py` file",
-                    |extension| extension == "py",
-                )?;
+            if let Some(python) = languages.python {
+                if let Some(paths) = python.handwritten_files {
+                    config.languages.python.handwritten_files = parse_handwritten_files(
+                        &paths,
+                        "languages.python.handwritten_files",
+                        "a Python `.py` file",
+                        |extension| extension == "py",
+                    )?;
+                }
+                if let Some(patterns) = python.excluded_file_patterns {
+                    config.languages.python.excluded_file_patterns = parse_path_glob_patterns(
+                        "languages.python.excluded_file_patterns",
+                        &patterns,
+                    )?;
+                }
             }
-            if let Some(typescript) = languages.typescript
-                && let Some(paths) = typescript.handwritten_files
-            {
-                config.languages.typescript.handwritten_files = parse_handwritten_files(
-                    &paths,
-                    "languages.typescript.handwritten_files",
-                    "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
-                    crate::analysis::is_ts_js_source_extension,
-                )?;
+            if let Some(typescript) = languages.typescript {
+                if let Some(paths) = typescript.handwritten_files {
+                    config.languages.typescript.handwritten_files = parse_handwritten_files(
+                        &paths,
+                        "languages.typescript.handwritten_files",
+                        "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
+                        crate::analysis::is_ts_js_source_extension,
+                    )?;
+                }
+                if let Some(patterns) = typescript.excluded_file_patterns {
+                    config.languages.typescript.excluded_file_patterns = parse_path_glob_patterns(
+                        "languages.typescript.excluded_file_patterns",
+                        &patterns,
+                    )?;
+                }
             }
         }
         if let Some(profiles) = raw.profiles {
@@ -1060,6 +1115,10 @@ impl RiprConfig {
                     .transpose()?,
             };
         }
+        if let Some(overrides) = raw.overrides {
+            config.overrides = parse_overrides(overrides, text)?;
+            overrides::sync_compiled_overlays(&mut config);
+        }
         Ok(config)
     }
 }
@@ -1111,28 +1170,26 @@ fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String>
 }
 
 fn parse_generated_file_patterns(values: &[String]) -> Result<Vec<String>, String> {
+    parse_path_glob_patterns("languages.rust.generated_file_patterns", values)
+}
+
+fn parse_path_glob_patterns(field: &str, values: &[String]) -> Result<Vec<String>, String> {
     let mut parsed = Vec::with_capacity(values.len());
     // Set membership keeps duplicate detection linear: a hostile `ripr.toml`
     // may list tens of thousands of entries (#11560).
     let mut seen = std::collections::HashSet::with_capacity(values.len());
     for value in values {
         if value.chars().any(char::is_control) {
-            return Err(
-                "languages.rust.generated_file_patterns must not contain control characters"
-                    .to_string(),
-            );
+            return Err(format!("{field} must not contain control characters"));
         }
         let trimmed = value.trim();
-        parse_relative_path("languages.rust.generated_file_patterns", trimmed)?;
+        parse_relative_path(field, trimmed)?;
         if trimmed == "." {
-            return Err(
-                "languages.rust.generated_file_patterns must identify a file pattern, not `.`"
-                    .to_string(),
-            );
+            return Err(format!("{field} must identify a file pattern, not `.`"));
         }
         if !seen.insert(trimmed) {
             return Err(format!(
-                "languages.rust.generated_file_patterns lists `{trimmed}` more than once; remove the duplicate"
+                "{field} lists `{trimmed}` more than once; remove the duplicate"
             ));
         }
         parsed.push(trimmed.to_string());
@@ -1175,6 +1232,246 @@ fn parse_handwritten_files(
     }
     parsed.sort_unstable();
     Ok(parsed)
+}
+
+fn parse_overrides(
+    raw: Vec<RawOverride>,
+    text: &str,
+) -> Result<Vec<overrides::ConfigOverride>, Box<ConfigDiagnostic>> {
+    let mut parsed = Vec::with_capacity(raw.len());
+    for (index, row) in raw.into_iter().enumerate() {
+        let selector = match (row.crate_name, row.path) {
+            (Some(name), None) => {
+                overrides::OverrideSelector::Crate(overrides::parse_crate_selector(&name)?)
+            }
+            (None, Some(path)) => {
+                overrides::OverrideSelector::Path(overrides::parse_path_selector(&path)?)
+            }
+            (Some(_), Some(_)) => {
+                return Err(format!(
+                    "[[overrides]] entry {} must set exactly one of crate or path, not both",
+                    index + 1
+                )
+                .into());
+            }
+            (None, None) => {
+                return Err(format!(
+                    "[[overrides]] entry {} must set crate (Cargo package name) or path (repository-relative glob)",
+                    index + 1
+                )
+                .into());
+            }
+        };
+        let severity = row
+            .severity
+            .map(|raw_severity| parse_partial_severity(raw_severity, text, index))
+            .transpose()?;
+        let oracles = row
+            .oracles
+            .map(|raw_oracles| parse_partial_oracles(raw_oracles, text, index))
+            .transpose()?;
+        if severity
+            .as_ref()
+            .is_none_or(overrides::PartialSeverityConfig::is_empty)
+            && oracles
+                .as_ref()
+                .is_none_or(overrides::PartialOraclePolicy::is_empty)
+        {
+            return Err(format!(
+                "[[overrides]] entry {} must override severity or oracles",
+                index + 1
+            )
+            .into());
+        }
+        parsed.push(overrides::ConfigOverride {
+            selector,
+            severity,
+            oracles,
+            resolved_path_glob: None,
+            nested_package_dirs: Vec::new(),
+        });
+    }
+    Ok(parsed)
+}
+
+fn parse_partial_severity(
+    raw: RawSeverityConfig,
+    text: &str,
+    index: usize,
+) -> Result<overrides::PartialSeverityConfig, Box<ConfigDiagnostic>> {
+    let prefix = format!("overrides[{index}].severity");
+    let mut partial = overrides::PartialSeverityConfig::default();
+    if let Some(findings) = raw.findings {
+        partial.findings.exposed = optional_severity(
+            findings.exposed,
+            &format!("{prefix}.findings.exposed"),
+            false,
+            text,
+        )?;
+        partial.findings.weakly_exposed = optional_severity(
+            findings.weakly_exposed,
+            &format!("{prefix}.findings.weakly_exposed"),
+            false,
+            text,
+        )?;
+        partial.findings.reachable_unrevealed = optional_severity(
+            findings.reachable_unrevealed,
+            &format!("{prefix}.findings.reachable_unrevealed"),
+            false,
+            text,
+        )?;
+        partial.findings.no_static_path = optional_severity(
+            findings.no_static_path,
+            &format!("{prefix}.findings.no_static_path"),
+            false,
+            text,
+        )?;
+        partial.findings.infection_unknown = optional_severity(
+            findings.infection_unknown,
+            &format!("{prefix}.findings.infection_unknown"),
+            false,
+            text,
+        )?;
+        partial.findings.propagation_unknown = optional_severity(
+            findings.propagation_unknown,
+            &format!("{prefix}.findings.propagation_unknown"),
+            false,
+            text,
+        )?;
+        partial.findings.static_unknown = optional_severity(
+            findings.static_unknown,
+            &format!("{prefix}.findings.static_unknown"),
+            false,
+            text,
+        )?;
+    }
+    if let Some(seams) = raw.seams {
+        partial.seams.strongly_gripped = optional_severity(
+            seams.strongly_gripped,
+            &format!("{prefix}.seams.strongly_gripped"),
+            true,
+            text,
+        )?;
+        partial.seams.weakly_gripped = optional_severity(
+            seams.weakly_gripped,
+            &format!("{prefix}.seams.weakly_gripped"),
+            true,
+            text,
+        )?;
+        partial.seams.ungripped = optional_severity(
+            seams.ungripped,
+            &format!("{prefix}.seams.ungripped"),
+            true,
+            text,
+        )?;
+        partial.seams.reachable_unrevealed = optional_severity(
+            seams.reachable_unrevealed,
+            &format!("{prefix}.seams.reachable_unrevealed"),
+            true,
+            text,
+        )?;
+        partial.seams.activation_unknown = optional_severity(
+            seams.activation_unknown,
+            &format!("{prefix}.seams.activation_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.propagation_unknown = optional_severity(
+            seams.propagation_unknown,
+            &format!("{prefix}.seams.propagation_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.observation_unknown = optional_severity(
+            seams.observation_unknown,
+            &format!("{prefix}.seams.observation_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.discrimination_unknown = optional_severity(
+            seams.discrimination_unknown,
+            &format!("{prefix}.seams.discrimination_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.opaque =
+            optional_severity(seams.opaque, &format!("{prefix}.seams.opaque"), true, text)?;
+        partial.seams.intentional = optional_severity(
+            seams.intentional,
+            &format!("{prefix}.seams.intentional"),
+            true,
+            text,
+        )?;
+        partial.seams.suppressed = optional_severity(
+            seams.suppressed,
+            &format!("{prefix}.seams.suppressed"),
+            true,
+            text,
+        )?;
+    }
+    Ok(partial)
+}
+
+fn parse_partial_oracles(
+    raw: RawOraclePolicy,
+    text: &str,
+    index: usize,
+) -> Result<overrides::PartialOraclePolicy, Box<ConfigDiagnostic>> {
+    let prefix = format!("overrides[{index}].oracles");
+    Ok(overrides::PartialOraclePolicy {
+        snapshot_strength: optional_oracle_strength(
+            raw.snapshot_strength,
+            &format!("{prefix}.snapshot_strength"),
+            text,
+        )?,
+        mock_expectation_strength: optional_oracle_strength(
+            raw.mock_expectation_strength,
+            &format!("{prefix}.mock_expectation_strength"),
+            text,
+        )?,
+        broad_error_strength: optional_oracle_strength(
+            raw.broad_error_strength,
+            &format!("{prefix}.broad_error_strength"),
+            text,
+        )?,
+    })
+}
+
+fn optional_severity(
+    raw: Option<toml::Spanned<String>>,
+    field: &str,
+    allow_off: bool,
+    text: &str,
+) -> Result<Option<ConfigSeverity>, Box<ConfigDiagnostic>> {
+    raw.map(|value| {
+        parse_severity(field, value.get_ref(), allow_off).map_err(|message| {
+            Box::new(ConfigDiagnostic::at_value(
+                message,
+                field,
+                value.span(),
+                text,
+            ))
+        })
+    })
+    .transpose()
+}
+
+fn optional_oracle_strength(
+    raw: Option<toml::Spanned<String>>,
+    field: &str,
+    text: &str,
+) -> Result<Option<OracleStrength>, Box<ConfigDiagnostic>> {
+    raw.map(|value| {
+        parse_oracle_strength(field, value.get_ref()).map_err(|message| {
+            Box::new(ConfigDiagnostic::at_value(
+                message,
+                field,
+                value.span(),
+                text,
+            ))
+        })
+    })
+    .transpose()
 }
 
 fn parse_profiles(raw: RawProfilesConfig) -> Result<ProfilesConfig, String> {
@@ -1225,6 +1522,17 @@ struct RawConfig {
     profiles: Option<RawProfilesConfig>,
     typescript: Option<RawTypescriptConfig>,
     perl: Option<RawPerlConfig>,
+    overrides: Option<Vec<RawOverride>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawOverride {
+    #[serde(rename = "crate")]
+    crate_name: Option<String>,
+    path: Option<String>,
+    severity: Option<RawSeverityConfig>,
+    oracles: Option<RawOraclePolicy>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -1253,12 +1561,14 @@ struct RawRustLanguageConfig {
 #[serde(deny_unknown_fields)]
 struct RawPythonLanguageConfig {
     handwritten_files: Option<Vec<String>>,
+    excluded_file_patterns: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawTypescriptLanguageConfig {
     handwritten_files: Option<Vec<String>>,
+    excluded_file_patterns: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -1808,5 +2118,31 @@ pub(crate) fn config_for_candidate(
     })?;
     config.source_path = None;
     config.source_text = Some(text);
+    if config.has_crate_override_selectors() {
+        let manifests = crate::analysis::git_candidate_execution::candidate_cargo_toml_manifests(
+            subject,
+            git_timeout,
+        )
+        .map_err(|error| match error {
+            GitCandidateSubjectError::ExecutionTimedOut {
+                operation,
+                timeout_ms,
+                spawned,
+            } => CandidateConfigError::Timeout {
+                operation,
+                timeout_ms,
+                spawned,
+            },
+            other => CandidateConfigError::Other(other.to_string()),
+        })?;
+        config
+            .bind_workspace_crates(overrides::crates_from_listed_manifests(&manifests))
+            .map_err(|err| {
+                CandidateConfigError::Other(format!(
+                    "candidate tree ripr.toml: {}\n{CANDIDATE_CONFIG_PARSE_HINT}",
+                    err.trim_end()
+                ))
+            })?;
+    }
     Ok(config)
 }

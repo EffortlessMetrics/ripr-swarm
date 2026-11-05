@@ -1309,6 +1309,7 @@ const HAS_NARRATION: &[&str] = &[
     "check",
     "context",
     "continue",
+    "evidence-health",
     "explain",
     "pilot",
     "repair",
@@ -1348,7 +1349,6 @@ const NO_NARRATION: &[&str] = &[
     "coverage-grip frontier",
     "diff",
     "doctor",
-    "evidence-health",
     "feedback",
     "feedback export",
     "feedback record",
@@ -1551,7 +1551,14 @@ impl Drop for QuietScratch {
 /// progress/`wrote` emitter. Refusal-only argv for the remaining
 /// `HAS_NARRATION` rows still compares quiet vs loud; those working paths
 /// need attempt/seam state this fixture does not seed.
-const MUST_EMIT_NARRATION: &[&str] = &["check", "context", "explain", "pilot", "reports ci-packet"];
+const MUST_EMIT_NARRATION: &[&str] = &[
+    "check",
+    "context",
+    "evidence-health",
+    "explain",
+    "pilot",
+    "reports ci-packet",
+];
 
 /// Commands whose default spawn is not a quiet/loud narration comparison:
 /// stdio servers hang, and `init` writes a workflow whose `--quiet` path
@@ -1594,6 +1601,7 @@ fn narration_argv(
             finding.into(),
         ],
         "continue" => vec!["continue".into(), "--root".into(), root.into()],
+        "evidence-health" => vec!["evidence-health".into(), "--root".into(), root.into()],
         "explain" => vec![
             "explain".into(),
             "--root".into(),

@@ -349,9 +349,9 @@ fn real_diff_fixtures_omit_scope_and_contradiction_closes_packet() -> Result<(),
             return Err(format!("{ext}: diff control wrong: {diff:?}"));
         }
         for finding in &mut output.findings {
-            finding
-                .evidence
-                .push(crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string());
+            finding.evidence.push(
+                ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE.to_string(),
+            );
         }
         let json = json_of(&output)?;
         for f in ts_findings_in(&json) {

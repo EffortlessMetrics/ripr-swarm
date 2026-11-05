@@ -237,6 +237,61 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     None
 }
 
+/// An ordinary package or project manifest at or above the current directory.
+/// `resolve_project_root` anchors on workspaces, Cargo packages and Git top
+/// levels only, so a standalone npm or Python project without Git still reads
+/// as unanchored there; it is a project, and the repair-lifecycle gate keeps
+/// its ordinary answers (#12417).
+pub(in crate::cli) fn package_manifest_above_current_dir() -> bool {
+    const MANIFESTS: [&str; 4] = ["package.json", "pyproject.toml", "setup.py", "setup.cfg"];
+    let Ok(start) = std::fs::canonicalize(".") else {
+        return true;
+    };
+    start
+        .ancestors()
+        .any(|dir| MANIFESTS.iter().any(|name| dir.join(name).is_file()))
+}
+
+/// The cause an implicit repair-lifecycle run refuses with (#12417): the
+/// current directory sits under no workspace, package or Git top level, and
+/// no ordinary package manifest excuses it, so the directory is not a project
+/// and there is no repair state to answer about. `None` when the run is
+/// anchored (or the walk failed, which the ordinary resolution reports).
+pub(in crate::cli) fn unanchored_implicit_root_cause() -> Option<String> {
+    if !matches!(resolve_project_root(Path::new(".")), Ok(None)) {
+        return None;
+    }
+    if package_manifest_above_current_dir() {
+        return None;
+    }
+    Some(
+        "no workspace, package or Git repository was found above the current directory, so ripr did not look for repair state; run from inside your project or pass `--root <dir>`"
+            .to_string(),
+    )
+}
+
+/// The repair-lifecycle root resolution (`repair`, `continue`, `status`, and
+/// the `agent` spellings): the same implicit root [`resolve_implicit_command_root`]
+/// resolves, but an implicit run that no project anchors refuses instead of
+/// silently retaining the current directory (#12417). Retaining it made the
+/// spellings read or answer about an unrelated tree as if it were a project —
+/// for `continue`, by scanning that whole tree for a repair start. `check`,
+/// `pilot`, `context`, `rerun`, `diff`, `explain` and `cache` keep
+/// [`resolve_implicit_command_root`] (retain-start); an explicit `--root`
+/// skips the gate.
+pub(in crate::cli) fn resolve_implicit_command_root_refusing(
+    root: &mut PathBuf,
+    root_explicit: bool,
+) -> Result<Option<String>, String> {
+    if root_explicit {
+        return resolve_implicit_command_root(root, root_explicit);
+    }
+    if let Some(cause) = unanchored_implicit_root_cause() {
+        return Err(cause);
+    }
+    resolve_implicit_command_root(root, root_explicit)
+}
+
 /// Shared by every command that takes `--root` and defaults to `.`: without a
 /// typed `--root`, resolve the workspace root exactly as `ripr check` does
 /// (#8767), with the same stderr disclosure. A typed `--root` is kept as given.
@@ -588,7 +643,10 @@ pub(super) fn refuse_check(
 /// consumers get the requested echo, the published facts, and the bounded
 /// retry; every other failure keeps its unchanged prose.
 fn human_refusal_prose(error: &CoreError) -> String {
-    if error.refusal_notice().identity == "analysis_timeout"
+    if error
+        .refusal_notice(&crate::config::config_error_summary)
+        .identity
+        == "analysis_timeout"
         && let Some(projection) = app::timeout_refusal::take_stashed()
     {
         return format!("{error}\n{}", projection.human_recovery_text());
@@ -610,7 +668,7 @@ pub(super) fn machine_refusal_document(
     format: OutputFormat,
     error: &CoreError,
 ) -> Option<Result<String, String>> {
-    let notice = error.refusal_notice();
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
     match format {
         OutputFormat::Json => {
             let display = error.to_string();
@@ -1621,6 +1679,14 @@ fn check_inner(
         // The audit-path formats also say when the cache has no usable entry
         // and the full walk runs (#12505).
         crate::analysis::announce_seam_facts_cache_misses();
+    }
+    if check_timeout_explicitly_provided
+        && let Some(disclosure) = super::check_budget::explicit_check_timeout_disclosure(
+            check_timeout,
+            format.is_repo_seam_inventory(),
+        )
+    {
+        eprintln!("{disclosure}");
     }
     if matches!(format, OutputFormat::RepoExposureJson) {
         // #7781: this path never reaches `check_with_progress`, so it needs
@@ -2682,7 +2748,22 @@ mod tests {
             ("hedge-rust-excluded-ts", vec![LanguageId::TypeScript]),
             ("hedge-rust-excluded-empty", Vec::new()),
         ] {
-            let (findings, outcome) = sample_diff_outcome(label, enabled)?;
+            let root = copy_sample_workspace_to_temp(label)?;
+            let mut config = RiprConfig::default();
+            config.languages.enabled = enabled;
+            let input = CheckInput {
+                root: root.clone(),
+                diff_file: Some(root.join("example.diff")),
+                ..CheckInput::default()
+            };
+            let result = app::check_workspace_with_config(input, &config);
+            if let Ok(()) = std::fs::remove_dir_all(&root) {}
+            let output = result?;
+            let findings = output.findings.len();
+            let outcome = output
+                .analysis_outcome
+                .as_ref()
+                .ok_or("diff pipeline must project an analysis outcome")?;
             assert_eq!(
                 findings, 0,
                 "fixture precondition: {label} must analyze nothing"
@@ -2696,7 +2777,7 @@ mod tests {
                 crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
                 "an excluded Rust adapter must not claim a complete analysis ({label})"
             );
-            let hedge = zero_findings_diff_hedge(Some(&outcome), false)
+            let hedge = zero_findings_diff_hedge(Some(outcome), false)
                 .ok_or_else(|| format!("{label}: a typed exclusion must be named on stderr"))?;
             assert!(
                 hedge.contains("rust is not in the effective [languages].enabled set"),
@@ -2706,6 +2787,25 @@ mod tests {
                 !hedge.contains("not a valid unified diff"),
                 "{label}: {hedge}"
             );
+            // #13138: the real incomplete zero-finding check result must not
+            // become done= when the compact Agent renderer projects it.
+            assert!(!output.no_scope_provided);
+            let text =
+                output::render::render_check_with_config(&output, &OutputFormat::Agent, &config)?;
+            assert!(
+                text.contains("analysis=incomplete|outcome=partial_with_limitations\n"),
+                "{text}"
+            );
+            assert!(
+                text.contains("limitation=language_adapter_unavailable|"),
+                "{text}"
+            );
+            assert!(text.contains("|recovery="), "{text}");
+            assert!(
+                text.contains("\nstop=analysis incomplete; zero findings is not a clean result\n"),
+                "{text}"
+            );
+            assert!(!text.contains("\ndone="), "{text}");
         }
         Ok(())
     }

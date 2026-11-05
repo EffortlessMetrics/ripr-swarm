@@ -242,6 +242,9 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
     // True when the previous significant token ends an operand, so a
     // following `-`, `*`, `&` or `!` is binary, not prefix.
     let mut after_operand = false;
+    // Preserve the last significant token across whitespace and comments.
+    // Looking backward through bytes misses a closer hidden by comment trivia.
+    let mut previous_closed_group = false;
     let mut previous_word_was_else = false;
     let mut index = frontmatter_end(text);
 
@@ -259,6 +262,8 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             index = skip_block_comment(bytes, index);
             continue;
         }
+        let follows_closed_group = previous_closed_group;
+        previous_closed_group = matches!(byte, b')' | b']');
         if byte == b'"' {
             index = skip_string(bytes, index + 1);
             after_operand = true;
@@ -345,7 +350,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         previous_word_was_else = false;
         match byte {
             b'(' | b'[' | b'{' => {
-                if after_operand && byte != b'{' && follows_closer(bytes, index) {
+                if after_operand && byte != b'{' && follows_closed_group {
                     // Postfix call or index on a closed group: `f()()..`,
                     // `x[0][0]..` nest left. A flat run of siblings such as
                     // the token tree of `m!(foo() foo() ..)` does not.
@@ -422,15 +427,6 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         index += 1;
     }
     estimate
-}
-
-/// True when the last significant byte before `index` closes a group, so a
-/// following `(` or `[` is a postfix call or index on that group's value.
-fn follows_closer(bytes: &[u8], index: usize) -> bool {
-    bytes
-        .get(..index)
-        .and_then(|head| head.iter().rev().find(|b| !b.is_ascii_whitespace()))
-        .is_some_and(|b| matches!(b, b')' | b']'))
 }
 
 /// Words after which a `-`, `*`, `&` or `!` is a prefix operator.
@@ -1030,6 +1026,95 @@ mod tests {
         ];
         for (name, source) in flat {
             assert_eq!(rust_nesting_refusal(&source), None, "{name}");
+        }
+    }
+
+    /// Comments are trivia between postfix links, including nested comments
+    /// and line comments containing misleading delimiters.
+    #[test]
+    fn postfix_comments_preserve_chain_budget_and_flat_controls() {
+        for trivia in [" ", "/* gap */", "/* outer /* inner */ ) ] */", "// ) ]\n"] {
+            for postfix in ["()", "[0]"] {
+                let link = format!("{trivia}{postfix}");
+                for links in [
+                    0,
+                    1,
+                    32,
+                    RUST_OPERATOR_RUN_BUDGET,
+                    RUST_OPERATOR_RUN_BUDGET + 1,
+                ] {
+                    let source = format!("fn f() {{ x(){}; }}", link.repeat(links));
+                    let estimate = estimate_rust_nesting(&source);
+                    assert_eq!(estimate.operator_run, links, "{trivia:?} {postfix} {links}");
+                    if links > RUST_OPERATOR_RUN_BUDGET {
+                        assert!(
+                            rust_nesting_refusal(&source)
+                                .is_some_and(|reason| reason.contains("rust_nesting_budget"))
+                        );
+                        assert!(parse_clean_source_file(&source).is_none());
+                    } else {
+                        assert_eq!(rust_nesting_refusal(&source), None);
+                    }
+                }
+                // An intervening identifier starts a flat token-tree sibling.
+                let sibling = format!("x{postfix}{trivia}");
+                let flat = format!("fn f() {{ m!({}); }}", sibling.repeat(5_000));
+                assert_eq!(estimate_rust_nesting(&flat).operator_run, 0);
+                assert_eq!(rust_nesting_refusal(&flat), None);
+            }
+        }
+    }
+
+    #[test]
+    fn postfix_comment_controls_match_parser_structure() {
+        use ra_ap_syntax::SyntaxKind;
+
+        for trivia in ["", "/* gap */", "// gap\n", "/* /* nested */ */"] {
+            let source = format!(
+                "fn f() {{ x(){}; }}",
+                format!("{trivia}(){trivia}[0]").repeat(16)
+            );
+            let parsed = parse_clean_source_file(&source);
+            assert!(
+                parsed.is_some(),
+                "short postfix chain must parse: {trivia:?}"
+            );
+            let Some(parse) = parsed else { return };
+            let syntax = parse.syntax_node();
+            assert_eq!(
+                syntax
+                    .descendants()
+                    .filter(|node| node.kind() == SyntaxKind::CALL_EXPR)
+                    .count(),
+                17
+            );
+            assert_eq!(
+                syntax
+                    .descendants()
+                    .filter(|node| node.kind() == SyntaxKind::INDEX_EXPR)
+                    .count(),
+                16
+            );
+            assert_eq!(estimate_rust_nesting(&source).operator_run, 32);
+        }
+        // These intervening tokens must clear the closer state, even when a
+        // literal contains a misleading closer or comment delimiter.
+        for token in [
+            "foo",
+            "123",
+            "\") /*\"",
+            "r#\"] /*\"#",
+            "')'",
+            "'label",
+            ",",
+            ";",
+        ] {
+            let flat = format!(
+                "m!({});",
+                format!("(){token}/* gap */() separator ").repeat(5_000)
+            );
+            assert_eq!(estimate_rust_nesting(&flat).operator_run, 0, "{token}");
+            assert_eq!(rust_nesting_refusal(&flat), None, "{token}");
         }
     }
 

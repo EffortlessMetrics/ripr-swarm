@@ -68,6 +68,7 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
 
 mod shared_macro_scan;
 mod shared_target_context;
+mod tuple_projection;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
     let source = "mod production {\nstruct Widget;\nimpl Widget { fn read() {} }\n#[test] fn subject() {}\nmod nested { struct Widget; trait Render {}\n#[test] fn subject() {}\n}\n}\nmod peer { struct Widget;\n#[test] fn subject() {}\n}\n";
@@ -8574,6 +8575,24 @@ fn a_bare_assert_keeps_the_owner_binding_defeats() {
     );
 }
 
+#[test]
+fn refusal_describe_uses_stable_slash_paths_on_every_host() {
+    // Evidence text must be byte-identical across hosts: a Windows-spelled
+    // path renders with `/`, never `\\`, so checked-in goldens hold.
+    let mut refusal = binding_refusal(Some(MacroBindingKind::Definition));
+    if let AssertionRefusal::MacroBinding {
+        site: Some((path, _)),
+        ..
+    } = &mut refusal
+    {
+        *path = PathBuf::from(r"tests\api.rs");
+    }
+    assert_eq!(
+        refusal.describe(),
+        "tests/api.rs:3 defines a macro named `assert_eq`"
+    );
+}
+
 fn binding_refusal(kind: Option<MacroBindingKind>) -> AssertionRefusal {
     AssertionRefusal::MacroBinding {
         name: "assert_eq".to_string(),
@@ -11796,6 +11815,7 @@ mod claims_direction;
 mod claims_import_scope;
 mod expect_test_pins;
 mod helper_pins;
+mod path_value_pin;
 #[cfg(test)]
 mod projected_workspace_memo;
 
