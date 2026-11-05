@@ -169,12 +169,17 @@ Other counts are generated, not copied here:
 
 - Repository orientation inventory: `cargo xtask current-state` writes
   `target/ripr/reports/current-state.{json,md}`; `--json` also prints the JSON.
-  Its current coverage is checkout repository identity, workspace version/MSRV,
-  declared development/release authorities, the command-catalog entry count, and
-  four retired goal-authority markers in the current roadmap section.
-  `cargo xtask current-state --check` checks those markers, support-map file
-  existence, and a nonempty catalog. The broader inventory and drift coverage
-  remains open under [#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330).
+  Its coverage is checkout repository identity, workspace version/MSRV,
+  declared development/release authorities, the command-catalog entry count,
+  four retired goal-authority markers in the current roadmap section, registered
+  artifact counts by kind/recorded status, and support-row counts by tier.
+  The counts and sorted structural violations reuse `repo-contract-report`'s
+  ledger-plus-fragments and support collectors. `cargo xtask current-state --check`
+  rejects those existing violations as well as the retired markers and an empty
+  catalog; missing/malformed required inputs produce named failure. JSON and
+  readable Markdown state the remaining coverage limitations. These counts do
+  not establish filesystem completeness, semantic implementation or earned
+  support. The broader inventory and drift coverage remains open under [#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330).
 - Registered artifact and support structure: `cargo xtask repo-contract-report`
   writes `target/ripr/reports/source-of-truth-graph.{json,md}` from the artifact
   ledger and its fragments, support rows, and existing structural diagnostics.

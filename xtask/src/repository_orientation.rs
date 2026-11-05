@@ -773,27 +773,10 @@ mod tests {
     /// Relative path and bytes (`None` when absent) for each input the run reads.
     type InputSnapshot = Vec<(String, Option<Vec<u8>>)>;
 
-    /// The orientation run reads exactly these repository inputs. Comparing
-    /// their contents, rather than whole-workspace `git status`, keeps the proof
-    /// independent of unrelated files that parallel test shards write.
+    /// Include ledger/fragments, registered files, support checker inputs and
+    /// directory membership now read through the current-state producer.
     fn orientation_input_snapshot(root: &Path) -> Result<InputSnapshot, String> {
-        [
-            "docs/ROADMAP.md",
-            "Cargo.toml",
-            "docs/status/SUPPORT_TIERS.md",
-        ]
-        .iter()
-        .map(|relative| {
-            let path = root.join(relative);
-            match fs::read(&path) {
-                Ok(bytes) => Ok(((*relative).to_string(), Some(bytes))),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    Ok(((*relative).to_string(), None))
-                }
-                Err(error) => Err(format!("read {}: {error}", path.display())),
-            }
-        })
-        .collect()
+        crate::current_state::current_state_input_snapshot(root)
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! by #2331 cold-start orientation). Reports observable repository facts only;
 //! it does not decide support tiers, close issues, or authorize releases.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -27,7 +27,6 @@ pub(crate) fn release_authority_issue() -> Option<u64> {
 }
 
 const ROADMAP_PATH: &str = "docs/ROADMAP.md";
-const SUPPORT_TIERS_PATH: &str = "docs/status/SUPPORT_TIERS.md";
 const DELETED_GOAL_MARKERS: [&str; 4] = [
     ".ripr/goals",
     "cargo xtask goals",
@@ -47,6 +46,10 @@ pub(crate) struct CurrentStateInventoryV1 {
     pub release_authority: String,
     pub command_catalog_entries: u64,
     pub live_doc_deleted_command_hits: Vec<String>,
+    pub registered_artifacts_by_kind_and_status: BTreeMap<String, BTreeMap<String, u64>>,
+    pub support_rows_by_tier: BTreeMap<String, u64>,
+    pub contract_violations: Vec<String>,
+    pub coverage_limitations: Vec<String>,
     pub claim_boundary: String,
 }
 
@@ -164,6 +167,30 @@ fn read_repository(root: &Path) -> Result<String, String> {
 pub(crate) fn produce_current_state(root: &Path) -> Result<CurrentStateInventoryV1, String> {
     let current_section = read_roadmap_current_section(root)?;
     let catalog_count = crate::command::command_catalog().len() as u64;
+    let summary = crate::repo_contract_summary(root)?;
+    let mut registered_artifacts_by_kind_and_status = BTreeMap::new();
+    for artifact in &summary.artifacts {
+        let statuses = registered_artifacts_by_kind_and_status
+            .entry(artifact.kind.clone())
+            .or_insert_with(BTreeMap::new);
+        *statuses.entry(artifact.status.clone()).or_insert(0) += 1;
+    }
+    let mut support_rows_by_tier = BTreeMap::new();
+    for row in &summary.support_rows {
+        *support_rows_by_tier
+            .entry(crate::normalized_support_tier(&row.tier))
+            .or_insert(0) += 1;
+    }
+    // Existing fragment diagnostics include their input path. Keep report bytes
+    // independent of the absolute checkout root, preserving the named diagnostic.
+    let root_prefix = format!("{}/", crate::normalize_path(root).trim_end_matches('/'));
+    let contract_violations = summary
+        .missing_links
+        .iter()
+        .map(|violation| violation.replace(&root_prefix, ""))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     Ok(CurrentStateInventoryV1 {
         schema_version: CURRENT_STATE_SCHEMA_VERSION.to_string(),
         repository: read_repository(root)?,
@@ -174,6 +201,10 @@ pub(crate) fn produce_current_state(root: &Path) -> Result<CurrentStateInventory
         release_authority: RELEASE_AUTHORITY.to_string(),
         command_catalog_entries: catalog_count,
         live_doc_deleted_command_hits: scan_deleted_commands(&current_section),
+        registered_artifacts_by_kind_and_status,
+        support_rows_by_tier,
+        contract_violations,
+        coverage_limitations: coverage_limitations(),
         claim_boundary: CURRENT_STATE_CLAIM_BOUNDARY.to_string(),
     })
 }
@@ -186,15 +217,106 @@ pub(crate) fn check_current_state(root: &Path) -> Result<(), String> {
             inventory.live_doc_deleted_command_hits
         ));
     }
-    if !root.join(SUPPORT_TIERS_PATH).is_file() {
+    if !inventory.contract_violations.is_empty() {
         return Err(format!(
-            "missing support tier authority at {SUPPORT_TIERS_PATH}"
+            "current-state registered artifact/support contract violations:\n{}",
+            inventory.contract_violations.join("\n")
         ));
     }
     if inventory.command_catalog_entries == 0 {
         return Err("command catalog is empty".to_string());
     }
     Ok(())
+}
+
+fn coverage_limitations() -> Vec<String> {
+    [
+        "Artifact counts cover registered ledger/fragment records only; unregistered filesystem artifacts are not counted, and recorded status is not semantic completeness.",
+        "Support counts and violations reuse the existing structural checker; command existence does not establish earned support or executed proof.",
+        "The default branch is the declared main convention, not a discovered remote setting.",
+        "Authority declarations are program constants; authored authority contradictions are not checked.",
+        "Command inventory is a catalog entry count; aliases and general live-document references are not inventoried. Deleted-reference checks cover only four current-roadmap markers.",
+        "Release posture, implementation slices, fixtures/goldens/corpora and capability status are not inventoried.",
+        "Module health/ownership, CI/protected-lane settings, language adapters/features/tiers and generated/traceability health are not inventoried; unrun checks have no health result.",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+fn markdown_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace(['\n', '\r'], " ")
+}
+
+fn current_state_markdown(inventory: &CurrentStateInventoryV1) -> String {
+    let mut body = format!(
+        "# Current-state inventory\n\n{}\n\n## Repository\n\n\
+         | Fact | Value |\n| --- | --- |\n\
+         | Repository | {} |\n| Default branch (declared) | {} |\n\
+         | Workspace version | {} |\n| Rust MSRV | {} |\n\
+         | Development authority | {} |\n| Release authority | {} |\n\
+         | Command catalog entries | {} |\n\n\
+         ## Registered artifacts\n\nCounts describe registered records and recorded statuses.\n\n\
+         | Kind | Recorded status | Count |\n| --- | --- | ---: |\n",
+        inventory.claim_boundary,
+        markdown_cell(&inventory.repository),
+        markdown_cell(&inventory.default_branch),
+        markdown_cell(&inventory.crate_version),
+        markdown_cell(&inventory.rust_msrv),
+        markdown_cell(&inventory.development_authority),
+        markdown_cell(&inventory.release_authority),
+        inventory.command_catalog_entries,
+    );
+    for (kind, statuses) in &inventory.registered_artifacts_by_kind_and_status {
+        for (status, count) in statuses {
+            body.push_str(&format!(
+                "| {} | {} | {count} |\n",
+                markdown_cell(kind),
+                markdown_cell(status),
+            ));
+        }
+    }
+    body.push_str("\n## Support rows\n\n| Recorded tier | Count |\n| --- | ---: |\n");
+    for (tier, count) in &inventory.support_rows_by_tier {
+        body.push_str(&format!("| {} | {count} |\n", markdown_cell(tier)));
+    }
+    body.push_str("\n## Existing contract violations\n\n");
+    if inventory.contract_violations.is_empty() {
+        body.push_str("No violations reported by the existing artifact/support collectors.\n");
+    } else {
+        for violation in &inventory.contract_violations {
+            body.push_str(&format!("- {}\n", markdown_cell(violation)));
+        }
+    }
+    body.push_str("\n## Current-roadmap deleted references\n\n");
+    if inventory.live_doc_deleted_command_hits.is_empty() {
+        body.push_str("None of the four retired authority markers found in the current section.\n");
+    } else {
+        for reference in &inventory.live_doc_deleted_command_hits {
+            body.push_str(&format!("- {}\n", markdown_cell(reference)));
+        }
+    }
+    body.push_str("\n## Coverage and limitations\n\n");
+    for limitation in &inventory.coverage_limitations {
+        body.push_str(&format!("- {limitation}\n"));
+    }
+    body
+}
+
+fn write_current_state_reports(root: &Path, reports: &Path) -> Result<String, String> {
+    let inventory = produce_current_state(root)?;
+    let json_body = serde_json::to_string_pretty(&inventory)
+        .map_err(|error| format!("serialize current-state inventory: {error}"))?;
+    fs::create_dir_all(reports)
+        .map_err(|error| format!("create current-state report directory: {error}"))?;
+    fs::write(reports.join("current-state.json"), &json_body)
+        .map_err(|error| format!("write current-state.json: {error}"))?;
+    fs::write(
+        reports.join("current-state.md"),
+        current_state_markdown(&inventory),
+    )
+    .map_err(|error| format!("write current-state.md: {error}"))?;
+    Ok(json_body)
 }
 
 pub(crate) fn current_state_command(args: &[String]) -> Result<(), String> {
@@ -227,14 +349,7 @@ pub(crate) fn current_state_command(args: &[String]) -> Result<(), String> {
         }
         return Ok(());
     }
-    let inventory = produce_current_state(&root)?;
-    let json_body = serde_json::to_string_pretty(&inventory)
-        .map_err(|error| format!("serialize current-state inventory: {error}"))?;
-    crate::write_report("current-state.json", &json_body)?;
-    crate::write_report(
-        "current-state.md",
-        &format!("# Current-state inventory\n\n{}\n", json_body),
-    )?;
+    let json_body = write_current_state_reports(&root, &crate::reports_dir())?;
     if json {
         print!("{json_body}");
     } else {
@@ -242,6 +357,61 @@ pub(crate) fn current_state_command(args: &[String]) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Snapshot the added producer's file inputs for read-only consumer proof.
+/// Reuse the ledger/parser and support parser for dynamic paths. Directory
+/// walks retain membership changes as well as content changes, without taking
+/// a whole-workspace snapshot that races unrelated target/report writers.
+#[cfg(test)]
+pub(crate) type CurrentStateInputSnapshot = Vec<(String, Option<Vec<u8>>)>;
+
+#[cfg(test)]
+pub(crate) fn current_state_input_snapshot(root: &Path) -> Result<CurrentStateInputSnapshot, String> {
+    let mut paths = BTreeSet::from([
+        "docs/ROADMAP.md".to_string(),
+        "Cargo.toml".to_string(),
+        crate::SUPPORT_TIERS_PATH.to_string(),
+        crate::DOC_ARTIFACT_LEDGER.to_string(),
+        "README.md".to_string(),
+        crate::RUST_REPAIR_TRUST_CORPUS_PATH.to_string(),
+    ]);
+    for directory in ["policy", "docs/specs"] {
+        for path in crate::collect_files(&root.join(directory))? {
+            paths.insert(crate::display_repo_path(root, &path));
+        }
+    }
+    let ledger = crate::parse_doc_artifact_ledger(&root.join(crate::DOC_ARTIFACT_LEDGER))?;
+    for artifact in ledger.artifacts {
+        if let Some(path) = artifact.path
+            && crate::doc_artifact_path_safety_violation(&path).is_none()
+        {
+            paths.insert(path);
+        }
+    }
+    let support_path = root.join(crate::SUPPORT_TIERS_PATH);
+    let support = fs::read_to_string(&support_path)
+        .map_err(|error| format!("snapshot support tiers: {error}"))?;
+    for row in crate::support_tier_rows(&support, crate::SUPPORT_TIERS_PATH)? {
+        for reference in crate::inline_code_spans(&row.proof) {
+            if (reference.starts_with("scripts/") || reference.starts_with(".github/workflows/"))
+                && crate::doc_artifact_path_safety_violation(&reference).is_none()
+            {
+                paths.insert(reference);
+            }
+        }
+    }
+    paths
+        .into_iter()
+        .map(|relative| match fs::read(root.join(&relative)) {
+            Ok(bytes) => Ok((relative, Some(bytes))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok((relative, None)),
+            Err(error) => Err(format!("snapshot {relative}: {error}")),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod contract_tests;
 
 #[cfg(test)]
 mod tests {
