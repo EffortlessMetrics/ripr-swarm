@@ -931,3 +931,24 @@ fn tuple_option_projection_keeps_its_receiver_and_changed_slot() -> Result<(), S
     }
     Ok(())
 }
+
+#[test]
+fn tuple_iterator_identity_cannot_borrow_an_inherent_override() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/rust_same_method_owner_type_positive");
+    let source =
+        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
+    let test = std::fs::read_to_string(fixture.join("input/tests/size_hints.rs"))
+        .map_err(|e| e.to_string())?;
+    let manifest =
+        std::fs::read_to_string(fixture.join("input/Cargo.toml")).map_err(|e| e.to_string())?;
+    let diff = std::fs::read_to_string(fixture.join("diff.patch")).map_err(|e| e.to_string())?;
+    let source = format!(
+        "{source}\nimpl WhileSome {{ pub fn size_hint(&self)->(usize,Option<usize>) {{(0,Some(self.remaining))}} }}\n"
+    );
+    let report = check_report(&source, &test, &manifest, &diff)?;
+    let findings = report["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 1, "{report}");
+    assert_ne!(findings[0]["classification"], "exposed", "{report}");
+    Ok(())
+}

@@ -149,6 +149,8 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// The sole changed tuple slot is `None` -> `Some(self.integer_field)`.
     /// Its numeric projection observes that changed slot, never a sibling.
     tuple_option_projection: Option<(String, String)>,
+    /// This tuple slot belongs to the unshadowed standard prelude Iterator.
+    tuple_iterator_dispatch: bool,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -4845,6 +4847,8 @@ impl OwnerReturnPin {
         let tuple_option_projection = matches!(path, ReturnPathGate::Any)
             .then(|| changed_tuple_option_projection(owner, probe))
             .flatten();
+        let tuple_iterator_dispatch =
+            tuple_option_projection.is_some() && tuple_iterator_dispatch_is_closed(owner, index);
         // #6544: a bare call's same-package module-level rivals are settled
         // per test by the import or path that spells the call; every other
         // competing definition still refuses the pin here.
@@ -4857,7 +4861,7 @@ impl OwnerReturnPin {
             index,
             call.kind(),
             identity.as_deref(),
-            tuple_option_projection.is_some(),
+            tuple_iterator_dispatch,
         ) {
             return None;
         }
@@ -4896,6 +4900,7 @@ impl OwnerReturnPin {
             ),
             tuple_projection,
             tuple_option_projection,
+            tuple_iterator_dispatch,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -5032,6 +5037,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             tuple_option_projection: None,
+            tuple_iterator_dispatch: false,
             closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -5144,6 +5150,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             tuple_option_projection: None,
+            tuple_iterator_dispatch: false,
             closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -5248,6 +5255,7 @@ impl OwnerReturnPin {
             pointer_return_change: None,
             tuple_projection: None,
             tuple_option_projection: None,
+            tuple_iterator_dispatch: false,
             closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -6677,9 +6685,10 @@ impl OwnerReturnPin {
                     }
                     ReceiverType::Named(_) => method_may_dispatch_through_prelude(&self.name),
                 };
-                !shadowed_by_std
+                (!shadowed_by_std || self.tuple_iterator_dispatch)
                     && trait_scope.as_ref().is_none_or(|scope| {
-                        self.trait_in_scope(test, test_source, &scope.trait_name, index)
+                        (self.tuple_iterator_dispatch && scope.trait_name == "Iterator")
+                            || self.trait_in_scope(test, test_source, &scope.trait_name, index)
                     })
             }
             // #6617: `T::name(..)` names the owner only through the owner's
@@ -13381,23 +13390,30 @@ fn climb_one_level(
     Some(())
 }
 
-/// Whether another workspace definition of the owner's name could take a
-/// call by that name. A bare call competes with every other module-level
-/// function of the name; a method call competes with every other method of
-/// the name that has a body (overrides, inherent methods of other types,
-/// other traits' methods), except a pure `(**self).name(..)` forward, which
-/// dispatches to the same method on the pointee. A definition whose item
-/// container is unknown (lexical fallback) always competes, and so does a
-/// `fn name` the parser never indexed (inside a `macro_rules!` body).
-///
-/// An associated `T::name(..)` call (#6617, RIPR-SPEC-0172) competes with
-/// every other definition of the name that is not a module-level or local
-/// function: inherent and trait-impl functions of any type, trait items,
-/// unknown containers, and every unindexed `fn name`. A free function
-/// cannot be the target of a type path, so it never competes.
+/// This bounded tuple view can name the standard prelude Iterator without
+/// a source import. Generic return pins retain their prior prelude refusal.
+/// Unknown traits, aliases, disabled preludes and explicit standard-root
+/// imports cannot borrow this exception.
+fn tuple_iterator_dispatch_is_closed(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    matches!(&owner.item.container,FunctionContainer::TraitImpl{trait_path,..} if trait_path=="Iterator")
+        && !wrapper_may_be_rebound("Iterator", index)
+        && super::call_identity::closed_method_dispatch_imports(index)
+        && !index.files().values().any(|facts| {
+            facts.source.contains("extern")
+                || facts.source.contains("no_implicit_prelude")
+                || flattened_use_paths(&facts.source).iter().any(|import| {
+                    matches!(
+                        import.path.trim_start_matches("::").split("::").next(),
+                        Some("std" | "core")
+                    )
+                })
+        })
+}
+
 /// A same-named method on a different, explicitly declared root nominal
 /// type cannot dispatch on this pin's receiver. Unread traits and aliases
 /// retain the old refusal; assertion-local receiver binding still applies.
+/// Called only after the closed standard-Iterator tuple view was admitted.
 fn method_receivers_are_distinct_nominal_types(
     owner: &FunctionSummary,
     other: &FunctionSummary,
@@ -13413,25 +13429,7 @@ fn method_receivers_are_distinct_nominal_types(
     let (Some(a), Some(b)) = (ty(owner), ty(other)) else {
         return false;
     };
-    if a == b
-        || !is_plain_identifier(a)
-        || !is_plain_identifier(b)
-        || !super::call_identity::closed_method_dispatch_imports(index)
-    {
-        return false;
-    }
-    // The shared import closure's std/core exclusion is certified elsewhere
-    // by collection value equality. This new nominal route instead refuses
-    // explicit standard-root imports and extern aliases altogether.
-    if index.files().values().any(|facts| {
-        facts.source.contains("extern")
-            || flattened_use_paths(&facts.source).iter().any(|import| {
-                matches!(
-                    import.path.trim_start_matches("::").split("::").next(),
-                    Some("std" | "core")
-                )
-            })
-    }) {
+    if a == b || !is_plain_identifier(a) || !is_plain_identifier(b) {
         return false;
     }
     [(owner, a), (other, b)]
@@ -13458,12 +13456,28 @@ fn method_receivers_are_distinct_nominal_types(
         })
 }
 
+/// Whether another workspace definition of the owner's name could take a
+/// call by that name. A bare call competes with every other module-level
+/// function of the name; a method call competes with every other method of
+/// the name that has a body (overrides, inherent methods of other types,
+/// other traits' methods), except a pure `(**self).name(..)` forward, which
+/// dispatches to the same method on the pointee. A definition whose item
+/// container is unknown (lexical fallback) always competes, and so does a
+/// `fn name` the parser never indexed (inside a `macro_rules!` body).
+///
+/// An associated `T::name(..)` call (#6617, RIPR-SPEC-0172) competes with
+/// every other definition of the name that is not a module-level or local
+/// function: inherent and trait-impl functions of any type, trait items,
+/// unknown containers, and every unindexed `fn name`. A free function
+/// cannot be the target of a type path, so it never competes.
+/// A closed standard-Iterator tuple pin alone may exclude methods on a
+/// separately declared nominal type; its assertion still binds the receiver.
 fn other_definition_competes(
     owner: &FunctionSummary,
     index: &RustIndex,
     kind: CallKind,
     settled_per_test: Option<&OwnerCallIdentity>,
-    changed_tuple_projection: bool,
+    closed_tuple_iterator: bool,
 ) -> bool {
     let method = kind == CallKind::Method;
     let associated = kind == CallKind::Associated;
@@ -13487,7 +13501,7 @@ fn other_definition_competes(
                     && function.item.has_self_param
                     && function.item.has_body
                     && !is_self_forward(&function.body, name)
-                    && !(changed_tuple_projection
+                    && !(closed_tuple_iterator
                         && method_receivers_are_distinct_nominal_types(owner, function, index))
             }
         }
