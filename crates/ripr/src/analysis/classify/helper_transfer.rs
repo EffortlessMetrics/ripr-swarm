@@ -36,7 +36,11 @@ mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
 #[cfg(test)]
 mod asserting_entry_tests;
+mod boolean_comparison;
 mod field_projection;
+pub(in crate::analysis) use boolean_comparison::{
+    BooleanComparisonReceipt, boolean_comparison_receipt,
+};
 #[cfg(test)]
 mod method_hop_tests;
 #[cfg(test)]

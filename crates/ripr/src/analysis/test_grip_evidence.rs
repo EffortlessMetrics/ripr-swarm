@@ -697,7 +697,7 @@ fn evidence_for_seam_with_context(
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, observed_values, missing_discriminators) =
+    let (mut activate, mut observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
     let refuse = refuses_other_function_oracle(
@@ -719,7 +719,33 @@ fn evidence_for_seam_with_context(
         claims_pin.as_ref(),
     );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
-    let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let mut propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    // The same source producer supplies the diff and repository lenses. Its
+    // exact full-return identity prevents a receipt for another seam borrowing
+    // this assertion's strength or activation rows.
+    if seam.kind() == SeamKind::ReturnValue && reach.state == StageState::Yes {
+        for test in &related {
+            if let Some(receipt) = owner_fn
+                .and_then(|owner| {
+                    crate::analysis::classify::boolean_comparison_receipt(
+                        owner,
+                        test,
+                        context.index,
+                        pin_syntax,
+                    )
+                })
+                .filter(|receipt| {
+                    receipt.matches_source(seam.file(), seam.display_line(), seam.expression())
+                })
+            {
+                observed_values.extend(receipt.inputs());
+                activate = StageEvidence::new(StageState::Yes, Confidence::High, receipt.summary());
+                propagate =
+                    StageEvidence::new(StageState::Yes, Confidence::High, receipt.summary());
+            }
+        }
+        crate::analysis::classify::sort_value_facts(&mut observed_values);
+    }
     let observe = observe_evidence(&credited);
     let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
 
@@ -4255,6 +4281,7 @@ fn discriminate_evidence(
             // Weak credit: it pins the mutant's value and fails at baseline,
             // so it must not grade the seam's discrimination up (#6026).
             let (strength, contradiction) = effective_oracle_strength(
+                seam,
                 owner_fn,
                 oracle,
                 test,
@@ -4315,6 +4342,7 @@ fn discriminate_evidence(
 /// call is statically consistent and paired with this assertion. Other
 /// consistent or not-evaluable assertions keep their extracted strength.
 fn effective_oracle_strength(
+    seam: &RepoSeam,
     owner_fn: Option<&FunctionSummary>,
     oracle: &OracleFact,
     test: &TestSummary,
@@ -4330,6 +4358,20 @@ fn effective_oracle_strength(
             OracleStrength::Weak,
             Some(contradiction_summary(&expected, evaluated)),
         ),
+        _ if seam.kind() == SeamKind::ReturnValue
+            && owner_fn
+                .and_then(|owner| {
+                    crate::analysis::classify::boolean_comparison_receipt(
+                        owner, test, index, pin_syntax,
+                    )
+                })
+                .is_some_and(|receipt| {
+                    receipt.matches_source(seam.file(), seam.display_line(), seam.expression())
+                        && receipt.admits(test, oracle)
+                }) =>
+        {
+            (OracleStrength::Strong, None)
+        }
         _ if boolean_pin.is_some_and(|pin| pin.admits(test, oracle, index, pin_syntax)) => {
             (OracleStrength::Strong, None)
         }
@@ -4534,7 +4576,18 @@ fn oracle_discriminates_seam_in_test(
                 )
         });
     }
-    oracle_discriminates_seam(seam, oracle)
+    (seam.kind() == SeamKind::ReturnValue
+        && owner
+            .and_then(|owner| {
+                crate::analysis::classify::boolean_comparison_receipt(
+                    owner, test, index, pin_syntax,
+                )
+            })
+            .is_some_and(|receipt| {
+                receipt.matches_source(seam.file(), seam.display_line(), seam.expression())
+                    && receipt.admits(test, oracle)
+            }))
+        || oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
             .zip(owner)
             .is_some_and(|(receiver, owner)| {
@@ -5444,7 +5497,7 @@ fn best_oracle(
             continue;
         }
         let (strength, contradiction) =
-            effective_oracle_strength(owner_fn, oracle, test, boolean_pin, index, pin_syntax);
+            effective_oracle_strength(seam, owner_fn, oracle, test, boolean_pin, index, pin_syntax);
         if strength.rank() > best_strength.rank() {
             best_strength = strength.clone();
             best_kind = oracle.kind.clone();

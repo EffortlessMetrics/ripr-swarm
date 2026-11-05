@@ -178,6 +178,24 @@ impl ClassifiedProbeEvidence {
         let test_summaries = context.related_test_summaries();
         let fallback_pin_syntax = OwnerPinSyntax::default();
         let pin_syntax = context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax);
+        let boolean_comparisons = context
+            .owner_fn
+            .map(|owner| {
+                context
+                    .related_tests
+                    .iter()
+                    .filter_map(|(test, _)| {
+                        crate::analysis::classify::boolean_comparison_receipt(
+                            owner,
+                            test,
+                            context.index,
+                            pin_syntax,
+                        )
+                        .filter(|receipt| receipt.valid_for(context.probe))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let fallible_checks = context
             .owner_fn
             .map(|owner| {
@@ -326,6 +344,7 @@ impl ClassifiedProbeEvidence {
         let propagation_witness = propagation_witness.map(|diagnostic| match diagnostic {
             PropagationWitnessDiagnostic::Valid(mut witness) => {
                 witness.field_projection = field_projection.clone();
+                witness.boolean_comparisons = boolean_comparisons.clone();
                 witness.semantic_digest = witness.compute_semantic_digest();
                 PropagationWitnessDiagnostic::from_witness(witness)
             }
@@ -398,6 +417,10 @@ impl ClassifiedProbeEvidence {
             &mut flow_sinks,
         );
         let mut activation = gathered.activation;
+        for receipt in &boolean_comparisons {
+            activation.observed_values.extend(receipt.inputs());
+        }
+        crate::analysis::classify::sort_value_facts(&mut activation.observed_values);
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related
         // test's package against it.
@@ -542,14 +565,16 @@ impl ClassifiedProbeEvidence {
             .map(|(test, _)| *test)
             .collect::<Vec<_>>();
         let chain_computed_inputs = match (context.owner_fn, context.helper_chain.as_ref()) {
-            (Some(owner), Some(chain)) => !crate::analysis::classify::computed_input_parameters(
-                owner,
-                &owner_parameter_names(owner),
-                &chain_tests,
-                Some(chain),
-                context.index,
-            )
-            .is_empty(),
+            (Some(owner), Some(chain)) if boolean_comparisons.is_empty() => {
+                !crate::analysis::classify::computed_input_parameters(
+                    owner,
+                    &owner_parameter_names(owner),
+                    &chain_tests,
+                    Some(chain),
+                    context.index,
+                )
+                .is_empty()
+            }
             _ => false,
         };
         // #9889: a chain-edge argument that is no literal or caller
@@ -559,7 +584,8 @@ impl ClassifiedProbeEvidence {
         // refuted, the same as for a computed argument above.
         let chain_row_stop = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain))
-                if !chain_computed_inputs
+                if boolean_comparisons.is_empty()
+                    && !chain_computed_inputs
                     && !matches!(context.probe.family, ProbeFamily::Predicate)
                     && matches!(infect.state, StageState::Yes | StageState::Weak)
                     && helper_only_reach(&context.related_tests) =>
@@ -694,6 +720,7 @@ impl ClassifiedProbeEvidence {
                         };
                         !forwards
                             && field_projection.is_none()
+                            && boolean_comparisons.is_empty()
                     } =>
             {
                 if let Some(ledger) = returned_ledger.as_ref().filter(|ledger| {
@@ -721,6 +748,15 @@ impl ClassifiedProbeEvidence {
                 }
             }
             _ => propagate,
+        };
+        let propagate = if matches!(propagate.state, StageState::Yes | StageState::Weak) {
+            boolean_comparisons
+                .first()
+                .map_or(propagate.clone(), |receipt| {
+                    StageEvidence::new(StageState::Yes, Confidence::High, receipt.summary())
+                })
+        } else {
+            propagate
         };
         // Both defeats below depend only on the test's file (and the probe's
         // constant owner callee), never on the individual test. A
@@ -836,9 +872,16 @@ impl ClassifiedProbeEvidence {
             fmt_literal_edit && fmt_display_assertion(test, assertion)
         };
         let assertion_admitted = |test: &TestSummary, assertion: &OracleFact| {
-            pin_syntax.admits_equality_assertion(context.probe, test, assertion, context.index)
-                && (!field_oracle_needs_admission
-                    || pin_syntax.admits(test, assertion, context.index))
+            boolean_comparisons
+                .iter()
+                .any(|receipt| receipt.admits(test, assertion))
+                || (pin_syntax.admits_equality_assertion(
+                    context.probe,
+                    test,
+                    assertion,
+                    context.index,
+                ) && (!field_oracle_needs_admission
+                    || pin_syntax.admits(test, assertion, context.index)))
         };
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.
@@ -1014,6 +1057,9 @@ impl ClassifiedProbeEvidence {
                     })
                 });
             entry_pinned
+                || boolean_comparisons
+                    .iter()
+                    .any(|receipt| receipt.admits(test, assertion))
                 || fmt_display_pin(test, assertion)
                 || field_projection.as_ref().is_some_and(|receipt| {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
@@ -1752,6 +1798,12 @@ impl ClassifiedProbeEvidence {
                 let mut crediting_owner_refusals: Vec<bool> = Vec::new();
                 for (test, reason) in &context.related_tests {
                     for assertion in &test.assertions {
+                        if boolean_comparisons
+                            .iter()
+                            .any(|receipt| receipt.admits(test, assertion))
+                        {
+                            continue;
+                        }
                         let Some(refusal) = pin_syntax.equality_assertion_refusal(
                             context.probe,
                             test,

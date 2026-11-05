@@ -116,7 +116,10 @@ pub(in crate::analysis) use gap_admission::{
     withhold_debug_assertion_gap, withhold_log_capture_gap, withhold_mixed_refusal_gap,
     withhold_should_panic_gap, withhold_truncated_discovery_gap, withhold_unsupported_gap,
 };
-pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
+pub(in crate::analysis) use helper_transfer::{
+    BooleanComparisonReceipt, FieldProjectionReceipt, boolean_comparison_receipt,
+    field_projection_receipt,
+};
 pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
     ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_entry_pin_admits,

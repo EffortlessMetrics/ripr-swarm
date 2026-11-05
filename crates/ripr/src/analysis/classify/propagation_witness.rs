@@ -39,6 +39,9 @@ pub(in crate::analysis) struct PropagationWitnessV1 {
     /// Exact one-hop field/observer receipt; absent preserves previous digests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in crate::analysis) field_projection: Option<super::FieldProjectionReceipt>,
+    /// Source-bound asserted primitive equality observers (#13181).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::analysis) boolean_comparisons: Vec<super::BooleanComparisonReceipt>,
     pub(in crate::analysis) sink: PropagationEndpoint,
     pub(in crate::analysis) completeness: PathCompleteness,
     pub(in crate::analysis) limitations: Vec<String>,
@@ -250,6 +253,7 @@ pub(in crate::analysis) fn current_path_witness_with(
         selected_helper_calls: Vec::new(),
         fallible_check: None,
         field_projection: None,
+        boolean_comparisons: Vec::new(),
         edges: vec![PropagationEdge {
             kind: edge_kind.clone(),
             status: edge_status,
@@ -308,6 +312,7 @@ pub(in crate::analysis) fn fallible_literal_witness(
         selected_helper_calls: Vec::new(),
         fallible_check: Some(receipt.clone()),
         field_projection: None,
+        boolean_comparisons: Vec::new(),
         sink: PropagationEndpoint {
             kind: sink.kind.as_str().into(),
             identity,
@@ -523,6 +528,7 @@ fn direct_tail_witness(
         selected_helper_calls: Vec::new(),
         fallible_check: None,
         field_projection: None,
+        boolean_comparisons: Vec::new(),
         sink: PropagationEndpoint {
             kind: sink.kind.as_str().into(),
             identity,
@@ -680,6 +686,7 @@ pub(in crate::analysis) fn format_tail_witness(
         selected_helper_calls: Vec::new(),
         fallible_check: None,
         field_projection: None,
+        boolean_comparisons: Vec::new(),
         sink: PropagationEndpoint {
             kind: sink.kind.as_str().into(),
             identity,
@@ -828,6 +835,7 @@ pub(in crate::analysis) fn returned_ledger_witness(
         selected_helper_calls: Vec::new(),
         fallible_check: None,
         field_projection: None,
+        boolean_comparisons: Vec::new(),
         edges: vec![PropagationEdge {
             kind: PropagationEdgeKind::StructField,
             status: EdgeStatus::Candidate,
@@ -1057,6 +1065,10 @@ pub(in crate::analysis) fn complete_direct_witness(
             .field_projection
             .as_ref()
             .is_none_or(|receipt| receipt.valid_for(probe))
+        && witness
+            .boolean_comparisons
+            .iter()
+            .all(|receipt| receipt.valid_for(probe))
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
@@ -1104,6 +1116,7 @@ pub(in crate::analysis) fn valid_owner_bound_partial_witness(
     witness.digest_matches()
         && witness.fallible_check.is_none()
         && witness.field_projection.is_none()
+        && witness.boolean_comparisons.is_empty()
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
@@ -3123,6 +3136,16 @@ impl PropagationWitnessV1 {
         if let Some(receipt) = &self.field_projection {
             append_canonical_section_header(&mut canonical, "field-projection", 1);
             append_canonical_field(&mut canonical, &receipt.semantic_digest);
+        }
+        if !self.boolean_comparisons.is_empty() {
+            append_canonical_section_header(
+                &mut canonical,
+                "boolean-comparisons",
+                self.boolean_comparisons.len(),
+            );
+            for receipt in &self.boolean_comparisons {
+                append_canonical_field(&mut canonical, &receipt.semantic_digest);
+            }
         }
         append_canonical_field(&mut canonical, &self.sink.kind);
         append_canonical_field(&mut canonical, &self.sink.identity);
