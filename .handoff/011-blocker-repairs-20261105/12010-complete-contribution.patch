@@ -692,6 +692,342 @@ index 0198abf37..af4a0774e 100644
      {
        "id": "typescript_push_escaped_nondiscriminator",
        "language": "typescript",
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json
+index f3c9edd05..546487ad1 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:7ce49d557f42956a","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:52707771faf9947de1d34ba2a1a8bbdf35da9a711c273e75b376dc9037999d4b","generated_at":"unix_ms:1793808102984","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-async-fn-activated-unsupported"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:7ce49d557f42956a;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"a6620439feb4a260","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:0bd8be8440e009ed24d68aea9ad07f1e04de80be7500508a49bedb2f0118c42f","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"73ba8613408780e1"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:7ce49d557f42956a","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:65a14939b064b0a66dea2377bea12ac0e572960bfe6342abc624ded2098607b6","generated_at":"unix_ms:1793845956432","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-activated-unsupported"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:7ce49d557f42956a;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"a6620439feb4a260","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:0bd8be8440e009ed24d68aea9ad07f1e04de80be7500508a49bedb2f0118c42f","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"ec02bce52334e9b4"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json
+index 88c9b679d..075c3cc4c 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:2cbdd6740805c470","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:65e16f26a49c9d259bf915dcd005e929ba9ba93958a83c1c8bfea4912d662fdb","generated_at":"unix_ms:1793808103040","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-async-fn-entry"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:2cbdd6740805c470;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"fd4fbe1232c5748f","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:4315f0d21e8802f4585e6b6262395553960da984e471a043981a1eb5a6a735d7","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"821493c8f5911614"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:2cbdd6740805c470","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:ebf5a971d7515cd5ecd89f182df7a2e8afc6d238e36d32c22abdc504e7a84b60","generated_at":"unix_ms:1793845956558","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-entry"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:2cbdd6740805c470;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"fd4fbe1232c5748f","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:4315f0d21e8802f4585e6b6262395553960da984e471a043981a1eb5a6a735d7","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"5831d64a2115e19b"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json
+index 7dde72ebb..3f68f9ad0 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:b371485ab6170b8f","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:77eb959b857610d6d994717d5ea7c001dd5ee22cc9e501bcf70253372f352845","generated_at":"unix_ms:1793808103123","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-async-fn-intermediate"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:b371485ab6170b8f;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"e937e59818ff8799","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:6016d2b2a64f38edb9eb8f806d21d15b4d9cb1e109c803189891685d144de39a","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"2bef1a61ac6af630"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:b371485ab6170b8f","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:44c6accd4ace075e164dbc3f4d7c36eecc5c5bdee50ac7606c36adf475a6c3bd","generated_at":"unix_ms:1793845956646","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-intermediate"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:b371485ab6170b8f;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"e937e59818ff8799","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:6016d2b2a64f38edb9eb8f806d21d15b4d9cb1e109c803189891685d144de39a","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"1fe976f64fdafd5b"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json
+index 9412e682b..15c137f7a 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:af9f7b1fe6cace01","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:6d0008b1f03b2938d99a315ff1fe62f1985e46935dea2eaba77d936275eaf986","generated_at":"unix_ms:1793808103176","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-async-fn-last-hop"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:af9f7b1fe6cace01;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"df41f1e8623da0bd","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:e7aed08e30dcc2fd23ac28dd99dfa2f782df14c1bbf96b73d427a12bec6bb988","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"633ec0df9405952c"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:af9f7b1fe6cace01","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:10caada6c5fcdd393bf91ad7422bbfc618be71a3c2acfe098c847d2c895ea1d7","generated_at":"unix_ms:1793845956753","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-last-hop"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:af9f7b1fe6cace01;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"df41f1e8623da0bd","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:e7aed08e30dcc2fd23ac28dd99dfa2f782df14c1bbf96b73d427a12bec6bb988","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"64b135908d579fe7"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json
+index d79875317..b0beee9e3 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:db89bda6b354aa85","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:c5509b1660bbeb26008c88c772be7ba0f2e76f250629d1fe0180db87203d45b8","generated_at":"unix_ms:1793808103224","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-async-fn-method-entry"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:db89bda6b354aa85;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"688715b9494ef7ee","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:e9d354836ee6ccbe9e685bdd5912ccac628d7d595bce654abcdc817553d4b533","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"0fc33b9f1c5f30a4"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:db89bda6b354aa85","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:815564dce038981d3b1aa0f5bef28a44843c40286d80ed40730f5185149d6e8d","generated_at":"unix_ms:1793845956825","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-entry"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:db89bda6b354aa85;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"688715b9494ef7ee","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:e9d354836ee6ccbe9e685bdd5912ccac628d7d595bce654abcdc817553d4b533","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"7a753e91f2478a69"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json
+index 7e3df002a..22cbb893c 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:d6aae3c027a578fc","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:109f1a9056f42fe515241ea745e4467cbc3895fe6af8e0ff3391b7166aa6e061","generated_at":"unix_ms:1793808103275","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-async-fn-method-last-hop"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:d6aae3c027a578fc;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"7ce81d76b62b1f45","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:713b029056eff7e416d07e84d1c841f573e021faa11b5f68fee01158f35185ef","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"e837adda3ec2658a"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:d6aae3c027a578fc","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:4eed08191374bb32aa5ddb6cb33f74f482752da1f2a56296d0e0bd54b1ee45dc","generated_at":"unix_ms:1793845956909","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-last-hop"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:d6aae3c027a578fc;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"7ce81d76b62b1f45","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:713b029056eff7e416d07e84d1c841f573e021faa11b5f68fee01158f35185ef","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"b3dafecd8add2efc"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json
+index b0e402af8..333f80a71 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:a1b11e02aa49a82c","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:ab6410c1de25f0073395f5214c81cfdd258dbd18d72c7ebcdaa64a4767febd91","generated_at":"unix_ms:1793808103324","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-async-fn-operand"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:a1b11e02aa49a82c;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"d6e99abccad92e55","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:f1568b3ec4b9331a334bd658ff4d812946553bd46deb1d55b5d7ad0ffb6afa79","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"af2aecb2c8963368"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:a1b11e02aa49a82c","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:90b2756ebcfd8915d8a48b9edfd73d88e4ccd12cccd3f9badf5f7153f414c1ad","generated_at":"unix_ms:1793845956986","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-operand"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:a1b11e02aa49a82c;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"d6e99abccad92e55","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:f1568b3ec4b9331a334bd658ff4d812946553bd46deb1d55b5d7ad0ffb6afa79","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"0d7e9e9ae8950c18"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json
+index 01c277a5a..f11f1c61e 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:b5564620c6a45789","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:9ad99469deadda83a396b365b040fcbb2b6204f98ceda7c0e3c3ff72cc4d685c","generated_at":"unix_ms:1793808103369","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-receiver-async-operand-helper"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:b5564620c6a45789;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"fa6d4f8b59d36a47","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:5be257a85a8d28d23f30986499840eaaeab851e7b457b2349447b4fa17e516cd","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"7a29029af92e2d5a"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:b5564620c6a45789","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:939d2c454c5204de02cd44c223a2adcf9b359f89705b467b8cbb9f83a2b213d0","generated_at":"unix_ms:1793845957072","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand-helper"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:b5564620c6a45789;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"fa6d4f8b59d36a47","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:5be257a85a8d28d23f30986499840eaaeab851e7b457b2349447b4fa17e516cd","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"1717aa737200e0b5"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json
+index 31d2f964c..427ea5648 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:cbbbae36bd2495d6","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:03aaef7d67fc2e18e0069bd5f3565efad43331fed98e9521448e04763a0c7fa2","generated_at":"unix_ms:1793808103418","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-receiver-async-operand"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:cbbbae36bd2495d6;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"8e0cd5446e80daaa","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:76b92b32285463c5dfcc7b64955aecd742212e6c6c8e0b2e4659f532e1de9af6","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"dbe75b75bab56ba8"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:cbbbae36bd2495d6","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:725988b51274214678d2f2deaa6007e1a388e285ff7fa0eeff3d7ca3d34e0810","generated_at":"unix_ms:1793845957166","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:cbbbae36bd2495d6;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"8e0cd5446e80daaa","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:76b92b32285463c5dfcc7b64955aecd742212e6c6c8e0b2e4659f532e1de9af6","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"ee836f6c833affb7"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json
+index e513856ec..b43ca398f 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:cd5ec3c4b1b2f0df","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:f661e9cbbb13b4be73289c5d11d1a41843f2d2cabb9364821e9f3aa55d22df14","generated_at":"unix_ms:1793808103473","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-receiver-dormant-body"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:cd5ec3c4b1b2f0df;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"5e3a2dc6748ece9c","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:c49baf47107ebc6049a4cf952fc861badf170b6e795a0e3ce8efb81f665a1387","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"15e87f4046f2e15d"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:cd5ec3c4b1b2f0df","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:23bfeac9928571055184ff8cdc5463daa7683c3b16390bf606206b552fefa89c","generated_at":"unix_ms:1793845957270","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-dormant-body"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:cd5ec3c4b1b2f0df;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"5e3a2dc6748ece9c","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:c49baf47107ebc6049a4cf952fc861badf170b6e795a0e3ce8efb81f665a1387","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"fc70d0c0a9ab77a6"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json
+index fe4e2fa8b..4fdb79ec2 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:d2ca4d2f8c7b4d71","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:021505fd0209b748a8e2f6a3ab26540d7ced38994b9d202ffa471353a155f87b","generated_at":"unix_ms:1793808103540","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-receiver-foreign-helper"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:d2ca4d2f8c7b4d71;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"fcb50087de5a94d3","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:3624fa91072c595d16150b6ee0ffad48731ecb88dc493c1f1573bede5ee70648","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"58b85ef7851de60b"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:d2ca4d2f8c7b4d71","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:f4029ac0efeb003ec2199a9395f203e8f62122e5d431a37d16ad1ac4b87b54cd","generated_at":"unix_ms:1793845957344","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-foreign-helper"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:d2ca4d2f8c7b4d71;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"fcb50087de5a94d3","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:3624fa91072c595d16150b6ee0ffad48731ecb88dc493c1f1573bede5ee70648","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"1c84e283721954da"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json
+index dca923bff..8cd124cb9 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:56c8c5109f68e30b","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:1950bb1171c7326ca73e6266e37b99d0943731ee4ef28419d0c3a695e7d9bad1","generated_at":"unix_ms:1793808103606","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-receiver-free-helper-identity"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:56c8c5109f68e30b;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"d1ed306070da2a18","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:8419436399c191ba79e6c33baa2d79d7271a607049dc0246a8828551db516e02","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"dc17984e61f7c4c2"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:56c8c5109f68e30b","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:eb2016116ad7f819a14fe32cf156e26fa886103e78787d7dbec1b22046c1bb49","generated_at":"unix_ms:1793845957426","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-free-helper-identity"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:56c8c5109f68e30b;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"d1ed306070da2a18","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:8419436399c191ba79e6c33baa2d79d7271a607049dc0246a8828551db516e02","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"35b5dd3bb7e4f94d"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json
+index 0e5af4818..563ef4464 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:51b5f46b23b0e751","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:04fc9f1da2ce2956168924aaa335244eb85e8af9511f0f6b197e3d836bd623fc","generated_at":"unix_ms:1793808103672","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-receiver-helper-scope-shadow"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:51b5f46b23b0e751;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"a717b5226f013000","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:99951a95d1b26a9eaa8471371ee36a8bf5c2083769f535a08107a5d1f9aedf15","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"27b4eb92a2e56f90"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:51b5f46b23b0e751","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:f29c912ac7bb9c3a235c7e974bb7651b656bdd2facc3db5d618be7b87186c832","generated_at":"unix_ms:1793845957540","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-scope-shadow"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:51b5f46b23b0e751;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"a717b5226f013000","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:99951a95d1b26a9eaa8471371ee36a8bf5c2083769f535a08107a5d1f9aedf15","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"eb31d8917754d02a"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json
+index e594696a1..603e6f387 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:e9259618982f32ac","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:1644f04b9f1c3dff762081b03410289df3f6fbd54ac3b0f60aa63ce3c44de3a8","generated_at":"unix_ms:1793808103728","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-receiver-helper-type-parameter"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:e9259618982f32ac;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"e753a2fc6a515f07","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:94da0848a16cd7fc0768dc790b491a37c4a10c49e8a036fe8ca7849b6a7c356d","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"4c006ff38b4d7b9e"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:e9259618982f32ac","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:5a84377af64c343ea60ffdd4ca50df78e198b97dda4e7ff419b4913fb0cf0474","generated_at":"unix_ms:1793845957613","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-type-parameter"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:e9259618982f32ac;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"e753a2fc6a515f07","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:94da0848a16cd7fc0768dc790b491a37c4a10c49e8a036fe8ca7849b6a7c356d","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"7992ade88b4979b2"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json
+index 4b3a0e923..79a061545 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:e4c83ec49953053b","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:4c42400ebb9915c2c98c8ed5d21e797d93b89f04c3577b3a7045a319e1381217","generated_at":"unix_ms:1793808103791","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-receiver-local-wrapper"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:e4c83ec49953053b;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"f1da717d02ecf847","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:a58ee04c413dc8672102e9937c1bf16deafb107c9d2ef6da50e765a20a0be56a","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"3d8dc8a1387e0019"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:e4c83ec49953053b","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:604cfbbd2eda5edf506fd01dc759c83ae94d23f58747b27e322597942ba5f204","generated_at":"unix_ms:1793845957697","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-local-wrapper"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:e4c83ec49953053b;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"f1da717d02ecf847","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:a58ee04c413dc8672102e9937c1bf16deafb107c9d2ef6da50e765a20a0be56a","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"870bcd7e42d60605"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json
+index 28572ff38..00cca15a5 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:168c0609b122d14e","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:b0c9a71f430be779696d749e4a10adfdea2797f7a68f2e61f5f533397958031b","generated_at":"unix_ms:1793808103843","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-receiver-macro-discard"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:168c0609b122d14e;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"4ee82db3e84fd91f","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:126643acb3205eadba43dfa535e8214cade4ae5145dae5ebbae5ac75fc64b7a2","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"72e4b65e6a37e294"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:168c0609b122d14e","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:302670c1925ae4fbd5c30d6e84b9302c16c54666e7b7f0c3732c207ea9f45c62","generated_at":"unix_ms:1793845957773","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-macro-discard"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:168c0609b122d14e;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"4ee82db3e84fd91f","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:126643acb3205eadba43dfa535e8214cade4ae5145dae5ebbae5ac75fc64b7a2","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"6afbce7cc9347775"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json
+index 52f81fcad..fe9e7eaf4 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:948ff66e2252f6d3","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:183d10f5e13fed96ce22a8e97ebe973bac48ee1eb896f522b454131375ca01d9","generated_at":"unix_ms:1793808103895","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-inherent-receiver-module-type-shadow"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:948ff66e2252f6d3;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"180405829fe386ac","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:4725a8daaba7875eb6a9e9cf99f0a28df0d90576de98b7803a1e13cb094fd2d2","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"fbfc821bf1d41896"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:948ff66e2252f6d3","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:3c19152229c6bccf89939314ba45107aa96ea67f95b3c467d61d6417b541a898","generated_at":"unix_ms:1793845957856","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-module-type-shadow"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:948ff66e2252f6d3;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"180405829fe386ac","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:4725a8daaba7875eb6a9e9cf99f0a28df0d90576de98b7803a1e13cb094fd2d2","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"fd034dc74ddecc0f"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json
+index c02f47869..4370dc0e7 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:fdfbe87d2de67340","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:fa5593d9da18f7879c6cf16fb227f8c02905273583e2943d26a786afa1389a16","generated_at":"unix_ms:1793808103947","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-adapter-fed-error"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:fdfbe87d2de67340;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"d6b70cc632b31ef8","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:f73f45ab9eecbe030a9f6897df1fcd6a5e4da3bee0c452426111ae180308e998","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"eb30d892e5915465"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:fdfbe87d2de67340","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:4dea73d7f57b2b4b898ab8679627782bb6dcc0d551bf28a46d6e11a7655dbbd7","generated_at":"unix_ms:1793845957939","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/adapter-fed-error"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:fdfbe87d2de67340;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"d6b70cc632b31ef8","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:f73f45ab9eecbe030a9f6897df1fcd6a5e4da3bee0c452426111ae180308e998","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"aa1f0962ec889bcf"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json
+index 723722932..0153ed3e7 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:3c37c37c65ec4c4f","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:a7cbe2c70da604a1f8d5da0a7f8cd659d38d773bee7746436747c272029d58e5","generated_at":"unix_ms:1793808103998","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-identical-inline-arms"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:3c37c37c65ec4c4f;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"db530d514ed46bc5","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:0dde0c101a10c505baa2529abb924db67aae29691267c321897246a82e9f4c74","path":"src/lib.rs"},{"digest":"sha256:f2f9a2e31283aed2a4ec390c985e43274803a3c94b43d1f3ee3898ed84dd7921","path":"tests/tier_tests.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"bdaf2b754a76749b"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:3c37c37c65ec4c4f","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:fa2a21a90fa0800ad07669d53e1f6a9260d1d7439c8694af7e5d282e6c809b4f","generated_at":"unix_ms:1793845958057","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/identical-inline-arms"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:3c37c37c65ec4c4f;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"db530d514ed46bc5","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:0dde0c101a10c505baa2529abb924db67aae29691267c321897246a82e9f4c74","path":"src/lib.rs"},{"digest":"sha256:f2f9a2e31283aed2a4ec390c985e43274803a3c94b43d1f3ee3898ed84dd7921","path":"tests/tier_tests.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"56aea7821a1ce034"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json
+index 77f3f72ab..893217e01 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:61038fcecf1886c8","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:9cb4808e4ea05c5144dab4a000c11673d2566cedf4025c7765332b02da55c19e","generated_at":"unix_ms:1793808104046","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-proximity-other-function"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:61038fcecf1886c8;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"6f2a254f42bfa46c","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:38bf6f925b6fec5e3648f58045f1728c7cfc78fb957397d02e66da09781cdbf2","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+1e1f4fc34c756d1db1def0c890bf15a0b58d95bf+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"e23684593142f03b"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:61038fcecf1886c8","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:48d31ec0460f7c3a8b6a8d753cbbddf85c5353b4e0e00bf8886411d96c77fc93","generated_at":"unix_ms:1793845958138","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/proximity-other-function"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:61038fcecf1886c8;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"6f2a254f42bfa46c","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:38bf6f925b6fec5e3648f58045f1728c7cfc78fb957397d02e66da09781cdbf2","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"2b2ef5788a0bd807"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
+diff --git a/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json b/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json
+index b926ca0d9..3c6d6b79d 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json
++++ b/fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json
+@@ -1,8 +1,8 @@
+ {
+   "schema_version": "0.5",
+-  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:c05b5f3666f88f99","mode":"draft","profile":"draft","worktree":"unavailable"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:ff8d80d5e8ed7b5cca68cd7082514e57897bc8a0f8bcad6851d91c0554f038a4","generated_at":"unix_ms:1793815227849","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"unavailable","root":"/tmp/sj-us"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:c05b5f3666f88f99;revision:unavailable"},
+-  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.158","files_content_hash":"f2db05ebfe31295d","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:ab150c238ae43b266274416bf9194e58cfaa66a78f8fc9b2565e56981498726e","path":"src/lib.rs"}]},
+-  "analysis_inputs": {"analyzer_version":"0.11.0+5f31605d5c4863c7e35d2210149e6ad21cfedf77+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"5979fb2c9ace48a2"},
++  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:c05b5f3666f88f99","mode":"draft","profile":"draft","worktree":"dirty"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:e621761e42086a3a3257dd42f5cc1161b9bbffb9e366ee03d55d8d7b989e1892","generated_at":"unix_ms:1793845958208","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"81019b7361a2ef7e44cad70abbab5cf0affa45ae","root":"/workspace/ripr-12010-successor/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/uncalled-sibling"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:c05b5f3666f88f99;revision:81019b7361a2ef7e44cad70abbab5cf0affa45ae"},
++  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.159","files_content_hash":"f2db05ebfe31295d","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:ab150c238ae43b266274416bf9194e58cfaa66a78f8fc9b2565e56981498726e","path":"src/lib.rs"}]},
++  "analysis_inputs": {"analyzer_version":"0.11.0+81019b7361a2ef7e44cad70abbab5cf0affa45ae+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"957fba432059840b"},
+   "scope": "repo",
+   "run_status": "complete",
+   "metrics": {
 diff --git a/fixtures/rust_binding_status_wrong_owner_observer/SPEC.md b/fixtures/rust_binding_status_wrong_owner_observer/SPEC.md
 new file mode 100644
 index 000000000..e0f33c061
@@ -749,10 +1085,10 @@ index 000000000..9f6ab81b9
 + // Unrelated owner that shares `status`/`verdict` vocabulary but never
 diff --git a/fixtures/rust_binding_status_wrong_owner_observer/expected/CHANGELOG.md b/fixtures/rust_binding_status_wrong_owner_observer/expected/CHANGELOG.md
 new file mode 100644
-index 000000000..1baecbc53
+index 000000000..989e837b3
 --- /dev/null
 +++ b/fixtures/rust_binding_status_wrong_owner_observer/expected/CHANGELOG.md
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,73 @@
 +# Golden Output Changes
 +
 +## Pending — rust_binding_status_wrong_owner_observer (1)
@@ -814,26 +1150,49 @@ index 000000000..1baecbc53
 +Updated:
 +- `expected/check.json`
 +- `expected/human.txt`
++
++## Pending — rust_binding_status_wrong_owner_observer (6)
++
++Reason:
++RIPR-SPEC-0108 #12010: carry the wrong-owner control through the current producer; two current probes retain reached-unrevealed and infection-unknown outcomes with zero exposed findings
++
++Command:
++`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
 diff --git a/fixtures/rust_binding_status_wrong_owner_observer/expected/check.json b/fixtures/rust_binding_status_wrong_owner_observer/expected/check.json
 new file mode 100644
-index 000000000..5ed29d790
+index 000000000..88c736096
 --- /dev/null
 +++ b/fixtures/rust_binding_status_wrong_owner_observer/expected/check.json
-@@ -0,0 +1,293 @@
+@@ -0,0 +1,257 @@
 +{
 +  "schema_version": "0.2",
 +  "tool": "ripr",
 +  "mode": "fast",
 +  "root": "fixtures/rust_binding_status_wrong_owner_observer/input",
-+  "base": "origin/main",
-+  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":2,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
++  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
 +  "analysis_outcome": {
 +    "analysis_complete": true,
-+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:94b90a0533063e69f3fd02f590274b4178505c32bc88e5fc781ea8f0286fd567","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
++    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:94b90a0533063e69f3fd02f590274b4178505c32bc88e5fc781ea8f0286fd567","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
 +  },
 +  "findings": [
 +    {
 +      "id": "probe:src_lib.rs:call_deletion:5417b899",
++      "canonical_gap_id": "gap:rust:src/lib.rs:receipt_binding_matches:call_deletion:call_deletion:format!lit7b63757272656e743a3f7d==format!lit7b7265636f726465643a3f7d",
++      "canonical_gap_group_size": 1,
++      "canonical_gap": {
++        "id": "gap:rust:src/lib.rs:receipt_binding_matches:call_deletion:call_deletion:format!lit7b63757272656e743a3f7d==format!lit7b7265636f726465643a3f7d",
++        "language": "rust",
++        "file": "src/lib.rs",
++        "owner": "receipt_binding_matches",
++        "behavior_kind": "call_deletion",
++        "probe_kind": "call_deletion",
++        "normalized_discriminator": "format!lit7b63757272656e743a3f7d==format!lit7b7265636f726465643a3f7d"
++
++      },
 +      "classification": "reachable_unrevealed",
 +      "severity": "warning",
 +      "confidence": 0.79,
@@ -841,7 +1200,7 @@ index 000000000..5ed29d790
 +        "id": "probe:src_lib.rs:call_deletion:5417b899",
 +        "family": "call_deletion",
 +        "delta": "effect",
-+        "file": "fixtures/rust_binding_status_wrong_owner_observer/input/src/lib.rs",
++        "file": "./src/lib.rs",
 +        "line": 19,
 +        "expression": "format!(\"{current:?}\") == format!(\"{recorded:?}\")"
 +       },
@@ -852,7 +1211,7 @@ index 000000000..5ed29d790
 +        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
 +        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
 +       },
-+      "evidence_path": ["reach yes: Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: format!(\"{current:?}\") == format!(\"{recorded:?}\")", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches call effect: format!(\"{current:?}\") == format!(\"{recorded:?}\") (line 19)", "related test tests/driver.rs:6 binding_inputs_reach_the_changed_comparison uses none unknown oracle"],
++      "evidence_path": ["reach yes: Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: format!(\"{current:?}\") == format!(\"{recorded:?}\")", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches call effect: format!(\"{current:?}\") == format!(\"{recorded:?}\") (line 19)", "related test tests/driver.rs:6 binding_inputs_reach_the_changed_comparison uses no oracle"],
 +      "flow_sinks": [
 +        {"kind":"call_effect","text":"format!(\"{current:?}\") == format!(\"{recorded:?}\")","line":19}
 +      ],
@@ -880,111 +1239,56 @@ index 000000000..5ed29d790
 +          "oracle_kind": "unknown",
 +          "oracle": "",
 +          "relation_reason": "direct_owner_call",
-+          "relation_confidence": "high"
++          "relation_confidence": "high",
++          "miss": "no_assertion",
++          "why": "has no assertion"
 +        }
 +      ],
 +      "stop_reasons": ["proc_macro_opaque"],
 +      "oracle_kind": "unknown",
 +      "oracle_strength": "none",
-+      "recommended_next_step": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
-+      "suggested_next_action": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
-+      "language": "rust",
-+      "source_currentness": "base_deleted"
-+    },
-+    {
-+      "id": "probe:src_lib.rs:field_construction:bfd5b07d",
-+      "classification": "reachable_unrevealed",
-+      "severity": "warning",
-+      "confidence": 0.66,
-+      "probe": {
-+        "id": "probe:src_lib.rs:field_construction:bfd5b07d",
-+        "family": "field_construction",
-+        "delta": "value",
-+        "file": "fixtures/rust_binding_status_wrong_owner_observer/input/src/lib.rs",
-+        "line": 19,
-+        "expression": "format!(\"{current:?}\") == format!(\"{recorded:?}\")"
-+       },
-+      "ripr": {
-+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison"},
-+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
-+        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")"},
-+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
-+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
-+       },
-+      "evidence_path": ["reach yes: Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\") (line 19)", "related test tests/driver.rs:6 binding_inputs_reach_the_changed_comparison uses none unknown oracle", "missing discriminator format!(\"{current:?}\") == format!(\"{recorded:?}\"): No field-value assertion observes the constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")"],
-+      "flow_sinks": [
-+        {"kind":"struct_field","text":"format!(\"{current:?}\") == format!(\"{recorded:?}\")","line":19}
-+      ],
-+      "evidence": ["No assertion found on related tests", "No complete owner-bound propagation witness found for constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
-+      "missing": ["Missing discriminator value: format!(\"{current:?}\") == format!(\"{recorded:?}\")", "No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
-+      "assertion_texts": {
-+      },
-+      "activation": {
-+        "observed_values": [
-+        ],
-+        "missing_discriminators": [
-+          {
-+            "value": "format!(\"{current:?}\") == format!(\"{recorded:?}\")",
-+            "reason": "No field-value assertion observes the constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")",
-+            "flow_sink": {"kind":"struct_field","text":"format!(\"{current:?}\") == format!(\"{recorded:?}\")","line":19}
-+          }
-+        ]
-+      },
-+      "observed_values": [
-+      ],
-+      "missing_discriminators": [
-+        {
-+          "value": "format!(\"{current:?}\") == format!(\"{recorded:?}\")",
-+          "reason": "No field-value assertion observes the constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")",
-+          "flow_sink": {"kind":"struct_field","text":"format!(\"{current:?}\") == format!(\"{recorded:?}\")","line":19}
-+        }
-+      ],
-+      "related_tests_total": 1,
-+      "related_tests": [
-+        {
-+          "name": "binding_inputs_reach_the_changed_comparison",
-+          "file": "tests/driver.rs",
-+          "line": 6,
-+          "oracle_strength": "none",
-+          "oracle_kind": "unknown",
-+          "oracle": "",
-+          "relation_reason": "direct_owner_call",
-+          "relation_confidence": "high"
-+        }
-+      ],
-+      "stop_reasons": ["proc_macro_opaque"],
-+      "oracle_kind": "unknown",
-+      "oracle_strength": "none",
-+      "recommended_next_step": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
-+      "suggested_next_action": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
++      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
++      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
 +      "language": "rust",
 +      "source_currentness": "base_deleted"
 +    },
 +    {
 +      "id": "probe:src_lib.rs:predicate:1ce6138c",
++      "canonical_gap_id": "gap:rust:src/lib.rs:receipt_binding_matches:predicate_boundary:predicate:current.status==recorded.status_current.violations==recorded.violations",
++      "canonical_gap_group_size": 1,
++      "canonical_gap": {
++        "id": "gap:rust:src/lib.rs:receipt_binding_matches:predicate_boundary:predicate:current.status==recorded.status_current.violations==recorded.violations",
++        "language": "rust",
++        "file": "src/lib.rs",
++        "owner": "receipt_binding_matches",
++        "behavior_kind": "predicate_boundary",
++        "probe_kind": "predicate",
++        "normalized_discriminator": "current.status==recorded.status_current.violations==recorded.violations"
++
++      },
 +      "classification": "infection_unknown",
 +      "severity": "warning",
-+      "confidence": 0.66,
++      "confidence": 0.38,
 +      "probe": {
 +        "id": "probe:src_lib.rs:predicate:1ce6138c",
 +        "family": "predicate",
 +        "delta": "control",
-+        "file": "fixtures/rust_binding_status_wrong_owner_observer/input/src/lib.rs",
++        "file": "./src/lib.rs",
 +        "line": 19,
 +        "expression": "current.status == recorded.status && current.violations == recorded.violations"
 +       },
 +      "ripr": {
-+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach receipt_binding_matches: artifact_terminal_status_is_observed, binding_inputs_reach_the_changed_comparison"},
-+        "infect": {"state":"unknown","confidence":"low","summary":"Predicate changed, but no literal boundary was visible in the changed expression"},
++        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison"},
++        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown"},
 +        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
-+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through weak_token_substring linkage without sink-level evidence (identity_unresolved)"}
++        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
++        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
 +       },
-+      "evidence_path": ["reach yes: Related tests appear to reach receipt_binding_matches: artifact_terminal_status_is_observed, binding_inputs_reach_the_changed_comparison", "infection unknown: Predicate changed, but no literal boundary was visible in the changed expression", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through weak_token_substring linkage without sink-level evidence (identity_unresolved)", "related test tests/artifact.rs:6 artifact_terminal_status_is_observed uses weak relational check oracle: assert!(artifact_reaches_terminal(&record));", "related test tests/artifact.rs:6 artifact_terminal_status_is_observed uses strong exact value oracle: assert_eq!(record.verdict_note, \"blocked\");", "related test tests/artifact.rs:6 artifact_terminal_status_is_observed uses weak relational check oracle: assert!(format!(\"{:?}\", verdict.status).contains(\"Ready\"));", "related test tests/driver.rs:6 binding_inputs_reach_the_changed_comparison uses none unknown oracle", "observed assertion argument value \"blocked\" at line 14", "observed assertion argument value \"Ready\" at line 15", "observed assertion argument value \"{:?}\" at line 15", "observed enum variant value AttemptStatus::Ready at line 15", "observed assertion argument value \"Ready\" at line 21", "observed assertion argument value \"{:?}\" at line 21"],
++      "evidence_path": ["reach yes: Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison", "infection unknown: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "related test tests/driver.rs:6 binding_inputs_reach_the_changed_comparison uses no oracle", "related test tests/artifact.rs:6 artifact_terminal_status_is_observed uses weak relational check oracle: assert!(artifact_reaches_terminal(&record));", "related test tests/artifact.rs:6 artifact_terminal_status_is_observed uses strong exact value oracle: assert_eq!(record.verdict_note, \"blocked\");", "related test tests/artifact.rs:6 artifact_terminal_status_is_observed uses weak relational check oracle: assert!(format!(\"{:?}\", verdict.status).contains(\"Ready\"));", "source assertion argument value \"blocked\" at line 14", "source assertion argument value \"Ready\" at line 15", "source assertion argument value \"{:?}\" at line 15", "source enum variant value AttemptStatus::Ready at line 15", "source assertion argument value \"Ready\" at line 21", "source assertion argument value \"{:?}\" at line 21"],
 +      "flow_sinks": [
 +      ],
-+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator uncredited: strongest oracle reaches only through weak_token_substring linkage without sink-level evidence (identity_unresolved)", "Predicate changed, but no literal boundary was visible in the changed expression", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach receipt_binding_matches: artifact_terminal_status_is_observed, binding_inputs_reach_the_changed_comparison"],
-+      "missing": ["No detected boundary input for the changed predicate", "No strong discriminator was detected", "Predicate changed, but no literal boundary was visible in the changed expression"],
++      "evidence": ["Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No assertion found on related tests", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
++      "missing": ["Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No detected boundary input for the changed predicate", "No relevant oracle was detected", "No strong discriminator was detected"],
 +      "assertion_texts": {
 +        "14": "assert_eq!(record.verdict_note, \"blocked\");",
 +        "15": "assert_eq!(format!(\"{:?}\", AttemptStatus::Ready), \"Ready\");",
@@ -1063,6 +1367,18 @@ index 000000000..5ed29d790
 +      "related_tests_total": 4,
 +      "related_tests": [
 +        {
++          "name": "binding_inputs_reach_the_changed_comparison",
++          "file": "tests/driver.rs",
++          "line": 6,
++          "oracle_strength": "none",
++          "oracle_kind": "unknown",
++          "oracle": "",
++          "relation_reason": "direct_owner_call",
++          "relation_confidence": "high",
++          "miss": "no_assertion",
++          "why": "has no assertion"
++        },
++        {
 +          "name": "artifact_terminal_status_is_observed",
 +          "file": "tests/artifact.rs",
 +          "line": 6,
@@ -1070,7 +1386,9 @@ index 000000000..5ed29d790
 +          "oracle_kind": "relational_check",
 +          "oracle": "assert!(artifact_reaches_terminal(&record));",
 +          "relation_reason": "weak_token_substring",
-+          "relation_confidence": "low"
++          "relation_confidence": "low",
++          "miss": "no_call_path",
++          "why": "no established call path to the changed code; linked by name only"
 +        },
 +        {
 +          "name": "artifact_terminal_status_is_observed",
@@ -1080,7 +1398,9 @@ index 000000000..5ed29d790
 +          "oracle_kind": "exact_value",
 +          "oracle": "assert_eq!(record.verdict_note, \"blocked\");",
 +          "relation_reason": "weak_token_substring",
-+          "relation_confidence": "low"
++          "relation_confidence": "low",
++          "miss": "no_call_path",
++          "why": "no established call path to the changed code; linked by name only"
 +        },
 +        {
 +          "name": "artifact_terminal_status_is_observed",
@@ -1090,24 +1410,16 @@ index 000000000..5ed29d790
 +          "oracle_kind": "relational_check",
 +          "oracle": "assert!(format!(\"{:?}\", verdict.status).contains(\"Ready\"));",
 +          "relation_reason": "weak_token_substring",
-+          "relation_confidence": "low"
-+        },
-+        {
-+          "name": "binding_inputs_reach_the_changed_comparison",
-+          "file": "tests/driver.rs",
-+          "line": 6,
-+          "oracle_strength": "none",
-+          "oracle_kind": "unknown",
-+          "oracle": "",
-+          "relation_reason": "direct_owner_call",
-+          "relation_confidence": "high"
++          "relation_confidence": "low",
++          "miss": "no_call_path",
++          "why": "no established call path to the changed code; linked by name only"
 +        }
 +      ],
 +      "stop_reasons": ["infection_evidence_unknown"],
 +      "oracle_kind": "exact_value",
 +      "oracle_strength": "strong",
-+      "recommended_next_step": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
-+      "suggested_next_action": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
++      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
++      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
 +      "language": "rust",
 +      "source_currentness": "candidate_current"
 +    }
@@ -1115,40 +1427,69 @@ index 000000000..5ed29d790
 +}
 diff --git a/fixtures/rust_binding_status_wrong_owner_observer/expected/human.txt b/fixtures/rust_binding_status_wrong_owner_observer/expected/human.txt
 new file mode 100644
-index 000000000..5d8896a39
+index 000000000..63adceaeb
 --- /dev/null
 +++ b/fixtures/rust_binding_status_wrong_owner_observer/expected/human.txt
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,61 @@
 +ripr static RIPR exposure analysis
 +mode: fast
 +root: fixtures/rust_binding_status_wrong_owner_observer/input
 +
-+Summary: 3 probe(s), 0 exposed, 0 weak, 2 unrevealed, 0 no path, 1 unknown
++Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 1 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings (1 base-side evidence, not candidate edit targets)
 +
-+Analysis outcome: complete_with_findings (analysis complete).
-+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s).
++Analysis outcome: findings below (analysis complete)
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 +
 +Start here:
-+  State: static_limited
-+  Safe next action: inspect the named static limitation before treating this as repair-ready.
-+  File: fixtures/rust_binding_status_wrong_owner_observer/input/src/lib.rs:19
-+  Static exposure: infection_unknown (warning, confidence 0.66)
-+  Why infection_unknown: the change reaches a sink but infection could not be determined statically
++  State: ripr cannot tell from reading the code whether tests would notice this
++  Safe next action: look at the reason below before adding a test
++  File: ./src/lib.rs:19
++  Static exposure: unknown (severity: warning, confidence 0.38)
++  Why unknown: ripr could not tell which inputs would trigger the change, and could not follow it to something a test can check
++  Gap ID (for scripts): gap:rust:src/lib.rs:receipt_binding_matches:predicate_boundary:predicate:current.status==recorded.status_current.violations==recorded.violations
 +  Changed behavior: current.status == recorded.status && current.violations == recorded.violations
-+  Missing discriminator: No detected boundary input for the changed predicate
-+  Related test: tests/artifact.rs:6 artifact_terminal_status_is_observed
-+  Next step: Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.
-+  Evidence:
-+    - reach yes: Related tests appear to reach receipt_binding_matches: artifact_terminal_status_is_observed, binding_inputs_reach_the_changed_comparison
-+    - infection unknown: Predicate changed, but no literal boundary was visible in the changed expression
-+    - 13 more evidence line(s) hidden
++  Missing check (1 of 4): Changed boundary input is unresolved: the changed comparison's operands
++    are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the
++    boundary a test reaches; activation/infection is unknown
++  Related test (1 of 4 matched rows): tests/driver.rs:6 binding_inputs_reach_the_changed_comparison (has no assertion)
++  Next step: Open the related test, check whether it reaches the changed code, and inspect other
++    existing tests. Trace their inputs through the local or computed operand (including default and
++    empty cases) to see which side of the changed condition they exercise, then name an input that
++    would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or
++    strengthen a test only if this inspection finds a gap. Compare the original and changed
++    implementations with a focused run using the project's configured test runner (`cargo test` for
++    ordinary Cargo tests). Static classification may remain unknown
++  Evidence: reach yes · infection unknown · propagation unknown · observation no · assertion no
++    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
++      propagation = changed effect reaches output; observation = related test/assertion evidence;
++      assertion = a test assertion tells intended from wrong behavior
++    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
++      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
++    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
++      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
++      no test path = no test path found; unclear = analysis limited, not a verdict;
++      found = listed for review; suppressed by your settings = hidden by your suppression policy;
++      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
++    - reach yes: Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison
++    - infection unknown: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of…
++    - 13 more detail line(s) in --format human-full
 +
 +Next: drill into the top finding:
-+  ripr explain --root fixtures/rust_binding_status_wrong_owner_observer/input --diff fixtures/rust_binding_status_wrong_owner_observer/diff.patch --mode fast probe:src_lib.rs:predicate:1ce6138c
-+  ripr context --root fixtures/rust_binding_status_wrong_owner_observer/input --diff fixtures/rust_binding_status_wrong_owner_observer/diff.patch --mode fast --at probe:src_lib.rs:predicate:1ce6138c
++  (finding id, for explain/context)
++  ripr explain --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --diff <cwd>/fixtures/rust_binding_status_wrong_owner_observer/diff.patch --mode fast probe:src_lib.rs:predicate:1ce6138c
++  ripr context --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --diff <cwd>/fixtures/rust_binding_status_wrong_owner_observer/diff.patch --mode fast --at probe:src_lib.rs:predicate:1ce6138c
++  no repair start offered: ripr found 5 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
++Choose a test-stub spot for probe:src_lib.rs:predicate:1ce6138c: src/lib.rs:18 holds more than one predicate_boundary spot, so --at cannot pick one
++  Each command below produces a stub, but ripr could not tell which spot your change touches.
++  They do not establish a repair binding or close a static limitation.
++  ripr agent stub --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --seam-id e4df2237f070660c
++  ripr agent stub --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --seam-id 20904e3811fb86d5
 +
 +Hidden:
-+  2 lower-priority finding(s) omitted from default human output.
++  All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
++    - ./src/lib.rs:19 (unrevealed); kind: call_deletion; reason: No detected assertion observes the changed value, error, field, or effect
++  Hidden classes:
++    unrevealed = tests reach it but nothing appears to notice a change
 +  Full evidence: rerun with --format human-full
 +  Machine data: rerun with --format json
 diff --git a/fixtures/rust_binding_status_wrong_owner_observer/input/Cargo.toml b/fixtures/rust_binding_status_wrong_owner_observer/input/Cargo.toml
@@ -1319,10 +1660,10 @@ index 000000000..5c7b261f6
 + pub fn build_catalog() -> Catalog {
 diff --git a/fixtures/rust_catalog_description_structural_oracle/expected/CHANGELOG.md b/fixtures/rust_catalog_description_structural_oracle/expected/CHANGELOG.md
 new file mode 100644
-index 000000000..b4fac727f
+index 000000000..3cae4b97f
 --- /dev/null
 +++ b/fixtures/rust_catalog_description_structural_oracle/expected/CHANGELOG.md
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,50 @@
 +# Golden Output Changes
 +
 +## Pending — rust_catalog_description_structural_oracle (1)
@@ -1360,26 +1701,50 @@ index 000000000..b4fac727f
 +Updated:
 +- `expected/check.json`
 +- `expected/human.txt`
++
++## Pending — rust_catalog_description_structural_oracle (4)
++
++Reason:
++RIPR-SPEC-0108 #12010: unchanged catalog tokens do not discriminate returned wording; preserve one weakly-exposed finding and current output contracts, with the exact-wording CLI counterpart exposed
++
++Command:
++`cargo xtask goldens bless rust_catalog_description_structural_oracle --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++- `expected/human-full.txt`
 diff --git a/fixtures/rust_catalog_description_structural_oracle/expected/check.json b/fixtures/rust_catalog_description_structural_oracle/expected/check.json
 new file mode 100644
-index 000000000..e04e3f27e
+index 000000000..63d8de831
 --- /dev/null
 +++ b/fixtures/rust_catalog_description_structural_oracle/expected/check.json
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,86 @@
 +{
 +  "schema_version": "0.2",
 +  "tool": "ripr",
 +  "mode": "fast",
 +  "root": "fixtures/rust_catalog_description_structural_oracle/input",
-+  "base": "origin/main",
 +  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
 +  "analysis_outcome": {
 +    "analysis_complete": true,
-+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:9faa4854953601f7218f40c2c6e3e9d71eba34191afe1d0ce64745175dcad732","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
++    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:9faa4854953601f7218f40c2c6e3e9d71eba34191afe1d0ce64745175dcad732","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
 +  },
 +  "findings": [
 +    {
 +      "id": "probe:src_lib.rs:return_value:90200739",
++      "canonical_gap_id": "gap:rust:src/lib.rs:default_check_description:return_value:return_value:lit766572696669657320636174616c6f6720636f6e73697374656e6379.to_string",
++      "canonical_gap_group_size": 1,
++      "canonical_gap": {
++        "id": "gap:rust:src/lib.rs:default_check_description:return_value:return_value:lit766572696669657320636174616c6f6720636f6e73697374656e6379.to_string",
++        "language": "rust",
++        "file": "src/lib.rs",
++        "owner": "default_check_description",
++        "behavior_kind": "return_value",
++        "probe_kind": "return_value",
++        "normalized_discriminator": "lit766572696669657320636174616c6f6720636f6e73697374656e6379.to_string"
++
++      },
 +      "classification": "weakly_exposed",
 +      "severity": "warning",
 +      "confidence": 0.92,
@@ -1387,7 +1752,7 @@ index 000000000..e04e3f27e
 +        "id": "probe:src_lib.rs:return_value:90200739",
 +        "family": "return_value",
 +        "delta": "value",
-+        "file": "fixtures/rust_catalog_description_structural_oracle/input/src/lib.rs",
++        "file": "./src/lib.rs",
 +        "line": 11,
 +        "expression": "\"verifies catalog consistency\".to_string()"
 +       },
@@ -1426,14 +1791,16 @@ index 000000000..e04e3f27e
 +          "oracle_kind": "exact_value",
 +          "oracle": "assert_eq!(\n        entry_description_violations(&catalog),\n        Vec::<String>::new()\n    );",
 +          "relation_reason": "direct_owner_call",
-+          "relation_confidence": "high"
++          "relation_confidence": "high",
++          "miss": "observation_unconfirmed",
++          "why": "ripr could not confirm that this assertion observes the changed behavior"
 +        }
 +      ],
 +      "stop_reasons": [],
 +      "oracle_kind": "exact_value",
 +      "oracle_strength": "strong",
-+      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
-+      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
++      "recommended_next_step": "The related test `catalog_with_single_consistent_entry_has_no_violations` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
++      "suggested_next_action": "The related test `catalog_with_single_consistent_entry_has_no_violations` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
 +      "language": "rust",
 +      "source_currentness": "candidate_current"
 +    }
@@ -1441,29 +1808,37 @@ index 000000000..e04e3f27e
 +}
 diff --git a/fixtures/rust_catalog_description_structural_oracle/expected/human-full.txt b/fixtures/rust_catalog_description_structural_oracle/expected/human-full.txt
 new file mode 100644
-index 000000000..0d1988b88
+index 000000000..a5a7ec4a3
 --- /dev/null
 +++ b/fixtures/rust_catalog_description_structural_oracle/expected/human-full.txt
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,49 @@
 +ripr static RIPR exposure analysis
 +mode: fast
 +root: fixtures/rust_catalog_description_structural_oracle/input
 +
-+Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
++Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
++Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
++  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
++  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
++  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
++  unsuppressed = not hidden by your suppression policy
 +
-+Analysis outcome: complete_with_findings (analysis complete).
-+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
++Analysis outcome: findings below (analysis complete; complete_with_findings)
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 +
-+WARNING fixtures/rust_catalog_description_structural_oracle/input/src/lib.rs:11
++WARNING ./src/lib.rs:11
++  id: probe:src_lib.rs:return_value:90200739
 +
 +Changed
 +  before: "checks catalog consistency".to_string()
 +  after:  "verifies catalog consistency".to_string()
 +
-+Probe
++Change type
++  a returned value changed
 +  family: return_value
-+  delta:  value
++  delta:  value (changes a computed value)
 +  owner:  src/lib.rs::default_check_description
++  gap id (for scripts): gap:rust:src/lib.rs:default_check_description:return_value:return_value:lit766572696669657320636174616c6f6720636f6e73697374656e6379.to_string
 +
 +Static exposure
 +  weakly_exposed (warning, confidence 0.92)
@@ -1473,51 +1848,71 @@ index 000000000..0d1988b88
 +  - infection yes: Reachable tests can plausibly activate this changed behavior
 +  - propagation yes: Complete propagation witness reaches returned value: "verifies catalog consistency".to_string()
 +  - observation yes: A related test observes a value or effect near the changed behavior
-+  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
++  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
 +  - local flow reaches returned value: "verifies catalog consistency".to_string() (line 11)
-+  - related test tests/catalog.rs:6 catalog_with_single_consistent_entry_has_no_violations uses strong exact value oracle: assert_eq!(
-+        entry_description_violations(&catalog),
-+        Vec::<String>::new()
-+    );
++  - related test tests/catalog.rs:6 catalog_with_single_consistent_entry_has_no_violations uses strong exact value oracle: assert_eq!( entry_description_violations(&catalog), Vec::<String>::new() ); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 +
 +Weakness
 +  - No strong discriminator was detected
 +
 +Next step
-+  Replace broad assertions with exact equality or a property that constrains the changed returned value.
++  The related test `catalog_with_single_consistent_entry_has_no_violations` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
++Drill in:
++  (finding id, for explain/context)
++  ripr explain --root <cwd>/fixtures/rust_catalog_description_structural_oracle/input --diff <cwd>/fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:90200739
++  ripr context --root <cwd>/fixtures/rust_catalog_description_structural_oracle/input --diff <cwd>/fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:90200739
 diff --git a/fixtures/rust_catalog_description_structural_oracle/expected/human.txt b/fixtures/rust_catalog_description_structural_oracle/expected/human.txt
 new file mode 100644
-index 000000000..be9ece497
+index 000000000..acf6d8b56
 --- /dev/null
 +++ b/fixtures/rust_catalog_description_structural_oracle/expected/human.txt
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,50 @@
 +ripr static RIPR exposure analysis
 +mode: fast
 +root: fixtures/rust_catalog_description_structural_oracle/input
 +
-+Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
++Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 +
-+Analysis outcome: complete_with_findings (analysis complete).
-+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
++Analysis outcome: findings below (analysis complete)
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 +
 +Start here:
-+  State: top_gap
-+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
-+  File: fixtures/rust_catalog_description_structural_oracle/input/src/lib.rs:11
-+  Static exposure: weakly_exposed (warning, confidence 0.92)
-+  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
++  State: a test gap to inspect or repair
++  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
++  File: ./src/lib.rs:11
++  Static exposure: weak (severity: warning, confidence 0.92)
++  Why weak: a related test reaches this change but does not observe the exact changed value
++  Gap ID (for scripts): gap:rust:src/lib.rs:default_check_description:return_value:return_value:lit766572696669657320636174616c6f6720636f6e73697374656e6379.to_string
 +  Changed behavior: "verifies catalog consistency".to_string()
-+  Missing discriminator: No strong discriminator was detected
-+  Related test: tests/catalog.rs:6 catalog_with_single_consistent_entry_has_no_violations
-+  Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value.
-+  Evidence:
++  Missing check: No assertion was tied to the changed value
++  Related test: tests/catalog.rs:6 catalog_with_single_consistent_entry_has_no_violations (ripr could not confirm that this assertion observes the changed behavior)
++  Next step: The related test `catalog_with_single_consistent_entry_has_no_violations` already has
++    an exact assertion; this does not establish observation of the returned value. Check whether the
++    change can affect the returned value. If it can, add a separating input and assert the exact
++    returned value. If it cannot, test the changed effect separately; another input cannot
++    distinguish unchanged returns
++  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
++    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
++      propagation = changed effect reaches output; observation = related test/assertion evidence;
++      assertion = a test assertion tells intended from wrong behavior
++    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
++      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
++    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
++      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
++      no test path = no test path found; unclear = analysis limited, not a verdict;
++      found = listed for review; suppressed by your settings = hidden by your suppression policy;
++      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
 +    - reach yes: Related tests appear to reach default_check_description: catalog_with_single_consistent_entry_has_no_violations
 +    - infection yes: Reachable tests can plausibly activate this changed behavior
-+    - 5 more evidence line(s) hidden
++    - 5 more detail line(s) in --format human-full
 +
 +Next: drill into the top finding:
-+  ripr explain --root fixtures/rust_catalog_description_structural_oracle/input --diff fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:90200739
-+  ripr context --root fixtures/rust_catalog_description_structural_oracle/input --diff fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:90200739
++  (finding id, for explain/context)
++  ripr explain --root <cwd>/fixtures/rust_catalog_description_structural_oracle/input --diff <cwd>/fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:90200739
++  ripr context --root <cwd>/fixtures/rust_catalog_description_structural_oracle/input --diff <cwd>/fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:90200739
++  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
++Write a test for it:
++  ripr agent stub --root <cwd>/fixtures/rust_catalog_description_structural_oracle/input --at src/lib.rs:11 --kind return_value
 +
 +More:
 +  Full evidence: rerun with --format human-full

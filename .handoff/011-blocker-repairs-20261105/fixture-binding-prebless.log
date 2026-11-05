@@ -1,0 +1,11 @@
+$ CARGO_HOME=/workspace/.cargo RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_HOME=/workspace/.rustup cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.35s
+xtask: fixture command failed; see target/ripr/reports/fixtures.md
+check.json drift for fixture `rust_binding_status_wrong_owner_observer`
+  expected: fixtures/rust_binding_status_wrong_owner_observer/expected/check.json
+  actual:   target/ripr/fixtures/rust_binding_status_wrong_owner_observer/check.json
+  diff:    line 6 expected `  \"base\": \"origin/main\",` vs actual `  \"summary\": {\"changed_rust_files\":1,\"probes\":2,\"findings\":2,\"exposed\":0,\"weakly_exposed\":0,\"reachable_unre…`
+human.txt drift for fixture `rust_binding_status_wrong_owner_observer`
+  expected: fixtures/rust_binding_status_wrong_owner_observer/expected/human.txt
+  actual:   target/ripr/fixtures/rust_binding_status_wrong_owner_observer/human.txt
+  diff:    line 5 expected `Summary: 3 probe(s), 0 exposed, 0 weak, 2 unrevealed, 0 no path, 1 unknown` vs actual `Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 1 reached but not noticed, 0 no test …`

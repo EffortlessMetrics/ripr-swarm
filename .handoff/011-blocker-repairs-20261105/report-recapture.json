@@ -1,0 +1,361 @@
+{
+  "rows": [
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-activated-unsupported",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-activated-unsupported"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "e01aef9ee3033f6bfc9f8ff2791900caad7266f5f310854d88cc68a94856b343"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-entry",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-entry"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "2f040f13afecd87e49fef058fc1f773af792ec54dd724e3e4fb5bcf4b30ced59"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-intermediate",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-intermediate"
+      ],
+      "exit": 0,
+      "seams": 8,
+      "sha256": "df61489d3aeaf8eb73be8597bc3675b146e0f0b60283d9d233871a9c2f3a1d9d"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-last-hop",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-last-hop"
+      ],
+      "exit": 0,
+      "seams": 7,
+      "sha256": "aa7df2252655e4e2c6c78a7c3d10fc71f28074a81fbba410a0a9dab573062363"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-entry",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-entry"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "5b248f3b1f195fcf7c1907a5a63e9892d0187d10eea1200d97b29f8cdd9aaf39"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-last-hop",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-last-hop"
+      ],
+      "exit": 0,
+      "seams": 7,
+      "sha256": "002c61dc26fc06bab387bebbdf8682a0712d248478564b4b512fbd2fa14970f9"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-operand",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-operand"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "4d85ee7ff4c426d79dc966c35f61a074c288c9b74df4fafc1d360c46ab9bb530"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand-helper",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand-helper"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "8e7b4cbe3ef32f1880586c01626183217e5532916baadeb049bfa1aaa5b0e24d"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand"
+      ],
+      "exit": 0,
+      "seams": 4,
+      "sha256": "74e1262d13d52e3f6d8f6adb095b4b2253f532c9c425277a992aeece00964381"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-dormant-body",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-dormant-body"
+      ],
+      "exit": 0,
+      "seams": 4,
+      "sha256": "2a53a298649466637353c80793ed00550359781bac55a3413c5f02f65873e48b"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-foreign-helper",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-foreign-helper"
+      ],
+      "exit": 0,
+      "seams": 6,
+      "sha256": "5b505dc936ec63a306f4be704771b8eed9edc1e9740e4f6c8325fca354717bb5"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-free-helper-identity",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-free-helper-identity"
+      ],
+      "exit": 0,
+      "seams": 6,
+      "sha256": "efbe96edba5e85f7828179a965ef268f7462947b1a32e53f9f48df35473fe8f4"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-scope-shadow",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-scope-shadow"
+      ],
+      "exit": 0,
+      "seams": 7,
+      "sha256": "0a68b67076c26b72e614b2e58a827196887322fc27d82de912ce0624aa3712c3"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-type-parameter",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-type-parameter"
+      ],
+      "exit": 0,
+      "seams": 7,
+      "sha256": "68fe2ed43f9706dd2cfe2d1c04b1368f6bb7920d0ea8944ac757d152734b64fd"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-local-wrapper",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-local-wrapper"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "f35f53fb2321bae7bed49cfb5e58ee807f6eba63f65f059fa6c9597c2502adea"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-macro-discard",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-macro-discard"
+      ],
+      "exit": 0,
+      "seams": 4,
+      "sha256": "a7495e9e693921ee93c7d562400e451a15eda7842e764d216afc88ea9404032c"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-module-type-shadow",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-module-type-shadow"
+      ],
+      "exit": 0,
+      "seams": 4,
+      "sha256": "6dad906533b2ce9b004a0352b699cb4fed7d288505485f71d1aac722732ebc90"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/adapter-fed-error",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/adapter-fed-error"
+      ],
+      "exit": 0,
+      "seams": 6,
+      "sha256": "785c28c616a094e1d1c8be24dcedfa46b27b56a8f25f979dd3ff72d3de7dacd0"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/identical-inline-arms",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/identical-inline-arms"
+      ],
+      "exit": 0,
+      "seams": 4,
+      "sha256": "4a9698dd87c662e458d7025473e5b88c117d624b8cc7608bbbfec87f23a0191f"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/proximity-other-function",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/proximity-other-function"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "09a00776e665947800f52380fb69317f705cc1a981f00ef046925cf083b99eb0"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/uncalled-sibling",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/uncalled-sibling"
+      ],
+      "exit": 0,
+      "seams": 2,
+      "sha256": "d2fb36d8ac842638330b6fec67bc928431ff14c9b1f44c17ea8655e942eb722a"
+    }
+  ]
+}

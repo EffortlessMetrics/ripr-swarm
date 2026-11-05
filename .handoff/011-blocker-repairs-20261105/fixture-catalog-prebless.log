@@ -1,0 +1,15 @@
+$ CARGO_HOME=/workspace/.cargo RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_HOME=/workspace/.rustup cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.34s
+xtask: fixture command failed; see target/ripr/reports/fixtures.md
+check.json drift for fixture `rust_catalog_description_structural_oracle`
+  expected: fixtures/rust_catalog_description_structural_oracle/expected/check.json
+  actual:   target/ripr/fixtures/rust_catalog_description_structural_oracle/check.json
+  diff:    line 6 expected `  \"base\": \"origin/main\",` vs actual `  \"summary\": {\"changed_rust_files\":1,\"probes\":1,\"findings\":1,\"exposed\":0,\"weakly_exposed\":1,\"reachable_unre…`
+human.txt drift for fixture `rust_catalog_description_structural_oracle`
+  expected: fixtures/rust_catalog_description_structural_oracle/expected/human.txt
+  actual:   target/ripr/fixtures/rust_catalog_description_structural_oracle/human.txt
+  diff:    line 5 expected `Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown` vs actual `Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test p…`
+human-full.txt drift for fixture `rust_catalog_description_structural_oracle`
+  expected: fixtures/rust_catalog_description_structural_oracle/expected/human-full.txt
+  actual:   target/ripr/fixtures/rust_catalog_description_structural_oracle/human-full.txt
+  diff:    line 5 expected `Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown` vs actual `Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infecti…`

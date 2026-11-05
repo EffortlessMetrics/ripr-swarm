@@ -8,8 +8,7 @@ use crate::output::review_comments_receipt::{
     CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM, REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION,
     REVIEW_GUIDANCE_INDEX_RECOMPUTE_LIMITATION_CATEGORY, REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM,
     REVIEW_GUIDANCE_INDEX_RECOMPUTE_REPAIR_ROUTE, REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY,
-    ReviewCommentsPhaseEvidence,
-    ReviewCommentsReceiptLimitation, ReviewCommentsRunReceipt,
+    ReviewCommentsPhaseEvidence, ReviewCommentsReceiptLimitation, ReviewCommentsRunReceipt,
 };
 use crate::review_input::canonical_root_identity;
 use sha2::{Digest, Sha256};

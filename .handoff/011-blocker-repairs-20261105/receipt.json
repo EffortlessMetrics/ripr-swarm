@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "source_candidate": "81019b7361a2ef7e44cad70abbab5cf0affa45ae",
-  "source_tree": "4b0189c2c9ef980351b2e1639f69dd2dc3e0cf8a",
+  "source_candidate": "d1bef96f582a0df8ed627481d808e1f72a25acc0",
+  "source_tree": "60452fee6b88d8fe65c8a2e7c2141a37e123aabe",
   "base": "dc4771c5cd694b2b707fd0c372f58debaad0486d",
   "red_source_commit": "80ff4c80eba0387d6f31b6f6602ef648859cc2c4",
   "red_counts": {
@@ -42,8 +42,8 @@
       },
       {
         "path": "crates/ripr/src/app/review_comments_receipt.rs",
-        "bytes": 38328,
-        "sha256": "681ebe434e07b10bdf0b866f4efe3f658ff212d2641790c5037c7b882f69cea8"
+        "bytes": 38324,
+        "sha256": "fcdb679d331dbebe1c55db6b023b3629e7e60b4b8a8c08e1c1c284346e4a2359"
       },
       {
         "path": "crates/ripr/src/config.rs",
@@ -57,28 +57,99 @@
       },
       {
         "path": "xtask/src/main.rs",
-        "bytes": 987957,
-        "sha256": "b50d3193420b7ed262602a153b48335e2ca85d1b7193667fba29870065b046fb"
+        "bytes": 988380,
+        "sha256": "5d48860f6f85ab97f857441f88d02ea50d4fccd8e75c8580a82cf3c2d257c0de"
       },
       {
         "path": "xtask/src/policy/file_policy.rs",
-        "bytes": 82589,
-        "sha256": "ff3960fe58c3b736ae114a419ee8c1133bc31e36e119a9283a84dd11ebe9c93c"
+        "bytes": 84803,
+        "sha256": "bbd97a6b61804fe1ca515b2ba8436aef1a23d7b700fd6e9b2b0e7e4003863082"
       },
       {
         "path": "policy/non-rust-allowlist.toml",
-        "bytes": 44773,
-        "sha256": "e669e3e32dada9c6daba4bec37504a62d6b8fe7014dfb96dbb7f78c597fddbc3"
+        "bytes": 45819,
+        "sha256": "4e7d0f0bb9e43f2592b92ad69ff8cc7abc16d9034a2515a7fd39793aa97a494d"
+      },
+      {
+        "path": "CONTRIBUTING.md",
+        "bytes": 14752,
+        "sha256": "c1c34a2b3b27b9e234af20dead980bf145489023aef541b8e3254bff03c13f4f"
       }
     ],
-    "remaining": "11 unmerged generated gate-decision JSON files; production gate code equals destination main, but merged guidance SHA256 differs from both sides; producer regeneration pending",
-    "status": "unqualified, unpublished source merge; original carrier untouched"
+    "remaining": "No unresolved merge conflicts. First all-target check reported two imported TestFact literals missing generated; both repaired with generated: None at ba842766b. Retry queued after the active memory-heavy policy compile. No passing all-target verdict yet.",
+    "status": "Published isolated carrier; source and destination ancestry verified; not qualified.",
+    "head": "ba842766b7e5a521ebae33cdbefb98fa0eefc903",
+    "tree": "5cd4520c6a95ae979ce2ff8b08c2546cdf0c7020",
+    "history_merges": [
+      {
+        "sha": "239b7d5ff103371544eee35b4e5a9527e5809ab8",
+        "parents": [
+          "161c59becc919be3ce4ff7a6e256531ba0176887",
+          "dc4771c5cd694b2b707fd0c372f58debaad0486d"
+        ]
+      },
+      {
+        "sha": "b8e198f07b484e7434234c410e3b1af4c0c3317f",
+        "parents": [
+          "239b7d5ff103371544eee35b4e5a9527e5809ab8",
+          "c09c438e5646fcb244bbafcabe57036bc58d8f3d"
+        ]
+      }
+    ],
+    "gate_regeneration": "All 11 CLI-produced JSON reports bind the actual merged guidance hash, preserve non-hash semantics of both conflict sides, and retain byte-identical Markdown. Producer gate implementation matches the composition; not an exact-history-build qualification."
   },
   "holds": "No original ref updates, PR/readiness/CI request, merge, settings, promotion or release actions.",
   "complete_contribution_patch": {
     "path": "12010-complete-contribution.patch",
-    "bytes": 76286,
-    "sha256": "be7f5f8e3cac98e44db7b31030e921ef7de2df379350e4098136e07ca9417c67",
-    "apply_scope": "Complete dc4771c5c..81019b736 contribution, including test witness commit; reconcile against the actual combined input, not a blind single-commit cherry-pick."
+    "bytes": 157753,
+    "sha256": "405bbe2475f7f8e3c8ca2315d8096cd665b2dcc326f227ecae032e073905a044",
+    "apply_scope": "Complete dc4771c5c..d1bef96f contribution, including test witness and generated-output commits. Reconcile with the actual #7490/history input; do not blind cherry-pick a single commit."
+  },
+  "production_and_test_commit": "81019b7361a2ef7e44cad70abbab5cf0affa45ae",
+  "followup_scope": "Producer-generated goldens and report captures only; Rust implementation/test bytes unchanged from the 158-pass subject.",
+  "default_producer_proof": {
+    "source_commit": "81019b7361a2ef7e44cad70abbab5cf0affa45ae",
+    "build_exit": 0,
+    "producer_sha256": "d1d33330573c242270328d8cb95321f31945d8b765c40bf0928088c8c11b9df5",
+    "binding_fixture_exit": 0,
+    "binding_fixture_summary": {
+      "probes": 2,
+      "exposed": 0,
+      "reachable_unrevealed": 1,
+      "infection_unknown": 1
+    },
+    "catalog_fixture_exit": 0,
+    "catalog_fixture_summary": {
+      "probes": 1,
+      "weakly_exposed": 1,
+      "exposed": 0
+    },
+    "catalog_exact_wording_positive": {
+      "exit": 0,
+      "probes": 1,
+      "exposed": 1
+    },
+    "honesty_exit": 0,
+    "recaptured_reports": 21,
+    "claim_boundary": "Carried-forward production-code proof; latest followup only changes generated expected outputs/captures. Not full integration or release qualification."
+  },
+  "validation_pending": {
+    "source_check_fast": "active on d1bef96f; selector independently verified 46 paths against origin/main dc4771c5",
+    "history_all_target_check": "needs retry after two-line repair; no pass claimed",
+    "full_combined_qualification": "not requested; holds preserved",
+    "independent_source_review": "coordinator assigned, in progress; no approval claimed"
+  },
+  "blind_acceptance": {
+    "authority": "#4600 aggregate / #4604 real execution",
+    "accepted_infrastructure": [
+      "#4603 closed",
+      "#4510 closed"
+    ],
+    "start_prerequisites_pending": [
+      "#4508 terminal exact-candidate deterministic matrix",
+      "#2766 terminal selected carriers",
+      "#1609 immutable candidate/ref/manifest"
+    ],
+    "status": "not_run; scripted blind-journey-execute is instrument proof only, not a fresh installed operator journey"
   }
 }
