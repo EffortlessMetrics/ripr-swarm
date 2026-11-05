@@ -6,7 +6,7 @@ fn coverage_failure_capture_preserves_original_command_and_failure() -> Result<(
     let text = fs::read_to_string(root.join(".github/workflows/coverage.yml"))
         .map_err(|error| error.to_string())?;
     assert!(text.contains("id: generate-coverage"));
-    let command = "run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info";
+    let command = "run: target/debug/repo-policy run-coverage";
     assert!(text.contains(command));
     assert!(!text.contains("continue-on-error:"));
     assert!(text.contains("failure() && steps.generate-coverage.outcome == 'failure'"));
@@ -25,7 +25,7 @@ fn coverage_strip_is_generate_only_and_requires_native_controls() -> Result<(), 
         "        id: generate-coverage\n",
         "        env:\n",
         "          CARGO_PROFILE_TEST_STRIP: debuginfo\n",
-        "        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info"
+        "        run: target/debug/repo-policy run-coverage"
     );
     let controls = concat!(
         "name: Check diagnostic capture controls\n",
@@ -76,10 +76,9 @@ fn coverage_strip_is_generate_only_and_requires_native_controls() -> Result<(), 
         "cargo llvm-cov --workspace --lcov --output-path lcov.info",
         "true",
     ] {
-        assert!(!retained(&text.replace(
-            "cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info",
-            command,
-        )));
+        assert!(!retained(
+            &text.replace("target/debug/repo-policy run-coverage", command)
+        ));
     }
     assert!(!retained(&text.replace(
         "--lib coverage_diagnostics",
