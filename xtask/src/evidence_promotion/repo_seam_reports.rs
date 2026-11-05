@@ -885,7 +885,7 @@ mod tests {
     }
 
     #[test]
-    fn named_limitation_cases_require_explicit_presence_and_a_live_subject() {
+    fn named_limitation_cases_require_explicit_presence_and_a_live_subject() -> Result<(), String> {
         let mut assertion = json!({
             "type": "expected_repo_seam_limitation",
             "owner": "src/lib.rs::check", "expression": "a > b",
@@ -895,7 +895,7 @@ mod tests {
         assertion["present"] = json!("true");
         super::super::evidence_promotion_parse_assertion("field", 0, &assertion).unwrap_err();
         assertion["present"] = json!(true);
-        super::super::evidence_promotion_parse_assertion("field", 0, &assertion).unwrap();
+        super::super::evidence_promotion_parse_assertion("field", 0, &assertion)?;
         let mut case = json!({"id": "field", "assertions": [assertion]});
         let mut missing = Vec::new();
         assert!(repo_seam_cases(&[case.clone()], &mut missing).is_empty());
@@ -905,6 +905,7 @@ mod tests {
         let mut valid = Vec::new();
         assert_eq!(repo_seam_cases(&[case], &mut valid).len(), 1);
         assert!(valid.is_empty());
+        Ok(())
     }
 
     /// A report whose `content_sha256` is computed the producer's way.
