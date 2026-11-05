@@ -1,0 +1,245 @@
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 91cff0a93..3f63328cc 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -493,8 +493,8 @@ type DebugAssertEqCall = (usize, String);
+ type BareCallKey = (PathBuf, usize, String, PathBuf, usize);
+ 
+ /// RIPR-SPEC-0225 decision 9: a field-integer key: owner file, owner name,
+-/// record type name, field name.
+-type FieldIntegerKey = (PathBuf, String, String, String);
++/// optional indexed owner line, record type name, field name.
++type FieldIntegerKey = (PathBuf, String, Option<usize>, String, String);
+ 
+ /// #6974: run-scoped answers for [`OwnerReturnPin::path_reaches_owner`].
+ #[derive(Clone, Debug, Default)]
+@@ -5391,10 +5391,18 @@ impl OwnerReturnPin {
+             {
+                 return None;
+             }
+-            field_builtin_integer_of(owner, type_name, field, true, index, syntax)?;
++            field_builtin_integer_of(
++                owner,
++                type_name,
++                field,
++                true,
++                Some(owner.start_line),
++                index,
++                syntax,
++            )?;
+         } else {
+             let type_name = self.tuple_projection.as_deref()?;
+-            field_builtin_integer_of(owner, type_name, "0", true, index, syntax)?;
++            field_builtin_integer_of(owner, type_name, "0", true, None, index, syntax)?;
+         }
+         Some((stripped, suffix))
+     }
+@@ -10270,23 +10278,26 @@ pub(in crate::analysis) fn field_builtin_integer(
+     index: &RustIndex,
+     syntax: &OwnerPinSyntax,
+ ) -> Option<&'static str> {
+-    field_builtin_integer_of(owner, type_name, field, false, index, syntax)
++    field_builtin_integer_of(owner, type_name, field, false, None, index, syntax)
+ }
+ 
+ /// [`field_builtin_integer`] for an owner that may be an `impl` method. A
+ /// method is found only when it is the file's one `fn` of its name, so a
+-/// second same-named method or function refuses (#12796).
++/// second same-named method or function refuses (#12796). The independently
++/// bound tuple-slot view may supply its exact indexed owner line instead.
+ fn field_builtin_integer_of(
+     owner: &FunctionSummary,
+     type_name: &str,
+     field: &str,
+     methods: bool,
++    owner_line: Option<usize>,
+     index: &RustIndex,
+     syntax: &OwnerPinSyntax,
+ ) -> Option<&'static str> {
+     let key = (
+         owner.file.clone(),
+         owner.name.clone(),
++        owner_line,
+         type_name.to_owned(),
+         if methods {
+             format!("method:{field}")
+@@ -10297,7 +10308,8 @@ fn field_builtin_integer_of(
+     if let Some(found) = syntax.field_integer_memo.borrow().get(&key) {
+         return *found;
+     }
+-    let found = field_builtin_integer_uncached(owner, type_name, field, methods, index, syntax);
++    let found =
++        field_builtin_integer_uncached(owner, type_name, field, methods, owner_line, index, syntax);
+     syntax.field_integer_memo.borrow_mut().insert(key, found);
+     found
+ }
+@@ -10307,6 +10319,7 @@ fn field_builtin_integer_uncached(
+     type_name: &str,
+     field: &str,
+     methods: bool,
++    owner_line: Option<usize>,
+     index: &RustIndex,
+     syntax: &OwnerPinSyntax,
+ ) -> Option<&'static str> {
+@@ -10327,6 +10340,7 @@ fn field_builtin_integer_uncached(
+             .filter_map(ast::Module::cast)
+             .collect::<Vec<_>>()
+     };
++    let lines = LineIndex::new(&file.source);
+     let mut owners = tree
+         .syntax()
+         .descendants()
+@@ -10335,6 +10349,11 @@ fn field_builtin_integer_uncached(
+             function
+                 .name()
+                 .is_some_and(|name| name.text() == owner.name.as_str())
++                && owner_line.is_none_or(|line| {
++                    function
++                        .fn_token()
++                        .is_some_and(|token| lines.line(token.text_range().start()) == line)
++                })
+                 && function.syntax().parent().is_some_and(|parent| {
+                     ast::SourceFile::can_cast(parent.kind())
+                         || ast::ItemList::can_cast(parent.kind())
+diff --git a/crates/ripr/src/analysis/classify/owner_pin/tests/tuple_projection.rs b/crates/ripr/src/analysis/classify/owner_pin/tests/tuple_projection.rs
+index 138b53003..485116c0d 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin/tests/tuple_projection.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin/tests/tuple_projection.rs
+@@ -148,26 +148,8 @@ fn iterator_option_tuple_projection_establishes_and_pins_its_actual_component()
+     let owner = owner(&index, "size_hint");
+     let mut probe = return_probe(owner, "(0, Some(self.remaining))");
+     probe.before = Some("(0, None)".to_string());
+-    assert_eq!(
+-        changed_tuple_option_projection(owner, &probe),
+-        Some((".1".to_string(), "remaining".to_string())),
+-        "body: {}",
+-        owner.body
+-    );
+-    assert!(
+-        tuple_iterator_dispatch_is_closed(owner, &index),
+-        "container: {:?}",
+-        owner.item.container
+-    );
+-    assert!(
+-        !other_definition_competes(owner, &index, CallKind::Method, None, true),
+-        "distinct nominal receivers must not compete"
+-    );
++    probe.after = Some(probe.expression.clone());
+     let pin = OwnerReturnPin::establish(&probe, owner, &index).ok_or("owner pin missing")?;
+-    assert!(
+-        pin.tuple_iterator_dispatch,
+-        "standard Iterator dispatch must be retained"
+-    );
+     assert_eq!(
+         admitted_texts(&index, &pin).len(),
+         1,
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index 69769e251..a66b07054 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -703,7 +703,8 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// `1.168`: changed tuple Option slots retain nominal receiver and component identity.
+ /// `1.169`: seal tuple Iterator pins to the unshadowed standard prelude.
+ /// `1.170`: complete workspace context is required for tuple Iterator dispatch.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.170";
++/// `1.171`: tuple field-type queries bind the exact indexed owner location.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.171";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -919,7 +920,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.170";
+ /// `0.170`: same tuple-component identity as full `1.168`.
+ /// `0.171`: same sealed prelude scope as full `1.169`.
+ /// `0.172`: same complete-context tuple dispatch as full `1.170`.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.172";
++/// `0.173`: same exact-owner field-type query as full `1.171`.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.173";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1137,7 +1139,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.172";
+ /// `0.170`: same tuple-component identity as full `1.168`.
+ /// `0.171`: same sealed prelude scope as full `1.169`.
+ /// `0.172`: same complete-context tuple dispatch as full `1.170`.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.172";
++/// `0.173`: same exact-owner field-type query as full `1.171`.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.173";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5293,7 +5296,7 @@ mod tests {
+         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+         // Composed main and successor invalidate both predecessor branches.
+         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.170");
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.171");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5439,8 +5442,8 @@ mod tests {
+         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.172");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.172");
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.173");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.173");
+     }
+ 
+     #[test]
+@@ -5775,6 +5778,7 @@ mod tests {
+             ("pre-tuple-component-identity", "1.167", "0.169"),
+             ("pre-sealed-tuple-iterator-scope", "1.168", "0.170"),
+             ("pre-complete-tuple-dispatch-context", "1.169", "0.171"),
++            ("pre-exact-tuple-field-owner", "1.170", "0.172"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+diff --git a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+index b84f82553..1964285c6 100644
+--- a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
++++ b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.170";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.171";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index 54bd8eea5..cfdf89696 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -19795,7 +19795,7 @@ top-level `source_subject`:
+ 
+ - `digest_algorithm`: always `"sha256"`.
+ - `corpus` (additive, full Rust inventory only): the analysis-owned
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.170",
++  `{ "scope": "rust_workspace", "cache_schema_version": "1.171",
+   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+   classified inventory cache key, including both production and test Rust
+   files after the existing generated-file exclusions. Repo-exposure producers
+@@ -20580,7 +20580,7 @@ targeted-rerun receipt shape:
+     "recomputation_reasons": ["selected_test_scope_recomputed"],
+     "invalidation_status": "not_available",
+     "input_fingerprint": {
+-      "schema_version": "1.170",
++      "schema_version": "1.171",
+       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+       "workspace_root_hash": "…",
+       "files_content_hash": "…",
+diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
+index 84595d170..5ffa43775 100644
+--- a/xtask/src/tests/rust_corpus_projection.rs
++++ b/xtask/src/tests/rust_corpus_projection.rs
+@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.170";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.171";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";

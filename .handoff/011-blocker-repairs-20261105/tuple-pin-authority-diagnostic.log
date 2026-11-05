@@ -1,0 +1,21 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-current-main/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 7m 44s
+     Running unittests src/lib.rs (/workspace/12010-proof/target/debug/deps/ripr-7f72c4b83423df9b)
+
+running 1 test
+test analysis::classify::owner_pin::tests::tuple_projection::iterator_option_tuple_projection_establishes_and_pins_its_actual_component ... 
+thread 'analysis::classify::owner_pin::tests::tuple_projection::iterator_option_tuple_projection_establishes_and_pins_its_actual_component' (1097985) panicked at crates/ripr/src/analysis/classify/owner_pin/tests/tuple_projection.rs:171:5:
+assertion `left == right` failed: actual projected assertion must pin its receiver's changed slot
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    analysis::classify::owner_pin::tests::tuple_projection::iterator_option_tuple_projection_establishes_and_pins_its_actual_component
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 18197 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ripr --lib`

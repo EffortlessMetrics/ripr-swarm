@@ -1,0 +1,13 @@
+{
+  "base": "8636b2acd9a6bf45e53b9d98d098c0c0fb912eba",
+  "candidate": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+  "tree": "df84ee39eda27a54917b79283c0dd31519e177b9",
+  "patch_bytes": 12501,
+  "patch_sha256": "3d61580aff1b97de49cb524192d89c4ce55152d4f43b80257a3e695b9bfa60e6",
+  "prior_exact_results": "580467:17production pass/1tuple-positive failure+4native pass. 8636 lower unit:0pass/1fail/18197filtered; tuple/closed-dispatch/nominal-rival/pin-establishment assertions passed, final projected assertion admitted0. Native exit101 retained after executor reconnect; no build restarted.",
+  "factor_proof": "580467 whole tuple exposed; numeric projection exposed with rival implementation removed; original projection weak; public API confirms exact before(0,None)/after(0,Some(self.remaining)).",
+  "repair": "Only the tuple field query supplies Some(indexed owner line); generic queries keep None/name uniqueness. Memo key includes the optional line. Temporary implementation-checkpoint assertions removed; semantic pin test retained. Complete-workspace-context filter is in8636 base.",
+  "cache": "full1.171/sharded+compact0.173; predecessor1.170/0.172 refused",
+  "current_proof": "guarded18production+4native compile active; no current pass claim",
+  "remaining": "actual green tuple production proof;retained artifact regeneration and reviewed golden dispositions;complete current composition qualification;protected inbound integration;source1893/public promotion and release-selection holds"
+}

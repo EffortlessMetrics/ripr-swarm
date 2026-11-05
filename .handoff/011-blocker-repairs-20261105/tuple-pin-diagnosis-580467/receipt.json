@@ -1,0 +1,66 @@
+{
+  "producer": "58046707fb5eb87ee24a6792d2d696a1226f7e77",
+  "rows": [
+    {
+      "case": "original",
+      "exit": 0,
+      "findings": [
+        [
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ]
+      ]
+    },
+    {
+      "case": "whole_tuple",
+      "exit": 0,
+      "findings": [
+        [
+          "exposed",
+          "Strong oracle found: exact value or pattern assertion"
+        ]
+      ]
+    },
+    {
+      "case": "no_rival",
+      "exit": 0,
+      "findings": [
+        [
+          "exposed",
+          "Strong oracle found: exact value or pattern assertion"
+        ]
+      ]
+    },
+    {
+      "case": "no_rival_whole",
+      "exit": 0,
+      "findings": [
+        [
+          "exposed",
+          "Strong oracle found: exact value or pattern assertion"
+        ]
+      ]
+    },
+    {
+      "case": "inline",
+      "exit": 0,
+      "findings": [
+        [
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ]
+      ]
+    },
+    {
+      "case": "inline_whole",
+      "exit": 0,
+      "findings": [
+        [
+          "exposed",
+          "Strong oracle found: exact value or pattern assertion"
+        ]
+      ]
+    }
+  ],
+  "claim": "Diagnostic factor controls, not qualification of altered fixtures."
+}
