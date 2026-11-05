@@ -1,0 +1,28 @@
+{
+  "candidate": "d6fc8c836fe70f28aeb73d28271b475090fffc43",
+  "tree": "870fbfc27fe1cfa63a53089cd7f6e2093b8eaaf9",
+  "branch": "successor/011-current-main-20261105",
+  "parents": [
+    "caf5114c3c0693e61030fcd087a1f9babac80e60",
+    "d11f5c7ada675c8471aa211de85ef3dd20ed9f99"
+  ],
+  "preserved_public_source": "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a",
+  "status": "unqualified composition; no build started on this carrier",
+  "manual_resolution_patch": {
+    "path": "d6fc-main-composition-resolution.patch",
+    "bytes": 128388,
+    "sha256": "1e6b5119753584fe7188634b91abbd5b8f4887d305da94242f5dec82f1ba6b6f"
+  },
+  "resolutions": [
+    "retain scheduling-only runner reservation and main exact native-activation JUnit retention",
+    "combine non-Rust retention authorities and local-context generic fixtures",
+    "classified cache1.162/sharded+compact0.164 invalidate both main1.160/0.162 and successor1.161/0.163",
+    "25 retained JSON files provisionally use main bytes, await composed producer; explicit semantic audit retained"
+  ],
+  "qualification": "caf core run remains frozen/in progress; remaining native qualification will move to this fresh composition after core terminal boundary",
+  "holds": [
+    "protected merge pause",
+    "promotion trust hold",
+    "release-selection scope_pending"
+  ]
+}
