@@ -467,31 +467,58 @@ fn inventory_classified_seams_report_collect(
         }
     }
 
-    // Single-pass build (#8643, #6758): the streaming index build folds
-    // the aggregate `files_content_hash` from the same bytes it parses,
-    // so a classified-cache miss no longer pays a separate hashing read
-    // in `collect_workspace_state_from_files` plus a second index read
-    // in `build_index`. The folded hash is byte-identical to the legacy
-    // two-pass key (pinned by
-    // `streaming_collect_matches_legacy_hash_key_and_order`), and the
+    // Single-pass build (#8643, #6758) only on the fingerprint-miss
+    // path: the fingerprint fast path above already attempted a cache
+    // load under a byte-identical key and missed, so no cache load can
+    // hit before the build and the streaming build may fold the
+    // aggregate `files_content_hash` from the same bytes it parses. The
+    // folded hash is byte-identical to the legacy two-pass key (pinned
+    // by `streaming_collect_matches_legacy_hash_key_and_order`), and the
     // result is stored under the hash of exactly the bytes parsed, so
     // a corpus that moves mid-build can never be served as a later
     // run's stable state.
-    let mut state = workspace_state_from_paths(root, config, rust_files);
-    let cached_index = match state.build_index_single_pass(config) {
-        Ok(cached) => {
-            trace_latency_phase("collect_workspace_state", "ok", collect_started.elapsed());
-            cached
-        }
-        Err(err) => {
-            trace_latency_phase(
-                "collect_workspace_state",
-                "error",
-                collect_started.elapsed(),
-            );
-            trace_latency_phase("total", "error", total_started.elapsed());
-            return Err(err);
-        }
+    //
+    // With no fingerprint-derived key (always the case on Windows,
+    // where `corpus_fingerprint` refuses to sign, #3848) a warm
+    // classified-cache hit would otherwise pay a full index build
+    // instead of only the hashing read, so keep the legacy order
+    // there: hash collect -> cache load below -> build only on miss.
+    let fingerprint_miss_gated = fingerprint_miss_key.is_some();
+    let (state, prebuilt_index) = if fingerprint_miss_gated {
+        let mut state = workspace_state_from_paths(root, config, rust_files);
+        let cached_index = match state.build_index_single_pass(config) {
+            Ok(cached) => {
+                trace_latency_phase("collect_workspace_state", "ok", collect_started.elapsed());
+                cached
+            }
+            Err(err) => {
+                trace_latency_phase(
+                    "collect_workspace_state",
+                    "error",
+                    collect_started.elapsed(),
+                );
+                trace_latency_phase("total", "error", total_started.elapsed());
+                return Err(err);
+            }
+        };
+        (state, Some(cached_index))
+    } else {
+        let state = match collect_workspace_state_from_files(root, config, rust_files) {
+            Ok(state) => {
+                trace_latency_phase("collect_workspace_state", "ok", collect_started.elapsed());
+                state
+            }
+            Err(err) => {
+                trace_latency_phase(
+                    "collect_workspace_state",
+                    "error",
+                    collect_started.elapsed(),
+                );
+                trace_latency_phase("total", "error", total_started.elapsed());
+                return Err(err);
+            }
+        };
+        (state, None)
     };
     let key = state.cache_key();
     store_corpus_fingerprint_mapping(&state, fingerprint, &key, family_store_failures);
@@ -555,6 +582,19 @@ fn inventory_classified_seams_report_collect(
             }
         }
     }
+    // Legacy (non-gated) path: the cache load above missed, so only
+    // now pay the index build; `build_index` refuses a corpus that
+    // moved after the hashing read, as before #8643.
+    let cached_index = match prebuilt_index {
+        Some(cached) => cached,
+        None => match state.build_index(config) {
+            Ok(cached) => cached,
+            Err(err) => {
+                trace_latency_phase("total", "error", total_started.elapsed());
+                return Err(err);
+            }
+        },
+    };
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
     let (classified, limit_info, lexical_fallback_files) =
@@ -918,9 +958,11 @@ pub(crate) fn inventory_seam_grip_class_counts_at_with_config(
     config: &RiprConfig,
 ) -> Result<SeamGripClassCounts, String> {
     let cache = RepoSeamCountCache::at(root);
-    let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
-    let mut state = workspace_state_from_paths(root, config, rust_files);
-    let cached_index = state.build_index_single_pass(config)?;
+    // No fingerprint-derived key exists for the count cache, so a
+    // build-first single pass would make every warm count hit pay a
+    // full index build instead of only the hashing read (#8643).
+    // Keep the legacy order: hash collect -> load -> build on miss.
+    let state = collect_workspace_state(root, config)?;
     let key = state.cache_key();
     match cache.load_counts(&key) {
         CacheLoad::Hit(cached) => return Ok(cached),
@@ -931,6 +973,7 @@ pub(crate) fn inventory_seam_grip_class_counts_at_with_config(
             }
         }
     }
+    let cached_index = state.build_index(config)?;
     let counts =
         inventory_seam_grip_class_counts_from_state_with_config(&state, cached_index, config)?;
     let _ = cache.store_counts(&key, &counts);
@@ -957,6 +1000,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
 
     // Stat-only fast path (issue #2108): rebuild the byte-identical cache
     // key from the corpus fingerprint store when the signature is unchanged.
+    let mut fingerprint_miss_key: Option<RepoSeamCacheKey> = None;
     if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
         let cache_started = Instant::now();
         match cache.load_classified_seams_with_fallback(&key) {
@@ -972,7 +1016,65 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
             }
             CacheLoad::Miss => {
                 trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
-                // Disclosed once at the post-collect load below (#12505).
+                // Disclosed once at the authoritative load below (#12505).
+                fingerprint_miss_key = Some(key);
+            }
+            CacheLoad::CorruptIgnored { reason } => {
+                trace_latency_phase(
+                    "compact_cache_load",
+                    "corrupt_ignored",
+                    cache_started.elapsed(),
+                );
+                if claim_base_untrusted_reason_emission(&reason) {
+                    eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
+                }
+                fingerprint_miss_key = Some(key);
+            }
+        }
+    }
+
+    // Single-pass build (#8643) only when the fingerprint path above
+    // already proved this exact key misses, as in the full classified
+    // path. With no fingerprint-derived key (always on Windows), keep
+    // the legacy order: hash collect -> cache load -> build on miss,
+    // so a warm compact hit pays only the hashing read.
+    let (state, prebuilt_index) = if fingerprint_miss_key.is_some() {
+        let mut state = workspace_state_from_paths(root, config, rust_files);
+        let cached_index = state.build_index_single_pass(config)?;
+        (state, Some(cached_index))
+    } else {
+        let state = collect_workspace_state_from_files(root, config, rust_files)?;
+        (state, None)
+    };
+    let key = state.cache_key();
+    // The compact (badge) path has no receipt channel yet; its store failures
+    // keep the ordinary stderr sentence.
+    store_corpus_fingerprint_mapping(
+        &state,
+        fingerprint,
+        &key,
+        &mut FileFactCacheStats::zero_work(),
+    );
+    let cache_started = Instant::now();
+    if fingerprint_miss_key.as_ref() == Some(&key) {
+        // The fingerprint load already missed under this exact key.
+        trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
+        disclose_seam_facts_cache_miss(true);
+    } else {
+        match cache.load_classified_seams_with_fallback(&key) {
+            CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
+                trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
+                trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
+                if let Some(disclosure) =
+                    rust_index::lexical_fallback_disclosure_at(root, &lexical_fallback_files)
+                {
+                    eprintln!("{disclosure}");
+                }
+                return Ok(cached);
+            }
+            CacheLoad::Miss => {
+                trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
+                disclose_seam_facts_cache_miss(true);
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase(
@@ -987,46 +1089,10 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         }
     }
 
-    // Single-pass build (#8643): same fold as the full classified path.
-    let mut state = workspace_state_from_paths(root, config, rust_files);
-    let cached_index = state.build_index_single_pass(config)?;
-    let key = state.cache_key();
-    // The compact (badge) path has no receipt channel yet; its store failures
-    // keep the ordinary stderr sentence.
-    store_corpus_fingerprint_mapping(
-        &state,
-        fingerprint,
-        &key,
-        &mut FileFactCacheStats::zero_work(),
-    );
-    let cache_started = Instant::now();
-    match cache.load_classified_seams_with_fallback(&key) {
-        CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
-            trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
-            trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
-            if let Some(disclosure) =
-                rust_index::lexical_fallback_disclosure_at(root, &lexical_fallback_files)
-            {
-                eprintln!("{disclosure}");
-            }
-            return Ok(cached);
-        }
-        CacheLoad::Miss => {
-            trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
-            disclose_seam_facts_cache_miss(true);
-        }
-        CacheLoad::CorruptIgnored { reason } => {
-            trace_latency_phase(
-                "compact_cache_load",
-                "corrupt_ignored",
-                cache_started.elapsed(),
-            );
-            if claim_base_untrusted_reason_emission(&reason) {
-                eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
-            }
-        }
-    }
-
+    let cached_index = match prebuilt_index {
+        Some(cached) => cached,
+        None => state.build_index(config)?,
+    };
     let (classified, lexical_fallback_files) =
         inventory_compact_classified_seams_from_state_with_config(&state, cached_index, config)?;
     let store_started = Instant::now();
@@ -2510,8 +2576,16 @@ pub(crate) fn prepare_diff_scoped_classified_workspace(
     config: &RiprConfig,
     generated_context: Option<&[PathBuf]>,
 ) -> Result<PreparedDiffScopedClassifiedWorkspace, String> {
-    // Single-pass build (#8643): no cache lookup needs the key first on
-    // this path, so the hashing read would be purely redundant.
+    // Single-pass build (#8643) is not gated here: this entry point
+    // attempts no classified/count cache load before the build (the
+    // reuse lookups in `inventory_diff_scoped_classified_seams_inner`
+    // run before `prepare_diff_scoped_classified_workspace_from_state`
+    // with their own two-pass state, and pass `single_pass = false`
+    // when reuse was requested), so no warm cache hit can be made to
+    // pay for this build and the hashing read would be purely
+    // redundant. Same justification for the changed-test entry point
+    // above, which also loads no cache keyed by the workspace key
+    // before building.
     let state = if let Some(paths) = generated_context {
         let (corpus, _) = discover_analyzable_rust_corpus_for_changed_paths(root, config, paths)?;
         workspace_state_from_paths(root, config, corpus.analyzable)
@@ -3355,10 +3429,12 @@ where
 
 /// Collect the per-file content + intent + suppressions inputs the
 /// cache key derives from. Key-only callers (workspace identity, the
-/// diff-scoped reuse lookup) still need this hashing read on its own;
-/// the repo-exposure cold paths instead fold the same hash into the
-/// single-pass index build (`OwnedWorkspaceState::build_index_single_pass`,
-/// #8643) and never read the corpus twice.
+/// diff-scoped reuse lookup) still need this hashing read on its own.
+/// The repo-exposure paths fold the same hash into the single-pass
+/// index build (`OwnedWorkspaceState::build_index_single_pass`,
+/// #8643) only once a fingerprint-derived key has already proved the
+/// classified cache misses; with no such key they collect here first
+/// so a warm cache hit never pays for an index build.
 ///
 /// Hashes the **same analyzable Rust file set fed to `build_index`** —
 /// production seam sources *and* test evidence sources, after the generated
@@ -6736,10 +6812,12 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
-    /// #8643: the single-pass build used by the full, compact and counts
-    /// paths folds the identical `files_content_hash` (and therefore the
-    /// identical cache key) as the legacy two-pass collect, on a
-    /// multi-file fixture and independent of input enumeration order.
+    /// #8643: the single-pass build used on the gated fingerprint-miss
+    /// path (and by the no-cache-load entry points) folds the identical
+    /// `files_content_hash` (and therefore the identical cache key) as
+    /// the legacy two-pass collect, on a multi-file fixture and
+    /// independent of input enumeration order, with zero hash-pass
+    /// reads of its own.
     #[test]
     fn single_pass_build_matches_legacy_hash_key_and_order() -> Result<(), String> {
         let root = make_tempdir("single-pass-oracle")?;
@@ -6750,7 +6828,14 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         let reversed_paths: Vec<PathBuf> =
             loaded.iter().map(|(path, _)| path.clone()).rev().collect();
         let mut state = workspace_state_from_paths(&root, &config, reversed_paths);
-        let _cached = state.build_index_single_pass(&config)?;
+        let (built, hash_reads) =
+            super::hash_pass_source_reads::observe(|| state.build_index_single_pass(&config));
+        let _cached = built?;
+        if hash_reads != 0 {
+            return Err(format!(
+                "single-pass build must not run the hashing pass, got {hash_reads} reads"
+            ));
+        }
         if state.files_content_hash != legacy_hash {
             return Err(format!(
                 "single-pass hash {} must equal legacy hash {legacy_hash}",
@@ -7599,14 +7684,15 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         }
     }
 
-    /// #8643: the full, compact and counts paths fold the corpus hash
-    /// into the same single pass that parses the index, so there is no
-    /// hash/index gap left in which a moved source could be refused.
-    /// The guarantee that replaces the old two-pass refusal: each run
+    /// #8643: on the gated single-pass path there is no hash/index gap
+    /// left in which a moved source could be refused: each such run
     /// stores under the hash of exactly the bytes it parsed, and an
     /// edit changes that key, so a later run recomputes instead of
-    /// serving the earlier state. (The moved-source refusal itself
-    /// remains pinned on the still-two-pass diff-scoped reuse paths by
+    /// serving the earlier state. On the legacy (non-gated) path the
+    /// hashed and parsed bytes are the same for an unmoved corpus, so
+    /// the same stored-key expectation holds on both paths. (The
+    /// moved-source refusal itself remains pinned on the still-two-pass
+    /// diff-scoped reuse paths by
     /// `bound_seams_persisted_hit_refuses_a_source_moved_after_hashing`.)
     #[test]
     fn single_pass_inventory_paths_store_under_the_parsed_bytes_key() -> Result<(), String> {
@@ -7650,15 +7736,22 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
-    /// Issue #6758, #8643: every inventory entry point — changed-test,
-    /// diff-scoped review, and now the full, compact and counts paths —
-    /// derives the workspace key from the same streaming index read and
-    /// must not run the separate hashing pass in
-    /// [`collect_workspace_state_from_files`].
+    /// Issue #6758, #8643: entry points that attempt no cache load
+    /// before the build — changed-test and diff-scoped review — derive
+    /// the workspace key from the same streaming index read and must
+    /// not run the separate hashing pass in
+    /// [`collect_workspace_state_from_files`]. The same zero-read
+    /// proof holds on the gated fingerprint-miss path of the full and
+    /// compact paths: priming only the fingerprint mapping (no
+    /// classified entry) proves the key misses, so the run must build
+    /// single-pass with zero hash-pass reads. That gate is reachable
+    /// only where `corpus_fingerprint` signs (Unix); elsewhere the
+    /// legacy hash-then-load order applies and the counts path, which
+    /// has no fingerprint key at all, always pays the hashing read.
     #[test]
     fn single_pass_inventory_entry_points_skip_hash_pass_reads() -> Result<(), String> {
         let config = RiprConfig::default();
-        for path in ["full", "compact", "counts", "review", "rerun"] {
+        for path in ["review", "rerun"] {
             let root = make_tempdir(&format!("hash-pass-skip-{path}"))?;
             write_file(
                 &root.join("Cargo.toml"),
@@ -7682,6 +7775,59 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             }
             let _ = std::fs::remove_dir_all(&root);
         }
+        #[cfg(unix)]
+        for path in ["full", "compact"] {
+            let root = make_tempdir(&format!("hash-pass-skip-gated-{path}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(
+                &root.join("src/lib.rs"),
+                "pub fn check(value: i32) -> bool { value > 0 }\n",
+            )?;
+            write_file(
+                &root.join("tests/basic.rs"),
+                "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+            )?;
+            // Prime fingerprint -> hash mapping without storing any
+            // classified entry, so the fingerprint load misses and the
+            // gated single-pass build is the only correct next step.
+            workspace_cache_key_at_with_config(&root, &config)?;
+            let (result, hash_reads) =
+                super::hash_pass_source_reads::observe(|| run_inventory_path(path, &root, &config));
+            result?;
+            if hash_reads != 0 {
+                return Err(format!(
+                    "{path}: gated single-pass build must not read sources in the hashing pass, got {hash_reads} reads"
+                ));
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        // Counts has no fingerprint-derived key, so it intentionally
+        // keeps the legacy hashing read before its cache load.
+        let root = make_tempdir("hash-pass-counts-legacy")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn check(value: i32) -> bool { value > 0 }\n",
+        )?;
+        write_file(
+            &root.join("tests/basic.rs"),
+            "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+        )?;
+        let (result, hash_reads) =
+            super::hash_pass_source_reads::observe(|| run_inventory_path("counts", &root, &config));
+        result?;
+        if hash_reads == 0 {
+            return Err(
+                "counts: legacy path must run the hashing pass before its cache load".into(),
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 
