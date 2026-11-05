@@ -1673,8 +1673,16 @@ fn computed_local_boundary_and_unseen_input_delegate_unknown() -> Result<(), Str
         "use thr::thr;\n#[test]\nfn t() { let v = std::env::var(\"X\").unwrap().len() as i32; assert_eq!(thr(v), true); }\n",
     )?;
     let predicate = family(&findings, "predicate")?;
-    assert_eq!(predicate.ripr.infect.state, StageState::Unknown, "{predicate:?}");
+    assert_eq!(
+        predicate.ripr.infect.state,
+        StageState::Unknown,
+        "{predicate:?}"
+    );
     let returned = family(&findings, "return_value")?;
-    assert_eq!(returned.ripr.infect.state, StageState::Unknown, "{returned:?}");
+    assert_eq!(
+        returned.ripr.infect.state,
+        StageState::Unknown,
+        "{returned:?}"
+    );
     Ok(())
 }
