@@ -78,7 +78,10 @@ personal identity for personal work rather than inventing an agent identity.
 Never use `x <x@x>`, `ZCode <zcode@users.noreply.github.com>`,
 `steven <steven@users.noreply.github.com>` or
 `ripr-swarm convergence <convergence@users.noreply.github.com>` as internal
-attribution. Preserve legitimate external contributors and intentional
+attribution. These historical internal-error matches are not a claim that the
+same accounts can never be genuine external contributors. An ambiguous external
+match needs explicit provenance review; refuse rather than erase its credit or
+rewrite it as Steven. Preserve legitimate external contributors and intentional
 Claude/Cursor/App bot identities. Do not change global Git configuration.
 Review the final squash message as well as source commits: GitHub can inherit
 incorrect co-author trailers even when the primary squash author is correct.

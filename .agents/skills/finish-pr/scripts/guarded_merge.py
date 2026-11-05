@@ -195,10 +195,13 @@ def require_result(api, head):
         raise Refusal("Result check does not match the successful request, suite and app")
 
 
-# These are verified erroneous internal identities, not a contributor allowlist.
-BAD_EMAILS = frozenset({"x@x", "zcode@users.noreply.github.com",
-                        "steven@users.noreply.github.com",
-                        "convergence@users.noreply.github.com"})
+# Historical erroneous internal uses, not a claim that these accounts can never
+# contribute externally. Ambiguous genuine use needs explicit provenance review;
+# refuse rather than silently erase credit or infer an exemption.
+KNOWN_INTERNAL_ERROR_EMAILS = frozenset({
+    "x@x", "zcode@users.noreply.github.com",
+    "steven@users.noreply.github.com", "convergence@users.noreply.github.com",
+})
 COAUTHOR = re.compile(r"^co-authored-by\s*:", re.IGNORECASE | re.MULTILINE)
 IDENTITY = re.compile(r"[^<>\r\n]+<([^<>\s]+@[^<>\s]+)>\s*\Z")
 
@@ -212,16 +215,37 @@ def require_message_attribution(message):
     for line in message.splitlines():
         if COAUTHOR.match(line.strip()):
             identity = IDENTITY.fullmatch(line.split(":", 1)[1].strip())
-            if not identity or identity[1].casefold() in BAD_EMAILS:
-                raise Refusal("invalid or known erroneous co-author attribution")
+            if not identity or identity[1].casefold() in KNOWN_INTERNAL_ERROR_EMAILS:
+                raise Refusal("invalid co-author or historical internal attribution error; genuine external use needs provenance review")
             credits.add(identity[1].casefold())
     return credits
+
+
+def final_trailer_credits(message):
+    # Support canonical single-line trailers in the final paragraph. A credit
+    # quoted in prose or followed by prose cannot satisfy preservation. Refuse
+    # ambiguity instead of trying to reproduce all Git trailer heuristics.
+    lines = message.rstrip().splitlines()
+    start = len(lines)
+    while start and lines[start - 1].strip():
+        start -= 1
+    block = lines[start:]
+    if any(not re.fullmatch(r"[A-Za-z0-9-]+\s*:\s*[^\r\n]*", line) for line in block):
+        return set()
+    return require_message_attribution("\n".join(block))
+
+
+def require_commit_count(pr, commits):
+    count = pr.get("commits")
+    if type(count) is not int or not 0 < count < 250 or len(commits) != count:
+        raise Refusal("refreshed PR commit count is missing, capped or differs from inventory")
 
 
 def require_attribution(commits, head, title, message):
     if not isinstance(title, str) or not title.strip() or "\n" in title or "\r" in title:
         raise Refusal("explicit single-line squash title is required")
-    final_credits = require_message_attribution(message)
+    require_message_attribution(message)
+    final_credits = final_trailer_credits(message)
     require_message_attribution(title + "\n" + message)
     # GitHub's PR commits endpoint is capped at 250. Refuse at the cap rather
     # than claiming that an incomplete inventory was checked.
@@ -238,10 +262,12 @@ def require_attribution(commits, head, title, message):
             raise Refusal("PR commit metadata missing")
         author = commit.get("author")
         if (not isinstance(author, dict) or not isinstance(author.get("email"), str)
-                or not author["email"].strip()):
+                or not re.fullmatch(r"[^<>\s@]+@[^<>\s@]+", author["email"])):
             raise Refusal("PR commit author missing")
-        if author["email"].strip().casefold() in BAD_EMAILS:
-            raise Refusal("known erroneous PR commit author; repair unpublished metadata first")
+        if author["email"].strip().casefold() in KNOWN_INTERNAL_ERROR_EMAILS:
+            raise Refusal("source author matches historical internal attribution error; genuine external use needs provenance review")
+        if author["email"].casefold() not in final_credits:
+            raise Refusal("reviewed squash message omits source author credit; do not guess final primary author")
         source_credits = require_message_attribution(commit.get("message"))
         if not source_credits <= final_credits:
             raise Refusal("reviewed squash message omits source co-author credit")
@@ -296,10 +322,11 @@ class Gh:
         pages = self.api(["--paginate", "--slurp", self.pr_path + "/commits?per_page=100"])
         if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
             raise Refusal("PR attribution inventory is malformed")
-        require_attribution([item for page in pages for item in page], head,
-                            self.squash_title, self.squash_message)
+        commits = [item for page in pages for item in page]
         pr = self.pr()
         require_pr(pr, head)
+        require_commit_count(pr, commits)
+        require_attribution(commits, head, self.squash_title, self.squash_message)
         # Repository defaults can use PR title/body when constructing a squash.
         # Do not assume the explicit REST fields replace every generated byte.
         require_message_attribution(pr.get("title"))

@@ -12,7 +12,8 @@ g = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(g)
 HEAD = 'a' * 40
 TITLE = 'Reviewed change (#42)'
-MESSAGE = 'Reviewed body\n\nCo-authored-by: External <external@example.org>'
+MESSAGE = ('Reviewed body\n\nCo-authored-by: External <external@example.org>\n'
+           'Co-authored-by: Steven Zimmerman, CPA <15812269+EffortlessSteven@users.noreply.github.com>')
 
 
 def attribution_commit(email='15812269+EffortlessSteven@users.noreply.github.com', message='change'):
@@ -50,7 +51,7 @@ class API:
         self.r = page('workflow_runs', run())
         self.j = page('jobs', job())
         self.c = page('check_runs', check())
-        self.prs = [dict(state='open', draft=False, title=TITLE, body=MESSAGE, head={'sha': HEAD}, mergeable=True, mergeable_state='clean') for _ in range(2)]
+        self.prs = [dict(state='open', draft=False, title=TITLE, body=MESSAGE, commits=1, head={'sha': HEAD}, mergeable=True, mergeable_state='clean') for _ in range(2)]
         self.mutations = []
     def pr(self): return self.prs.pop(0)
     def runs(self, head): return copy.deepcopy(self.r)
@@ -93,7 +94,7 @@ class Tests(unittest.TestCase):
                                   'Co-authored-by: Contributor <' + email + '>')
 
     def test_known_bad_authors_and_coauthors_refuse(self):
-        for email in g.BAD_EMAILS:
+        for email in g.KNOWN_INTERNAL_ERROR_EMAILS:
             with self.subTest(email=email):
                 with self.assertRaises(g.Refusal):
                     g.require_attribution([attribution_commit(email.upper())], HEAD, TITLE, '')
@@ -123,29 +124,103 @@ class Tests(unittest.TestCase):
         for commit, message in ((attribution_commit('x@x'), ''),
                                 (attribution_commit(), 'Co-authored-by: x <x@x>')):
             api = g.Gh(g.AUDITED_REPO, 42, TITLE, message)
-            with patch.object(api, 'api', return_value=[[commit]]) as transport:
+            pr = dict(state='open', draft=False, head={'sha': HEAD}, commits=1,
+                      mergeable=True, mergeable_state='clean', title=TITLE, body=MESSAGE)
+            with patch.object(api, 'api', side_effect=[[[commit]], pr]) as transport:
                 with self.assertRaises(g.Refusal): api.merge(HEAD)
-                self.assertEqual(transport.call_count, 1)
+                self.assertEqual(transport.call_count, 2)
                 self.assertNotIn('PUT', transport.call_args.args[0])
 
     def test_explicit_message_preserves_source_coauthor_credit(self):
         source = 'Co-authored-by: External <external@example.org>\nCo-authored-by: Claude <noreply@anthropic.com>'
-        commits = [attribution_commit(message=source)]
+        commits = [attribution_commit('external@example.org', message=source)]
         for body in ('', 'Co-authored-by: External <external@example.org>'):
-            with self.assertRaisesRegex(g.Refusal, 'omits source co-author'):
+            with self.assertRaisesRegex(g.Refusal, 'omits source .*credit'):
                 g.require_attribution(commits, HEAD, TITLE, body)
         g.require_attribution(commits, HEAD, TITLE, source.upper())
 
     def test_bad_generated_pr_metadata_never_reaches_put(self):
         for field in ('title', 'body'):
             pr = dict(state='open', draft=False, head={'sha': HEAD},
-                      mergeable=True, mergeable_state='clean', title=TITLE, body=MESSAGE)
+                      mergeable=True, mergeable_state='clean', title=TITLE, body=MESSAGE, commits=1)
             pr[field] = 'Co-authored-by: Bad <x@x>'
-            api = g.Gh(g.AUDITED_REPO, 42, TITLE, '')
+            api = g.Gh(g.AUDITED_REPO, 42, TITLE, MESSAGE)
             with patch.object(api, 'api', side_effect=[[[attribution_commit()]], pr]) as transport:
                 with self.assertRaises(g.Refusal): api.merge(HEAD)
                 self.assertEqual(transport.call_count, 2)
                 self.assertTrue(all('PUT' not in c.args[0] for c in transport.call_args_list))
+
+    def test_distinct_source_primary_authors_must_be_preserved(self):
+        source = attribution_commit('genuine@example.org')
+        with self.assertRaisesRegex(g.Refusal, 'source author'):
+            g.require_attribution([source], HEAD, TITLE, MESSAGE)
+
+    def test_source_credit_in_prose_is_not_a_final_trailer(self):
+        source = attribution_commit(message='Co-authored-by: External <external@example.org>')
+        body = MESSAGE + '\n\nThanks for reviewing.'
+        with self.assertRaisesRegex(g.Refusal, 'credit'):
+            g.require_attribution([source], HEAD, TITLE, body)
+
+    def test_transport_refuses_incomplete_inventory_ending_in_expected_head(self):
+        pr = dict(state='open', draft=False, head={'sha': HEAD}, commits=2,
+                  mergeable=True, mergeable_state='clean', title=TITLE, body=MESSAGE)
+        api = g.Gh(g.AUDITED_REPO, 42, TITLE, MESSAGE)
+        with patch.object(api, 'api', side_effect=[[[attribution_commit()]], pr, {'merged': True}]) as transport:
+            with self.assertRaisesRegex(g.Refusal, 'count'):
+                api.merge(HEAD)
+            self.assertTrue(all('PUT' not in c.args[0] for c in transport.call_args_list))
+
+    def test_transport_refuses_missing_or_malformed_refreshed_commit_count(self):
+        for count in (None, True, '1', 1.0, 0, 250):
+            pr = dict(state='open', draft=False, head={'sha': HEAD}, commits=count,
+                      mergeable=True, mergeable_state='clean', title=TITLE, body=MESSAGE)
+            api = g.Gh(g.AUDITED_REPO, 42, TITLE, MESSAGE)
+            with self.subTest(count=count), patch.object(api, 'api', side_effect=[[[attribution_commit()]], pr, {'merged': True}]) as transport:
+                with self.assertRaisesRegex(g.Refusal, 'count'):
+                    api.merge(HEAD)
+                self.assertTrue(all('PUT' not in c.args[0] for c in transport.call_args_list))
+
+    def test_transport_preserves_distinct_authors_and_intentional_bot(self):
+        first = attribution_commit('genuine@example.org')
+        first['sha'] = 'b' * 40
+        second = attribution_commit('noreply@anthropic.com')
+        body = ('Reviewed change\n\nCo-authored-by: Genuine <genuine@example.org>\n'
+                'Co-authored-by: Claude <noreply@anthropic.com>')
+        pr = dict(state='open', draft=False, head={'sha': HEAD}, commits=2,
+                  mergeable=True, mergeable_state='clean', title=TITLE, body=body)
+        api = g.Gh(g.AUDITED_REPO, 42, TITLE, body)
+        with patch.object(api, 'api', side_effect=[[[first], [second]], pr, {'merged': True}]) as transport:
+            api.merge(HEAD)
+            self.assertIn('PUT', transport.call_args.args[0])
+            self.assertIn('commit_message=' + body, transport.call_args.args[0])
+        with patch.object(api, 'api', side_effect=[[[first], [second]], pr]) as transport:
+            api.squash_message = 'Co-authored-by: Claude <noreply@anthropic.com>'
+            with self.assertRaisesRegex(g.Refusal, 'source author'):
+                api.merge(HEAD)
+            self.assertTrue(all('PUT' not in c.args[0] for c in transport.call_args_list))
+
+    def test_final_credit_parser_agrees_with_git_for_supported_messages(self):
+        # A different oracle establishes the final trailer block, rather than
+        # asserting only the Python parser's own idea of a credit line.
+        for body, expected in ((MESSAGE, True), (MESSAGE + '\n\nThanks.', False),
+                               ('Quoted example:\n' + MESSAGE.split('\n\n')[1] + '\nMore prose.', False)):
+            native = g.subprocess.run(['git', '-c', 'trailer.separators=:', 'interpret-trailers', '--parse'],
+                                      input=body, capture_output=True, text=True, check=True)
+            self.assertEqual('external@example.org' in native.stdout, expected)
+            self.assertEqual('external@example.org' in g.final_trailer_credits(body), expected)
+
+    def test_matching_real_account_requires_provenance_review_without_erasing_credit(self):
+        commit = attribution_commit('zcode@users.noreply.github.com')
+        commit['author'] = dict(login='zcode', type='User')
+        original = copy.deepcopy(commit)
+        pr = dict(state='open', draft=False, head={'sha': HEAD}, commits=1,
+                  mergeable=True, mergeable_state='clean', title=TITLE, body=MESSAGE)
+        api = g.Gh(g.AUDITED_REPO, 42, TITLE, 'Co-authored-by: ZCode <zcode@users.noreply.github.com>')
+        with patch.object(api, 'api', side_effect=[[[commit]], pr]) as transport:
+            with self.assertRaisesRegex(g.Refusal, 'genuine external use needs provenance review'):
+                api.merge(HEAD)
+            self.assertTrue(all('PUT' not in c.args[0] for c in transport.call_args_list))
+        self.assertEqual(commit, original)
 
     def test_success_and_unstable_do_not_add_advisory_gate(self):
         for state in ('clean', 'unstable'):
