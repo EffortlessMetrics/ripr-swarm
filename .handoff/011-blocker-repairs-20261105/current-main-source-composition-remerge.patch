@@ -1,0 +1,254 @@
+diff --git a/.config/nextest.toml b/.config/nextest.toml
+remerge CONFLICT (content): Merge conflict in .config/nextest.toml
+index 9df840d2f..4cb22a5fa 100644
+--- a/.config/nextest.toml
++++ b/.config/nextest.toml
+@@ -24,19 +24,17 @@ slow-timeout = { period = "120s", terminate-after = 3 }
+ [profile.ci.junit]
+ path = "junit.xml"
+ 
+-<<<<<<< caf5114c3 (fix: withhold collection sink identity for unread external dispatch)
+ # This production-path control compiles/enumerates reviewed trees through
+ # nested Cargo under the unchanged 180-second command bounds. Reserve the
+ # runner while it executes; all tests and all diagnostic commands still run.
+ [[profile.default.overrides]]
+ filter = 'binary(=source_promotion_workflow_contract) & test(=green_historical_diagnostics_are_rejected_by_the_real_final_gate)'
+ threads-required = "num-test-threads"
+-=======
++
+ # Retain the real SDK identities and opposing-pin observation for #13123.
+ [[profile.ci.overrides]]
+ filter = 'package(=xtask) & binary(=rust_activation) & test(=installed_rustup_activation_keeps_the_exact_fixture_compiler)'
+ junit.store-success-output = true
+->>>>>>> d11f5c7ad (fix(cli): point ripr reports kani argument errors at the kani help route (#13315))
+ 
+ # #2695: Fast iteration path for local development.
+ # Skip slow server-spawning tests with:
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+remerge CONFLICT (content): Merge conflict in crates/ripr/src/analysis/seam_cache.rs
+index 67de1dd00..da2f10252 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -680,22 +680,19 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// statement through the same owner-pin decision as `ripr check` (#12394).
+ /// `1.158`: a bounded `.map(owner)` chain is credited at the first input where
+ /// the change is visible (#12841).
+-<<<<<<< caf5114c3 (fix: withhold collection sink identity for unread external dispatch)
+ /// `1.159`: repo boundary evidence requires the boundary input and admitted
+ /// discriminating oracle in the same test (#7490).
+ /// `1.159`: proximity-only and unchanged-return-token oracles cannot discriminate (#12010).
+ /// `1.160`: compose #7490 boundary pairing with #12010 assertion-local sink identity
+ /// and return-delta confirmation; neither independent `1.159` is reusable.
+ /// `1.161`: external imported observers cannot inherit collection sink identity.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.161";
+-=======
+ /// `1.159`: a cloned call-making callback cannot borrow an unrelated plain
+ /// helper assertion (#13219). Raw file facts are unchanged; helper credit is
+ /// recomputed after loading them.
+ /// `1.160`: same-named receiver and free calls no longer lend one another an
+ /// assertion oracle; real opposite-kind wrappers retain reach uncertainty (#12234).
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.160";
+->>>>>>> d11f5c7ad (fix(cli): point ripr reports kani argument errors at the kani help route (#13315))
++/// `1.162`: compose successor 1.161 with main callback/call-kind semantics.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.162";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -895,17 +892,14 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.160";
+ /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
+ /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
+ /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+-<<<<<<< caf5114c3 (fix: withhold collection sink identity for unread external dispatch)
+ /// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+ /// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
+ /// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
+ /// `0.163`: same external-observer refusal as full `1.161`.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
+-=======
+ /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+ /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
+->>>>>>> d11f5c7ad (fix(cli): point ripr reports kani argument errors at the kani help route (#13315))
++/// `0.164`: composed successor and main semantics, matching full 1.162.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1107,17 +1101,14 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
+ /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
+ /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
+ /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+-<<<<<<< caf5114c3 (fix: withhold collection sink identity for unread external dispatch)
+ /// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+ /// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
+ /// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
+ /// `0.163`: same external-observer refusal as full `1.161`.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
+-=======
+ /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+ /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
+->>>>>>> d11f5c7ad (fix(cli): point ripr reports kani argument errors at the kani help route (#13315))
++/// `0.164`: composed successor and main semantics, matching full 1.162.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5266,16 +5257,13 @@ mod tests {
+         // 1.155 -> 1.156: different-arm error pin is one fact in every view (#12733, #12734).
+         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
+         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
+-<<<<<<< caf5114c3 (fix: withhold collection sink identity for unread external dispatch)
+         // 1.158 -> 1.159: boundary and oracle must be paired in the same test (#7490).
+         // 1.159 -> 1.160: both independent predecessor semantics must be invalidated.
+         // 1.160 -> 1.161: unread external collection-observer interception.
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.161");
+-=======
+         // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
+         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.160");
+->>>>>>> d11f5c7ad (fix(cli): point ripr reports kani argument errors at the kani help route (#13315))
++        // Composed main and successor invalidate both predecessor branches.
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.162");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5415,18 +5403,13 @@ mod tests {
+         // 0.157 -> 0.158: same different-arm error-pin rule as full 1.156 (#12733, #12734).
+         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
+         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
+-<<<<<<< caf5114c3 (fix: withhold collection sink identity for unread external dispatch)
+         // 0.160 -> 0.161: same boundary-oracle pairing as full 1.159 (#7490).
+         // 0.161 -> 0.162: compose both independent semantic generations.
+         // 0.162 -> 0.163: same external-observer refusal as full 1.161.
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
+-=======
+         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.162");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.162");
+->>>>>>> d11f5c7ad (fix(cli): point ripr reports kani argument errors at the kani help route (#13315))
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.164");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.164");
+     }
+ 
+     #[test]
+@@ -5752,6 +5735,7 @@ mod tests {
+             ("7490-boundary-pairing", "1.159", "0.161"),
+             ("12010-sink-identity", "1.159", "0.161"),
+             ("external-observer-interception", "1.160", "0.162"),
++            ("pre-main-composition", "1.161", "0.163"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+@@ -5825,7 +5809,7 @@ mod tests {
+     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
+         for previous in [
+             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
+-            "0.161", "0.162",
++            "0.161", "0.162", "0.163",
+         ] {
+             for compact in [false, true] {
+                 let scratch = integrity_scratch("property-shard-generation")?;
+diff --git a/policy/local_context_allowlist.txt b/policy/local_context_allowlist.txt
+remerge CONFLICT (content): Merge conflict in policy/local_context_allowlist.txt
+index 3d1c8ede4..08fe0eb81 100644
+--- a/policy/local_context_allowlist.txt
++++ b/policy/local_context_allowlist.txt
+@@ -8,10 +8,8 @@
+ # should be removed instead of allowlisted.
+ crates/ripr/src/config/perl_executable_tests.rs|C:\path\to\Perl|1|Generic Windows absolute exporter path with spaces exercises exact config preservation (#8841).
+ crates/ripr/tests/sarif_uri_identity.rs|C:\path\to\a%b.rs|1|Generic drive-looking filename exercises native Unix SARIF URI identity (RIPR-SPEC-0008).
+-<<<<<<< caf5114c3 (fix: withhold collection sink identity for unread external dispatch)
+ editors/vscode/test/suite/archive_inventory.test.ts|C:/path/to/evil|1|Generic Windows drive-path fixture for hostile archive member rejection; owner repo-policy; issue #1641.
+ crates/ripr/src/review_input.rs|C:/path/to/repo|2|Generic Windows drive-path fixture for review_root_spelling_preserves_platform_identity; owner repo-policy; issue #1686.
+ crates/ripr/src/review_input.rs|C:\path\to\repo|1|Generic Windows drive-path fixture for review_root_spelling_preserves_platform_identity; owner repo-policy; issue #1686.
+-=======
++
+ editors/vscode/test/suite/fixture_producer.test.ts|C:\path\to\directory|1|Generic Windows argv fixture with spaces and a trailing backslash verifies exact native argument preservation (#13201).
+->>>>>>> d11f5c7ad (fix(cli): point ripr reports kani argument errors at the kani help route (#13315))
+diff --git a/xtask/src/main.rs b/xtask/src/main.rs
+remerge CONFLICT (content): Merge conflict in xtask/src/main.rs
+index ddf73a577..79036cd90 100644
+--- a/xtask/src/main.rs
++++ b/xtask/src/main.rs
+@@ -23981,7 +23981,6 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
+ }
+ 
+ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+-<<<<<<< caf5114c3 (fix: withhold collection sink identity for unread external dispatch)
+     if matches!(
+         path,
+         ".github/scripts/source-promotion-composition.sh"
+@@ -24022,7 +24021,6 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
+         );
+     }
+ 
+-=======
+     if path == "tools/activate-rust.sh" {
+         return Some(
+             "Sourced Bash must update the caller's environment before Cargo is available; a Rust subprocess cannot export into its parent shell (#13123).",
+@@ -24033,7 +24031,6 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
+             "Bash controls directly inspect source-time caller options, arguments and variable attributes; the Rust-owned rust_activation integration test executes this exact harness (#13123).",
+         );
+     }
+->>>>>>> d11f5c7ad (fix(cli): point ripr reports kani argument errors at the kani help route (#13315))
+     if path == ".ci/contabo-result.sh" {
+         return Some(
+             "Pinned EM CI requires a Bash result script; this lightweight jq consumer accepts only centrally authenticated exact-subject product imports without compiling or executing product code (#4988).",
+diff --git a/xtask/src/product_gate_plan.rs b/xtask/src/product_gate_plan.rs
+remerge CONFLICT (content): Merge conflict in xtask/src/product_gate_plan.rs
+index e261a8eaf..95e1ecd74 100644
+--- a/xtask/src/product_gate_plan.rs
++++ b/xtask/src/product_gate_plan.rs
+@@ -733,13 +733,7 @@ mod tests {
+                 })
+     }
+ 
+-    /// Keys that change which tests nextest selects or how it retries them,
+-<<<<<<< caf5114c3 (fix: withhold collection sink identity for unread external dispatch)
+-    /// wherever they appear in the parsed config, quoted or inline.
+-    /// A reviewed override only reserves the whole runner for one named test
+-    /// (`threads-required = "num-test-threads"`); every test still runs with
+-    /// unchanged retries and timeouts. Any other override key, or a filter with
+-    /// no such reservation, still narrows or re-policies the selection.
++    /// Reserve runner slots without changing test selection or retry policy.
+     fn is_scheduling_only_overrides(value: &toml::Value) -> bool {
+         let Some(items) = value.as_array() else {
+             return false;
+@@ -756,20 +750,9 @@ mod tests {
+             })
+     }
+ 
+-    fn collect_selection_keys(value: &toml::Value, path: &str, violations: &mut Vec<String>) {
+-        match value {
+-            toml::Value::Table(table) => {
+-                for (key, child) in table {
+-                    let child_path = if path.is_empty() {
+-                        key.clone()
+-                    } else {
+-                        format!("{path}.{key}")
+-                    };
+-                    if key == "default-filter"
+-                        || (key == "overrides" && !is_scheduling_only_overrides(child))
+-=======
+-    /// wherever they appear in the parsed config, quoted or inline. The single
+-    /// exact native-activation JUnit output row is the only override exception.
++    /// Keys that change test selection or retries, wherever they appear in
++    /// the parsed config, quoted or inline.
++    /// Closed output-only and scheduling-only rows preserve test selection.
+     fn collect_selection_keys(value: &toml::Value, path: &[&str], violations: &mut Vec<String>) {
+         match value {
+             toml::Value::Table(table) => {
+@@ -778,8 +761,8 @@ mod tests {
+                     child_path.push(key.as_str());
+                     if key == "default-filter"
+                         || (key == "overrides"
+-                            && !native_activation_output_override(&child_path, child))
+->>>>>>> d11f5c7ad (fix(cli): point ripr reports kani argument errors at the kani help route (#13315))
++                            && !native_activation_output_override(&child_path, child)
++                            && !is_scheduling_only_overrides(child))
+                     {
+                         violations.push(format!(
+                             "nextest config declares `{}`, which narrows or re-policies the selected tests",
