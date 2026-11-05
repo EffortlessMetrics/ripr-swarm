@@ -438,7 +438,10 @@ fn summarize(date: &str, version: &str, rows: &[Value]) -> Value {
     })
 }
 
-fn load_receipts(dirs: &[PathBuf]) -> Result<BTreeMap<String, Value>, String> {
+fn load_receipts(
+    dirs: &[PathBuf],
+    current: Option<&Value>,
+) -> Result<BTreeMap<String, Value>, String> {
     let mut by_date: BTreeMap<String, Value> = BTreeMap::new();
     for dir in dirs {
         let Ok(entries) = fs::read_dir(dir) else {
@@ -460,8 +463,21 @@ fn load_receipts(dirs: &[PathBuf]) -> Result<BTreeMap<String, Value>, String> {
                 .filter(|d| valid_date(d))
                 .ok_or_else(|| format!("{} has no valid `date`", path.display()))?
                 .to_string();
-            // A measured receipt beats a manual seed for the same date; among
-            // equals the later directory wins.
+            // A measurement produced by this invocation owns its date, even if
+            // an explicit history directory contains another same-day file.
+            if current.is_some_and(|fresh| fresh["date"] == receipt["date"]) {
+                continue;
+            }
+            if let Some(old) = by_date.get(&date)
+                && old["source"] == json!("xtask_measure")
+                && receipt["source"] == json!("xtask_measure")
+                && old != &receipt
+            {
+                return Err(format!(
+                    "conflicting measured receipts for {date}; rerun with --ripr to establish the current measurement"
+                ));
+            }
+            // A measured receipt beats a manual seed for the same date.
             let keep_existing = by_date.get(&date).is_some_and(|old| {
                 old["source"] == json!("xtask_measure")
                     && receipt["source"] != json!("xtask_measure")
@@ -470,6 +486,13 @@ fn load_receipts(dirs: &[PathBuf]) -> Result<BTreeMap<String, Value>, String> {
                 by_date.insert(date, receipt);
             }
         }
+    }
+    if let Some(fresh) = current {
+        let date = fresh["date"]
+            .as_str()
+            .filter(|date| valid_date(date))
+            .ok_or("current receipt has no valid date")?;
+        by_date.insert(date.to_string(), fresh.clone());
     }
     Ok(by_date)
 }
@@ -794,6 +817,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let options = parse_options(args)?;
     let root = workspace_root()?;
     let mut dirs = vec![root.join(SEED_DIR)];
+    let mut current = None;
     if let Some(extra) = &options.receipts {
         dirs.push(extra.clone());
     }
@@ -822,10 +846,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         } else {
             dirs.push(root.join("target/ripr/reports"));
         }
+        current = Some(receipt);
     } else if options.receipts.is_none() {
         dirs.push(root.join("target/ripr/reports"));
     }
-    let receipts = load_receipts(&dirs)?;
+    let receipts = load_receipts(&dirs, current.as_ref())?;
     let bars = read_json(&root.join(BARS_PATH))?;
     let dx = options
         .dx_scoreboard
@@ -1090,10 +1115,39 @@ mod tests {
             live.join("a.json"),
             receipt("2026-11-02", "xtask_measure", 8, vec![]),
         )?;
-        let loaded = load_receipts(&[live.clone(), seed.clone()]);
+        let loaded = load_receipts(&[live.clone(), seed.clone()], None);
         let _ = fs::remove_dir_all(&dir);
         let loaded = loaded?;
         assert_eq!(loaded["2026-11-02"]["started"], json!(22));
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_measurement_owns_its_date_and_conflicting_history_refuses() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("outcome-current-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let fresh = receipt("2026-11-04", "xtask_measure", 5, vec![]);
+        let stale = receipt("2026-11-04", "xtask_measure", 9, vec![]);
+        for (name, value) in [
+            ("repair-start-2026-11-04.json", &fresh),
+            ("z-stale.json", &stale),
+        ] {
+            fs::write(dir.join(name), value.to_string()).map_err(|e| e.to_string())?;
+        }
+        let loaded = load_receipts(std::slice::from_ref(&dir), Some(&fresh));
+        let conflict = load_receipts(std::slice::from_ref(&dir), None);
+        let _ = fs::remove_dir_all(&dir);
+        let loaded = loaded?;
+        assert_eq!(loaded["2026-11-04"], fresh);
+        assert!(
+            evaluate(&loaded, &bars(), None)?
+                .failures
+                .iter()
+                .any(|f| f.contains("rust repair-start regression"))
+        );
+        assert!(
+            matches!(conflict, Err(message) if message.contains("conflicting measured receipts"))
+        );
         Ok(())
     }
 
