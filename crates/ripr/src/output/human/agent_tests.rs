@@ -163,64 +163,6 @@ fn outcome_output(
     Ok(output)
 }
 
-/// #13138: a real parsed Rust diff with its adapter disabled reports partial
-/// zero findings through the production check builder and render dispatcher.
-#[test]
-fn agent_dispatch_discloses_actual_partial_zero_check_output() -> Result<(), String> {
-    use crate::analysis_outcome::AnalysisOutcomeKind;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|err| err.to_string())?
-        .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "ripr-agent-partial-zero-{}-{nanos}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
-    let result = (|| {
-        std::fs::write(root.join("src/lib.rs"), "pub fn value() -> u32 { 2 }\n")
-            .map_err(|err| err.to_string())?;
-        std::fs::write(
-            root.join("change.diff"),
-            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> u32 { 1 }\n+pub fn value() -> u32 { 2 }\n",
-        )
-        .map_err(|err| err.to_string())?;
-        let mut config = RiprConfig::default();
-        config.languages.enabled.clear();
-        let output = crate::app::check_workspace_with_config(
-            crate::app::CheckInput {
-                root: root.clone(),
-                diff_file: Some(root.join("change.diff")),
-                ..crate::app::CheckInput::default()
-            },
-            &config,
-        )?;
-        let outcome = output.analysis_outcome.as_ref().ok_or("missing outcome")?;
-        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
-        assert_eq!(outcome.counts.changed_file_count, 1);
-        assert!(output.findings.is_empty());
-        assert!(!output.no_scope_provided);
-        let text = agent_dispatch(&output, &config)?;
-        assert!(
-            text.contains("analysis=incomplete|outcome=partial_with_limitations\n"),
-            "{text}"
-        );
-        assert!(
-            text.contains("limitation=language_adapter_unavailable|"),
-            "{text}"
-        );
-        assert!(text.contains("|recovery="), "{text}");
-        assert!(
-            text.contains("\nstop=analysis incomplete; zero findings is not a clean result\n"),
-            "{text}"
-        );
-        assert!(!text.contains("\ndone="), "{text}");
-        Ok(())
-    })();
-    std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
-    result
-}
-
 #[test]
 fn agent_dispatch_never_completes_incomplete_empty_or_exposed_reports() -> Result<(), String> {
     use crate::analysis_outcome::AnalysisOutcomeKind::{

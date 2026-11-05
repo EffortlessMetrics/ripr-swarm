@@ -273,7 +273,7 @@ A diff-scoped badge whose outcome is `no_scope`, `no_changed_lines`, or
 
 ## Test Mapping
 
-`output::human::agent_tests::agent_dispatch_discloses_actual_partial_zero_check_output`
+`cli::commands::check::tests::zero_findings_hedge_names_config_excluded_rust_instead_of_diff_validity`
 runs a valid Rust diff through the check producer with Rust disabled, asserts
 the nonempty changed-file subject and partial zero outcome, then exercises the
 production Agent render dispatcher. The companion

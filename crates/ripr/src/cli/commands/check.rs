@@ -2748,7 +2748,22 @@ mod tests {
             ("hedge-rust-excluded-ts", vec![LanguageId::TypeScript]),
             ("hedge-rust-excluded-empty", Vec::new()),
         ] {
-            let (findings, outcome) = sample_diff_outcome(label, enabled)?;
+            let root = copy_sample_workspace_to_temp(label)?;
+            let mut config = RiprConfig::default();
+            config.languages.enabled = enabled;
+            let input = CheckInput {
+                root: root.clone(),
+                diff_file: Some(root.join("example.diff")),
+                ..CheckInput::default()
+            };
+            let result = app::check_workspace_with_config(input, &config);
+            if let Ok(()) = std::fs::remove_dir_all(&root) {}
+            let output = result?;
+            let findings = output.findings.len();
+            let outcome = output
+                .analysis_outcome
+                .as_ref()
+                .ok_or("diff pipeline must project an analysis outcome")?;
             assert_eq!(
                 findings, 0,
                 "fixture precondition: {label} must analyze nothing"
@@ -2762,7 +2777,7 @@ mod tests {
                 crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
                 "an excluded Rust adapter must not claim a complete analysis ({label})"
             );
-            let hedge = zero_findings_diff_hedge(Some(&outcome), false)
+            let hedge = zero_findings_diff_hedge(Some(outcome), false)
                 .ok_or_else(|| format!("{label}: a typed exclusion must be named on stderr"))?;
             assert!(
                 hedge.contains("rust is not in the effective [languages].enabled set"),
@@ -2772,6 +2787,28 @@ mod tests {
                 !hedge.contains("not a valid unified diff"),
                 "{label}: {hedge}"
             );
+            // #13138: the real incomplete zero-finding check result must not
+            // become done= when the compact Agent renderer projects it.
+            assert!(!output.no_scope_provided);
+            let text = output::render::render_check_with_config(
+                &output,
+                &OutputFormat::Agent,
+                &config,
+            )?;
+            assert!(
+                text.contains("analysis=incomplete|outcome=partial_with_limitations\n"),
+                "{text}"
+            );
+            assert!(
+                text.contains("limitation=language_adapter_unavailable|"),
+                "{text}"
+            );
+            assert!(text.contains("|recovery="), "{text}");
+            assert!(
+                text.contains("\nstop=analysis incomplete; zero findings is not a clean result\n"),
+                "{text}"
+            );
+            assert!(!text.contains("\ndone="), "{text}");
         }
         Ok(())
     }

@@ -1,7 +1,7 @@
 [[extend]]
 id = "RIPR-SPEC-0147"
 tests = [
-  "crates/ripr/src/output/human/agent_tests.rs::agent_dispatch_discloses_actual_partial_zero_check_output",
+  "crates/ripr/src/cli/commands/check.rs::tests::zero_findings_hedge_names_config_excluded_rust_instead_of_diff_validity",
   "crates/ripr/src/output/human/agent_tests.rs::agent_dispatch_never_completes_incomplete_empty_or_exposed_reports",
   "crates/ripr/src/output/human/agent_tests.rs::agent_dispatch_keeps_partial_gaps_and_complete_controls",
 ]
