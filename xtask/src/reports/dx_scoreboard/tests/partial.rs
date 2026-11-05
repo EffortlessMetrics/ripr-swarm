@@ -65,8 +65,8 @@ fn qualifying_partial_measurement_is_visible_without_changing_the_gate() -> Resu
     assert_eq!(report["rollup"]["not_measured"], 0);
     assert_eq!(report["boards"][0]["status"], "partial");
     assert_eq!(
-        report["gate"]["status"], "pass",
-        "coverage disclosure is not a new gate"
+        report["gate"]["status"], "pass_with_gaps",
+        "coverage disclosure is not a new gate failure"
     );
     assert_eq!(row["baseline"]["delta"], json!(0.0));
     assert!(
