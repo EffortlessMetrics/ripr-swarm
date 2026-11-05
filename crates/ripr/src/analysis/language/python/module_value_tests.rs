@@ -294,11 +294,11 @@ fn fstring_constant_reader_credits_an_exact_old_value_pin() -> Check {
 }
 
 #[test]
-fn fstring_constant_reader_requires_old_true_new_false() -> Check {
+fn fstring_constant_reader_requires_a_deciding_assertion() -> Check {
     for assertion in [
-        "assert 'bob' in greet('bob')",
-        "assert greet('bob') == 'hi, bob'",
         "assert greet('bob') == 'unrelated'",
+        "assert False and greet('bob') == 'hello, bob'",
+        "assert False and greet('bob') == 'hi, bob'",
         "greet('bob')\n    assert 'bob' == 'bob'",
     ] {
         assert_no_module_value_credit(&classify_fstring_reader(
@@ -306,6 +306,365 @@ fn fstring_constant_reader_requires_old_true_new_false() -> Check {
             &fstring_test(assertion),
         )?);
     }
+    Ok(())
+}
+
+fn classify_string_reader(
+    source: &str,
+    old: &str,
+    tests: &[(&str, &str)],
+    edited: bool,
+    others: &[(&str, &str)],
+) -> Result<Finding, String> {
+    let own = Path::new("hostile/settings.py");
+    let mut owners = owners_of(source);
+    let mut extracted = tests_of(tests);
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        others
+            .iter()
+            .chain(tests.iter())
+            .map(|(file, text)| (Path::new(file), *text))
+            .chain([(own, source)]),
+        false,
+    );
+    for owner in owners.iter_mut().filter(|owner| owner.is_module_owner()) {
+        owner.foreign_writes = foreign.clone();
+    }
+    for test in &mut extracted {
+        test.constant_rebinding.edited_in_diff = edited;
+    }
+    let new = source.lines().next().ok_or("missing constant declaration")?;
+    classify_change_with_context(
+        own,
+        1,
+        new,
+        Some(old),
+        &owners,
+        &extracted,
+        PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..PythonNoBehaviorContext::default()
+        },
+        Some(source),
+    )
+    .ok_or_else(|| "the string edit must yield a finding".to_string())
+}
+
+const STRING_READER: &str =
+    "GREETING = 'hi'\n\n\ndef greet(name):\n    return f'{GREETING}, {name}'\n";
+
+#[test]
+fn module_string_reader_weak_membership_has_return_value_guidance() -> Check {
+    let finding = classify_fstring_reader(
+        "    return f'{GREETING}, {name}'",
+        &fstring_test("assert 'bob' in greet('bob')"),
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_eq!(finding.ripr.reach.state, crate::domain::StageState::Yes);
+    assert_eq!(
+        finding.ripr.reveal.observe.state,
+        crate::domain::StageState::Weak
+    );
+    assert_eq!(
+        finding.ripr.reveal.discriminate.state,
+        crate::domain::StageState::Weak
+    );
+    assert!(finding.static_limit_kind.is_none(), "{finding:?}");
+    let card = crate::output::python_repair_card::python_repair_card(&finding)
+        .ok_or("the bounded weak reader must supply a repair card")?;
+    assert_eq!(card.missing_discriminator, "greet('bob') == \"hi, bob\"");
+    assert!(card.recommended_test_shape.contains("return-value"));
+    Ok(())
+}
+
+#[test]
+fn module_string_reader_resolves_aliases_and_keeps_the_string_bound() -> Check {
+    for (source, test, call) in [
+        (
+            STRING_READER.to_string(),
+            "from hostile.settings import greet as welcome\n\ndef test_it():\n    assert 'bob' in welcome('bob')\n".to_string(),
+            "welcome('bob')",
+        ),
+        (
+            STRING_READER.replace("f'{GREETING}, {name}'", "GREETING + ', ' + name"),
+            "from hostile import settings\n\ndef test_it():\n    assert 'bob' in settings.greet('bob')\n".to_string(),
+            "settings.greet('bob')",
+        ),
+    ] {
+        let finding = classify_string_reader(
+            &source,
+            "GREETING = 'hello'",
+            &[("tests/test_settings.py", &test)],
+            false,
+            &[],
+        )?;
+        let card = crate::output::python_repair_card::python_repair_card(&finding)
+            .ok_or("a resolved alias must keep its runnable reader")?;
+        assert_eq!(card.missing_discriminator, format!("{call} == \"hi, bob\""));
+    }
+    for (argument, within_bound) in [
+        (format!("{}xx", "☃".repeat(21_843)), true),
+        (format!("{}xxx", "☃".repeat(21_843)), false),
+    ] {
+        for assertion in [
+            format!("assert '☃' in greet('{argument}')"),
+            format!("assert greet('{argument}') == 'hi{argument}'"),
+        ] {
+            let finding = classify_fstring_reader(
+                "    return f'{GREETING}{name}'",
+                &fstring_test(&assertion),
+            )?;
+            if within_bound {
+                assert_ne!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
+            } else {
+                assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
+                assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn module_string_reader_current_pin_closes_the_same_gap_after_a_test_edit() -> Check {
+    let weak = classify_string_reader(
+        STRING_READER,
+        "GREETING = 'hello'",
+        &[(
+            "tests/test_settings.py",
+            &fstring_test("assert 'bob' in greet('bob')"),
+        )],
+        false,
+        &[],
+    )?;
+    for edited in [false, true] {
+        let exact = classify_string_reader(
+            STRING_READER,
+            "GREETING = 'hello'",
+            &[(
+                "tests/test_settings.py",
+                &fstring_test("assert greet('bob') == 'hi, bob'"),
+            )],
+            edited,
+            &[],
+        )?;
+        assert_credited(&exact);
+        assert_eq!(
+            weak.canonical_gap.as_ref().ok_or("weak gap identity")?.id,
+            exact.canonical_gap.as_ref().ok_or("exact gap identity")?.id,
+        );
+        assert!(
+            exact
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("module_value_current_pin:"))
+        );
+        assert!(crate::output::python_repair_card::python_repair_card(&exact).is_none());
+    }
+    for assertion in [
+        "assert greet('bob') == 'hello, bob'",
+        "assert 'bob' in greet('bob')",
+        "assert 'hi' in greet('bob')",
+    ] {
+        let finding = classify_string_reader(
+            STRING_READER,
+            "GREETING = 'hello'",
+            &[("tests/test_settings.py", &fstring_test(assertion))],
+            true,
+            &[],
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{assertion}: {finding:?}"
+        );
+        assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn module_string_reader_current_pin_keeps_prefix_binding_and_activation_guards() -> Check {
+    for prefix in ["assert 1 == 1\n    ", "assert 'bob' in greet('bob')\n    "] {
+        let test = fstring_test(&format!("{prefix}assert 'hi, bob' == greet('bob')"));
+        assert_credited(&classify_string_reader(
+            STRING_READER,
+            "GREETING = 'hello'",
+            &[("tests/test_settings.py", &test)],
+            true,
+            &[],
+        )?);
+    }
+    for test in [
+        fstring_test("assert False\n    assert greet('bob') == 'hi, bob'"),
+        fstring_test("assert False and greet('bob') == 'hi, bob'"),
+        fstring_test("assert False and 1 == 1\n    assert greet('bob') == 'hi, bob'"),
+        fstring_test("assert False and 'bob' in greet('bob')\n    assert greet('bob') == 'hi, bob'"),
+        fstring_test("assert 'absent' in greet('bob')\n    assert greet('bob') == 'hi, bob'"),
+        fstring_test("assert 'hi' in greet('bob')\n    assert greet('bob') == 'hi, bob'"),
+        fstring_test("greet = lambda name: 'hi, bob'\n    assert greet('bob') == 'hi, bob'"),
+        fstring_test("assert greet('bob') == 'hi, bob'")
+            .replace("hostile.settings", "elsewhere.settings"),
+        "from hostile.settings import greet\nimport pytest\n\n@pytest.mark.skip\ndef test_it():\n    assert greet('bob') == 'hi, bob'\n".to_string(),
+        "from hostile.settings import greet\nimport pytest\n\n@pytest.mark.xfail\ndef test_it():\n    assert greet('bob') == 'hi, bob'\n".to_string(),
+    ] {
+        let finding = classify_string_reader(
+            STRING_READER,
+            "GREETING = 'hello'",
+            &[("tests/test_settings.py", &test)],
+            true,
+            &[],
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{test}: {finding:?}");
+        assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn module_string_reader_membership_requires_an_unchanged_true_oracle() -> Check {
+    for (assertion, expected) in [
+        ("assert 'bob' in greet('bob')", ExposureClass::WeaklyExposed),
+        ("assert 'hello' in greet('bob')", ExposureClass::Exposed),
+        ("assert 'hi' in greet('bob')", ExposureClass::Exposed),
+        ("assert 'absent' in greet('bob')", ExposureClass::StaticUnknown),
+        ("assert 'hello' not in greet('bob')", ExposureClass::Exposed),
+    ] {
+        let finding =
+            classify_fstring_reader("    return f'{GREETING}, {name}'", &fstring_test(assertion))?;
+        assert_eq!(finding.class, expected, "{assertion}: {finding:?}");
+        if expected != ExposureClass::StaticUnknown {
+            let row = finding
+                .related_tests
+                .first()
+                .ok_or("reader test row missing")?;
+            assert_eq!(row.oracle_kind, crate::domain::OracleKind::RelationalCheck);
+            if expected == ExposureClass::Exposed {
+                assert_eq!(row.oracle_strength, crate::domain::OracleStrength::Strong);
+            }
+        }
+        if expected != ExposureClass::WeaklyExposed {
+            assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn module_string_reader_does_not_invent_reach_or_repair_from_call_spelling() -> Check {
+    for assertion in [
+        "assert False and 'bob' in greet('bob')",
+        "assert True or 'bob' in greet('bob')",
+        "assert 'bob' in (greet('bob') if False else 'bob')",
+        "greet('bob')\n    assert 'bob' == 'bob'",
+        "assert False\n    assert 'bob' in greet('bob')",
+        "assert 'bob' in greet('bob')\n    assert 1 == 1",
+        "greet = lambda name: name\n    assert 'bob' in greet('bob')",
+    ] {
+        let finding =
+            classify_fstring_reader("    return f'{GREETING}, {name}'", &fstring_test(assertion))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::StaticUnknown,
+            "{assertion}: {finding:?}"
+        );
+        assert_eq!(finding.ripr.reach.state, crate::domain::StageState::Unknown);
+        assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+    }
+    for body in [
+        "    return f'{GREETING!s}, {name}'",
+        "    return f'GREETING, {name}'",
+        "    return name if name else GREETING",
+        "    return unknown(GREETING, name)",
+    ] {
+        let finding = classify_fstring_reader(body, &fstring_test("assert 'bob' in greet('bob')"))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::StaticUnknown,
+            "{body}: {finding:?}"
+        );
+        assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn module_string_reader_packet_stays_with_the_selected_test_and_escaped_value() -> Check {
+    let tests = "from hostile.settings import greet\n\ndef test_aaa_unrelated():\n    greet('discarded')\n    assert 1 == 1\n\nclass TestA:\n    def test_same(self):\n        assert 'alice' in greet('alice')\n\nclass TestB:\n    def test_same(self):\n        assert 'bob' in greet('bob')\n";
+    let source = STRING_READER.replace("'hi'", "'\\x07'");
+    let finding = classify_string_reader(
+        &source,
+        "GREETING = 'hello'",
+        &[("tests/test_settings.py", tests)],
+        false,
+        &[],
+    )?;
+    let card = crate::output::python_repair_card::python_repair_card(&finding)
+        .ok_or("the selected reader needs a complete card")?;
+    assert_eq!(
+        card.suggested_test_node_id.as_deref(),
+        Some("tests/test_settings.py::TestA::test_same")
+    );
+    assert_eq!(
+        card.missing_discriminator,
+        "greet('alice') == \"\\u0007, alice\""
+    );
+    super::source_facts::parse_module_result(
+        Path::new("repair.py"),
+        &format!("assert {}", card.missing_discriminator),
+    )
+    .map_err(|error| format!("the proposed discriminator must be Python syntax: {error}"))?;
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line == "suggested_test_line: 8")
+    );
+    Ok(())
+}
+
+#[test]
+fn module_string_reader_respects_foreign_writers_and_missing_import_identity() -> Check {
+    for others in [
+        vec![(
+            "hostile/writer.py",
+            "import hostile.settings as s\ns.GREETING = 'other'\n",
+        )],
+        vec![(
+            "hostile/writer.py",
+            "import hostile.settings as s\ns.greet.__code__ = replacement.__code__\n",
+        )],
+    ] {
+        let finding = classify_string_reader(
+            STRING_READER,
+            "GREETING = 'hello'",
+            &[(
+                "tests/test_settings.py",
+                &fstring_test("assert 'bob' in greet('bob')"),
+            )],
+            false,
+            &others,
+        )?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
+        assert_eq!(finding.ripr.reach.state, crate::domain::StageState::Unknown);
+        assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
+    }
+    let test = fstring_test("assert 'bob' in greet('bob')")
+        .replace("hostile.settings", "elsewhere.settings");
+    let finding = classify_string_reader(
+        STRING_READER,
+        "GREETING = 'hello'",
+        &[("tests/test_unrelated.py", &test)],
+        false,
+        &[],
+    )?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{finding:?}");
+    assert_eq!(finding.ripr.reach.state, crate::domain::StageState::Unknown);
+    assert_eq!(
+        finding.ripr.reveal.discriminate.state,
+        crate::domain::StageState::Unknown
+    );
     Ok(())
 }
 

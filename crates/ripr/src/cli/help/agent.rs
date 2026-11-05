@@ -415,10 +415,10 @@ Options:
                        resolves to that seam. `--phase after` keeps exact seam
                        IDs. An unmapped ID refuses with the `ripr pilot`
                        recovery route.
-  --gap-id ID          Start a repair for one canonical TypeScript preview gap
-                       (`gap:typescript:typescript_preview:...`) printed by
-                       `ripr check`; exclusive with `--seam-id` and requires
-                       `--base`. The before phase re-runs the diff-scoped
+  --gap-id ID          Start a repair for one canonical Python or TypeScript
+                       preview gap printed by `ripr check`; exclusive with
+                       `--seam-id` and requires `--base`. The before phase
+                       re-runs the diff-scoped
                        check, refuses unless the finding's repair packet is
                        ready, and records the check-findings snapshot. Run
                        `--attempt ID --phase after` after committing the
@@ -426,8 +426,7 @@ Options:
                        base commit, reports the gap closed only when it reads
                        exposed (otherwise it refuses and the attempt stays
                        retryable), then enforces the edit cage. It issues no
-                       receipt; the closure rides the verify result. Python
-                       gaps are not repairable here.
+                       receipt; the closure rides the verify result.
   --base REF           The Git base the diff-scoped check compares against;
                        required with, and valid only for, `--gap-id`.
   --attempt ID         Select one durable repair attempt; valid for `after`

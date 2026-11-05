@@ -36,8 +36,12 @@ pub(super) enum PythonRelationKind {
     ProtocolEntryCall,
     /// The test's assertion statically depends on an edited module-level
     /// constant, directly or through a module function it calls with literal
-    /// arguments, and fails under the new value (`module_value.rs`, #9423).
+    /// arguments, and distinguishes the old and new values
+    /// (`module_value.rs`, #9423, #12950).
     ModuleValueCall,
+    /// A resolved module string reader returns different values, but the
+    /// selected membership assertion accepts both (#12950).
+    ModuleValueRead,
     SameStem,
     TestNameSimilarity,
     FixtureName,
@@ -66,6 +70,7 @@ impl PythonRelationKind {
             Self::DunderProtocol => 3,
             Self::ProtocolEntryCall => 4,
             Self::ModuleValueCall => 4,
+            Self::ModuleValueRead => 4,
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
@@ -87,6 +92,7 @@ impl PythonRelationKind {
                 | Self::LocalBinding
                 | Self::ProtocolEntryCall
                 | Self::ModuleValueCall
+                | Self::ModuleValueRead
         )
     }
 
@@ -106,6 +112,7 @@ impl PythonRelationKind {
             Self::DunderProtocol => "dunder_protocol",
             Self::ProtocolEntryCall => "protocol_entry_call",
             Self::ModuleValueCall => "module_value_call",
+            Self::ModuleValueRead => "module_value_reader_call",
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",

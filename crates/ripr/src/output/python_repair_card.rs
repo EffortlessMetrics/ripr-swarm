@@ -1,4 +1,4 @@
-use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily, RelatedTest};
+use crate::domain::{ExposureClass, Finding, FlowSinkKind, LanguageId, ProbeFamily, RelatedTest};
 use ripr_contract::domain::language_capability::{
     CapabilityFamily, family_established_for_any_framework,
 };
@@ -217,12 +217,21 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
     }
 
     let gap = finding.canonical_gap.as_ref()?;
-    let missing_discriminator = finding
-        .activation
-        .missing_discriminators
-        .first()?
-        .value
-        .clone();
+    let missing = finding.activation.missing_discriminators.first()?;
+    let missing_discriminator = missing.value.clone();
+    // A module constant keeps its existing gap identity, while its producer
+    // can establish a concrete reader-return sink (#12950). Render that
+    // supplied sink as value guidance without making a new reach decision.
+    let repair_family = if matches!(finding.probe.family, ProbeFamily::Predicate)
+        && missing
+            .flow_sink
+            .as_ref()
+            .is_some_and(|sink| sink.kind == FlowSinkKind::ReturnValue)
+    {
+        ProbeFamily::ReturnValue
+    } else {
+        finding.probe.family.clone()
+    };
     let suggested_test_file = evidence_value(finding, "suggested_test_file: ")?.to_string();
     let suggested_test_name = evidence_value(finding, "suggested_test_name: ")?.to_string();
     let suggested_test_node_id =
@@ -230,11 +239,8 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
     let verify_command = evidence_value(finding, "suggested_verify_command: ")?.to_string();
     let verify_command_confidence =
         evidence_value(finding, "suggested_verify_command_confidence: ")?.to_string();
-    let stop_conditions = stop_conditions(
-        &finding.probe.family,
-        &missing_discriminator,
-        &verify_command,
-    );
+    let stop_conditions =
+        stop_conditions(&repair_family, &missing_discriminator, &verify_command);
     let repair_action = evidence_value(finding, "suggested_repair_action: ")
         .unwrap_or("add_or_strengthen_test")
         .to_string();
@@ -255,13 +261,13 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
         current_test_evidence: current_test_evidence(related_test),
         missing_discriminator: missing_discriminator.clone(),
         recommended_test_shape: recommended_test_shape(
-            &finding.probe.family,
+            &repair_family,
             &missing_discriminator,
             &verify_command,
             &repair_action,
         ),
         suggested_assertion: suggested_assertion(
-            &finding.probe.family,
+            &repair_family,
             &missing_discriminator,
             &verify_command,
         ),
