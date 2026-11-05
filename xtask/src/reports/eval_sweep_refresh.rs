@@ -50,6 +50,11 @@
 //!   `timed-out`/`crashed`/`unsupported`/`tempfail`/`stale` are derived from
 //!   producer facts (rail-enforced timeout, exit status, captured JSON,
 //!   `analysis_outcome` kind and completeness) with no two outcomes merged.
+//! - Raw-output admission: only genuine UTF-8, duplicate-key-free JSON with
+//!   well-formed consumed findings/outcome fields reaches scoring. Malformed
+//!   output is a failed attempt with a named execution limitation; two empty
+//!   sets obtained by discarding malformed evidence never become stable.
+//!   Valid complete empty findings and additive producer fields remain valid.
 //! - Stability: the route runs a second pass ONLY where the first result is
 //!   `complete` — the one state where a gap/output identity comparison is
 //!   meaningful — and records the comparison in the row's `repeat` block
@@ -83,6 +88,8 @@
 //!   validator/publisher owns. The receipt is not accepted promotion evidence,
 //!   no structural-accuracy, repair-correctness, gate, badge, or support claim
 //!   is inferred, and distributions stay descriptive (they never gate).
+
+mod admission;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -1195,7 +1202,8 @@ struct AnalysisPass {
 /// Classifies one captured pass from producer facts. Terminal states stay
 /// distinct: rail-enforced timeout, process failure exit, non-JSON stdout,
 /// `unsupported_input` analysis kind, parse degradation to a named
-/// static-unknown limitation, and producer-reported completeness.
+/// static-unknown limitation, and producer-reported completeness. Production
+/// callers pass only documents admitted by `analysis_pass_from_capture`.
 fn classify_pass(timed_out: bool, exit_ok: bool, parsed: Option<&Value>) -> RunStatus {
     if timed_out {
         return RunStatus::TimedOut;
@@ -1260,35 +1268,62 @@ fn run_analysis_pass(
         timeout,
         &format!("eval-sweep refresh ripr check for `{subject_id}`"),
     )?;
-    let runtime_ms = output.duration.as_millis() as u64;
-    let stdout_text = String::from_utf8_lossy(&output.stdout).to_string();
-    let parsed: Option<Value> = serde_json::from_str(&stdout_text).ok();
-    let exit_ok = output.status.is_some_and(|status| status.success());
-    let status = classify_pass(output.timed_out, exit_ok, parsed.as_ref());
+    Ok(analysis_pass_from_capture(
+        output.timed_out,
+        output.status.is_some_and(|status| status.success()),
+        output.duration.as_millis() as u64,
+        output.stdout,
+        output.stderr,
+    ))
+}
+
+/// One admission path for both captured passes. A malformed document remains
+/// a measured failed attempt with exact raw bytes and a diagnostic; missing
+/// evidence cannot turn into empty complete findings or a stable comparison.
+fn analysis_pass_from_capture(
+    timed_out: bool,
+    exit_ok: bool,
+    runtime_ms: u64,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+) -> AnalysisPass {
+    let (parsed, mut limitations) = match admission::parse_check_document(&stdout) {
+        Ok(value) => (Some(value), Vec::new()),
+        Err(reason) => (None, vec![format!("check output rejected: {reason}")]),
+    };
+    let status = classify_pass(timed_out, exit_ok, parsed.as_ref());
     let complete = parsed
         .as_ref()
         .and_then(crate::check_document_analysis_complete)
         .unwrap_or(false);
-    let limitations = parsed
+    if parsed
         .as_ref()
-        .and_then(|value| value.get("analysis_outcome"))
-        .and_then(|outcome| outcome.get("outcome"))
-        .and_then(|outcome| outcome.get("limitations"))
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .map(|item| {
-                    item.get("kind")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unreported_limitation")
-                        .to_string()
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+        .is_some_and(|value| value.get("analysis_outcome").is_none())
+    {
+        limitations.push("analysis_outcome is absent; completeness was not reported".to_string());
+    }
+    limitations.extend(
+        parsed
+            .as_ref()
+            .and_then(|value| value.get("analysis_outcome"))
+            .and_then(|outcome| outcome.get("outcome"))
+            .and_then(|outcome| outcome.get("limitations"))
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| {
+                        item.get("kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or("unreported_limitation")
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+    );
     let (classification, alignment) = parsed.as_ref().map(count_distributions).unwrap_or_default();
-    Ok(AnalysisPass {
+    AnalysisPass {
         status,
         runtime_ms,
         complete,
@@ -1296,10 +1331,10 @@ fn run_analysis_pass(
         gap_ids: parsed.as_ref().map(gap_ids).unwrap_or_default(),
         classification,
         alignment,
-        stdout: output.stdout,
-        stderr: output.stderr,
+        stdout,
+        stderr,
         output_json: parsed,
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1411,9 +1446,14 @@ fn run_stability_pass(
 /// compares), then gap sets and raw output identity decide stability.
 fn compare_passes(first: &AnalysisPass, second: AnalysisPass) -> StabilityResult {
     if !matches!(second.status, RunStatus::Complete) {
+        let detail = if second.limitations.is_empty() {
+            String::new()
+        } else {
+            format!("; {}", second.limitations.join("; "))
+        };
         return StabilityResult::NotCompared {
             limitation: format!(
-                "stability pass ended in status `{}`; a comparison needs a complete second pass",
+                "stability pass ended in status `{}`; a comparison needs a complete second pass{detail}",
                 second.status.as_str()
             ),
         };
@@ -3089,7 +3129,7 @@ mod python_eval_sweep_refresh {
 
     // -- row assembly (pure) -------------------------------------------------
 
-    fn test_subject(id: &str, sha: &str, shape: &str) -> AcceptedSubject {
+    pub(super) fn test_subject(id: &str, sha: &str, shape: &str) -> AcceptedSubject {
         AcceptedSubject {
             id: id.to_string(),
             url: format!("https://example.com/{id}"),
@@ -3104,7 +3144,7 @@ mod python_eval_sweep_refresh {
         }
     }
 
-    fn test_binary() -> BinaryIdentity {
+    pub(super) fn test_binary() -> BinaryIdentity {
         BinaryIdentity {
             absolute: PathBuf::from("bin").join("ripr"),
             binary_digest: DIGEST_ONE.to_string(),
@@ -3128,7 +3168,7 @@ mod python_eval_sweep_refresh {
         }
     }
 
-    fn materialized() -> Materialization {
+    pub(super) fn materialized() -> Materialization {
         Materialization::Materialized {
             dir: PathBuf::from("subjects").join("x"),
             source: "local_seed_clone",
@@ -3830,24 +3870,17 @@ mod python_eval_sweep_refresh {
         let bounded = json!({"analysis_outcome": {
             "analysis_complete": true, "document_complete": false,
             "findings_rendered": 1, "findings_total": 3,
-            "outcome": {"kind": "complete_with_findings"}}, "findings": []});
+            "outcome": {"kind": "complete_with_findings", "limitations": []}}, "findings": []});
         let legacy = json!({"analysis_outcome": {
             "analysis_complete": true,
-            "outcome": {"kind": "complete_with_findings"}},
+            "outcome": {"kind": "complete_with_findings", "limitations": []}},
             "run_limitations": [{"category": "limited_findings_bound",
                 "run_status": "limited_findings_bound"}], "findings": []});
         let unbounded = json!({"analysis_outcome": {
             "analysis_complete": true,
-            "outcome": {"kind": "complete_with_findings"}}, "findings": []});
-        let pass_from = |doc: &Value| -> AnalysisPass {
-            let status = classify_pass(false, true, Some(doc));
-            AnalysisPass {
-                status,
-                complete: matches!(status, RunStatus::Complete),
-                stdout: doc.to_string().into_bytes(),
-                output_json: Some(doc.clone()),
-                ..analysis_pass(status, 10)
-            }
+            "outcome": {"kind": "complete_no_findings", "limitations": []}}, "findings": []});
+        let pass_from = |doc: &Value| {
+            analysis_pass_from_capture(false, true, 10, doc.to_string().into_bytes(), Vec::new())
         };
         let subject = test_subject("bounded", VALID_SHA_C, "click_typer");
         let binary = test_binary();
@@ -3956,16 +3989,30 @@ mod python_eval_sweep_refresh {
         let bounded = json!({"analysis_outcome": {
             "analysis_complete": true, "document_complete": false,
             "findings_rendered": 1, "findings_total": 3,
-            "outcome": {"kind": "complete_with_findings"}}, "findings": []});
+            "outcome": {"kind": "complete_with_findings", "limitations": []}}, "findings": []});
         assert!(matches!(
-            classify_pass(false, true, Some(&bounded)),
+            analysis_pass_from_capture(
+                false,
+                true,
+                10,
+                bounded.to_string().into_bytes(),
+                Vec::new(),
+            )
+            .status,
             RunStatus::Partial
         ));
         let control = json!({"analysis_outcome": {
             "analysis_complete": true,
-            "outcome": {"kind": "complete_with_findings"}}, "findings": []});
+            "outcome": {"kind": "complete_no_findings", "limitations": []}}, "findings": []});
         assert!(matches!(
-            classify_pass(false, true, Some(&control)),
+            analysis_pass_from_capture(
+                false,
+                true,
+                10,
+                control.to_string().into_bytes(),
+                Vec::new(),
+            )
+            .status,
             RunStatus::Complete
         ));
     }

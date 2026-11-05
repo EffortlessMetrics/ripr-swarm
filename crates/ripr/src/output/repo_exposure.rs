@@ -222,7 +222,7 @@ const MAX_TOP_FILES_SUMMARY_JSON: usize = 25;
 
 const REPO_EXPOSURE_INVENTORY_LIMIT_CATEGORY: &str = "repo_seam_limit_applied";
 const REPO_EXPOSURE_PILOT_BUDGET_CATEGORY: &str = "pilot_seam_budget_applied";
-const REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
+pub(crate) const REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
 const REPO_EXPOSURE_PILOT_BUDGET_CONTROL: &str = "RIPR_PILOT_SEAM_BUDGET";
 const REPO_EXPOSURE_SEAM_LIMIT_RUN_STATUS: &str = "seam_limit_applied";
 
@@ -267,36 +267,56 @@ impl<'a> RepoExposureLimit<'a> {
     }
 
     pub(crate) fn repair_route(self) -> &'static str {
-        match (self, &self.info().source) {
-            (Self::Inventory(_), SeamLimitSource::Default) => {
-                "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-            }
-            (Self::Inventory(_), SeamLimitSource::Configured) => {
-                "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-            }
-            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Default) => {
-                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
-            }
-            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Configured) => {
-                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
-            }
+        match self {
+            Self::Inventory(_) => repo_exposure_inventory_repair_route(&self.info().source),
+            Self::PilotBudget(_) | Self::Both(_, _) => match self.info().source {
+                SeamLimitSource::Default => {
+                    "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
+                }
+                SeamLimitSource::Configured => {
+                    "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
+                }
+            },
         }
     }
 
     fn markdown_repair_route(self) -> &'static str {
-        match (self, &self.info().source) {
-            (Self::Inventory(_), SeamLimitSource::Default) => {
-                "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
+        match self {
+            Self::Inventory(_) => {
+                repo_exposure_inventory_markdown_repair_route(&self.info().source)
             }
-            (Self::Inventory(_), SeamLimitSource::Configured) => {
-                "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
-            }
-            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Default) => {
-                "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget"
-            }
-            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Configured) => {
-                "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts"
-            }
+            Self::PilotBudget(_) | Self::Both(_, _) => match self.info().source {
+                SeamLimitSource::Default => {
+                    "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget"
+                }
+                SeamLimitSource::Configured => {
+                    "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts"
+                }
+            },
+        }
+    }
+}
+
+/// Repair route for a repo inventory seam cap, shared by md/json exposure and
+/// the repo badge warnings channel (#12508).
+pub(crate) fn repo_exposure_inventory_repair_route(source: &SeamLimitSource) -> &'static str {
+    match source {
+        SeamLimitSource::Default => {
+            "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+        }
+        SeamLimitSource::Configured => {
+            "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+        }
+    }
+}
+
+fn repo_exposure_inventory_markdown_repair_route(source: &SeamLimitSource) -> &'static str {
+    match source {
+        SeamLimitSource::Default => {
+            "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
+        }
+        SeamLimitSource::Configured => {
+            "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
         }
     }
 }
@@ -492,7 +512,7 @@ pub(crate) fn bound_repo_exposure_seams(
     let canonical_gaps = canonical_gap_identities(classified);
     let sizes: Vec<usize> = classified
         .iter()
-        .map(|entry| render_seam_json(entry, &canonical_gaps).len())
+        .map(|entry| render_seam_json(entry, &canonical_gaps).0.len())
         .collect();
     // The writer joins entries with `,\n`, so a selection of n entries costs
     // their bytes plus 2 * (n - 1): the budget bounds the written `seams[]`
@@ -812,6 +832,10 @@ struct SeamJsons<'a> {
     /// for the full set.
     order: Vec<usize>,
     prefix: Vec<String>,
+    /// Raw path spellings each prefix entry names, collected while it was
+    /// rendered, parallel to `prefix`. Lets the source-subject pass stamp
+    /// the kept entries without parsing their JSON back.
+    prefix_named_files: Vec<BTreeSet<String>>,
 }
 
 impl<'a> SeamJsons<'a> {
@@ -820,17 +844,19 @@ impl<'a> SeamJsons<'a> {
         let canonical_gaps = canonical_gap_identities(classified);
         trace_latency_phase("serialize_gap_identities", "ok", gaps_started.elapsed());
         let mut prefix = Vec::new();
+        let mut prefix_named_files = Vec::new();
         let mut total = 0usize;
         // A zero budget (the plain streaming writer) keeps nothing, so it
         // renders no entry just to discard it.
         let prerender_started = Instant::now();
         for entry in classified.iter().take_while(|_| budget_bytes > 0) {
-            let seam_json = render_seam_json(entry, &canonical_gaps);
+            let (seam_json, named_files) = render_seam_json(entry, &canonical_gaps);
             total = total.saturating_add(seam_json.len());
             if total > budget_bytes {
                 break;
             }
             prefix.push(seam_json);
+            prefix_named_files.push(named_files);
         }
         trace_latency_phase(
             "serialize_seam_prerender",
@@ -842,6 +868,7 @@ impl<'a> SeamJsons<'a> {
             canonical_gaps,
             order: (0..classified.len()).collect(),
             prefix,
+            prefix_named_files,
         }
     }
 
@@ -851,30 +878,94 @@ impl<'a> SeamJsons<'a> {
     fn restrict_to(&mut self, kept: &[usize]) {
         self.order = kept.to_vec();
         self.prefix.clear();
+        self.prefix_named_files.clear();
     }
 
     /// Hand `idx`'s entry to `use_json`, from the prefix when it holds one.
     fn with_entry<R>(&self, pos: usize, use_json: impl FnOnce(&str) -> R) -> R {
         match self.prefix.get(pos) {
             Some(seam_json) => use_json(seam_json),
-            None => use_json(&render_seam_json(
-                &self.classified[self.order[pos]],
-                &self.canonical_gaps,
-            )),
+            None => use_json(
+                &render_seam_json(&self.classified[self.order[pos]], &self.canonical_gaps).0,
+            ),
         }
     }
+
+    /// Collect the workspace-relative files entry `pos` names into `files`.
+    /// Prefix entries reuse the spellings captured during prerender; entries
+    /// past the prefix are collected from their source seam and evidence
+    /// record, so no entry is rendered or parsed back for this pass.
+    fn collect_named_files(&self, pos: usize, root: &Path, files: &mut BTreeSet<String>) {
+        fn insert_filtered(
+            candidates: &BTreeSet<String>,
+            root: &Path,
+            files: &mut BTreeSet<String>,
+        ) {
+            for raw in candidates {
+                if let Some(path) =
+                    crate::output::gap_source_subject::subject_relative_path(root, raw)
+                {
+                    files.insert(path);
+                }
+            }
+        }
+        match self.prefix_named_files.get(pos) {
+            Some(named) => insert_filtered(named, root, files),
+            None => {
+                let mut candidates = BTreeSet::new();
+                collect_classified_named_files(
+                    &self.classified[self.order[pos]],
+                    self.canonical_gaps
+                        .get(self.classified[self.order[pos]].seam.id()),
+                    &mut candidates,
+                );
+                insert_filtered(&candidates, root, files);
+            }
+        }
+    }
+}
+
+/// Raw path spellings one seam entry names under the rendered JSON's
+/// path-bearing keys: the seam and rendered related-test `file`s, plus every
+/// such spelling inside its evidence record. Mirrors what
+/// `named_files_in_value` would collect from the rendered entry.
+fn collect_classified_named_files(
+    entry: &ClassifiedSeam,
+    canonical_gap: Option<&CanonicalGapIdentity>,
+    candidates: &mut BTreeSet<String>,
+) {
+    candidates.insert(display_path(entry.seam.file()));
+    for grip in entry
+        .evidence
+        .related_tests
+        .iter()
+        .take(MAX_RELATED_TESTS_PER_SEAM_JSON)
+    {
+        candidates.insert(display_path(&grip.file));
+    }
+    let record = evidence_record_for(entry, canonical_gap);
+    crate::output::gap_source_subject::named_file_candidates_in_value(
+        &evidence_record_json_value(&record),
+        candidates,
+    );
 }
 
 fn render_seam_json(
     entry: &ClassifiedSeam,
     canonical_gaps: &BTreeMap<crate::analysis::seams::SeamId, CanonicalGapIdentity>,
-) -> String {
+) -> (String, BTreeSet<String>) {
     // A rendered seam averages ~12KB on the reference workload; 8KB costs
     // at most one regrowth while never over-reserving into the kept prefix
     // (#6898).
     let mut seam_json = String::with_capacity(8 * 1024);
-    push_classified_json(&mut seam_json, entry, canonical_gaps.get(entry.seam.id()));
-    seam_json
+    let mut named_files = BTreeSet::new();
+    push_classified_json(
+        &mut seam_json,
+        entry,
+        canonical_gaps.get(entry.seam.id()),
+        &mut named_files,
+    );
+    (seam_json, named_files)
 }
 
 /// #4544: the content digests of every workspace file the seam entries name,
@@ -887,13 +978,8 @@ fn repo_exposure_source_subject(
     root: &std::path::Path,
 ) -> Option<serde_json::Value> {
     let mut files = std::collections::BTreeSet::new();
-    let mut collect = |seam_json: &str| -> Option<()> {
-        let seam = serde_json::from_str::<serde_json::Value>(seam_json).ok()?;
-        crate::output::gap_source_subject::named_files_in_value(root, &seam, &mut files);
-        Some(())
-    };
     for pos in 0..seams.order.len() {
-        seams.with_entry(pos, &mut collect)?;
+        seams.collect_named_files(pos, root, &mut files);
     }
     if files.is_empty() {
         return None;
@@ -1504,6 +1590,7 @@ fn push_classified_json(
     out: &mut String,
     entry: &ClassifiedSeam,
     canonical_gap: Option<&CanonicalGapIdentity>,
+    named_files: &mut BTreeSet<String>,
 ) {
     let seam = &entry.seam;
     let evidence = &entry.evidence;
@@ -1518,7 +1605,9 @@ fn push_classified_json(
     out.push_str("\",\n");
     let _ = writeln!(out, "      \"kind\": \"{}\",", seam.kind().as_str());
     let _ = write!(out, "      \"file\": \"");
-    json_escape_into(out, &display_path(seam.file()));
+    let seam_file = display_path(seam.file());
+    json_escape_into(out, &seam_file);
+    named_files.insert(seam_file);
     out.push_str("\",\n");
     let _ = writeln!(
         out,
@@ -1592,7 +1681,9 @@ fn push_classified_json(
             json_escape_into(out, grip.test_name.as_str());
             out.push_str("\", ");
             let _ = write!(out, "\"file\": \"");
-            json_escape_into(out, &display_path(&grip.file));
+            let grip_file = display_path(&grip.file);
+            json_escape_into(out, &grip_file);
+            named_files.insert(grip_file);
             out.push_str("\", ");
             let _ = write!(out, "\"line\": {}, ", grip.line);
             let _ = write!(out, "\"oracle_kind\": \"{}\", ", grip.oracle_kind.as_str());
@@ -1654,7 +1745,9 @@ fn push_classified_json(
     out.push_str("],\n");
     let record = evidence_record_for(entry, canonical_gap);
     out.push_str("      \"evidence_record\": ");
-    out.push_str(&evidence_record_json_value(&record).to_string());
+    let evidence_value = evidence_record_json_value(&record);
+    crate::output::gap_source_subject::named_file_candidates_in_value(&evidence_value, named_files);
+    out.push_str(&evidence_value.to_string());
     out.push('\n');
     out.push_str("    }");
 }
@@ -2029,7 +2122,7 @@ pub(crate) mod tests {
         // every grip class, and an empty seams array, never zero bytes.
         let notice =
             crate::core_error::CoreError::seam_id_unknown("agent packet seam_id s was not found")
-                .refusal_notice();
+                .refusal_notice(&crate::config::config_error_summary);
         let rendered = render_refusal_json(&notice);
         let value: serde_json::Value =
             serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
@@ -2140,6 +2233,56 @@ pub(crate) mod tests {
         assert_eq!(document(usize::MAX), streamed);
         assert_eq!(document(total - 1), streamed);
         assert_eq!(document(all[0].len()), streamed);
+    }
+
+    #[test]
+    fn source_subject_named_files_match_rendered_json_across_budgets() -> Result<(), String> {
+        let root =
+            std::env::temp_dir().join(format!("ripr-repo-exposure-subject-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(root.join("tests")).map_err(|err| err.to_string())?;
+        std::fs::write(root.join("src/pricing.rs"), "fn p() {}\n")
+            .map_err(|err| err.to_string())?;
+        std::fs::write(root.join("src/b.rs"), "fn b() {}\n").map_err(|err| err.to_string())?;
+        std::fs::write(root.join("tests/pricing_tests.rs"), "fn t() {}\n")
+            .map_err(|err| err.to_string())?;
+        let classified = vec![
+            weakly_gripped_classified(),
+            classified_at("src/b.rs", "b::gate", 7, SeamGripClass::Ungripped),
+        ];
+        // Oracle: the pre-change parse-back over the rendered strings.
+        let oracle_seams = SeamJsons::new(&classified, usize::MAX);
+        let mut expected_files = BTreeSet::new();
+        for pos in 0..oracle_seams.order.len() {
+            let parsed: Result<serde_json::Value, String> = oracle_seams.with_entry(pos, |text| {
+                serde_json::from_str(text).map_err(|err| err.to_string())
+            });
+            crate::output::gap_source_subject::named_files_in_value(
+                &root,
+                &parsed?,
+                &mut expected_files,
+            );
+        }
+        assert!(
+            expected_files.contains("src/pricing.rs"),
+            "fixture must name its seam file: {expected_files:?}"
+        );
+        assert!(
+            expected_files.contains("tests/pricing_tests.rs"),
+            "fixture must name its related test: {expected_files:?}"
+        );
+        let expected =
+            crate::output::gap_source_subject::stamp_source_subject(&root, &expected_files)
+                .and_then(|stamp| serde_json::to_value(stamp).map_err(|err| err.to_string()))?;
+        // 0 = no prefix (tail path), 1 = partial prefix, MAX = full prefix.
+        for budget in [0usize, 1, usize::MAX] {
+            let seams = SeamJsons::new(&classified, budget);
+            let subject = repo_exposure_source_subject(&seams, &root)
+                .ok_or_else(|| format!("source subject missing at budget {budget}"))?;
+            assert_eq!(subject, expected, "budget {budget}");
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())?;
+        Ok(())
     }
 
     fn ts_guidance(ts_file_count: usize) -> TsFullRepoGuidance {
@@ -3216,7 +3359,7 @@ pub(crate) mod tests {
     fn byte_bound_cuts_seams_and_discloses_the_cut_in_the_document() -> Result<(), String> {
         let classified = byte_bound_corpus();
         let canonical_gaps = canonical_gap_identities(&classified);
-        let one = render_seam_json(&classified[0], &canonical_gaps).len();
+        let one = render_seam_json(&classified[0], &canonical_gaps).0.len();
         // Room for exactly three entries.
         let budget = one * 3 + one / 2;
         let bound = bound_repo_exposure_seams(
@@ -3270,7 +3413,7 @@ pub(crate) mod tests {
         let canonical_gaps = canonical_gap_identities(&classified);
         let total: usize = classified
             .iter()
-            .map(|entry| render_seam_json(entry, &canonical_gaps).len())
+            .map(|entry| render_seam_json(entry, &canonical_gaps).0.len())
             .sum::<usize>()
             + (classified.len() - 1) * SEAM_SEPARATOR_BYTES;
         for budget in [Some((total, SeamLimitSource::Default)), None] {
@@ -3299,7 +3442,7 @@ pub(crate) mod tests {
     fn byte_bound_keeps_the_current_change_seams_first() -> Result<(), String> {
         let classified = byte_bound_corpus();
         let canonical_gaps = canonical_gap_identities(&classified);
-        let one = render_seam_json(&classified[0], &canonical_gaps).len();
+        let one = render_seam_json(&classified[0], &canonical_gaps).0.len();
         let bound = bound_repo_exposure_seams(
             &classified,
             Some((one * 2 + one / 2, SeamLimitSource::Default)),
@@ -3321,7 +3464,7 @@ pub(crate) mod tests {
         // smaller-or-equal rest seams must not fill leftover budget.
         let classified = byte_bound_corpus();
         let canonical_gaps = canonical_gap_identities(&classified);
-        let one = render_seam_json(&classified[0], &canonical_gaps).len();
+        let one = render_seam_json(&classified[0], &canonical_gaps).0.len();
         let bound = bound_repo_exposure_seams(
             &classified,
             Some((one * 3 / 2, SeamLimitSource::Configured)),
@@ -3351,7 +3494,9 @@ pub(crate) mod tests {
     }
 
     fn one_entry_bytes(classified: &[ClassifiedSeam]) -> usize {
-        render_seam_json(&classified[0], &canonical_gap_identities(classified)).len()
+        render_seam_json(&classified[0], &canonical_gap_identities(classified))
+            .0
+            .len()
     }
 
     /// #12151: an oversized seam in the middle of the current-change group is
@@ -3365,7 +3510,7 @@ pub(crate) mod tests {
         let one = one_entry_bytes(&classified);
         let budget = one * 7 / 2;
         let canonical_gaps = canonical_gap_identities(&classified);
-        let big = render_seam_json(&classified[1], &canonical_gaps).len();
+        let big = render_seam_json(&classified[1], &canonical_gaps).0.len();
         assert!(big > budget, "fixture: seam 1 must exceed the budget");
         let bound = bound_repo_exposure_seams(
             &classified,
@@ -3512,7 +3657,7 @@ pub(crate) mod tests {
         let canonical_gaps = canonical_gap_identities(&classified);
         let sizes: Vec<usize> = classified
             .iter()
-            .map(|entry| render_seam_json(entry, &canonical_gaps).len())
+            .map(|entry| render_seam_json(entry, &canonical_gaps).0.len())
             .collect();
         let three = sizes[..3].iter().sum::<usize>() + 2 * SEAM_SEPARATOR_BYTES;
         for (budget, expect) in [(three, 3usize), (three - 1, 2)] {

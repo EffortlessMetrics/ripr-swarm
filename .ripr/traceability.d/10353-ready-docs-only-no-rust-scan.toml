@@ -1,0 +1,9 @@
+# Registers Ready's empty-diff short-circuit (#10353) under RIPR-SPEC-0171.
+[[extend]]
+id = "RIPR-SPEC-0171"
+tests = [
+  "crates/ripr/tests/no_rust_diff_reads_no_rust.rs::docs_only_diff_does_not_scan_workspace_rust_in_ready_mode",
+  "crates/ripr/tests/no_rust_diff_reads_no_rust.rs::rust_diff_does_reach_the_sentinel_in_ready_mode",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::ready_without_changed_rust_indexes_nothing",
+  "crates/ripr/src/analysis/workspace/select.rs::tests::deep_without_changed_rust_still_indexes_workspace",
+]

@@ -71,7 +71,7 @@ assert*/expect calls and nothing outside tests calls it".
 
 The exposure class is NEVER changed by this detection. Only the
 `recommended_next_step` text is reframed for oracle-shaped owners, defined as
-`pub(crate) const`s in `crates/ripr/src/domain/classification.rs` next to
+`pub(crate) const`s in `crates/ripr-contract/src/domain/classification.rs` next to
 `NO_STATIC_PATH_NEXT_STEP`:
 
 - `NoStaticPath` → `ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP`: name that the
@@ -177,8 +177,8 @@ surfaces continue to consume `Finding.recommended_next_step` through
 
 | Component | Location |
 |---|---|
-| Guidance consts + shared reason | `crates/ripr/src/domain/classification.rs` |
-| Re-export | `crates/ripr/src/domain/mod.rs` |
+| Guidance consts + shared reason | `crates/ripr-contract/src/domain/classification.rs` |
+| Re-export | `crates/ripr-contract/src/domain/mod.rs` |
 | Detector | `crates/ripr/src/analysis/classify/owner_shape.rs` |
 | Reframed next-step decision | `crates/ripr/src/analysis/classify/decision.rs` |
 | Context flag | `crates/ripr/src/analysis/classify/context.rs` |

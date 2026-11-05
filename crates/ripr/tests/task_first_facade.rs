@@ -3118,6 +3118,142 @@ fn repair_still_starts_when_a_weak_asserting_test_sits_beside_should_panic() -> 
     Ok(())
 }
 
+/// #12977: public pilot artifacts retain the named panic reason and brief
+/// omits the exact seam with that reason. A weak asserting sibling keeps
+/// the ordinary gap selectable on both surfaces. A snapshot configured to
+/// carry no strength supplies concrete propagation without granting grip,
+/// exercising named-only selection through the real configured analyzer.
+#[test]
+fn pilot_and_brief_withhold_the_should_panic_limitation() -> Result<(), String> {
+    let seam_id = "498b9581c66564c1";
+    for (fixture_name, extra_test, snapshot_disabled, selected) in [
+        ("facade-panic-selection", "", false, false),
+        (
+            "facade-panic-selection-weak",
+            "\n#[test]\nfn ok() {\n    assert!(div(4, 2) > 0);\n}\n",
+            false,
+            true,
+        ),
+        (
+            "facade-panic-selection-snapshot",
+            "\n#[test]\nfn snapshot_result() {\n    let result = div(8, 2);\n    insta::assert_debug_snapshot!(result, @\"4\");\n}\n",
+            true,
+            false,
+        ),
+    ] {
+        let fixture = Fixture::dir(fixture_name)?;
+        let root = &fixture.root;
+        populate_should_panic_fixture(root, extra_test)?;
+        if snapshot_disabled {
+            std::fs::write(
+                root.join("ripr.toml"),
+                "[oracles]\nsnapshot_strength = \"none\"\n",
+            )
+            .map_err(|error| format!("write snapshot policy: {error}"))?;
+            std::fs::write(
+                root.join("Cargo.toml"),
+                format!("{FIXTURE_CARGO_TOML}\n[dev-dependencies]\ninsta = \"1\"\n"),
+            )
+            .map_err(|error| format!("write snapshot fixture manifest: {error}"))?;
+        }
+        let root_arg = root.to_string_lossy().into_owned();
+        let pilot = run_ripr(root, &["pilot", "--root", &root_arg, "--quiet"])?;
+        assert_exit(&pilot, 0, "pilot on the should_panic fixture");
+        let summary: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("target/ripr/pilot/pilot-summary.json"))
+                .map_err(|error| format!("read pilot summary: {error}"))?,
+        )
+        .map_err(|error| format!("parse pilot summary: {error}"))?;
+        assert_eq!(summary["status"], "complete", "{summary}");
+        let ranked = summary["top_actionable_seams"]
+            .as_array()
+            .ok_or("pilot must emit top_actionable_seams")?;
+        let exposure: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("target/ripr/pilot/repo-exposure.json"))
+                .map_err(|error| format!("read repo exposure: {error}"))?,
+        )
+        .map_err(|error| format!("parse repo exposure: {error}"))?;
+        let seam = exposure["seams"]
+            .as_array()
+            .and_then(|seams| seams.iter().find(|entry| entry["seam_id"] == seam_id))
+            .ok_or("repo exposure must contain the div predicate seam")?;
+        let limitations = seam["evidence_record"]["static_limitations"]
+            .as_array()
+            .ok_or("the seam must retain its static limitations")?;
+        assert_eq!(
+            limitations
+                .iter()
+                .any(|limit| limit["category"] == "rust_panic_outcome_unresolved"),
+            !selected,
+            "{seam}"
+        );
+        if snapshot_disabled {
+            let record = &seam["evidence_record"];
+            assert_eq!(record["grip_class"], "reachable_unrevealed", "{record}");
+            for stage in ["reach", "activate", "propagate", "observe", "discriminate"] {
+                let state = record["evidence_path"][stage]["state"]
+                    .as_str()
+                    .ok_or("the seam must retain every evidence stage")?;
+                assert!(!matches!(state, "unknown" | "opaque"), "{stage}: {record}");
+            }
+            assert_eq!(
+                limitations.len(),
+                1,
+                "only the named panic limit applies: {record}"
+            );
+        }
+        assert_eq!(
+            ranked.iter().any(|entry| entry["seam_id"] == seam_id),
+            selected
+        );
+        if !selected {
+            assert!(
+                summary["withheld_static_limitations_total"]
+                    .as_u64()
+                    .is_some_and(|count| count > 0),
+                "{summary}"
+            );
+        }
+
+        let brief = run_ripr(
+            root,
+            &[
+                "agent",
+                "brief",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                seam_id,
+                "--json",
+            ],
+        )?;
+        assert_exit(&brief, 0, "brief on the exact should_panic seam");
+        let brief: serde_json::Value = serde_json::from_slice(&brief.stdout)
+            .map_err(|error| format!("parse agent brief: {error}"))?;
+        let top = brief["top_seams"]
+            .as_array()
+            .ok_or("brief must emit top_seams")?;
+        assert_eq!(top.len(), usize::from(selected), "{brief}");
+        if selected {
+            assert_eq!(top[0]["seam_id"], seam_id);
+        } else {
+            assert!(
+                brief["warnings"].as_array().is_some_and(|warnings| {
+                    warnings.iter().any(|warning| {
+                        warning.as_str().is_some_and(|warning| {
+                            warning.contains(
+                                "cannot tell whether the changed code causes the expected panic",
+                            )
+                        })
+                    })
+                }),
+                "{brief}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Control 4: one current attempt — `ripr continue` advances that exact
 /// attempt through the accepted after path.
 #[test]

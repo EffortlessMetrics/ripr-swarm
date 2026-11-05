@@ -36,7 +36,7 @@ pub(crate) fn check_identity_registry() -> Result<(), String> {
             why_it_matters: "Governed identifier fields need one registry disposition so later migrations cannot invent a second owner or treat compatibility aliases as authority.",
             fix_kind: FixKind::AuthorDecisionRequired,
             recommended_fixes: &[
-                "Update crates/ripr/src/domain/identity to record the field as canonical, alias, component, or adjacent.",
+                "Update crates/ripr-contract/src/domain/identity to record the field as canonical, alias, component, or adjacent.",
                 "Regenerate docs/identity/REGISTRY.md and docs/identity/registry.v1.json with RIPR_WRITE_IDENTITY_REGISTRY=1 cargo xtask check-identity-registry.",
                 "Do not collapse RepairAttemptId into an analysis-attempt or snapshot identity.",
             ],
@@ -421,9 +421,9 @@ mod tests {
         // Real governed source, not a comment/string added to make the gate
         // appear productive. The moved tokenizer precedes an existing DTO
         // validation-field literal in the same compiled candidate source.
-        let source = include_str!("../../crates/ripr/src/domain/command_spec.rs");
+        let source = include_str!("../../crates/ripr-contract/src/domain/command_spec.rs");
         let tokenizer = source
-            .find("pub(crate) fn command_tokens(")
+            .find("pub fn command_tokens(")
             .ok_or("actual command tokenizer source must be present")?;
         let command_id = source
             .find("\"command_id\"")
@@ -438,7 +438,7 @@ mod tests {
             "the full governed source must retain real command_id after tokenizer CHAR punctuation: {fields:?}"
         );
         assert!(
-            surface_field_violations("crates/ripr/src/domain/command_spec.rs", &fields)
+            surface_field_violations("crates/ripr-contract/src/domain/command_spec.rs", &fields)
                 .iter()
                 .all(|violation| !violation.contains("zero identity-shaped fields")),
             "a real governed source must not become a false empty registry surface"
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn rust_scanner_preserves_utf8_offsets_unknown_fields_and_zero_surface_refusal() {
-        let surface = "crates/ripr/src/domain/command_spec.rs";
+        let surface = "crates/ripr-contract/src/domain/command_spec.rs";
         for prefix in [r#"let quote = '"';"#, r#"let byte_quote = b'"';"#] {
             let source = format!(
                 r#"fn packet() {{

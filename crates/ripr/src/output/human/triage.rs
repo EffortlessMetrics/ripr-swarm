@@ -335,9 +335,18 @@ pub(crate) fn render_human_triage(
             } else if let Some(base) = output.base.as_deref()
                 && head_is_on_branch(&output.root, base)
             {
-                out.push_str(&format!(
-                    "  Safe next action: you are on `{base}`, which is the comparison base; edit a tracked source file or switch to a feature branch\n"
-                ));
+                // #13036: when HEAD has a parent, the usual intent is "check the
+                // last commit", so print that command instead of leaving it to
+                // be guessed.
+                if head_has_parent(&output.root) {
+                    out.push_str(&format!(
+                        "  Safe next action: you are on `{base}`, which is the comparison base, so there is no diff; to check the last commit run `ripr check --base HEAD~1` (or edit a tracked source file, or switch to a feature branch)\n"
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "  Safe next action: you are on `{base}`, which is the comparison base; edit a tracked source file or switch to a feature branch\n"
+                    ));
+                }
             } else if let Some(base) = output.base.as_deref()
                 && let Some(candidate) = empty_diff_base_candidate(output, base)
             {
@@ -847,7 +856,9 @@ fn hidden_finding_reason(finding: &Finding) -> String {
             }
             ExposureClass::StaticUnknown => &finding.ripr.infect.summary,
         });
-    one_line(&super::evidence_lines::plain_default_missing(reason))
+    one_line(&super::evidence_lines::plain_default_missing_for(
+        finding, reason,
+    ))
 }
 
 /// The currentness mix of the omitted set. `unresolved_subject` is the
@@ -997,6 +1008,17 @@ pub(crate) fn canonical_next_action_for_triage(
         limitations,
     };
     select_canonical_next_action(&input)
+}
+
+/// True when `HEAD~1` resolves, so `--base HEAD~1` names a real range.
+fn head_has_parent(root: &std::path::Path) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD~1"],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .ok()
+    .is_some_and(|output| output.status.success())
 }
 
 /// True when `HEAD` is the symbolic ref of local branch `base` (a detached
@@ -1483,7 +1505,7 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
             )
         } else {
             (
-                "static evidence names no concrete missing discriminator".to_string(),
+                "static evidence names no concrete missing check".to_string(),
                 "add or strengthen a test by hand",
             )
         }
@@ -3456,7 +3478,7 @@ mod tests {
             "{action}"
         );
         assert!(
-            !action.contains("names no concrete missing discriminator"),
+            !action.contains("names no concrete missing check"),
             "{action}"
         );
         // #10990: the unresolved-call boundary decline gets its own plain
@@ -3473,7 +3495,7 @@ mod tests {
             "{unresolved_action}"
         );
         assert!(
-            !unresolved_action.contains("names no concrete missing discriminator"),
+            !unresolved_action.contains("names no concrete missing check"),
             "{unresolved_action}"
         );
         // A weak finding without the unresolved-operand shape keeps the
@@ -3484,7 +3506,7 @@ mod tests {
         generic.language_status = Some(LanguageStatus::Preview);
         let generic_action = python_preview_safe_action(&generic, false);
         assert!(
-            generic_action.contains("static evidence names no concrete missing discriminator"),
+            generic_action.contains("static evidence names no concrete missing check"),
             "{generic_action}"
         );
     }

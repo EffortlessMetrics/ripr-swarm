@@ -5,6 +5,7 @@ use crate::app::Mode;
 use crate::domain::{ExposureClass, LanguageId, OracleStrength};
 use std::path::{Path, PathBuf};
 
+use super::overrides::{ConfigOverride, WorkspaceCrate};
 use super::{
     DEFAULT_CONTEXT_RELATED_TESTS, DEFAULT_LSP_SEAM_DIAGNOSTICS, DEFAULT_SUPPRESSIONS_PATH,
 };
@@ -21,8 +22,17 @@ pub struct RiprConfig {
     pub profiles: ProfilesConfig,
     pub typescript: TypescriptConfig,
     pub perl: PerlConfig,
+    /// Optional `[[overrides]]` rows (#2671). Empty when omitted, so existing
+    /// configs keep repo-wide severity and oracle policy.
+    pub(crate) overrides: Vec<ConfigOverride>,
+    /// Cargo packages discovered for the selected root. Loader metadata, not
+    /// a `ripr.toml` field; used to resolve `crate = "..."` selectors.
+    pub(crate) workspace_crates: Vec<WorkspaceCrate>,
     pub source_path: Option<PathBuf>,
     pub source_text: Option<String>,
+    /// Passive VP29A compile output when configuration is loaded from disk (#6428).
+    pub(crate) verification_contract_decision:
+        Option<super::verification_contract::RepositoryVerificationContractDecisionV1>,
 }
 
 impl RiprConfig {
@@ -246,6 +256,9 @@ pub struct OraclePolicy {
     pub snapshot_strength: OracleStrength,
     pub mock_expectation_strength: OracleStrength,
     pub broad_error_strength: OracleStrength,
+    /// Compiled `[[overrides]]` rows that set oracle fields. Empty means the
+    /// repo-wide strengths apply everywhere.
+    pub(crate) overlays: Vec<ConfigOverride>,
 }
 
 impl Default for OraclePolicy {
@@ -254,6 +267,7 @@ impl Default for OraclePolicy {
             snapshot_strength: OracleStrength::Medium,
             mock_expectation_strength: OracleStrength::Medium,
             broad_error_strength: OracleStrength::Weak,
+            overlays: Vec::new(),
         }
     }
 }
@@ -480,6 +494,9 @@ pub struct PythonLanguageConfig {
     /// Exact normalized repository-relative Python paths admitted past the
     /// built-in excluded-directory conventions (#7386).
     pub handwritten_files: Vec<String>,
+    /// Additional repository-relative globs omitted from Python preview indexing
+    /// (#5380).
+    pub excluded_file_patterns: Vec<String>,
 }
 
 /// `[languages.typescript]` repository configuration.
@@ -488,6 +505,9 @@ pub struct TypescriptLanguageConfig {
     /// Exact normalized repository-relative TypeScript/JavaScript paths
     /// admitted past the built-in excluded-directory conventions (#7386).
     pub handwritten_files: Vec<String>,
+    /// Additional repository-relative globs omitted from TypeScript preview
+    /// indexing (#5380).
+    pub excluded_file_patterns: Vec<String>,
 }
 
 fn canonical_sorted_strings(patterns: &[String]) -> String {
@@ -507,29 +527,13 @@ fn canonical_sorted_strings(patterns: &[String]) -> String {
 /// Canonical identity encoding for test-harness registrations (#3532).
 /// Length-prefixed, NUL-joined, sorted — injective, so distinct
 /// registration sets never hash to the same artifact identity.
-fn canonical_test_harnesses_identity(registrations: &[TestHarnessRegistration]) -> String {
+/// Canonical identity for the full harness registration set (#3532 / #6428).
+pub(crate) fn canonical_test_harnesses_identity(
+    registrations: &[TestHarnessRegistration],
+) -> String {
     let mut ordered = registrations
         .iter()
-        .map(|registration| {
-            let mut encoded = String::new();
-            for field in [
-                registration.registration_id.as_str(),
-                registration
-                    .target
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .as_str(),
-                registration.kind.as_str(),
-                registration.adapter.as_str(),
-                registration.marker.as_str(),
-            ] {
-                encoded.push_str(&field.len().to_string());
-                encoded.push(':');
-                encoded.push_str(field);
-                encoded.push('\u{0}');
-            }
-            encoded
-        })
+        .map(test_harness_registration_canonical_identity)
         .collect::<Vec<_>>();
     ordered.sort();
 
@@ -539,6 +543,30 @@ fn canonical_test_harnesses_identity(registrations: &[TestHarnessRegistration]) 
         identity.push_str(&encoded);
     }
     identity
+}
+
+/// Canonical identity for one harness registration (#3532 / #6428).
+pub(crate) fn test_harness_registration_canonical_identity(
+    registration: &TestHarnessRegistration,
+) -> String {
+    let mut encoded = String::new();
+    for field in [
+        registration.registration_id.as_str(),
+        registration
+            .target
+            .to_string_lossy()
+            .replace('\\', "/")
+            .as_str(),
+        registration.kind.as_str(),
+        registration.adapter.as_str(),
+        registration.marker.as_str(),
+    ] {
+        encoded.push_str(&field.len().to_string());
+        encoded.push(':');
+        encoded.push_str(field);
+        encoded.push('\u{0}');
+    }
+    encoded
 }
 
 /// `[perl]` repository configuration (Campaign 31 Phase D, #1407).
@@ -681,6 +709,9 @@ impl ConfigSeverity {
 pub struct SeverityConfig {
     pub findings: FindingSeverityConfig,
     pub seams: SeamSeverityConfig,
+    /// Compiled `[[overrides]]` rows that set severity fields. Empty means
+    /// the repo-wide map applies everywhere.
+    pub(crate) overlays: Vec<ConfigOverride>,
 }
 
 impl SeverityConfig {
@@ -796,7 +827,7 @@ pub struct CheckInputExplicit {
 /// same PR. The classification is closed: the field enumerator destructures
 /// every config struct without `..`, so an unclassified field fails to
 /// compile, and a unit test pins the resulting role of every field.
-pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 4;
+pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 5;
 
 /// How one `ripr.toml` field participates in the check-artifact identity gate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -847,8 +878,11 @@ impl RiprConfig {
             profiles,
             typescript,
             perl,
+            overrides,
+            workspace_crates: _,
             source_path: _,
             source_text: _,
+            verification_contract_decision: _,
         } = self;
         let AnalysisConfig {
             mode: _,
@@ -860,8 +894,13 @@ impl RiprConfig {
             snapshot_strength,
             mock_expectation_strength,
             broad_error_strength,
+            overlays: _,
         } = oracles;
-        let SeverityConfig { findings, seams } = severity;
+        let SeverityConfig {
+            findings,
+            seams,
+            overlays: _,
+        } = severity;
         let FindingSeverityConfig {
             exposed: _,
             weakly_exposed: _,
@@ -903,10 +942,12 @@ impl RiprConfig {
             python:
                 PythonLanguageConfig {
                     handwritten_files: python_handwritten_files,
+                    excluded_file_patterns: python_excluded_file_patterns,
                 },
             typescript:
                 TypescriptLanguageConfig {
                     handwritten_files: typescript_handwritten_files,
+                    excluded_file_patterns: typescript_excluded_file_patterns,
                 },
         } = languages;
         let ProfilesConfig { bun_ub } = profiles;
@@ -934,11 +975,22 @@ impl RiprConfig {
         } else {
             String::new()
         };
+        let python_excluded_file_patterns_identity = if enabled.contains(&LanguageId::Python) {
+            canonical_sorted_strings(python_excluded_file_patterns)
+        } else {
+            String::new()
+        };
         let typescript_handwritten_files_identity = if enabled.contains(&LanguageId::TypeScript) {
             canonical_sorted_strings(typescript_handwritten_files)
         } else {
             String::new()
         };
+        let typescript_excluded_file_patterns_identity =
+            if enabled.contains(&LanguageId::TypeScript) {
+                canonical_sorted_strings(typescript_excluded_file_patterns)
+            } else {
+                String::new()
+            };
         let mut fields = vec![
             ConfigIdentityField {
                 name: "analysis.mode",
@@ -994,6 +1046,12 @@ impl RiprConfig {
                 role: ConfigIdentityRole::FindingAffecting,
                 value: Some(broad_error_strength.as_str().to_string()),
                 note: "oracle strength policy changes classification evidence",
+            },
+            ConfigIdentityField {
+                name: "overrides.oracles",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(super::overrides::oracle_overlay_identity(overrides)),
+                note: "per-crate oracle overlays change classification evidence (#2671)",
             },
         ];
         for name in [
@@ -1073,10 +1131,22 @@ impl RiprConfig {
                 note: "explicit handwritten Python files change the analyzed source corpus (#7386)",
             },
             ConfigIdentityField {
+                name: "languages.python.excluded_file_patterns",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(python_excluded_file_patterns_identity),
+                note: "preview Python exclusion globs change which source files are indexed (#5380)",
+            },
+            ConfigIdentityField {
                 name: "languages.typescript.handwritten_files",
                 role: ConfigIdentityRole::FindingAffecting,
                 value: Some(typescript_handwritten_files_identity),
                 note: "explicit handwritten TypeScript files change the analyzed source corpus (#7386)",
+            },
+            ConfigIdentityField {
+                name: "languages.typescript.excluded_file_patterns",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(typescript_excluded_file_patterns_identity),
+                note: "preview TypeScript exclusion globs change which source files are indexed (#5380)",
             },
         ]);
         match bun_ub {
@@ -1153,6 +1223,18 @@ impl RiprConfig {
                 note: "where the managed Perl fact packet is written and read",
             },
             ConfigIdentityField {
+                name: "overrides.severity",
+                role: ConfigIdentityRole::Excluded,
+                value: None,
+                note: "render-only per-crate severity display; honored fresh at render time (#2671)",
+            },
+            ConfigIdentityField {
+                name: "workspace_crates",
+                role: ConfigIdentityRole::Excluded,
+                value: None,
+                note: "loader container metadata, not a ripr.toml field",
+            },
+            ConfigIdentityField {
                 name: "source_path",
                 role: ConfigIdentityRole::Excluded,
                 value: None,
@@ -1163,6 +1245,12 @@ impl RiprConfig {
                 role: ConfigIdentityRole::Excluded,
                 value: None,
                 note: "loader container metadata, not a ripr.toml field",
+            },
+            ConfigIdentityField {
+                name: "verification_contract_decision",
+                role: ConfigIdentityRole::Excluded,
+                value: None,
+                note: "passive VP29A compile output derived at load time, not authored config",
             },
         ]);
         fields
