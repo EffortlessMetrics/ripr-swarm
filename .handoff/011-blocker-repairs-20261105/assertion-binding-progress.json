@@ -1,0 +1,43 @@
+{
+  "source": "9445bfeffb8519579fadbceab596bd2ed15ab594",
+  "tree": "1a915533ba86add6f6e8d71bc9c8c544a503f17a",
+  "reveal": {
+    "passed": 136,
+    "failed": 23,
+    "ignored": 0,
+    "log": "assertion-binding-reveal.log"
+  },
+  "real_parser_discard_and_owner_controls": "passed within reveal suite",
+  "qualification": "not merge ready; legacy fixture and producer observer reconciliation pending",
+  "prior_candidate_check_fast": {
+    "source": "d1bef96f582a0df8ed627481d808e1f72a25acc0",
+    "exit": 0,
+    "log": "check-fast.log",
+    "limitation": "does not qualify assertion-binding repair"
+  },
+  "history": {
+    "source": "6f1f0f580e1fb6b2a91c6adce7e816891babd7be",
+    "tree": "4c070c0dda38a077ad0414f92dc45e87ddbaa696",
+    "parents": [
+      "ba842766b7e5a521ebae33cdbefb98fa0eefc903",
+      "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a"
+    ],
+    "workspace_all_targets_retry": "running; no pass claimed"
+  },
+  "qualified_7490_materialization": {
+    "commit": "339e4c1dea913e10a95c3efb0e198190274f2a65",
+    "tree": "9639eca69ec36fb5ca153d713eb2253f2b15d339",
+    "archive_sha256": "f695622206f6041e0ded7d432ed378179260365b3db2991ec05999452e06a9f8"
+  },
+  "integration": {
+    "commit": "15cd57e49554d60491647be9d1190183bd2b46e6",
+    "tree": "b2af1b0078260f9a423bc1f049db4d8cfc990a64",
+    "content": "history plus exact 7490 artifact, not 12010 repair",
+    "qualification": "not run"
+  },
+  "holds": [
+    "queue-only CI",
+    "promotion trust hold",
+    "no release selection/publication claim"
+  ]
+}
