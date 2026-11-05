@@ -147,9 +147,10 @@ a focused testing question, not a replacement coverage percentage.
 
 Under the hood, ripr follows the path from a changed behavior through test
 inputs and observable effects to an assertion. When that path becomes opaque,
-it reports the limitation. [Why ripr](docs/WHY_RIPR.md) compares it with
-coverage, mutation testing and formal verification. See the [static exposure model](docs/STATIC_EXPOSURE_MODEL.md)
+it reports the limitation. See the [static exposure model](docs/STATIC_EXPOSURE_MODEL.md)
 and [terminology](docs/TERMINOLOGY.md) for the precise model and classifications.
+[Why ripr](docs/WHY_RIPR.md) compares it with coverage, mutation testing and
+formal verification.
 
 ## Status
 

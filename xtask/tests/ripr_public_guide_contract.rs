@@ -830,14 +830,15 @@ fn why_ripr_quotes_checked_output_and_keeps_its_limits() -> Result<(), String> {
         .and_then(|rest| rest.split("```").next())
         .ok_or("docs/WHY_RIPR.md must quote ripr output in a text block")?;
     let mut quoted = 0;
-    let mut from = 0;
+    let mut fixture_lines = BOUNDARY_GAP_HUMAN.lines();
     for line in fence.lines().filter(|l| !l.trim().is_empty()) {
         quoted += 1;
-        // Lines must appear in fixture order, not merely somewhere in it.
-        let at = BOUNDARY_GAP_HUMAN[from..].find(line).ok_or_else(|| {
-            format!("quoted line is missing or out of order in the fixture: {line}")
-        })?;
-        from += at + line.len();
+        // Whole lines, in fixture order (not merely somewhere in it).
+        if !fixture_lines.any(|fixture_line| fixture_line == line) {
+            return Err(format!(
+                "quoted line is missing or out of order in the fixture: {line}"
+            ));
+        }
     }
     if quoted < 4 {
         return Err("expected the four-line boundary example".to_string());
