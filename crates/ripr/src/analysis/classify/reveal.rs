@@ -3195,9 +3195,10 @@ fn analyze_related_assertions(
                     || value_receiver_read
                     // The canonical chain-entry pin authenticates this exact
                     // helper-result operand. Arm selection and observation
-                    // confirmation remain independently required above.
+                    // confirmation remain independently required above. A
+                    // coarse same-file relation is not itself identity, but
+                    // does not defeat an independently established entry pin.
                     || (matches!(probe.family, ProbeFamily::MatchArm)
-                        && *reason == RelationReason::HelperOwnerCall
                         && (return_admission.value_observer_identity)(test, assertion))
                     || producer_owned_result_identity(
                         &assertion_context,

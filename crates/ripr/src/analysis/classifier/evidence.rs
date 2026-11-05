@@ -654,6 +654,7 @@ impl ClassifiedProbeEvidence {
         );
         // The free-call chain's identity is one answer per probe.
         let free_chain_identity = std::cell::OnceCell::new();
+        let assertion_wrapper_chain = std::cell::OnceCell::new();
         let propagate = match (context.owner_fn, context.helper_chain.as_ref()) {
             // An already-unknown stage keeps its own reason.
             (Some(owner), Some(chain))
@@ -1243,20 +1244,35 @@ impl ClassifiedProbeEvidence {
                     context.workspace_complete
                         && pin_syntax.admits(test, assertion, context.index)
                         && if matches!(context.probe.family, ProbeFamily::MatchArm) {
-                            context
-                                .owner_fn
-                                .zip(context.helper_chain.as_ref())
-                                .is_some_and(|(owner, chain)| {
+                            context.owner_fn.is_some_and(|owner| {
+                                // This local observer context does not upgrade
+                                // the reported relation. The entry producer must
+                                // still bind this test's actual whole-call operand
+                                // and every forwarding edge before it can admit.
+                                let observer = [(test, RelationReason::HelperOwnerCall)];
+                                let entry_pins = |chain| {
                                     chain_entry_pin_admits(
                                         &owner.name,
                                         &context.probe.expression,
                                         chain,
-                                        &[(test, RelationReason::HelperOwnerCall)],
+                                        &observer,
                                         context.index,
                                         (test, assertion),
                                         &std::cell::OnceCell::new(),
                                     )
-                                })
+                                };
+                                // Mixed direct tests can stop the global chain.
+                                // The existing wrapper producer independently binds
+                                // one same-file production edge; the entry pin still
+                                // proves this assertion's operand and forwarded result.
+                                context.helper_chain.as_ref().is_some_and(entry_pins)
+                                    || entry_pins(assertion_wrapper_chain.get_or_init(|| {
+                                        crate::analysis::classify::resolve_repo_boundary_chain(
+                                            &owner.name,
+                                            context.index,
+                                        )
+                                    }))
+                            })
                         } else {
                             crate::analysis::classify::builder_override::owner_field_read_identity(
                                 context.probe,
@@ -2973,10 +2989,28 @@ mod tests {
     fn a_sibling_field_that_may_exit_keeps_return_value_weakly() -> Result<(), String> {
         use crate::domain::ExposureClass;
 
+        struct Workspace(PathBuf);
+        impl Drop for Workspace {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
         let class_for = |array_tail: &str, test_body: &str| -> Result<ExposureClass, String> {
             let source = format!(
                 "pub struct Row {{\n    pub total: u32,\n}}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {{\n    {array_tail}\n}}\n\n#[test]\nfn pins_second_row() {{\n    {test_body}\n}}\n"
             );
+            // The element authority requires a real dependency-closed Cargo
+            // context, just as the production array controls supply.
+            let root = Workspace(crate::analysis::facts::drop_in::temp_workspace(
+                "returned-array-evidence",
+                &[
+                    (
+                        "Cargo.toml",
+                        "[package]\nname='array_evidence'\nversion='0.0.0'\nedition='2024'\n",
+                    ),
+                    ("src/lib.rs", &source),
+                ],
+            )?);
             let path = PathBuf::from("src/lib.rs");
             let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
             let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
@@ -2985,10 +3019,8 @@ mod tests {
                 files: [(path, facts)].into_iter().collect(),
                 ..Default::default()
             });
-            crate::analysis::facts::compose_fixture_source_roles(
-                &mut index,
-                std::path::Path::new(""),
-            );
+            index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root.0);
+            crate::analysis::facts::compose_fixture_source_roles(&mut index, &root.0);
             let owner = index
                 .functions()
                 .iter()

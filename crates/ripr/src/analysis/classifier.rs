@@ -3598,61 +3598,59 @@ fn far_above_threshold_discounts() {
 
     #[test]
     fn parser_expression_confirms_payload_without_rewriting_emitted_probe() -> Result<(), String> {
-        let owner = function("src/gate_watchdog.rs", "classify_gate_watchdog");
-        let owner_id = owner.id.clone();
-        let path = PathBuf::from("src/gate_watchdog.rs");
-        // The positive oracle reads the owner result. Merely repeating the
-        // payload on an unbound value cannot borrow a discarded owner's call.
-        for (assertion, expected) in [
+        struct Workspace(PathBuf);
+        impl Drop for Workspace {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        for (body, expected) in [
             (
-                r#"assert_eq!(classify_gate_watchdog(&input), "run-missing");"#,
+                "let input=();\n    assert_eq!(classify_gate_watchdog(&input), \"run-missing\");",
                 ExposureClass::Exposed,
             ),
             (
-                r#"ensure!(reason.kind == "run-missing");"#,
+                "let input=();\n    let _=classify_gate_watchdog(&input);\n    let unrelated=\"run-missing\";\n    assert_eq!(unrelated, \"run-missing\");",
                 ExposureClass::WeaklyExposed,
             ),
         ] {
-            let mut test = test_with_oracle(
-                "src/tests/gate_watchdog_tests.rs",
-                "classify_gate_watchdog_reports_run_missing",
-                "classify_gate_watchdog(&input)",
-                oracle_fact(assertion, OracleKind::ExactValue, OracleStrength::Strong),
-            );
-            for call in &mut test.calls {
-                call.name = owner.name.clone();
-            }
-            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
-                functions: vec![owner.clone()],
-                tests: vec![test],
-                files: BTreeMap::from([(
-                    path.clone(),
-                    FileFacts {
-                        path: PathBuf::from("src/gate_watchdog.rs"),
-                        probe_shapes: vec![ProbeShapeFact {
-                            start_line: 190,
-                            end_line: 194,
-                            start_byte: 1_024,
-                            end_byte: 1_074,
-                            kind: ProbeShapeKind::CallDeletion,
-                            text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
-                            value_consumed: false,
-                            source_lines: None,
-                        }],
-                        ..FileFacts::default()
-                    },
-                )]),
-                workspace_authority: None,
+            // The call starts at line 190. Real parser facts establish both
+            // the payload shape and standard assertion execution; a discarded
+            // owner result cannot lend identity to the unrelated-value control.
+            let mut source = "\n".repeat(187);
+            source.push_str("pub fn classify_gate_watchdog(_input: &()) -> &'static str {\n    let mut reason=\"not-set\";\n    watchdog_reason(\n        \"run-missing\",\n        &mut reason,\n    );\n    reason\n}\nfn watchdog_reason(kind: &'static str, out: &mut &'static str) { *out=kind; }\n");
+            source.push_str(&format!(
+                "#[test]\nfn reports_run_missing() {{\n    {body}\n}}\n"
+            ));
+            let root = Workspace(crate::analysis::facts::drop_in::temp_workspace(
+                "parser-payload-observer",
+                &[
+                    (
+                        "Cargo.toml",
+                        "[package]\nname='payload_evidence'\nversion='0.0.0'\nedition='2024'\n",
+                    ),
+                    ("src/lib.rs", &source),
+                ],
+            )?);
+            let path = PathBuf::from("src/lib.rs");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: facts.functions.clone(),
+                tests: facts.tests.clone(),
+                files: BTreeMap::from([(path, facts)]),
                 ..Default::default()
             });
+            index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root.0);
+            crate::analysis::facts::compose_fixture_source_roles(&mut index, &root.0);
+            let owner = index
+                .functions()
+                .iter()
+                .find(|owner| owner.name == "classify_gate_watchdog")
+                .ok_or("missing parsed owner")?;
             let probe = Probe {
                 id: ProbeId("probe:watchdog-reason".to_string()),
-                location: SourceLocation::new(
-                    PathBuf::from("/repo/ub-review/src/gate_watchdog.rs"),
-                    190,
-                    1,
-                ),
-                owner: Some(owner_id.clone()),
+                location: SourceLocation::new(PathBuf::from("/repo/ub-review/src/lib.rs"), 190, 1),
+                owner: Some(owner.id.clone()),
                 family: ProbeFamily::CallDeletion,
                 delta: DeltaKind::Effect,
                 before: None,
@@ -3661,7 +3659,6 @@ fn far_above_threshold_discounts() {
                 expected_sinks: vec![],
                 required_oracles: vec![],
             };
-
             let finding = classify_probe(&probe, &index, true, None);
             if finding.class != expected {
                 return Err(format!("parser payload was not discriminated: {finding:?}"));
