@@ -494,3 +494,38 @@ fn returned_field_constructor_identity_respects_namespace() -> Result<(), String
     }
     Ok(())
 }
+
+#[test]
+fn returned_field_identity_rejects_mutation_inside_let_initializers() -> Result<(), String> {
+    let source = "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn reset(&mut self) { self.attempts=4; }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,1 +4,1 @@\n-  Self { attempts:3 }\n+  Self { attempts:4 }\n";
+    for (body, exposed) in [
+        (
+            "let mut item=Builder::new(); let _ignored={ item.attempts=4; 0 }; assert_eq!(item.attempts,4);",
+            false,
+        ),
+        (
+            "let mut item=Builder::new(); let _ignored=item.reset(); assert_eq!(item.attempts,4);",
+            false,
+        ),
+        (
+            "let item=Builder::new(); let alias=item; assert_eq!(alias.attempts,4);",
+            true,
+        ),
+        (
+            "let item=Builder::new(); let _snapshot=item.attempts; assert_eq!(item.attempts,4);",
+            true,
+        ),
+    ] {
+        let test = format!(
+            "use rust_catalog_description_structural_oracle::Builder;\n#[test]\nfn observes() {{\n {body}\n}}\n"
+        );
+        let report = check_report(source, &test, MANIFEST, diff)?;
+        let findings = report["findings"].as_array().ok_or("findings missing")?;
+        assert!(!findings.is_empty(), "{report}");
+        for finding in findings {
+            assert_eq!(finding["classification"] == "exposed", exposed, "{report}");
+        }
+    }
+    Ok(())
+}
