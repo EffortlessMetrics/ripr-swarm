@@ -529,3 +529,82 @@ fn returned_field_identity_rejects_mutation_inside_let_initializers() -> Result<
     }
     Ok(())
 }
+
+#[test]
+fn persisted_effect_identity_tracks_the_changed_argument_not_written_siblings() -> Result<(), String>
+{
+    for (
+        extra_signature,
+        extra_argument,
+        status_write,
+        before_call,
+        expected_status,
+        status_exposed,
+        sent_exposed,
+    ) in [
+        (
+            "",
+            "",
+            "self.status=1;",
+            "notifier.send(\"static_msg\")",
+            1,
+            false,
+            true,
+        ),
+        (
+            ", status:u32",
+            ", status",
+            "self.status=status;",
+            "notifier.send(\"static_msg\", status)",
+            7,
+            false,
+            true,
+        ),
+        (
+            ", status:u32",
+            ", status",
+            "self.status=status;",
+            "notifier.send(order_id, 0)",
+            7,
+            true,
+            false,
+        ),
+    ] {
+        let source = format!(
+            "pub struct Notifier {{ pub sent:Vec<String>, pub status:u32 }}\nimpl Notifier {{\n pub fn new()->Self {{ Self {{ sent:vec![], status:0 }} }}\n pub fn send(&mut self,payload:&str{extra_signature})->bool {{\n  {status_write}\n  self.sent.push(payload.to_string());\n  true\n }}\n}}\npub fn process_order(notifier:&mut Notifier,order_id:&str{extra_signature})->bool {{\n notifier.send(order_id{extra_argument})\n}}\n"
+        );
+        let after_call = format!("notifier.send(order_id{extra_argument})");
+        let diff = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -11,1 +11,1 @@\n- {before_call}\n+ {after_call}\n"
+        );
+        let extra_value = if extra_signature.is_empty() {
+            ""
+        } else {
+            ", 7"
+        };
+        for (assertion, exposed) in [
+            (
+                "assert_eq!(notifier.sent, vec![\"order-42\".to_string()]);".to_string(),
+                sent_exposed,
+            ),
+            (
+                format!("assert_eq!(notifier.status,{expected_status});"),
+                status_exposed,
+            ),
+            ("assert_eq!(notifier.sent.len(),1);".to_string(), false),
+        ] {
+            let test = format!(
+                "use rust_catalog_description_structural_oracle::{{Notifier,process_order}};\n#[test]\nfn observes() {{\n let mut notifier=Notifier::new();\n process_order(&mut notifier,\"order-42\"{extra_value});\n {assertion}\n}}\n"
+            );
+            let report = check_report(&source, &test, MANIFEST, &diff)?;
+            let finding = report["findings"]
+                .as_array()
+                .ok_or("findings missing")?
+                .iter()
+                .find(|finding| finding["probe"]["family"] == "side_effect")
+                .ok_or("side-effect row missing")?;
+            assert_eq!(finding["classification"] == "exposed", exposed, "{report}");
+        }
+    }
+    Ok(())
+}
