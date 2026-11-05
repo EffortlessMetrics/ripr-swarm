@@ -2042,6 +2042,168 @@ pub(crate) mod tests {
     };
     use crate::output::markdown::{code_span, inline_prose_literal};
 
+    fn unique_suffix() -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("{}-{:x}", std::process::id(), nanos)
+    }
+
+    fn make_tempdir(label: &str) -> Result<std::path::PathBuf, String> {
+        let dir = std::env::temp_dir().join(format!("ripr-exposure-{label}-{}", unique_suffix()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create {}: {err}", dir.display()))?;
+        Ok(dir)
+    }
+
+    fn write_fixture_file(path: &std::path::Path, content: &str) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("mkdir {}: {err}", parent.display()))?;
+        }
+        std::fs::write(path, content).map_err(|err| format!("write {}: {err}", path.display()))
+    }
+
+    fn list_compact_family_entries(
+        root: &std::path::Path,
+    ) -> Result<Vec<std::path::PathBuf>, String> {
+        let dir = root
+            .join("target")
+            .join("ripr")
+            .join("cache")
+            .join("repo-compact-classified-seams")
+            .join(crate::analysis::seam_cache::COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION);
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for entry in
+            std::fs::read_dir(&dir).map_err(|err| format!("read {}: {err}", dir.display()))?
+        {
+            out.push(entry.map_err(|err| format!("read entry: {err}"))?.path());
+        }
+        out.sort();
+        Ok(out)
+    }
+
+    /// #12506: a classified cold walk must publish the compact-classified
+    /// cache family this summary renderer reads. Before dual-publish the
+    /// classified run wrote only the full classified family, so a following
+    /// summary-json run found no compact entry, cold-walked every seam on a
+    /// workspace whose sibling formats were already warm, and re-derived the
+    /// file facts behind the re-emitted advisories.
+    #[test]
+    fn classified_cold_run_publishes_compact_family_and_summary_json_hits_warm()
+    -> Result<(), String> {
+        let root = make_tempdir("compact-dual-publish")?;
+        struct OwnedRoot(std::path::PathBuf);
+        impl Drop for OwnedRoot {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _owned = OwnedRoot(root.clone());
+        write_fixture_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = 'shop'\nversion = '0.1.0'\n",
+        )?;
+        write_fixture_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
+pub fn surcharge(total: i32) -> Result<i32, String> {
+    if total > 100 { Ok(total) } else { Err(String::from("too small")) }
+}
+#[cfg(test)] mod tests {
+    use super::{discount, surcharge};
+    #[test] fn asserts_discount_boundary() { assert!(discount(12, 10)); }
+    #[test] fn asserts_surcharge_value() { assert_eq!(surcharge(200), Ok(200)); }
+}
+"#,
+        )?;
+        // Enough production files that the cold walk pays real parse and
+        // evidence work, so the warm hit's latency receipt separates from
+        // scheduler noise.
+        for i in 0..80 {
+            write_fixture_file(
+                &root.join(format!("src/gen_{i:03}.rs")),
+                &format!("pub fn gen_{i}(value: i32) -> bool {{ value > {i} }}\n"),
+            )?;
+        }
+        let config = crate::config::RiprConfig::default();
+
+        // Cold-walk baseline: summary-json renders from a compact cold
+        // walk on a cache-free tree. The walk itself stores a compact
+        // entry, so every cache family is reset afterwards.
+        let cold_started = std::time::Instant::now();
+        let baseline_seams =
+            crate::analysis::inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        let baseline_summary =
+            render_repo_exposure_summary_json(&baseline_seams, &root, None, "check");
+        let cold_elapsed = cold_started.elapsed();
+        assert!(
+            !baseline_summary.is_empty(),
+            "cold-walk baseline summary must render"
+        );
+        let cache_root = root.join("target").join("ripr").join("cache");
+        std::fs::remove_dir_all(&cache_root)
+            .map_err(|err| format!("reset cache {}: {err}", cache_root.display()))?;
+
+        // The classified cold walk. It must now publish the compact
+        // family it previously never wrote.
+        let classified =
+            crate::analysis::inventory_classified_seams_report_at_with_config(&root, &config)?;
+        assert!(
+            !classified.classified.is_empty(),
+            "fixture must retain classified seams"
+        );
+        let compact_entries = list_compact_family_entries(&root)?;
+        assert_eq!(
+            compact_entries.len(),
+            1,
+            "classified cold walk must publish exactly one compact-family entry, found {compact_entries:?}"
+        );
+
+        // Warm summary-json: the compact hit renders the byte-identical
+        // summary, and the latency receipt shows the hit inside a bounded
+        // budget (the cold walk rebuilt an index; the hit decodes one
+        // entry). The first warm run absorbs process-lazy costs, the
+        // measured steady-state hit runs twice, and the smaller receipt
+        // is the one bounded against the cold walk.
+        let warm_first_started = std::time::Instant::now();
+        let warm_seams =
+            crate::analysis::inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        let warm_summary = render_repo_exposure_summary_json(&warm_seams, &root, None, "check");
+        let warm_first = warm_first_started.elapsed();
+        let warm_second_started = std::time::Instant::now();
+        let warm_seams_again =
+            crate::analysis::inventory_compact_classified_seams_at_with_config(&root, &config)?;
+        let warm_summary_again =
+            render_repo_exposure_summary_json(&warm_seams_again, &root, None, "check");
+        let warm_second = warm_second_started.elapsed();
+        let warm_elapsed = warm_first.min(warm_second);
+        assert_eq!(
+            list_compact_family_entries(&root)?.len(),
+            1,
+            "warm hit must load the published entry, not re-store"
+        );
+        assert_eq!(
+            warm_summary, baseline_summary,
+            "warm compact hit must render the byte-identical summary"
+        );
+        assert_eq!(
+            warm_summary_again, baseline_summary,
+            "steady-state warm compact hit must render the byte-identical summary"
+        );
+        assert!(
+            warm_elapsed < cold_elapsed,
+            "warm compact hit must complete inside a bounded latency receipt (cold={cold_elapsed:?} warm_first={warm_first:?} warm_second={warm_second:?})"
+        );
+        Ok(())
+    }
+
     #[test]
     fn refusal_document_keeps_the_format_contract_with_zeroed_metrics() -> Result<(), String> {
         // #7332: a refused repo-exposure run parses as repo-exposure-json —
