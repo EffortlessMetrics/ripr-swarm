@@ -771,7 +771,7 @@ mod tests {
 
     #[test]
     fn identity_registry_file_plan_runs_the_registry_check() -> Result<(), String> {
-        let plan = plan_for(&["crates/ripr/src/domain/identity/catalog.rs"])?;
+        let plan = plan_for(&["crates/ripr-contract/src/domain/identity/catalog.rs"])?;
         assert_eq!(plan.routed_pack_ids, vec!["identity-registry"]);
         assert!(!plan.full_proof);
         assert!(!plan.release_proof_required);

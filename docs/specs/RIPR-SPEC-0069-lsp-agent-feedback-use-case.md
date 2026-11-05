@@ -398,7 +398,19 @@ the only word about a live finding:
 - `ripr/analysisStatus` carries `unavailable_languages` — typed
   `language`, skipped changed-file `file_count` and `recovery` rows for
   changed files whose language adapter is not enabled or compiled in
-  (empty when none). Clients without the `riprEditor` integration get one
+  (empty when none). Each row also carries `availability_state` (string,
+  the closed `LanguageAvailabilityReport` state such as
+  `detected_compiled_disabled` or `not_enabled`; `null` when the language
+  is unknown or no configuration is loaded) and `remediation` (array of
+  strings, ordered most actionable first; empty when the state has no
+  steps or `availability_state` is `null`). `recovery` remains the single
+  editor-facing sentence; for an adapter that is not compiled in it is the
+  build prerequisite whatever the configured intent, because configuration
+  cannot enable it. Additive fields: the status `schema_version` is
+  unchanged and consumers ignoring them keep working. The VS Code client
+  keeps these rows on every status kind (not only `languageNotEnabled`), so
+  Diagnose Setup prints `Language availability (<language>)` beside a
+  stale, deferred, cache-limited or partition presentation. Clients without the `riprEditor` integration get one
   bounded `window/showMessage` warning per such language (shown again only
   after the language leaves the set); the VS Code status bar renders the
   typed rows, never the limitation's detail text.
@@ -474,8 +486,10 @@ governed code is a catalog-breaking change and is not worth it for wording.
 
 ## Non-Goals
 
-- No autonomous edits. The LSP never modifies source; every command
-  is read-only or copy-only.
+- No autonomous edits by default. The LSP never modifies source; every command
+  today is read-only or copy-only. ADR 0026 and RIPR-SPEC-0320 propose one
+  future exception — a guarded, opt-in, test-only assertion replacement — but
+  no command emits or applies that edit until a later implementation slice lands.
 - No generated test patches. Suggested assertion shapes are
   guidance text, not applied edits.
 - No provider integration: no model calls from the LSP, and no

@@ -85,9 +85,7 @@
           "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert route_order()[0] == \"index\"",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "oracle": "assert route_order()[0] == \"index\""
         }
       ],
       "repair_placement": {

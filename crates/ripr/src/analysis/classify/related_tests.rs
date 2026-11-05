@@ -19,7 +19,7 @@ use crate::analysis::extract::{
     mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
 };
 use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
-use crate::analysis::seam_cache::PathDependencySection;
+use crate::analysis::seam_cache::path_dependencies::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationConfidence, RelationReason};
 use ra_ap_syntax::{
@@ -5667,7 +5667,13 @@ fn executable_call_resolves(
                         }
                     })
                 });
-                binding_admitted && assertion_arguments_resolve(&call, index, resolves)
+                binding_admitted
+                    && assertion_arguments_resolve(
+                        &call,
+                        index,
+                        trust_unplaced_standard_root,
+                        resolves,
+                    )
             })
 }
 
@@ -5751,12 +5757,32 @@ fn inherent_call_node_resolves(
             })
 }
 
+/// Whether any indexed file declares `macro_rules! name`, whatever its scope or
+/// export. A text scan: a hit only withholds the limit, so a spelling inside a
+/// comment or string can at worst keep a gap.
+fn workspace_defines_macro(index: &RustIndex, name: &str) -> bool {
+    index.files().values().any(|facts| {
+        let source = facts.data().source.as_ref();
+        source.match_indices("macro_rules").any(|(at, keyword)| {
+            // Rust allows whitespace around the `!` and a raw identifier name.
+            let after = source[at + keyword.len()..].trim_start();
+            after.strip_prefix('!').is_some_and(|rest| {
+                let rest = rest.trim_start();
+                let rest = rest.strip_prefix("r#").unwrap_or(rest);
+                rest.strip_prefix(name)
+                    .is_some_and(|rest| !rest.starts_with(is_ident_char))
+            })
+        })
+    })
+}
+
 /// Assertion token trees are not expression descendants of the source AST.
 /// Parse only their evaluated operands, preserving the original invocation as
 /// the lexical scope anchor. Diagnostics and unsupported macros add no proof.
 fn assertion_arguments_resolve(
     call: &ast::MacroCall,
     index: Option<&RustIndex>,
+    trust_unplaced_standard_root: bool,
     resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
 ) -> bool {
     let Some(path) = call.path() else {
@@ -5773,6 +5799,19 @@ fn assertion_arguments_resolve(
     let operands = match qualified.unwrap_or(name.trim()) {
         "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
         "assert" | "debug_assert" => 1,
+        // `assert_matches!` is no prelude macro, so a bare spelling names
+        // whatever an import or crate binds. Only the limit-naming trusted
+        // pass reads its first operand, which the std and `assert_matches`
+        // crate macros evaluate before matching the pattern; the credit path
+        // never does. A workspace macro of the same name may ignore its
+        // operand, so one anywhere keeps the gap (#10666).
+        "assert_matches"
+            if qualified.is_none()
+                && trust_unplaced_standard_root
+                && index.is_some_and(|index| !workspace_defines_macro(index, "assert_matches")) =>
+        {
+            1
+        }
         _ => return false,
     };
     if qualified.is_none()
@@ -7196,13 +7235,33 @@ fn free_function_call_start_in(text: &str, name: &str) -> Option<usize> {
 /// `text` is a call that can reach a free function (see
 /// [`test_calls_free_function`]).
 pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name: &str) -> bool {
+    name_may_denote_free_function_at(text, at, name) && {
+        let after = at + name.len();
+        call_paren_follows(text, after)
+    }
+}
+
+/// Whether the occurrence of `name` starting at byte `at` of `text` (masked
+/// source, or raw source when the caller also admits doctest and string
+/// mentions) is spelled so that it can denote a module-level free function:
+/// the name at an identifier boundary, not a `fn name` declaration, not a
+/// receiver-dot selection (`x.name`, which picks a method or field), and not
+/// qualified by a type (`Type::name`, `u64::name`, `<T as Tr>::name`). A bare
+/// `name`, a lowercase `module::name` path and a range operand (`0..name`)
+/// qualify. Unlike [`is_free_function_call_at`] it does not require a call
+/// paren, so a function-pointer use (`.map(name)`) still qualifies.
+pub(in crate::analysis) fn name_may_denote_free_function_at(
+    text: &str,
+    at: usize,
+    name: &str,
+) -> bool {
     let bytes = text.as_bytes();
     if name.is_empty() || text.get(at..).is_none_or(|rest| !rest.starts_with(name)) {
         return false;
     }
     {
         let after = at + name.len();
-        if !ident_boundary(text, at, after) || !call_paren_follows(text, after) {
+        if !ident_boundary(text, at, after) {
             return false;
         }
         let mut before = at;
@@ -7242,7 +7301,7 @@ pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name:
 /// cache) fails closed — an unestablished owner keeps the credit — and so
 /// does every method container, including trait declarations, which share
 /// the `None` self-type branch with free functions (#7006).
-fn is_established_free_function(owner: &FunctionSummary) -> bool {
+pub(in crate::analysis) fn is_established_free_function(owner: &FunctionSummary) -> bool {
     matches!(owner.item.container, FunctionContainer::Free) && !owner.item.has_self_param
 }
 
@@ -8493,6 +8552,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 attrs: Vec::new(),
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -10968,7 +11028,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         edges: &[(&str, &str, PathDependencySection, &str)],
         limitations: bool,
     ) -> PathDependencyAdjacency {
-        use crate::analysis::seam_cache::{
+        use crate::analysis::seam_cache::path_dependencies::{
             PathDependencyEdge, PathDependencyLimitation, PathDependencyLimitationKind,
             PathDependencyResolution, PathDependencySource, WorkspaceGraphProvenance,
         };
@@ -12674,6 +12734,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![macro_test],
@@ -12704,6 +12765,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![call_test],
@@ -13385,6 +13447,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -14099,6 +14162,7 @@ let r = try_parse_summary(\"x\");",
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let mut first = second.clone();
         first.start_line = 3;
@@ -14786,6 +14850,7 @@ try_parse_summary(raw).map_err(Into::into)"
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -14849,6 +14914,7 @@ try_parse_summary(raw).map_err(Into::into)"
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

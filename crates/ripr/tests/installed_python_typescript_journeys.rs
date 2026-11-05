@@ -4858,6 +4858,42 @@ fn pending_terminal_recovery_requires_published_receipt() -> Result<(), String> 
             "partial retention residue was hidden: {partial_row}"
         ));
     }
+    // A receipt retry over the residue refuses by name and says how to recover.
+    let workflow = attempt.root.join("target/ripr/workflow");
+    let refused = ripr_output(
+        &attempt.decoy,
+        &[
+            "agent",
+            "receipt",
+            "--root",
+            &attempt.root_arg,
+            "--verify-json",
+            &workflow.join("agent-verify.json").to_string_lossy(),
+            "--seam-id",
+            &attempt.gap,
+            "--attempt",
+            &attempt.attempt_id,
+            "--json",
+            "--out",
+            &workflow.join("residue.receipt.json").to_string_lossy(),
+        ],
+    )?;
+    expect_exit(
+        refused.status.success(),
+        false,
+        "receipt over staged residue",
+    )?;
+    let (_, refusal) = text_of(&refused);
+    need(
+        &refusal,
+        "after.check-findings.tmp-9999-3",
+        "the refusal names the staging file",
+    )?;
+    need(
+        &refusal,
+        "Remove it",
+        "the refusal says how to recover from the residue",
+    )?;
     std::fs::remove_file(&temporary).map_err(|e| e.to_string())?;
     let restored = read_row()?;
     if restored["disposition"] != "finished" || restored["head_current"] != true {

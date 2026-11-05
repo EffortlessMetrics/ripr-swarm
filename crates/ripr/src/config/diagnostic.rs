@@ -149,6 +149,12 @@ impl ConfigDiagnostic {
             | "oracles.broad_error_strength" => {
                 vec!["strong", "medium", "weak", "smoke", "none", "unknown"]
             }
+            path if path.contains("oracles.snapshot_strength")
+                || path.contains("oracles.mock_expectation_strength")
+                || path.contains("oracles.broad_error_strength") =>
+            {
+                vec!["strong", "medium", "weak", "smoke", "none", "unknown"]
+            }
             "severity.findings.exposed"
             | "severity.findings.weakly_exposed"
             | "severity.findings.reachable_unrevealed"
@@ -156,7 +162,8 @@ impl ConfigDiagnostic {
             | "severity.findings.infection_unknown"
             | "severity.findings.propagation_unknown"
             | "severity.findings.static_unknown" => vec!["info", "warning", "note"],
-            path if path.starts_with("severity.seams.") => vec!["off", "info", "warning", "note"],
+            path if path.contains("severity.findings.") => vec!["info", "warning", "note"],
+            path if path.contains("severity.seams.") => vec!["off", "info", "warning", "note"],
             "lsp.diagnostic_profile" => vec!["actionable", "full"],
             "perl.producer" => vec!["perl-ripr-facts", "perllsp", "perl-lsp"],
             _ => Vec::new(),

@@ -72,7 +72,11 @@ pub(crate) enum NoEligibleChange {
     AlreadyChecked,
     /// The changed Rust lines touch no code a repair can start on.
     NoRepairableCode,
-    /// An open spot on the change cannot start, or no diff was read.
+    /// A spot on the changed lines is still open but cannot start a repair;
+    /// each reason says what it needs, so the next step is to write that test
+    /// by hand (#12861).
+    OpenOnChange,
+    /// No diff was read, so nothing can be said about the change.
     Other,
 }
 
@@ -329,10 +333,31 @@ fn repair_refusal(
             }
         });
     }
-    policy
-        .omission_reason_for_class(entry.class)
-        .map(|reason| (RefusalKind::Other, reason))
+    if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
+        return Some((RefusalKind::Other, reason));
+    }
+    // #12867: the start publishes an attempt and then renders the handoff
+    // card, which cannot name the workspace without an admitted test target
+    // (a proposed new test file has none). A start whose card cannot be
+    // produced leaves an attempt with nothing to act on, so the gate refuses
+    // it up front, through the card's own identity rule.
+    super::repair_card_handoff::workspace_identity_for(entry, &eligibility.readiness)
+        .err()
+        .map(|_| {
+            (
+                RefusalKind::RouteNotReady,
+                NO_TEST_TARGET_REASON.to_string(),
+            )
+        })
 }
+
+/// Compared by equality in `check_repair_route` (shared on purpose, so a
+/// static-limited finding can stay silent about it): change the text in one
+/// place only.
+/// Why a seam that is otherwise ready does not start: no existing test names
+/// where the repair would go, and a proposed new test file cannot be handed
+/// off as a card (#12867).
+const NO_TEST_TARGET_REASON: &str = "ripr found no existing test to extend for this code, and it cannot hand off a repair that would begin in a new test file, so it does not start an automatic repair here; write the test by hand";
 
 /// The refusal for an opaque seam with no candidate test to name: ripr could
 /// not see how any test reaches or observes the changed code, so it cannot say
@@ -495,6 +520,10 @@ fn route_not_ready_reason(
                 crate::analysis::seams::SeamKind::ReturnValue,
                 "return_value"
             ) | (crate::analysis::seams::SeamKind::ErrorVariant, "error_path")
+                | (
+                    crate::analysis::seams::SeamKind::FieldConstruction,
+                    "field_construction"
+                )
         )
     {
         // The stub command refuses some owners (async, generic, ...): name
@@ -950,7 +979,7 @@ pub(crate) fn resolve_repair_start(
     let mut open_on_change = 0usize;
     // Distinct refusal reasons in first-seen order, each with the first seam
     // that has it and how many seams share it.
-    let mut blocked_groups: Vec<(String, String, usize)> = Vec::new();
+    let mut blocked_groups: Vec<(String, String, usize, bool)> = Vec::new();
     for (entry, refusal) in &refusals {
         let off = off_change(entry);
         match refusal {
@@ -985,9 +1014,22 @@ pub(crate) fn resolve_repair_start(
             // verdicts on one change.
             Some((_, reason)) => {
                 open_on_change += 1;
-                match blocked_groups.iter_mut().find(|group| group.0 == *reason) {
-                    Some(group) => group.2 += 1,
-                    None => blocked_groups.push((reason.clone(), seam_label(entry), 1)),
+                // Seams in the same state group even when their by-hand hints
+                // differ (a stub command here, the stub's own refusal there):
+                // the hint is the first member's, the state is the key.
+                match blocked_groups
+                    .iter_mut()
+                    .find(|group| reason_state(&group.0) == reason_state(reason))
+                {
+                    Some(group) => {
+                        group.2 += 1;
+                        // A member whose hint differs from the shown one
+                        // (stub command vs the stub's own refusal) is flagged.
+                        if reason_hint(&group.0) != reason_hint(reason) {
+                            group.3 = true;
+                        }
+                    }
+                    None => blocked_groups.push((reason.clone(), seam_label(entry), 1, false)),
                 }
             }
         }
@@ -997,10 +1039,12 @@ pub(crate) fn resolve_repair_start(
     let all_changed_checked = matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && gripped_on_change > 0
         && open_on_change == 0;
-    let change = if all_changed_checked {
+    let mut change = if all_changed_checked {
         NoEligibleChange::AlreadyChecked
     } else if matches!(scope, Some(ChangeScope::TouchesNoSeam(_))) {
         NoEligibleChange::NoRepairableCode
+    } else if matches!(scope, Some(ChangeScope::TouchesSeams(_))) && open_on_change > 0 {
+        NoEligibleChange::OpenOnChange
     } else {
         NoEligibleChange::Other
     };
@@ -1015,13 +1059,14 @@ pub(crate) fn resolve_repair_start(
                 .map(|(_, reason)| reason),
         );
     } else {
-        for (reason, label, count) in blocked_groups {
+        for (reason, label, count, hints_differ) in blocked_groups {
             let mut text = format!("{label}: {reason}");
             if count > 1 {
-                text.push_str(&format!(
-                    " (and {} other gaps in the same state)",
-                    count - 1
-                ));
+                text.push_str(&format!(" (and {} other gaps in the same state", count - 1));
+                if hints_differ {
+                    text.push_str("; the next step may differ for them, see `ripr check`");
+                }
+                text.push(')');
             }
             refusal_reasons.push(text);
         }
@@ -1108,19 +1153,70 @@ pub(crate) fn resolve_repair_start(
     if let Some(note) = unscoped_diff_note(diff.as_deref(), base) {
         refusal_reasons.insert(0, note);
     }
-    let (reasons, reasons_total) =
-        collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
-    // #12831: several eligible seams on the change, but `ripr check` names
-    // one repair start for it. Check's choice is the recommendation, so the
-    // bare start takes it instead of asking the user to repeat it. Only a
-    // seam among the eligible ones is taken; no first or newest pick.
+    // #12831: several eligible seams on the change. `ripr check` is the
+    // authority on the change, so its single recommended start wins; failing
+    // that, a seam whose check finding is already noticed, or which check
+    // cannot judge (and so offers no start for), is no start here either
+    // (#12849). Only a seam among the eligible ones is taken; no first or
+    // newest pick.
     if candidates.len() > 1
         && matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && let Some(output) = check_run.get()
-        && let Some(chosen) = check_recommended_start(root, &config, output, &candidates)
     {
-        candidates.retain(|(id, _)| *id == chosen);
+        if let Some(chosen) = check_recommended_start(root, &config, output, &candidates) {
+            candidates.retain(|(id, _)| *id == chosen);
+        } else {
+            let before = candidates.len();
+            let mut left_open = false;
+            let mut kept = Vec::new();
+            for (id, note) in std::mem::take(&mut candidates) {
+                let closed = classified
+                    .iter()
+                    .find(|entry| entry.seam.id().as_str() == id)
+                    .and_then(|entry| {
+                        let gap_id = repair_packet_eligibility(entry).readiness.canonical_gap_id;
+                        super::repair_card_handoff::finding_for_seam(
+                            &output.findings,
+                            entry,
+                            gap_id.as_deref(),
+                            &classified,
+                        )
+                        .map(|finding| (entry, finding))
+                    })
+                    .and_then(|(entry, finding)| {
+                        if finding.class == crate::domain::ExposureClass::Exposed {
+                            Some(format!("{}: {CHECK_NOTICED_REASON}", seam_label(entry)))
+                        } else if super::gap_bound_repair::finding_is_static_limited(finding) {
+                            Some(format!("{}: {CHECK_UNKNOWN_REASON}", seam_label(entry)))
+                        } else {
+                            None
+                        }
+                    });
+                match closed {
+                    Some(reason) => {
+                        left_open |= reason.ends_with(CHECK_UNKNOWN_REASON);
+                        refusal_reasons.push(reason);
+                    }
+                    None => kept.push((id, note)),
+                }
+            }
+            // Check recommended none of the rest. A lone survivor of a
+            // narrowing would otherwise read as the only choice and start on
+            // its own; it is offered by id instead.
+            if kept.len() == 1 && kept.len() < before {
+                let (_, note) = kept.remove(0);
+                left_open = true;
+                refusal_reasons.push(format!(
+                    "the code at {} `{}`: `ripr check` recommends no repair start for this change; to repair it anyway, run `{}`",
+                    note.location, note.code, note.command
+                ));
+            }
+            candidates = kept;
+            change = change_after_closure(change, !candidates.is_empty(), left_open, before > 0);
+        }
     }
+    let (reasons, reasons_total) =
+        collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
     let (eligible_ids, candidate_notes): (Vec<String>, Vec<RepairCandidateNote>) =
         candidates.into_iter().unzip();
     let head = current_git_head(root).ok();
@@ -1140,6 +1236,63 @@ pub(crate) fn resolve_repair_start(
         start_spec: spec.as_ref(),
         change,
     })
+}
+
+/// The outcome after check's closure dropped candidates (#12861). Only a spot
+/// check cannot judge, or a survivor check did not recommend, leaves something
+/// to write by hand; when every candidate was dropped as already noticed there
+/// is nothing to do. Outcomes other than `Other` are already decided.
+fn change_after_closure(
+    change: NoEligibleChange,
+    candidates_left: bool,
+    left_open: bool,
+    dropped_any: bool,
+) -> NoEligibleChange {
+    match change {
+        NoEligibleChange::Other if candidates_left || left_open => NoEligibleChange::OpenOnChange,
+        NoEligibleChange::Other if dropped_any => NoEligibleChange::AlreadyChecked,
+        other => other,
+    }
+}
+
+/// The part of a not-ready reason that names its state: everything before the
+/// by-hand hint (#12959), so seams missing the same evidence group together.
+fn reason_state(reason: &str) -> &str {
+    reason
+        .split_once(": write the test by hand")
+        .map_or(reason, |(state, _)| state)
+}
+
+/// The by-hand hint of a not-ready reason, or `None` when it has none.
+fn reason_hint(reason: &str) -> Option<&str> {
+    reason
+        .split_once(": write the test by hand")
+        .map(|(_, hint)| hint)
+}
+
+#[cfg(test)]
+mod reason_group_tests {
+    use super::{reason_hint, reason_state};
+
+    /// #12959: the state is the part before the by-hand hint, so seams in
+    /// one state group even when their hints differ; a reason without the
+    /// hint delimiter is its own state, unchanged.
+    #[test]
+    fn same_state_with_different_hints_shares_a_state() {
+        let stub = "repair route not ready (missing evidence: x): write the test by hand, or run `ripr agent stub --at a:1 --kind field_construction`";
+        let why = "repair route not ready (missing evidence: x): write the test by hand; ripr cannot write a fill-in skeleton here because y";
+        assert_eq!(reason_state(stub), reason_state(why));
+        assert_eq!(
+            reason_state(stub),
+            "repair route not ready (missing evidence: x)"
+        );
+        assert_ne!(reason_hint(stub), reason_hint(why));
+        let other = "repair route not ready (missing evidence: z): write the test by hand";
+        assert_ne!(reason_state(stub), reason_state(other));
+        let bare = "no delimiter here";
+        assert_eq!(reason_state(bare), bare);
+        assert_eq!(reason_hint(bare), None);
+    }
 }
 
 /// Runs `run` at most once and shares its result.
@@ -1191,6 +1344,10 @@ fn recommended_seam(
         _ => None,
     }
 }
+
+/// Why a changed spot has no repair start when `ripr check` cannot judge it
+/// (#12849): check offers none for a static-limited finding.
+const CHECK_UNKNOWN_REASON: &str = "`ripr check` cannot tell from reading the code whether tests would notice this and offers no repair start for it, so inspect it by hand before adding a test";
 
 /// Why a changed spot needs no repair when `ripr check` already reads it as
 /// noticed by a test (#11401). It speaks to the changed code itself, unlike
@@ -2682,6 +2839,13 @@ pub(crate) fn check_repair_route(
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
     if let Some((kind, reason)) = repair_refusal(entry, policy, RefusalRoot::named(root)) {
+        // #12867: a static-limited finding never offered a start, so the new
+        // no-card refusal adds nothing to its screen (its limitation
+        // guidance is the whole story); only a finding that would otherwise
+        // have been offered a start names it.
+        if static_limited && reason == NO_TEST_TARGET_REASON {
+            return CheckRepairRoute::Silent;
+        }
         // A bound seam carries a canonical gap id, which a strongly gripped
         // seam never does, so `AlreadyGripped` cannot reach here: that case is
         // named by the location fallback above (#10702).
@@ -4221,6 +4385,28 @@ pub(crate) mod tests {
             || counted(Some(Vec::new())),
         );
         assert_eq!(runs.get(), 2);
+    }
+
+    /// #12861: all candidates dropped as already noticed is nothing to do, not
+    /// "write that test by hand".
+    #[test]
+    fn closure_outcome_says_nothing_to_do_when_everything_was_noticed() {
+        use NoEligibleChange::*;
+        assert_eq!(
+            change_after_closure(Other, false, false, true),
+            AlreadyChecked
+        );
+        assert_eq!(change_after_closure(Other, false, true, true), OpenOnChange);
+        assert_eq!(change_after_closure(Other, true, false, true), OpenOnChange);
+        assert_eq!(change_after_closure(Other, false, false, false), Other);
+        assert_eq!(
+            change_after_closure(OpenOnChange, false, false, true),
+            OpenOnChange
+        );
+        assert_eq!(
+            change_after_closure(AlreadyChecked, false, false, true),
+            AlreadyChecked
+        );
     }
 
     /// #12831: the noticed-by-check screen and the recommended-start

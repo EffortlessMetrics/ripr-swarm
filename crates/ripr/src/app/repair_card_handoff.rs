@@ -1852,7 +1852,7 @@ mod tests {
             },
             confidence: 0.5,
             evidence: Vec::new(),
-            missing: vec!["Missing discriminator value: amount == discount_threshold".to_string()],
+            missing: vec!["Missing check value: amount == discount_threshold".to_string()],
             flow_sinks: Vec::new(),
             activation: ActivationEvidence::default(),
             stop_reasons: Vec::new(),

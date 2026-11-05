@@ -794,6 +794,11 @@ unknown route into a recognized one.
   request-ID refusal, unknown-method routing and same-session recovery.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
+- `crates/ripr/src/mcp/server_tests.rs::unknown_argument_names_keep_bounded_explicit_diagnostics`
+  + `crates/ripr/tests/mcp_stdio.rs::unknown_argument_names_stay_typed_bounded_and_recover`
+  — unknown-name diagnostic prefixes preserve ordinary names, disclose
+  truncation and original UTF-8 byte length, and retain typed recovery for
+  admitted large/escaped/multibyte keys in both protocol lifecycles (#13154).
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
   hosted wire interop controls, including
   `post_initialize_ping_with_handshake_meta_returns_an_empty_result`
@@ -822,6 +827,15 @@ unknown route into a recognized one.
   outcomes (negative invariant)
 
 ## Source-preserving recovery follow-up (#10799)
+
+The top-limitation document retains the source-custody owner's recovery (#13127) for
+`worktree_source_not_committed`. This code can describe committed input over
+dirty Rust files as well as an unsettled saved-worktree snapshot; it must not
+choose a default committed refresh solely from the shared refusal code.
+`mcp::gaps::tests::limitation_custody_recovery_preserves_the_source_owner_remedy`
+checks producer-owned remedies for dirty committed input, saved-file movement
+and head movement, their refusal state and restart identity. Recovery keeps an
+explicit base in the next refresh request and requires a read of the new snapshot.
 
 Single-gap overflow recovery is captured with its evidence snapshot and reused
 at the raw-document, tool-envelope and resource-envelope boundaries. The CLI

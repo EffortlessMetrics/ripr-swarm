@@ -285,6 +285,8 @@ Useful references:
   for the checked TypeScript/Python preview receipt cases.
 - [TypeScript preview static facts](specs/RIPR-SPEC-0027-typescript-preview-static-facts.md).
 - [Python preview static facts](specs/RIPR-SPEC-0028-python-preview-static-facts.md).
+- [Ruby preview static facts](specs/RIPR-SPEC-0391-ruby-preview-static-facts.md) (proposed contract only; no adapter shipped).
+- [Go preview static facts](specs/RIPR-SPEC-0414-go-preview-static-facts.md) (proposed contract only; no adapter shipped).
 
 ## Repo-Mode Analysis: Rust Full, Python and TypeScript Bounded Preview
 
