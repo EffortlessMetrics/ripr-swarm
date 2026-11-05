@@ -1258,7 +1258,8 @@ impl OwnerReach<'_, '_> {
         {
             return true;
         }
-        let Some(parameters) = super::operand_pin::closed_primitive_parameters(function, self.index)
+        let Some(parameters) =
+            super::operand_pin::closed_primitive_parameters(function, self.index)
         else {
             return true;
         };
@@ -1295,11 +1296,9 @@ impl OwnerReach<'_, '_> {
                 ast::Expr::BinExpr(_) | ast::Expr::PrefixExpr(_) => !primitive(&expression),
                 ast::Expr::PathExpr(path) => {
                     !primitive(&expression)
-                        && !path
-                            .path()
-                            .is_some_and(|path| {
-                                self.opposite_kind_enum_path_is_closed(function, &path)
-                            })
+                        && !path.path().is_some_and(|path| {
+                            self.opposite_kind_enum_path_is_closed(function, &path)
+                        })
                 }
                 ast::Expr::CallExpr(call) => {
                     let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
@@ -1338,9 +1337,7 @@ impl OwnerReach<'_, '_> {
         let snapshot = self.index.source_syntax.get(self.index, &function.file);
         let root_scope = snapshot
             .as_ref()
-            .and_then(|snapshot| {
-                snapshot.item_nesting(&function.name, function.start_line, true)
-            })
+            .and_then(|snapshot| snapshot.item_nesting(&function.name, function.start_line, true))
             .is_some_and(|scope| scope.modules.is_empty() && !scope.cfg_gated);
         // The older enum helper establishes declarations and rebinding,
         // not this occurrence's namespace. Restrict the exception to a
@@ -1357,7 +1354,8 @@ impl OwnerReach<'_, '_> {
                         .children()
                         .filter_map(ast::Enum::cast)
                         .any(|item| {
-                            item.name().is_some_and(|name| name.text() == enum_name.text())
+                            item.name()
+                                .is_some_and(|name| name.text() == enum_name.text())
                                 && super::call_identity::data_declaration_name_is_unambiguous(
                                     item.syntax(),
                                 )
@@ -1387,8 +1385,7 @@ impl OwnerReach<'_, '_> {
                     let name = name.text();
                     super::owner_pin::error_enum_compares_payload(&name, self.index)
                         && super::element_field_pin::drop_is_plain_in_closed_sources(
-                            self.index,
-                            &name,
+                            self.index, &name,
                         )
                 })
     }
@@ -5573,7 +5570,8 @@ mod tests {
         let reach_index = TransitiveReachIndex::new(&index);
         let reach = reach_index.owner_reach("consume");
         let owner = make_fn("consume", Vec::new());
-        assert!(pins_other_without_container_candidate(&reach,
+        assert!(pins_other_without_container_candidate(
+            &reach,
             &owner,
             "assert_eq!(reduce(2500), Reduction::Over(Duration::from_millis(15)))"
         ));
@@ -5587,12 +5585,11 @@ mod tests {
             &owner,
             "assert!(consume_bridge(1))"
         ));
-        assert!(
-            !pins_other_without_container_candidate(&reach,
-                &owner,
-                "assert_eq!(reduce(1), consume_bridge(1).into())"
-            )
-        );
+        assert!(!pins_other_without_container_candidate(
+            &reach,
+            &owner,
+            "assert_eq!(reduce(1), consume_bridge(1).into())"
+        ));
         assert!(!pins_other_without_container_candidate(
             &reach,
             &owner,
@@ -5624,13 +5621,21 @@ mod tests {
         let reach_index = TransitiveReachIndex::new(&index);
         let reach = reach_index.owner_reach("consume");
         let owner = make_fn("consume", Vec::new());
-        assert!(!pins_other_without_container_candidate(&reach, &owner, "assert_eq!(outer(), 1)"));
+        assert!(!pins_other_without_container_candidate(
+            &reach,
+            &owner,
+            "assert_eq!(outer(), 1)"
+        ));
         assert!(!pins_other_without_container_candidate(
             &reach,
             &owner,
             "assert_eq!(outer_of_opaque(), 1)"
         ));
-        assert!(pins_other_without_container_candidate(&reach, &owner, "assert_eq!(leaf(), 1)"));
+        assert!(pins_other_without_container_candidate(
+            &reach,
+            &owner,
+            "assert_eq!(leaf(), 1)"
+        ));
     }
 
     #[test]

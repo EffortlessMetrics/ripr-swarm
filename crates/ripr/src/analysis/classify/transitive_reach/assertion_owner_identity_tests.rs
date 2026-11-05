@@ -155,7 +155,11 @@ fn assertion_call_kind_separates_same_named_free_and_receiver_owners() -> Result
         (true, "assert_eq!(widget.consume(1), consume(1))", false),
         (false, "assert_eq!(widget.consume(1), consume(1))", false),
         (true, "assert_eq!(widget.consume::<u32>(1), 3)", true),
-        (true, "assert_eq!(widget.consume(1), 3); // consume(1)", true),
+        (
+            true,
+            "assert_eq!(widget.consume(1), 3); // consume(1)",
+            true,
+        ),
     ] {
         assert_eq!(
             pins_other_in_test(&index, owner(&index, free)?, assertion)?,
@@ -171,8 +175,18 @@ fn opposite_kind_enum_constructor_admission_preserves_declared_context() -> Resu
     for (attributes, extra, generic, unresolved) in [
         ("#[derive(Debug, PartialEq)]", "", false, false),
         ("", "", false, false),
-        ("#[derive(Debug, PartialEq)]", "use foreign::Debug;", false, true),
-        ("#[derive(Debug, PartialEq)]", "use foreign::*;", false, true),
+        (
+            "#[derive(Debug, PartialEq)]",
+            "use foreign::Debug;",
+            false,
+            true,
+        ),
+        (
+            "#[derive(Debug, PartialEq)]",
+            "use foreign::*;",
+            false,
+            true,
+        ),
         ("#[rewrite]", "", false, true),
         ("#[cfg(feature = \"optional\")]", "", false, true),
         ("#[derive(Debug, PartialEq)]", "declare!();", false, true),
@@ -323,7 +337,11 @@ fn opposite_kind_unicode_function_values_keep_owner_uncertainty() -> Result<(), 
             function.name == "consumé" && function.item.container == FunctionContainer::Free
         })
         .ok_or_else(|| "missing Unicode free owner".to_string())?;
-    assert!(!pins_other_in_test(&index, owner, "assert_eq!(widget.consumé()(1), 2)")?);
+    assert!(!pins_other_in_test(
+        &index,
+        owner,
+        "assert_eq!(widget.consumé()(1), 2)"
+    )?);
     Ok(())
 }
 
@@ -409,37 +427,31 @@ fn opposite_kind_callback_values_keep_owner_uncertainty() -> Result<(), String> 
 #[test]
 fn assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain() -> Result<(), String> {
     let unindexed = parsed_index("pub fn consume(value: u32) -> u32 { value + 1 }")?;
-    assert!(
-        !pins_other_in_test(
-            &unindexed,
-            owner(&unindexed, true)?,
-            "assert_eq!(external.consume(1), 2)",
-        )?
-    );
+    assert!(!pins_other_in_test(
+        &unindexed,
+        owner(&unindexed, true)?,
+        "assert_eq!(external.consume(1), 2)",
+    )?);
 
     let ambiguous = parsed_index(&source(
         "value + 1",
         "value + 2",
         "struct Other; impl Other { fn consume(&self, value: u32) -> u32 { value + 3 } }",
     ))?;
-    assert!(
-        !pins_other_in_test(
-            &ambiguous,
-            owner(&ambiguous, true)?,
-            "assert_eq!(receiver.consume(1), 3)",
-        )?
-    );
+    assert!(!pins_other_in_test(
+        &ambiguous,
+        owner(&ambiguous, true)?,
+        "assert_eq!(receiver.consume(1), 3)",
+    )?);
 
     let known = parsed_index(&source("value + 1", "value + 2", ""))?;
     let mut unknown = owner(&known, true)?.clone();
     unknown.item.container = FunctionContainer::Unknown;
-    assert!(
-        !pins_other_in_test(
-            &known,
-            &unknown,
-            "assert_eq!(widget.consume(1), 3)",
-        )?
-    );
+    assert!(!pins_other_in_test(
+        &known,
+        &unknown,
+        "assert_eq!(widget.consume(1), 3)",
+    )?);
 
     let implicit = parsed_index(&source(
         "value + 1",
@@ -451,13 +463,11 @@ fn assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain() -> Resul
              }\n\
          }",
     ))?;
-    assert!(
-        !pins_other_in_test(
-            &implicit,
-            owner(&implicit, true)?,
-            "assert_eq!(widget.consume(1), 3)",
-        )?
-    );
+    assert!(!pins_other_in_test(
+        &implicit,
+        owner(&implicit, true)?,
+        "assert_eq!(widget.consume(1), 3)",
+    )?);
     Ok(())
 }
 
