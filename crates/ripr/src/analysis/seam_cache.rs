@@ -1309,6 +1309,11 @@ pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_STORE_LIMIT_ENV: &str =
 pub(crate) const CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_ENV: &str =
     "RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES";
+/// Load ceiling for the single module-tree scan bundle (`scans.json`). The
+/// bundle holds one small edge list per distinct source text, so a file
+/// above this is corrupt, legacy, or hostile. Not a process-RSS guarantee.
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV: &str = "RIPR_MODULE_TREE_SCAN_CACHE_BYTES";
 pub(crate) const CLASSIFIED_SEAM_CACHE_STORE_IO_BUFFER_BYTES: usize = 64 * 1024;
 const CACHE_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:CacheEnvelope:v1";
 const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1";
@@ -1556,6 +1561,14 @@ fn parse_positive_seam_cache_store_limit(value: &str, env_name: &str) -> Result<
         return Err(format!("{env_name} must be a positive integer"));
     }
     Ok(parsed)
+}
+
+pub(crate) fn module_tree_scan_cache_max_bytes() -> Result<usize, String> {
+    seam_cache_store_limit_from_env(
+        std::env::var(MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV),
+        MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV,
+        MODULE_TREE_SCAN_CACHE_MAX_BYTES,
+    )
 }
 
 pub(crate) fn classified_seam_cache_encoded_shard_ceiling_bytes() -> Result<usize, String> {
@@ -2342,7 +2355,13 @@ impl RepoModuleTreeScanCache {
         {
             return BTreeMap::new();
         }
-        let Ok(bytes) = std::fs::read(self.entry_path()) else {
+        // Bounded read: a bundle above the ceiling is never allocated
+        // whole; it degrades to a cold rebuild like any unusable bundle.
+        // An unparseable ceiling env falls back to the default ceiling.
+        let ceiling =
+            module_tree_scan_cache_max_bytes().unwrap_or(MODULE_TREE_SCAN_CACHE_MAX_BYTES);
+        let Ok(bytes) = crate::bounded_input::read_with_limit(self.entry_path(), ceiling as u64)
+        else {
             return BTreeMap::new();
         };
         let Ok(envelope) = serde_json::from_slice::<ModuleTreeScanEnvelope>(&bytes) else {
@@ -8415,6 +8434,36 @@ mod tests {
 
         std::fs::write(&path, b"{not json").map_err(|error| error.to_string())?;
         assert!(cache.load().is_empty(), "undecodable bundle reads as empty");
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn module_tree_scan_bundle_above_the_byte_ceiling_reads_as_empty() -> Result<(), String> {
+        // Memory bound: a bundle file above the load ceiling is never
+        // allocated whole; the load degrades to a cold rebuild. Trailing
+        // spaces keep the oversized file decodable, so only the byte
+        // ceiling can explain an empty read.
+        let dir = isolated_dir("module-tree-scans-oversized");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoModuleTreeScanCache::at_dir(dir.clone());
+        let scans = sample_module_tree_scans();
+        cache.store(&scans)?;
+        assert_eq!(cache.load(), scans, "control: the stored bundle loads");
+
+        let path = cache.entry_path();
+        let mut bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        let ceiling = module_tree_scan_cache_max_bytes()
+            .map_err(|error| format!("ceiling must resolve: {error}"))?;
+        if bytes.len() > ceiling {
+            return Err("control: stored bundle already exceeds the ceiling".to_string());
+        }
+        bytes.resize(ceiling + 1, b' ');
+        std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+        assert!(
+            cache.load().is_empty(),
+            "a bundle above the byte ceiling reads as empty, not allocated whole"
+        );
         ignore_remove_dir_all(&dir);
         Ok(())
     }
