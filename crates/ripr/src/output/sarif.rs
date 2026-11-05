@@ -171,25 +171,6 @@ struct SarifRunDisclosures<'a> {
     results_bound: Option<&'a SarifResultsBound>,
 }
 
-/// Render diff-scoped Findings as SARIF with the default results budget.
-/// The CLI resolves [`SARIF_RESULTS_BYTES_ENV`] before rendering (see the
-/// `Sarif` arm in `output::render`); direct callers needing another budget
-/// use [`render_findings_sarif_with_budget`]. Test-only: production renders
-/// through the explicit-budget entry point.
-#[cfg(test)]
-pub(crate) fn render_findings_sarif(
-    output: &CheckOutput,
-    config: &RiprConfig,
-    suppressions: &[SuppressionEntry],
-) -> String {
-    render_findings_sarif_with_budget(
-        output,
-        config,
-        suppressions,
-        Some(DEFAULT_SARIF_RESULTS_BYTES),
-    )
-}
-
 /// Render diff-scoped Findings as SARIF, keeping only the leading results
 /// that fit `results_budget` pretty-printed bytes (`None` renders all).
 /// Omitted results are disclosed in the run properties, never silently.
@@ -311,24 +292,6 @@ fn fold_same_line_results(results: Vec<Value>) -> (Vec<Value>, usize) {
         kept.push(keeper);
     }
     (kept, folded)
-}
-
-/// Render repo-scoped classified seams as SARIF with the default results
-/// budget. Direct callers needing another budget use
-/// [`render_repo_seams_sarif_with_budget`]. Test-only: production renders
-/// through the explicit-budget entry point.
-#[cfg(test)]
-pub(crate) fn render_repo_seams_sarif(
-    classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
-    config: &RiprConfig,
-) -> String {
-    render_repo_seams_sarif_with_budget(
-        classified,
-        limit_info,
-        config,
-        Some(DEFAULT_SARIF_RESULTS_BYTES),
-    )
 }
 
 /// Render repo-scoped classified seams as SARIF, keeping only the leading
@@ -1635,6 +1598,42 @@ fn escape_message(value: &str) -> String {
         .replace('"', "\\\"")
         .replace('\n', "\\n")
         .replace('\r', "\\r")
+}
+
+/// Render diff-scoped Findings as SARIF with the default results budget.
+/// Test-only: production renders through
+/// [`render_findings_sarif_with_budget`] with the CLI-resolved budget.
+/// Kept at the test boundary so the evidence-literal ratchet's
+/// `#[cfg(test)]` scan cutoff stays at the test module.
+#[cfg(test)]
+pub(crate) fn render_findings_sarif(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+) -> String {
+    render_findings_sarif_with_budget(
+        output,
+        config,
+        suppressions,
+        Some(DEFAULT_SARIF_RESULTS_BYTES),
+    )
+}
+
+/// Render repo-scoped classified seams as SARIF with the default results
+/// budget. Test-only: production renders through
+/// [`render_repo_seams_sarif_with_budget`].
+#[cfg(test)]
+pub(crate) fn render_repo_seams_sarif(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    config: &RiprConfig,
+) -> String {
+    render_repo_seams_sarif_with_budget(
+        classified,
+        limit_info,
+        config,
+        Some(DEFAULT_SARIF_RESULTS_BYTES),
+    )
 }
 
 #[cfg(test)]
