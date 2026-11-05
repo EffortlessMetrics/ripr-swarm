@@ -1,0 +1,16 @@
+# Same-named free and receiver calls must not borrow one another's oracle.
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/src/analysis/classify/call_identity.rs::function_value_names_keep_unicode_values_and_exclude_nonvalues",
+  "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::assertion_call_kind_separates_same_named_free_and_receiver_owners",
+  "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::same_named_opposite_kind_wrappers_keep_owner_uncertainty",
+  "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::opposite_kind_indirect_function_values_keep_owner_uncertainty",
+  "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::opposite_kind_wrapper_walk_keeps_unrelated_chains_and_cycles_separate",
+  "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::opposite_kind_wrapper_budget_retains_uncertainty",
+  "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::opposite_kind_unicode_function_values_keep_owner_uncertainty",
+  "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::opposite_kind_callback_values_keep_owner_uncertainty",
+  "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/assertion_call_kind.rs::same_named_call_kinds_refuse_only_wrong_owner_repo_oracles",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/assertion_call_kind.rs::same_named_call_kinds_keep_diff_owner_observation_scoped",
+]

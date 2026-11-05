@@ -1189,7 +1189,7 @@ impl ClassifiedProbeEvidence {
                         );
                         owner_reach
                             .get_or_init(|| proximity_reach.owner_reach(&owner.name))
-                            .assertion_pins_other_function(&text)
+                            .assertion_pins_other_function(owner, &text)
                     })
                 },
                 owner_parameters: &owner_parameters,

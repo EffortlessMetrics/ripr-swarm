@@ -1141,17 +1141,61 @@ impl OwnerReach<'_, '_> {
     /// full reverse closure, macro hops included, rather than trusting
     /// `path_untraced`, which blanket-fails on any macro in a large
     /// workspace. Fail closed when the owner may be reached implicitly.
-    pub(in crate::analysis) fn assertion_pins_other_function(&self, assertion_text: &str) -> bool {
+    pub(in crate::analysis) fn assertion_pins_other_function(
+        &self,
+        owner: &FunctionSummary,
+        assertion_text: &str,
+    ) -> bool {
         if self.implicit_dispatch {
             return false;
         }
         let closure = self
             .unbounded_reaching
             .get_or_init(|| self.graph.names_reaching_unbounded(&self.owner_name));
+        let passes_owner_path = |text: &str| {
+            super::call_identity::function_value_names(text)
+                .iter()
+                .any(|name| name == &self.owner_name || closure.contains(name.as_str()))
+        };
         let mut other_indexed = false;
         for name in super::reveal::called_names(assertion_text) {
             let name = name.as_str();
-            if name == self.owner_name || self.reaching.contains(name) {
+            if name == self.owner_name {
+                if super::call_identity::text_may_call_function_kind(assertion_text, owner)
+                    || passes_owner_path(assertion_text)
+                {
+                    return false;
+                }
+                // A receiver call cannot name a free owner, nor a bare call a
+                // method owner. It may still call an opposite-kind wrapper
+                // that reaches this owner. Inspect that definition's edges,
+                // not the shared leaf name (which always reaches itself).
+                let mut candidates = self
+                    .graph
+                    .by_name
+                    .get(name)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|function| {
+                        super::call_identity::text_may_call_function_kind(assertion_text, function)
+                    });
+                let Some(candidate) = candidates.next() else {
+                    // An unindexed receiver is not another indexed function.
+                    continue;
+                };
+                if candidates.next().is_some()
+                    || candidate.id == owner.id
+                    || self.opposite_kind_wrapper_may_run_owner(candidate, closure)
+                {
+                    // Ambiguous dispatch, implicit/unknown code and a real
+                    // outgoing owner path retain the existing uncertainty.
+                    return false;
+                }
+                other_indexed = true;
+                continue;
+            }
+            if self.reaching.contains(name) {
                 return false;
             }
             if self.graph.by_name.contains_key(name) {
@@ -1165,6 +1209,61 @@ impl OwnerReach<'_, '_> {
             }
         }
         other_indexed
+    }
+
+    /// Refusing the same-named call must not erase a genuine wrapper path.
+    /// Follow indexed calls and function values iteratively; the reverse
+    /// call closure cannot see an owner passed as a value inside a helper.
+    /// Unknown code or an exhausted budget retains the prior uncertainty.
+    fn opposite_kind_wrapper_may_run_owner(
+        &self,
+        entry: &FunctionSummary,
+        owner_closure: &HashSet<&str>,
+    ) -> bool {
+        const MAX_WRAPPER_FUNCTIONS: usize = 64;
+        let mut pending = vec![entry];
+        let mut seen = HashSet::new();
+        while let Some(function) = pending.pop() {
+            if !seen.insert(&function.id) {
+                continue;
+            }
+            if seen.len() > MAX_WRAPPER_FUNCTIONS
+                || function.item.container == FunctionContainer::Unknown
+            {
+                return true;
+            }
+            for call in calls_of(function) {
+                let name = call.name.as_str();
+                if is_macro_call(name)
+                    || name == self.owner_name
+                    || owner_closure.contains(name)
+                {
+                    return true;
+                }
+                if let Some(targets) = self.graph.by_name.get(name) {
+                    if targets.len() != 1 {
+                        return true;
+                    }
+                    pending.extend(targets.iter().copied());
+                } else if name.starts_with(|ch: char| ch.is_lowercase() || ch == '_') {
+                    // The same uncertainty as `test_may_reach`: an external
+                    // call may enter trait or callback code the index lacks.
+                    return true;
+                }
+            }
+            for name in super::call_identity::function_value_names(&function.body) {
+                if name == self.owner_name || owner_closure.contains(name.as_str()) {
+                    return true;
+                }
+                if let Some(targets) = self.graph.by_name.get(name.as_str()) {
+                    if targets.len() != 1 {
+                        return true;
+                    }
+                    pending.extend(targets.iter().copied());
+                }
+            }
+        }
+        false
     }
 
     /// Whether `test` may run the owner, by name only (#6297). It may when
@@ -3642,6 +3741,9 @@ pub(in crate::analysis) fn trait_dispatch_ambiguity_detail_lines(
 }
 
 #[cfg(test)]
+mod assertion_owner_identity_tests;
+
+#[cfg(test)]
 mod declaration_tests {
     use super::*;
 
@@ -5246,16 +5348,25 @@ mod tests {
         );
         let reach_index = TransitiveReachIndex::new(&index);
         let reach = reach_index.owner_reach("consume");
+        let owner = make_fn("consume", Vec::new());
         assert!(reach.assertion_pins_other_function(
+            &owner,
             "assert_eq!(reduce(2500), Reduction::Over(Duration::from_millis(15)))"
         ));
-        assert!(!reach.assertion_pins_other_function("assert_eq!(consume(1), true)"));
-        assert!(!reach.assertion_pins_other_function("assert!(consume_bridge(1))"));
+        assert!(!reach.assertion_pins_other_function(&owner, "assert_eq!(consume(1), true)"));
+        assert!(!reach.assertion_pins_other_function(&owner, "assert!(consume_bridge(1))"));
         assert!(
-            !reach.assertion_pins_other_function("assert_eq!(reduce(1), consume_bridge(1).into())")
+            !reach.assertion_pins_other_function(
+                &owner,
+                "assert_eq!(reduce(1), consume_bridge(1).into())"
+            )
         );
-        assert!(!reach.assertion_pins_other_function("assert!(matches!(x, Reduction::Over(1)))"));
-        assert!(!reach.assertion_pins_other_function("assert_eq!(Duration::from_millis(5), x)"));
+        assert!(
+            !reach.assertion_pins_other_function(&owner, "assert!(matches!(x, Reduction::Over(1)))")
+        );
+        assert!(
+            !reach.assertion_pins_other_function(&owner, "assert_eq!(Duration::from_millis(5), x)")
+        );
     }
 
     #[test]
@@ -5276,9 +5387,10 @@ mod tests {
         );
         let reach_index = TransitiveReachIndex::new(&index);
         let reach = reach_index.owner_reach("consume");
-        assert!(!reach.assertion_pins_other_function("assert_eq!(outer(), 1)"));
-        assert!(!reach.assertion_pins_other_function("assert_eq!(outer_of_opaque(), 1)"));
-        assert!(reach.assertion_pins_other_function("assert_eq!(leaf(), 1)"));
+        let owner = make_fn("consume", Vec::new());
+        assert!(!reach.assertion_pins_other_function(&owner, "assert_eq!(outer(), 1)"));
+        assert!(!reach.assertion_pins_other_function(&owner, "assert_eq!(outer_of_opaque(), 1)"));
+        assert!(reach.assertion_pins_other_function(&owner, "assert_eq!(leaf(), 1)"));
     }
 
     #[test]

@@ -2349,7 +2349,7 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
             continue;
         }
         let head = masked[..start].trim_end();
-        if head.ends_with('.') {
+        if head.ends_with('.') && !head.ends_with("..") {
             if with_methods {
                 calls.push((Some(Vec::new()), true));
             }
@@ -2361,6 +2361,51 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
         calls.push((qualifier_before(head), false));
     }
     calls
+}
+
+/// Whether a call of this name may have the function's container kind (#12234).
+/// This only separates bare calls from receiver calls. A qualified or unread
+/// path may be a free call or UFCS, and an unknown container stays uncertain.
+/// Matching shape does not resolve the receiver or grant owner-call credit.
+pub(super) fn text_may_call_function_kind(text: &str, function: &FunctionSummary) -> bool {
+    call_sites(text, &function.name, true)
+        .into_iter()
+        .any(|(qualifier, is_method)| match qualifier {
+            Some(segments) if segments.is_empty() => match function.item.container {
+                FunctionContainer::Free | FunctionContainer::Local => !is_method,
+                FunctionContainer::Inherent { .. }
+                | FunctionContainer::TraitImpl { .. }
+                | FunctionContainer::Trait { .. } => is_method,
+                FunctionContainer::Unknown => true,
+            },
+            _ => true,
+        })
+}
+
+/// Names that may be function values, using the same exclusions as the
+/// owner-call identity scan. Mask and scan once, including non-ASCII names;
+/// walking every indexed name or rescanning repeated tokens is unnecessary.
+/// These names preserve uncertainty and never grant owner-call credit.
+pub(super) fn function_value_names(text: &str) -> BTreeSet<String> {
+    let masked = mask_comments_and_strings(text);
+    let use_items = use_item_ranges(&masked);
+    let mut names = BTreeSet::new();
+    let mut start = 0;
+    for (end, ch) in masked.char_indices() {
+        if is_ident_char(ch) {
+            continue;
+        }
+        if start < end && is_function_value_mention(&masked, &use_items, start, end) {
+            names.insert(masked[start..end].to_string());
+        }
+        start = end + ch.len_utf8();
+    }
+    if start < masked.len()
+        && is_function_value_mention(&masked, &use_items, start, masked.len())
+    {
+        names.insert(masked[start..].to_string());
+    }
+    names
 }
 
 /// `module` without its leading crate segment when that segment names the
@@ -3344,38 +3389,45 @@ fn value_mentions(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
         if ident_char_at(&masked, end) {
             continue;
         }
-        if use_items.iter().any(|range| range.contains(&start)) {
-            continue;
+        if is_function_value_mention(&masked, &use_items, start, end) {
+            mentions.push(qualifier_before(masked[..start].trim_end()));
         }
-        let tail = masked[end..].trim_start();
-        // `name!` is a macro, but `name != x` compares the name as a value.
-        let is_macro = tail.starts_with('!') && !tail.starts_with("!=");
-        if tail.starts_with('(') || tail.starts_with(':') || is_macro {
-            continue;
-        }
-        let head = masked[..start].trim_end();
-        if head.ends_with('.')
-            || head.ends_with('\'')
-            || matches!(
-                head_word(head),
-                "fn" | "let"
-                    | "mut"
-                    | "ref"
-                    | "struct"
-                    | "enum"
-                    | "union"
-                    | "mod"
-                    | "const"
-                    | "static"
-                    | "type"
-                    | "trait"
-            )
-        {
-            continue;
-        }
-        mentions.push(qualifier_before(head));
     }
     mentions
+}
+
+fn is_function_value_mention(
+    masked: &str,
+    use_items: &[std::ops::Range<usize>],
+    start: usize,
+    end: usize,
+) -> bool {
+    if use_items.iter().any(|range| range.contains(&start)) {
+        return false;
+    }
+    let tail = masked[end..].trim_start();
+    // `name!` is a macro, but `name != x` compares the name as a value.
+    let is_macro = tail.starts_with('!') && !tail.starts_with("!=");
+    if tail.starts_with('(') || tail.starts_with(':') || is_macro {
+        return false;
+    }
+    let head = masked[..start].trim_end();
+    !head.ends_with('.')
+        && !head.ends_with('\'')
+        && !matches!(
+            head_word(head),
+            "fn" | "let"
+                | "mut"
+                | "ref"
+                | "struct"
+                | "enum"
+                | "union"
+                | "mod"
+                | "const"
+                | "static"
+                | "type"
+                | "trait"
+        )
 }
 
 /// Byte ranges of the `use` items in masked `text`, each from its `use`
@@ -4599,6 +4651,33 @@ mod tests {
         );
         assert!(mentions_word("let x = fast(1);", "fast"));
         assert!(!mentions_word("let x = faster(1); // fast", "fast"));
+    }
+
+    #[test]
+    fn function_value_names_keep_unicode_values_and_exclude_nonvalues() {
+        let values = function_value_names(
+            "fn declared() {\n\
+             use crate::imported;\n\
+             let binding = called(1);\n\
+             let callbacks = [crate::render, módulo, r#type];\n\
+             let field = object.member;\n\
+             let record = Record { named: 1 };\n\
+             macro_name!(1);\n\
+             // commented\n\
+             let text = \"quoted\";\n\
+             }",
+        );
+        for value in ["render", "módulo", "type"] {
+            assert!(values.contains(value), "missing function value: {value}");
+        }
+        for nonvalue in [
+            "declared", "imported", "binding", "called", "member", "named", "macro_name",
+            "commented", "quoted",
+        ] {
+            assert!(!values.contains(nonvalue), "not a function value: {nonvalue}");
+        }
+        assert!(function_value_names("módulo").contains("módulo"));
+        assert!(function_value_names("").is_empty());
     }
 
     #[test]
