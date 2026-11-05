@@ -175,3 +175,89 @@ fn transformed_or_discarded_helper_outputs_do_not_create_false_contradictions() 
     }
     Ok(())
 }
+
+#[test]
+fn uncalled_child_delegations_do_not_establish_helper_reach() -> Result<(), String> {
+    for placement in [Placement::InlineChild, Placement::FileChild] {
+        for body in [
+            "let _f = || HELPER; 10",
+            "let _f = move || HELPER; 10",
+            "let _f = || { let value = HELPER; value }; 10",
+            "let _f = async { let value = HELPER; value }; 10",
+            "fn hidden() -> i32 { HELPER } 10",
+            "macro_rules! deferred { ($e:expr) => { || $e } } let _f = deferred!(HELPER); 10",
+        ] {
+            let seam = Fixture::new(placement, 9, body, 10)?.seam()?;
+            assert_no_helper_reach(&seam)?;
+        }
+    }
+    Ok(())
+}
+
+fn assert_no_helper_reach(seam: &Value) -> Result<(), String> {
+    let reach = seam
+        .get("evidence")
+        .and_then(|evidence| evidence.get("reach"))
+        .and_then(Value::as_str)
+        .filter(|reach| !reach.is_empty())
+        .ok_or_else(|| format!("missing or untyped reach: {seam}"))?;
+    assert_ne!(reach, "yes", "{seam}");
+    let total = seam
+        .get("related_tests_total")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("missing or untyped related count: {seam}"))?;
+    let tests = seam
+        .get("related_tests")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("missing related test array: {seam}"))?;
+    let retained = u64::try_from(tests.len()).map_err(|error| error.to_string())?;
+    assert_eq!(total, retained, "related count/list disagree: {seam}");
+    for test in tests {
+        let relation = test
+            .get("relation_reason")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("missing or untyped relation: {seam}"))?;
+        assert_ne!(relation, "helper_owner_call", "{seam}");
+    }
+    Ok(())
+}
+
+#[test]
+fn compile_time_child_calls_do_not_establish_runtime_helper_reach() -> Result<(), String> {
+    for placement in [Placement::InlineChild, Placement::FileChild] {
+        for body in [
+            "const UNUSED: i32 = HELPER; 10",
+            "static UNUSED: i32 = HELPER; 10",
+            "let _value = const { HELPER }; 10",
+            "let _a = [0u8; HELPER as usize]; 10",
+            "let _a: [u8; HELPER as usize] = [0u8; 9]; 10",
+            "fn ignore<const N: usize>() {} ignore::<{ HELPER as usize }>(); 10",
+        ] {
+            let fixture = Fixture::new(placement, 9, body, 10)?;
+            let file = if matches!(placement, Placement::FileChild) {
+                fixture.root.join("src/child.rs")
+            } else {
+                fixture.root.join("src/lib.rs")
+            };
+            let text = std::fs::read_to_string(&file).map_err(|error| error.to_string())?;
+            std::fs::write(
+                &file,
+                text.replace("fn compute_value", "const fn compute_value"),
+            )
+            .map_err(|error| error.to_string())?;
+            assert_no_helper_reach(&fixture.seam()?)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn runtime_array_elements_keep_child_helper_reach() -> Result<(), String> {
+    for placement in [Placement::InlineChild, Placement::FileChild] {
+        for body in ["let _a = [HELPER; 1]; 10", "let _a = [HELPER, 0]; 10"] {
+            let seam = Fixture::new(placement, 9, body, 10)?.seam()?;
+            assert_eq!(contradictions(&seam)?, 0, "{placement:?} {body}: {seam}");
+        }
+    }
+    Ok(())
+}

@@ -429,6 +429,128 @@ impl ModuleItemScopes {
     }
 }
 
+/// Qualified calls in the current function's executable body. The existing
+/// nested-function boundary excludes closures, async blocks and nested items;
+/// macro token trees are not parsed call expressions. A qualified textual
+/// mention alone cannot establish ordinary child-delegation reach (#4681).
+pub(crate) fn eager_qualified_call_paths(text: &str) -> BTreeSet<String> {
+    let wrapped;
+    let parse = if let Some(parse) = super::parse_clean_source_file_memoized(text) {
+        parse
+    } else {
+        // FunctionSummary bodies can be a complete item or body text.
+        wrapped = format!("fn __ripr_delegation() {{ {text} }}");
+        let Some(parse) = super::parse_clean_source_file_memoized(&wrapped) else {
+            return BTreeSet::new();
+        };
+        parse
+    };
+    let tree = parse.tree();
+    let mut functions = tree.items().filter_map(|item| match item {
+        ast::Item::Fn(function) => Some(function),
+        _ => None,
+    });
+    let Some(function) = functions.next() else {
+        return BTreeSet::new();
+    };
+    if functions.next().is_some() || function.async_token().is_some() {
+        return BTreeSet::new();
+    }
+    eager_qualified_call_paths_in(&function)
+}
+
+fn eager_qualified_call_paths_in(function: &ast::Fn) -> BTreeSet<String> {
+    let Some(body) = function.body() else {
+        return BTreeSet::new();
+    };
+    body.syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .filter(|call| !enclosed_by_nested_fn_like(call.syntax(), &body))
+        // Items and const blocks may evaluate without executing the parent.
+        // Keep this extra boundary local to ordinary qualified delegation.
+        .filter(|call| {
+            !call
+                .syntax()
+                .ancestors()
+                .take_while(|ancestor| ancestor != body.syntax())
+                .any(|ancestor| {
+                    ast::Item::can_cast(ancestor.kind())
+                        || ast::Type::can_cast(ancestor.kind())
+                        || ast::ConstArg::can_cast(ancestor.kind())
+                        || ast::ArrayExpr::cast(ancestor.clone()).is_some_and(|array| {
+                            matches!(array.kind(), ast::ArrayExprKind::Repeat { repeat: Some(repeat), .. }
+                                if repeat.syntax().text_range().contains_range(call.syntax().text_range()))
+                        })
+                        || ast::BlockExpr::cast(ancestor)
+                            .is_some_and(|block| block.const_token().is_some())
+                })
+        })
+        .filter_map(|call| match call.expr()? {
+            ast::Expr::PathExpr(path) => path.path(),
+            _ => None,
+        })
+        .filter(|path| path.qualifier().is_some())
+        .map(|path| {
+            path.syntax()
+                .text()
+                .to_string()
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect()
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod eager_qualified_call_tests {
+    use super::*;
+
+    #[test]
+    fn parsed_child_calls_keep_eager_paths_and_refuse_deferred_mentions() {
+        for body in [
+            "child::target()",
+            "return child::target();",
+            "let value = child::target(); value + 1",
+            "child::target() + 1",
+            "child::target(); 10",
+            "({ child::target() }) + 1",
+            "let _f = || child::target(); child::target()",
+            "let _a = [child::target(); 1]; 10",
+            "let _a = [child::target(), 0]; 10",
+        ] {
+            let item = format!("pub fn entry() -> i32 {{ {body} }}");
+            assert!(
+                eager_qualified_call_paths(&item).contains("child::target"),
+                "{item}"
+            );
+        }
+        for body in [
+            "let _f = || child::target(); 10",
+            "let _f = move || child::target(); 10",
+            "let _f = || { let value = child::target(); value }; 10",
+            "let _f = async { let value = child::target(); value }; 10",
+            "fn hidden() -> i32 { child::target() } 10",
+            "const UNUSED: i32 = child::target(); 10",
+            "static UNUSED: i32 = child::target(); 10",
+            "let _value = const { child::target() }; 10",
+            "let _a = [0u8; child::target() as usize]; 10",
+            "let _a: [u8; child::target() as usize] = [0u8; 9]; 10",
+            "fn ignore<const N: usize>() {} ignore::<{ child::target() as usize }>(); 10",
+            "macro_rules! deferred { ($e:expr) => { || $e } } let _f = deferred!(child::target()); 10",
+        ] {
+            let item = format!("pub fn entry() -> i32 {{ {body} }}");
+            assert!(
+                !eager_qualified_call_paths(&item).contains("child::target"),
+                "{item}"
+            );
+        }
+        assert!(eager_qualified_call_paths("pub async fn entry() { child::target() }").is_empty());
+        assert!(eager_qualified_call_paths("child::target()").contains("child::target"));
+        assert!(eager_qualified_call_paths("fn broken( { child::target()").is_empty());
+    }
+}
+
 /// The module scopes of `text`'s functions. `None` when the file does not
 /// parse cleanly, so a caller that needs module scope fails closed.
 pub(crate) fn module_item_scopes(text: &str) -> Option<ModuleItemScopes> {

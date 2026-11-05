@@ -1652,7 +1652,7 @@ pub(in crate::analysis::test_grip_evidence) fn ordinary_module_delegation_owner_
     let parent_module_path = super::module_path_for_index(index, &function.file)
         .unwrap_or_default()
         .replace('/', "::");
-    let body = crate::analysis::extract::mask_comments_and_strings(&function.body);
+    let calls = crate::analysis::syntax::ra::eager_qualified_call_paths(&function.body);
     let mut delegated = BTreeSet::new();
     for declaration in &file_facts.module_declarations {
         if declaration.requires_test || declaration.path_target == ModulePathTarget::Unknown {
@@ -1685,7 +1685,7 @@ pub(in crate::analysis::test_grip_evidence) fn ordinary_module_delegation_owner_
             if !owner_token_is_specific_enough(&owner_name.to_ascii_lowercase()) {
                 continue;
             }
-            if !code_contains_qualified_helper_call(&body, &declaration.name, &owner_name) {
+            if !eager_qualified_helper_call(&calls, &declaration.name, &owner_name) {
                 continue;
             }
             let matching_modules = candidate_module_paths
@@ -1720,6 +1720,16 @@ pub(in crate::analysis::test_grip_evidence) fn ordinary_module_delegation_owner_
     delegated
 }
 
+fn eager_qualified_helper_call(
+    calls: &BTreeSet<String>,
+    module_path: &str,
+    helper_name: &str,
+) -> bool {
+    ["", "crate::", "self::", "super::"]
+        .into_iter()
+        .any(|prefix| calls.contains(&format!("{prefix}{module_path}::{helper_name}")))
+}
+
 fn production_owner_name_is_unique_in_package(
     index: &RustIndex,
     package: &str,
@@ -1744,7 +1754,7 @@ fn same_file_nested_module_delegation_owner_calls(
     if function.source_role.is_evidence_role() || rust_index::is_test_file(&function.file) {
         return BTreeSet::new();
     }
-    let body = crate::analysis::extract::mask_comments_and_strings(&function.body);
+    let calls = crate::analysis::syntax::ra::eager_qualified_call_paths(&function.body);
     let file_prefix = format!("{}::", function.file.display());
     let mut by_module: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for candidate in same_file_functions {
@@ -1757,7 +1767,7 @@ fn same_file_nested_module_delegation_owner_calls(
         if !owner_token_is_specific_enough(&candidate.name.to_ascii_lowercase()) {
             continue;
         }
-        if !code_contains_qualified_helper_call(&body, module_name, &candidate.name) {
+        if !eager_qualified_helper_call(&calls, module_name, &candidate.name) {
             continue;
         }
         by_module
@@ -1813,9 +1823,9 @@ pub(in crate::analysis::test_grip_evidence) fn production_delegation_from_test_r
             if package_scope(&test.file) != package_scope(&callee.file) {
                 continue;
             }
-            let body = crate::analysis::extract::mask_comments_and_strings(&callee.body);
+            let calls = crate::analysis::syntax::ra::eager_qualified_call_paths(&callee.body);
             if let Some(module) = owner_module.as_deref().filter(|module| !module.is_empty()) {
-                if code_contains_qualified_helper_call(&body, module, &owner_fn.name)
+                if eager_qualified_helper_call(&calls, module, &owner_fn.name)
                     || callee_delegates_to_owner_in_same_module(callee, owner_fn)
                 {
                     return true;

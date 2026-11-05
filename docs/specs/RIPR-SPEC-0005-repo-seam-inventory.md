@@ -180,6 +180,12 @@ and an exact declaration. Unknown attributes, `#[path]`, includes and unresolved
 placement do not gain a new visibility verdict. An independent, already-admitted
 helper witness survives the direct-relation veto; fallback affinity alone must
 not restore the disproven relation.
+Ordinary child-helper delegation requires a parsed qualified call in the
+current function body. Calls only inside uncalled closures, async bodies,
+nested functions, item/const-block initializers, type/const-generic arguments,
+array-repeat lengths or unsupported macro token trees do not establish runtime
+helper reach. Runtime array-element calls retain their evidence. A separate eager call keeps its evidence even when a deferred body
+mentions the same helper.
 
 Full evidence carries the indexed test target. Compact evidence intentionally
 omits target details and preserves the five stage states and contradiction count.
