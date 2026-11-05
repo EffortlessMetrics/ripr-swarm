@@ -444,6 +444,16 @@ Reports local tooling and workspace shape. Takes no analysis-shaping flags.
 `--profile source-build` makes it a failure. See
 [Exit codes](EXIT_CODES.md#ripr-doctor-exit-codes).
 
+For source-build diagnosis, `tool_rustc` probes the explicit `RUSTC` executable,
+then `CARGO_BUILD_RUSTC` when `RUSTC` is unset, otherwise `rustc` on PATH. A bare
+override name uses PATH; an override containing a path separator resolves from
+the selected root. Paths containing spaces remain one executable, without shell
+expansion. An explicit missing, failing or incompatible compiler fails the check
+and names the override to fix or unset. Empty or non-Unicode selected values are
+refused rather than replaced by a healthy PATH compiler. This bounded check does
+not evaluate Cargo configuration files or compiler wrappers, install a toolchain,
+or establish that a build succeeds. The analysis profile keeps its PATH probe.
+
 Use `--json` for the same core checks as the human report when onboarding an
 agent, editor, or CI wrapper:
 
