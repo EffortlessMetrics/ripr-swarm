@@ -4570,6 +4570,22 @@ pub(in crate::analysis) fn returned_closure_pin_required(
             .is_some_and(|tail| tail.tail_is(&probe.expression))
 }
 
+/// Test-side result identity with no changed-path or discrimination credit.
+pub(in crate::analysis) struct AsyncResultIdentity(OwnerReturnPin);
+impl AsyncResultIdentity {
+    pub(in crate::analysis) fn admits(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        self.0
+            .admits(test, assertion, index, imports_foreign, syntax)
+    }
+}
+
 impl OwnerReturnPin {
     /// Establish a return pin from the actual tail expression of a
     /// forwarding entry. The caller must separately prove that this entry
@@ -4649,7 +4665,6 @@ impl OwnerReturnPin {
         if !parser_backed {
             return None;
         }
-        let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
         let path = match return_path_gate_from(
             &owner.body,
@@ -4759,6 +4774,45 @@ impl OwnerReturnPin {
         }) {
             return None;
         }
+        Self::from_path(probe, owner, index, path, returns_bool, changed_line)
+    }
+
+    /// Identity of an awaited primitive result only. This does not prove that
+    /// the changed predicate reaches that result or discriminates a boundary.
+    /// Callers retain the independent activation and observation gates.
+    pub(in crate::analysis) fn establish_async_result_identity(
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+    ) -> Option<AsyncResultIdentity> {
+        if !matches!(probe.family, ProbeFamily::Predicate)
+            || !matches!(owner.item.container, FunctionContainer::Free)
+            || function_declaration_is_async(owner, index) != Some(true)
+            || !returns_primitive_scalar(owner, index)
+            || !owner.item.has_body
+            || index.files().get(&owner.file)?.used_lexical_fallback
+        {
+            return None;
+        }
+        Some(AsyncResultIdentity(Self::from_path(
+            probe,
+            owner,
+            index,
+            ReturnPathGate::Any,
+            declared_return_type(&owner.body).as_deref() == Some("bool"),
+            probe.location.line.checked_sub(owner.start_line)?,
+        )?))
+    }
+
+    fn from_path(
+        probe: &Probe,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+        path: ReturnPathGate,
+        returns_bool: bool,
+        changed_line: usize,
+    ) -> Option<Self> {
+        let name = owner.name.as_str();
         let call = pin_call(owner, index)?;
         // #6544: a bare call's same-package module-level rivals are settled
         // per test by the import or path that spells the call; every other
@@ -15990,12 +16044,17 @@ fn is_trivial_expression(expression: &str, locals: bool) -> bool {
 fn binds_outside_let(masked: &str, name: &str) -> bool {
     // A function-pointer type has no item name: its `fn` is followed by
     // `(`. Its parameter labels bind no values in the surrounding test.
-    // Keep the existing conservative refusal for actual nested fn items.
+    // Nested items have their own parameter scope. A same-named nested
+    // function still binds this outer name; an unrelated item does not.
     let fns: Vec<_> = whole_word_offsets(masked, "fn")
         .into_iter()
         .filter(|offset| !masked[offset + "fn".len()..].trim_start().starts_with('('))
         .collect();
-    if fns.len() > 1 {
+    if fns
+        .iter()
+        .skip(1)
+        .any(|offset| starts_with_word(masked[offset + "fn".len()..].trim_start(), name))
+    {
         return true;
     }
     // The test's own parameters (`#[case] name: T`) bind the name too.

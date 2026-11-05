@@ -14331,3 +14331,36 @@ fn mapped_enum_expectation_memo_is_index_owned_and_bounded() -> Result<(), Strin
     }
     Ok(())
 }
+
+#[test]
+fn same_file_trait_empty_string_return_keeps_its_owner_pin() -> Result<(), String> {
+    let source = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/rust_trait_impl_import/input/src/lib.rs"),
+    )
+    .map_err(|e| e.to_string())?;
+    let index = index(&[(LIB, &source)]);
+    let owner = index
+        .functions()
+        .iter()
+        .find(|f| f.name == "render" && f.item.has_body)
+        .ok_or("missing implemented owner")?;
+    let pin = OwnerReturnPin::establish(&return_probe(owner, "String::from(\"\")"), owner, &index)
+        .ok_or("owner side failed")?;
+    let test = index.tests().iter().next().ok_or("missing fixture test")?;
+    let assertion = test.assertions.first().ok_or("missing fixture assertion")?;
+    let syntax = OwnerPinSyntax::default();
+    assert!(
+        pin.admits(
+            test,
+            assertion,
+            &index,
+            &|_, name| file_imports_foreign_callee_name(&source, name, &index.package_names),
+            &syntax
+        ),
+        "trait scope={}, syntax refusal={:?}",
+        trait_in_scope(&source, "Render", &index),
+        syntax.refusal(test, assertion, &index)
+    );
+    Ok(())
+}

@@ -3961,3 +3961,91 @@ fn literal_json_constructor_matches_real_callback_and_runtime_controls() -> Resu
     }
     Ok(())
 }
+
+#[test]
+fn awaited_predicate_identity_does_not_credit_discarded_or_overwritten_results()
+-> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_async_fn_owner");
+    let source =
+        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
+    let original = "let result = fetch_limit(100, 50).await;\n        assert_eq!(result, 90);";
+    assert!(source.contains(original));
+    for (body, exposed) in [
+        (
+            "let result = fetch_limit(50, 50).await; assert_eq!(result, 50);",
+            true,
+        ),
+        (
+            "let input=50; assert_eq!(input,50); let result=fetch_limit(50,50).await; assert_eq!(result,50);",
+            true,
+        ),
+        (
+            "let result=fetch_limit(50,50).await; assert_eq!(result,50); let input=50; assert_eq!(input,50);",
+            true,
+        ),
+        (
+            "let _=fetch_limit(50,50).await; let result=50; assert_eq!(result,50);",
+            false,
+        ),
+        (
+            "let mut result=fetch_limit(50,50).await; result=50; assert_eq!(result,50);",
+            false,
+        ),
+        (
+            "let result={ let _=fetch_limit(50,50).await; 50 }; assert_eq!(result,50);",
+            false,
+        ),
+    ] {
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
+        std::fs::copy(
+            fixture.join("input/Cargo.toml"),
+            scratch.0.join("Cargo.toml"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(scratch.0.join("src/lib.rs"), source.replace(original, body))
+            .map_err(|e| e.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(report.findings.len(), 1, "nonempty async predicate subject");
+        assert_eq!(
+            report.findings[0].class == ExposureClass::Exposed,
+            exposed,
+            "{body}: {:?}",
+            report.findings[0]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn exact_error_kind_projection_keeps_its_own_result_identity() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/error_path_oracle_execution_direct");
+    let source =
+        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
+    let original = "assert_eq!(read_all(rdr).unwrap_err().kind(), io::ErrorKind::Other);";
+    assert!(source.contains(original));
+    for (body, exposed) in [
+        (format!("let input=32; assert_eq!(input,32); {original}"), true),
+        (format!("{original} let input=32; assert_eq!(input,32);"), true),
+        ("let _=read_all(BrokenReader); assert_eq!(other(rdr).unwrap_err().kind(), io::ErrorKind::Other);".to_string(), false),
+        ("assert_eq!(other(rdr).unwrap_err().kind(), io::ErrorKind::Other); let _=read_all(BrokenReader);".to_string(), false),
+    ] {
+        let scratch=Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
+        std::fs::copy(fixture.join("input/Cargo.toml"),scratch.0.join("Cargo.toml")).map_err(|e| e.to_string())?;
+        let helper="\nfn other<R: Read>(_: R) -> io::Result<usize> { Err(io::Error::other(\"other\")) }\n";
+        std::fs::write(scratch.0.join("src/lib.rs"),format!("{}{helper}",source.replace(original,&body))).map_err(|e| e.to_string())?;
+        let report=check_workspace(CheckInput { root:scratch.0.clone(), diff_file:Some(fixture.join("diff.patch")), mode:Mode::Fast, include_unchanged_tests:true, ..CheckInput::default() })?;
+        let subjects:Vec<_>=report.findings.iter().filter(|f|f.probe.family==ProbeFamily::ErrorPath).collect();
+        assert_eq!(subjects.len(),1,"nonempty error projection subject");
+        assert_eq!(subjects[0].class==ExposureClass::Exposed,exposed,"{body}: {:?}",subjects[0]);
+    }
+    Ok(())
+}

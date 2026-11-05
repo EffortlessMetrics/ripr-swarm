@@ -2894,7 +2894,7 @@ fn analyze_related_assertions(
                 && (return_admission.effect_observer_identity)(test, assertion);
             let value_receiver_read = matches!(
                 probe.family,
-                ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+                ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction | ProbeFamily::Predicate
             ) && *reason == RelationReason::DirectOwnerCall
                 && !import_defeats_owner
                 && !cross_package_defeats_owner
@@ -3160,9 +3160,16 @@ fn analyze_related_assertions(
                     && !match_context.owner_shadowed
                     && match_context.owner_callee.is_some_and(|owner| {
                         assertion_comparison_operands(&assertion.text).is_some_and(|operands| {
-                            operands
-                                .iter()
-                                .any(|operand| is_whole_owner_call(operand.trim(), owner))
+                            operands.iter().any(|operand| {
+                                is_whole_owner_call(operand.trim(), owner)
+                                    || (matches!(probe.family, ProbeFamily::ErrorPath)
+                                        && operand
+                                            .trim()
+                                            .strip_suffix(".unwrap_err().kind()")
+                                            .is_some_and(|call| {
+                                                is_whole_owner_call(call.trim(), owner)
+                                            }))
+                            })
                         }) || crate::analysis::extract::assertion_observed_operand(&assertion.text)
                             .is_some_and(|operand| is_whole_owner_call(operand.trim(), owner))
                     });

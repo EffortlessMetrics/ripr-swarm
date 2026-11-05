@@ -744,6 +744,18 @@ impl ClassifiedProbeEvidence {
         let owner_return_pin = context
             .owner_fn
             .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+        let async_result_identity = context
+            .workspace_complete
+            .then(|| {
+                context.owner_fn.and_then(|owner| {
+                    OwnerReturnPin::establish_async_result_identity(
+                        context.probe,
+                        owner,
+                        context.index,
+                    )
+                })
+            })
+            .flatten();
         // RIPR-SPEC-0229: which owner-call input selects a changed arm.
         // A same-named function elsewhere (a trait method on another enum
         // with the same variant names) makes a direct call ambiguous; a
@@ -1272,6 +1284,24 @@ impl ClassifiedProbeEvidence {
                                             context.index,
                                         )
                                     }))
+                            })
+                        } else if matches!(context.probe.family, ProbeFamily::Predicate) {
+                            async_result_identity.as_ref().is_some_and(|pin| {
+                                pin.admits(
+                                    test,
+                                    assertion,
+                                    context.index,
+                                    &|file, name| {
+                                        context.index.files().get(file).is_none_or(|facts| {
+                                            context.test_file_imports_foreign_callee_name(
+                                                file,
+                                                &facts.source,
+                                                name,
+                                            )
+                                        })
+                                    },
+                                    pin_syntax,
+                                )
                             })
                         } else {
                             crate::analysis::classify::builder_override::owner_field_read_identity(

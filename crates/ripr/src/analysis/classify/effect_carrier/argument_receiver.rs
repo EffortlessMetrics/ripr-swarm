@@ -375,7 +375,7 @@ impl ArgumentReceiver {
         assertion: &OracleFact,
         syntax: &OwnerPinSyntax,
     ) -> Option<()> {
-        if !syntax.admits(test, assertion, index) {
+        if !syntax.admits_effect_assertion(test, assertion, index) {
             return None;
         }
         let operands = assertion_comparison_operands(&assertion.text)?;

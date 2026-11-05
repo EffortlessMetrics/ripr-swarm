@@ -274,7 +274,8 @@ fn check_case(
             assert!(
                 finding["ripr"]["discriminate"]["summary"]
                     .as_str()
-                    .is_some_and(|summary| summary.contains("same_test_pairing_missing")),
+                    .is_some_and(|summary| summary.contains("same_test_pairing_missing")
+                        || summary.contains("identity_unresolved")),
                 "{case}"
             );
         }
