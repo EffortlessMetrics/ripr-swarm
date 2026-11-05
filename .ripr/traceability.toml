@@ -19673,6 +19673,14 @@ id = "RIPR-SPEC-0240"
 name = "Unknown, not a gap"
 spec = "docs/specs/RIPR-SPEC-0240-unknown-not-a-gap.md"
 tests = [
+  "crates/ripr/tests/typescript_read_budget.rs::a_capped_test_file_withholds_no_static_path",
+  "crates/ripr/tests/typescript_read_budget.rs::an_exhausted_workspace_budget_withholds_no_static_path",
+  "crates/ripr/tests/typescript_read_budget.rs::enough_budget_reads_the_test_and_retains_its_boundary_witness",
+  "crates/ripr/tests/typescript_read_budget.rs::a_finished_read_without_tests_keeps_no_static_path",
+  "crates/ripr/tests/typescript_read_budget.rs::an_observed_test_keeps_its_finding_beside_unread_sources",
+  "crates/ripr/tests/typescript_read_budget.rs::a_refused_changed_source_does_not_invent_a_finding",
+  "crates/ripr/src/analysis/classify/gap_admission.rs::tests::a_read_limit_withholds_only_untyped_no_path_findings",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_typescript_workspace_read_limit",
   "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_literal_pin_reads_helper_data",
   "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_credit_requires_readable_carried_data",
   "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_projection_edit_needs_distinct_literal_totals",
@@ -19853,6 +19861,10 @@ fixtures = [
   "fixtures/gap_kept_ignored_test",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/mod.rs",
+  "crates/ripr/src/analysis/language/typescript/actionability.rs",
+  "crates/ripr-contract/src/domain/language.rs",
+  "crates/ripr-contract/src/domain/limit_guidance.rs",
   "crates/ripr/src/analysis/classify/owner_pin/fixture_receiver.rs",
   "crates/ripr/src/analysis/classify/owner_pin/fixture_receiver/dispatch.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",

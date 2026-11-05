@@ -52,9 +52,11 @@ The [retained trials](#evidence-and-compatibility) used Muse Code **1.4.14**
 and a pinned **RIPR 0.11.0** development build. RIPR **0.10.0** failed with
 `unknown command "mcp"`. Check the command and tool discovery as well as the
 version: a version number alone does not establish the required capabilities.
-If the command is absent, install an
-MCP-capable build through your normal installation route, then restart Muse
-with that binary on its `PATH`.
+If the command is absent, follow the
+[development-build installation instructions](../../../docs/QUICKSTART.md#development-build),
+then repeat the capability check and restart Muse with that binary on its
+`PATH`. Those instructions distinguish development builds from the published
+release and cover the Rust toolchain prerequisite.
 
 Use a checkout containing `plugins/muse/ripr`. Replace the package path below
 with its absolute path; this is the plugin's source directory, which can be
