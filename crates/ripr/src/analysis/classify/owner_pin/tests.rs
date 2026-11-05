@@ -2230,6 +2230,115 @@ fn an_early_some_or_ok_return_is_pinned_beside_opposite_exits() {
 }
 
 #[test]
+fn a_scalar_early_return_beside_distinct_literal_exits_is_pinned() {
+    // #13037 Defect A: `return 100;` beside a distinct literal tail is the
+    // owner's only source of `100`, so an exact pin on `100` observes the
+    // changed exit; the sibling exits would return their own literals and
+    // fail the pin.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    5\n}",
+            "return 100;"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "100"
+    ));
+    // The mirror holds for the tail: `5` beside distinct literal returns.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    5\n}",
+            "5"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "5"
+    ));
+    // Several distinct literal siblings still admit each exit.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    if x > 3 {\n        return 7;\n    }\n    5\n}",
+            "return 100;"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "100"
+    ));
+    // A single-digit early return (`return 0;` zero-fee shape) credits too.
+    assert!(matches!(
+        gate(
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 0;\n    }\n    5\n}",
+            "return 0;"
+        ),
+        Some(ReturnPathGate::EarlyScalar { literal }) if literal == "0"
+    ));
+    for (body, changed) in [
+        // A second `return 100;` is a second source of `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    if x > 3 {\n        return 100;\n    }\n    5\n}",
+            "return 100;",
+        ),
+        // A computed sibling exit may alias `100` for an unread input.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    if x > 3 {\n        return x * 2;\n    }\n    5\n}",
+            "return 100;",
+        ),
+        // A parameter sibling exit may alias `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    passthrough(100)\n}",
+            "return 100;",
+        ),
+        // A tail of the same literal is a second source of `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    100\n}",
+            "return 100;",
+        ),
+        // A parameter tail may alias `100`.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    x\n}",
+            "return 100;",
+        ),
+        // A `?` builds an opaque early exit the spelling read cannot bound.
+        (
+            "fn fee(x: u64) -> u64 {\n    let y = g(x)?;\n    if y == 0 {\n        return 100;\n    }\n    5\n}",
+            "return 100;",
+        ),
+        // A `return` inside a nested closure does not leave this function.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 100;\n    }\n    let f = || {\n        return 7;\n    };\n    5\n}",
+            "return 100;",
+        ),
+        // Non-literal changed exits keep their existing gates or none.
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return x * 2;\n    }\n    5\n}",
+            "return x * 2;",
+        ),
+    ] {
+        let at = body.find(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
+    // The tail direction stays fail-closed on the same shapes: a sibling
+    // return of the tail's own literal, a computed sibling, or a `?`.
+    for (body, changed) in [
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return 5;\n    }\n    5\n}",
+            "5",
+        ),
+        (
+            "fn fee(x: u64) -> u64 {\n    if x == 0 {\n        return x * 2;\n    }\n    5\n}",
+            "5",
+        ),
+        (
+            "fn fee(x: u64) -> u64 {\n    let y = g(x)?;\n    if y == 0 {\n        return 100;\n    }\n    5\n}",
+            "5",
+        ),
+    ] {
+        let at = body.rfind(changed).unwrap_or(0);
+        assert!(
+            return_path_gate(body, changed, body[..at].matches('\n').count()).is_none(),
+            "{body}"
+        );
+    }
+}
+
+#[test]
 fn return_path_gate_needs_the_changed_tail_on_the_pinned_path() {
     // No early exit: any pinned value came through the changed tail.
     assert!(matches!(

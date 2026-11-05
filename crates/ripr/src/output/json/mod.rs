@@ -3,6 +3,7 @@ mod finding_alignment;
 mod findings_priority;
 mod formatter;
 mod report;
+mod terse;
 
 pub(crate) use context_packet::CONTEXT_PACKET_VERSION_CONTRACT;
 pub use context_packet::render_context_packet;
@@ -19,6 +20,7 @@ pub(crate) use report::{
     CHECK_FINDINGS_BYTES_ENV, FINDINGS_BOUND_RUN_STATUS, check_findings_byte_budget,
     render_with_config,
 };
+pub(crate) use terse::render_terse;
 
 pub(crate) use formatter::{array_field, escape, escape_into, field, float_field, number_field};
 

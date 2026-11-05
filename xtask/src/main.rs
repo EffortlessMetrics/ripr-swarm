@@ -45,6 +45,7 @@ mod fixture_contracts;
 mod generation_pins;
 mod kani_lane;
 mod public_proof;
+mod publish_rehearsal;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 mod current_state;
@@ -1800,7 +1801,7 @@ fn ci_full() -> Result<(), String> {
     check_pr()?;
     run_ci_full_evidence_gates(&ci_full_evidence_gates())?;
     run("cargo", &["package", "-p", "ripr", "--list"])?;
-    run("cargo", &["publish", "-p", "ripr", "--dry-run"]).map(|_| ())
+    publish_rehearsal::run()
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -19562,7 +19563,7 @@ const PROOF_PACK_RELEASE_REQUIRED_COMMANDS: &[&str] = &[
     "cargo clippy --workspace --all-targets -- -D warnings",
     "cargo xtask check-pr",
     "cargo package -p ripr --list",
-    "cargo publish -p ripr --dry-run",
+    "cargo xtask publish-dry-run",
     "cargo xtask release-readiness",
 ];
 
@@ -19578,7 +19579,7 @@ const PROOF_PACK_KNOWN_REPO_COMMANDS: &[&str] = &[
     "cargo clippy --workspace --all-targets -- -D warnings",
     "cargo doc --workspace --no-deps",
     "cargo package -p ripr --list",
-    "cargo publish -p ripr --dry-run",
+    "cargo xtask publish-dry-run",
 ];
 
 fn check_proof_packs_impl() -> Result<(), String> {
