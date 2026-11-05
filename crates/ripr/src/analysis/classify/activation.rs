@@ -4314,19 +4314,7 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
     // #11870: a non-public field is read only by a test that can name it.
     let mut reach = None;
     let mut weak = false;
-    // The related tests, plus every test that may run the owner another way
-    // the relation machinery does not place (an alias, a loop, a closure, a
-    // helper): each must itself be a placed weak read.
-    let mut every: Vec<&TestSummary> = tests.to_vec();
-    for found in super::field_reach::tests_that_may_run_owner(owner, index) {
-        if !every
-            .iter()
-            .any(|known| known.file == found.file && known.start_line == found.start_line)
-        {
-            every.push(found);
-        }
-    }
-    for test in every {
+    for test in tests {
         // Every test that runs the owner must itself be a placed weak read:
         // a test that reaches the owner another way (a helper, a loop, an
         // alias), or that reads the write through a getter, `Display`, a
@@ -4383,6 +4371,23 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
             return false;
         }
         weak = true;
+    }
+    // No other mention of the owner's name anywhere in the index (another
+    // test, a helper, a `macro_rules!` body, a doctest, production code, an
+    // alias path, a method value, a turbofish call) than in the placed weak
+    // reads: such a mention may be a runner that observes the write exactly,
+    // which no relation or per-test rule places. A name shared with another
+    // type only over-withholds.
+    let mut placed: Vec<(&std::path::Path, usize)> = Vec::new();
+    let mut in_placed = 0;
+    for test in tests {
+        if !placed.contains(&(test.file.as_path(), test.start_line)) {
+            placed.push((test.file.as_path(), test.start_line));
+            in_placed += super::field_reach::mentions_in(test.body.as_ref(), &owner.name);
+        }
+    }
+    if weak && super::field_reach::owner_name_mentions(index, &owner.name) != in_placed {
+        return false;
     }
     // The type walk is the costly check, so it runs last, only for a start
     // every cheaper rule allowed. The test's binding is the impl's `Self`

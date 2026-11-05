@@ -61,7 +61,7 @@ fn repo(
     repo_with_src_files(label, base, changed, test, feature_branch, &[])
 }
 
-/// [`repo`] plus extra files under `src/` (`(name, text)`), present in both
+/// [`repo`] plus extra files (`(path under the root, text)`), present in both
 /// commits.
 fn repo_with_src_files(
     label: &str,
@@ -85,7 +85,7 @@ fn repo_with_src_files(
     std::fs::write(root.join("src/lib.rs"), base).map_err(|e| e.to_string())?;
     std::fs::write(root.join("tests/t.rs"), test).map_err(|e| e.to_string())?;
     for (name, text) in src_files {
-        std::fs::write(root.join("src").join(name), text).map_err(|e| e.to_string())?;
+        std::fs::write(root.join(name), text).map_err(|e| e.to_string())?;
     }
     git(&root, &["init", "-q"])?;
     git(&root, &["config", "core.autocrlf", "false"])?;
@@ -758,7 +758,7 @@ fn a_weak_read_of_a_private_or_crate_field_starts_only_where_the_test_can_name_i
         &new,
         "",
         true,
-        &[("tests.rs", tests_mod)],
+        &[("src/tests.rs", tests_mod)],
     )?;
     if check_start_id(&private_child.root)?.is_some() {
         return Err("a private field read from a child module file must start nothing".to_string());
@@ -770,7 +770,7 @@ fn a_weak_read_of_a_private_or_crate_field_starts_only_where_the_test_can_name_i
         &new,
         "",
         true,
-        &[("tests.rs", tests_mod)],
+        &[("src/tests.rs", tests_mod)],
     )?;
     // The field is nameable there, but a child module file is no test surface
     // repair may edit, so check offers no start either.
@@ -880,7 +880,7 @@ fn a_second_test_that_observes_the_write_another_way_withholds_the_start() -> Re
 /// (inline tests) and a plain `pub` field (`tests/`) alike.
 #[test]
 fn every_test_that_runs_the_owner_must_be_a_placed_weak_read() -> Result<(), String> {
-    let extras = "\nimpl Counter {\n    pub fn value(&self) -> u32 {\n        self.count\n    }\n}\n\nimpl std::fmt::Display for Counter {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        write!(f, \"{}\", self.count)\n    }\n}\n";
+    let extras = "\nimpl Counter {\n    pub fn value(&self) -> u32 {\n        self.count\n    }\n}\n\nimpl std::fmt::Display for Counter {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        write!(f, \"{}\", self.count)\n    }\n}\n\npub fn make() -> Counter {\n    Counter::new()\n}\n";
     let weak = "#[test]\nfn a() {\n    let mut c = Counter::new();\n    c.bump();\n    assert!(c.count > 0);\n}\n";
     // (label, helper items, second test signature, second test body)
     let cases: [(&str, &str, &str, &str); 7] = [
@@ -961,6 +961,62 @@ fn every_test_that_runs_the_owner_must_be_a_placed_weak_read() -> Result<(), Str
             }
             ripr(&repo_case.root, &["repair"])?;
             if attempts(&repo_case.root) != 0 {
+                escapes.push(format!("{name}: repair started an attempt"));
+            }
+        }
+        // Runners in another file, found only by the owner's name.
+        let other_files: [(&str, &str); 6] = [
+            (
+                "ufcs",
+                "use fx::Counter as C;\n\n#[test]\nfn b() {\n    let mut c = C::new();\n    C::bump(&mut c);\n    assert_eq!(c.value(), 2);\n}\n",
+            ),
+            (
+                "inferred",
+                "#[test]\nfn b() {\n    let mut c = fx::make();\n    c.bump();\n    assert_eq!(c.value(), 2);\n}\n",
+            ),
+            (
+                "turbofish",
+                "#[test]\nfn b() {\n    let mut c = fx::make();\n    c.bump::<u8>();\n    assert_eq!(c.value(), 2);\n}\n",
+            ),
+            (
+                "foreach",
+                "use fx::Counter;\n\n#[test]\nfn b() {\n    let mut v = vec![Counter::new()];\n    v.iter_mut().for_each(Counter::bump);\n    assert_eq!(v[0].value(), 2);\n}\n",
+            ),
+            (
+                "chain",
+                "use fx::Counter;\n\nfn h1(c: &mut Counter) {\n    h2(c)\n}\nfn h2(c: &mut Counter) {\n    h3(c)\n}\nfn h3(c: &mut Counter) {\n    h4(c)\n}\nfn h4(c: &mut Counter) {\n    c.bump()\n}\n\n#[test]\nfn b() {\n    let mut c = Counter::new();\n    h1(&mut c);\n    assert_eq!(c.to_string(), \"2\");\n}\n",
+            ),
+            (
+                "macro",
+                "use fx::Counter;\n\nmacro_rules! go {\n    ($c:expr) => {\n        $c.bump()\n    };\n}\n\n#[test]\nfn b() {\n    let mut c = Counter::new();\n    go!(c);\n    assert_eq!(c.value(), 2);\n}\n",
+            ),
+        ];
+        for (label, other) in other_files {
+            let name = format!("every{visibility}file{label}");
+            let case = if visibility == "priv" {
+                let wrap = |lib: &str| {
+                    format!(
+                        "{lib}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    {}}}\n",
+                        indent(weak)
+                    )
+                };
+                repo_with_src_files(
+                    &name,
+                    &wrap(&base),
+                    &wrap(&new),
+                    "",
+                    true,
+                    &[("tests/b.rs", other)],
+                )?
+            } else {
+                let test = format!("use fx::Counter;\n\n{weak}");
+                repo_with_src_files(&name, &base, &new, &test, true, &[("tests/b.rs", other)])?
+            };
+            if check_start_id(&case.root)?.is_some() {
+                escapes.push(format!("{name}: check offered a start"));
+            }
+            ripr(&case.root, &["repair"])?;
+            if attempts(&case.root) != 0 {
                 escapes.push(format!("{name}: repair started an attempt"));
             }
         }

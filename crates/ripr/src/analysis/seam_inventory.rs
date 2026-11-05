@@ -4188,10 +4188,13 @@ fn match_arm_source_ranges(
     }
 }
 
-/// Admits a non-public written field's seam (#11870) only when a related
-/// test can name the field and reads it weakly: the seam's evidence then
-/// satisfies the start policy over the tests that call its owner directly.
-/// Any other write of a private or `pub(crate)` field stays ungraded, since
+/// The most owner-name mentions the placed weak reads of one seam may hold: a
+/// dozen related tests, a few mentions each.
+const MAX_PLACED_OWNER_MENTIONS: usize = 36;
+
+/// Admits a non-public written field's seam (#11870) only when the owner's
+/// file declares the field, a relational assertion names it, and the seam's own
+/// evidence carries the weak-read start fact. Any other write of a private or `pub(crate)` field stays ungraded, since
 /// its tests observe it through a getter or `Display` and a missing direct
 /// read is no gap. Every other seam is admitted. The evidence pass later
 /// grades an admitted seam over its ranked related tests, as for any seam.
@@ -4289,16 +4292,12 @@ impl<'a> FieldSeamAdmission<'a> {
         // Cheap necessary conditions first; the exact start (the seam's own
         // evidence over every test that runs the owner) decides last, so an
         // admitted seam always carries the start fact and admission is never
-        // looser than the start.
+        // looser than the start. A name mentioned more often than a handful of
+        // placed tests could account for cannot start (one index lookup).
         if !(self.field_declared(seam.file(), source, owner, field)
             && self.some_test_reads_weakly(field)
-            && crate::analysis::classify::assigned_field_weak_read_start(
-                owner,
-                seam.expression(),
-                field,
-                &[],
-                self.index,
-            ))
+            && crate::analysis::classify::owner_name_mentions(self.index, &owner.name)
+                <= MAX_PLACED_OWNER_MENTIONS)
         {
             return Ok(false);
         }
@@ -5707,6 +5706,62 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
         let twin =
             format!("mod other {{\n    pub struct C {{\n        count: u32,\n    }}\n}}\n{here}");
         assert!(written_field_seam_files(&[("src/counter.rs", &twin)])?.is_empty());
+        Ok(())
+    }
+
+    /// #11870: the start withholds when the owner's name is mentioned anywhere
+    /// but in the placed weak read; a sibling test that does not mention it
+    /// does not.
+    #[test]
+    fn any_other_mention_of_the_owner_name_withholds_a_private_field_seam() -> Result<(), String> {
+        let head = "pub struct C {\n    count: u32,\n}\n\nimpl C {\n    pub fn new() -> Self {\n        C { count: 0 }\n    }\n\n    pub fn bump(&mut self) {\n        self.count = 2;\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn a() {\n        let mut c = C::new();\n        c.bump();\n        assert!(c.count > 0);\n    }\n";
+        let with = |extra: &str| format!("{head}{extra}}}\n");
+        let seams = |lib: &str, others: &[(&str, &str)]| -> Result<usize, String> {
+            let mut files = vec![("src/counter.rs", lib)];
+            files.extend_from_slice(others);
+            Ok(written_field_seam_files(&files)?.len())
+        };
+        // The placed weak read alone, and beside a sibling test that never
+        // names the owner, starts.
+        assert_eq!(seams(&with(""), &[])?, 1);
+        assert_eq!(
+            seams(
+                &with("\n    #[test]\n    fn sibling() {\n        assert_eq!(1 + 1, 2);\n    }\n"),
+                &[]
+            )?,
+            1
+        );
+        // Another test that names the owner withholds: ignored, should_panic,
+        // a plain second test, a method value, a turbofish.
+        for extra in [
+            "\n    #[test]\n    #[ignore]\n    fn b() {\n        let mut c = C::new();\n        c.bump();\n    }\n",
+            "\n    #[test]\n    #[should_panic]\n    fn b() {\n        let mut c = C::new();\n        c.bump();\n    }\n",
+            "\n    #[test]\n    fn b() {\n        let mut c = C::new();\n        c.bump();\n        assert_eq!(c.count, 2);\n    }\n",
+            "\n    #[test]\n    fn b() {\n        let mut v = vec![C::new()];\n        v.iter_mut().for_each(C::bump);\n    }\n",
+            "\n    #[test]\n    fn b() {\n        let mut c = C::new();\n        c.bump::<u8>();\n    }\n",
+        ] {
+            assert_eq!(seams(&with(extra), &[])?, 0, "{extra}");
+        }
+        // Another file, and a name collision with an unrelated type, withhold.
+        assert_eq!(
+            seams(
+                &with(""),
+                &[("src/other.rs", "pub fn go(d: &mut D) {\n    d.bump();\n}\n")]
+            )?,
+            0
+        );
+        assert_eq!(
+            seams(
+                &with(""),
+                &[("src/other.rs", "// calls bump( somewhere\npub fn go() {}\n")]
+            )?,
+            0
+        );
+        // A `fn bump` definition elsewhere is no mention.
+        assert_eq!(
+            seams(&with(""), &[("src/other.rs", "pub fn bump() {}\n")])?,
+            1
+        );
         Ok(())
     }
 

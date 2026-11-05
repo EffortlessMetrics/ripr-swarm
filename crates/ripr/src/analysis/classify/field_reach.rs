@@ -127,67 +127,63 @@ pub(in crate::analysis) fn declared_field_reach(
     FieldTable::parse(&facts.source)?.reach(&owner.impl_context, field)
 }
 
-/// Whether `masked` (comments and strings masked) calls `name` as a bare,
-/// method or path call: `name(` not continuing a longer identifier.
-fn mentions_call(masked: &str, name: &str) -> bool {
-    let call = format!("{name}(");
-    masked.match_indices(&call).any(|(at, _)| {
-        !masked[..at]
-            .chars()
-            .next_back()
-            .is_some_and(|before| before.is_alphanumeric() || before == '_')
-    })
-}
-
-/// Every test, in any file, that may run `owner`: it calls the owner's name on
-/// the owner's type (the test sits in the owner's file or names the type), or
-/// calls a function that does, up to three hops. This is a structural
-/// over-approximation of the relations the finding is graded over: a test the
-/// relation machinery misses (an aliased, iterated or closure receiver, a
-/// helper) is still found, and the start withholds unless it too is a placed
-/// weak read.
-pub(in crate::analysis) fn tests_that_may_run_owner<'a>(
-    owner: &FunctionSummary,
-    index: &'a RustIndex,
-) -> Vec<&'a crate::analysis::rust_index::TestSummary> {
-    let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
-        return Vec::new();
-    };
-    let type_name = self_type.split('<').next().unwrap_or(self_type).trim();
-    let mask = |text: &str| crate::analysis::extract::mask_comments_and_strings(text);
-    let mut names: Vec<String> = Vec::new();
-    // Functions that call the owner, then functions that call those.
-    let mut callers: Vec<(String, String)> = Vec::new();
-    for function in index.functions().iter() {
-        if function.id == owner.id {
+/// Calls `visit` with every identifier of `text` and whether the previous
+/// identifier was `fn` (a definition, not a mention).
+fn for_each_identifier(text: &str, mut visit: impl FnMut(&str, bool)) {
+    let mut previous_is_fn = false;
+    let mut chars = text.char_indices().peekable();
+    while let Some((start, ch)) = chars.next() {
+        if !(ch.is_alphabetic() || ch == '_') {
             continue;
         }
-        callers.push((function.name.clone(), mask(function.body.as_ref())));
-    }
-    let mut called = vec![owner.name.clone()];
-    for _ in 0..3 {
-        let mut next: Vec<String> = Vec::new();
-        for (name, body) in &callers {
-            if !names.contains(name) && called.iter().any(|callee| mentions_call(body, callee)) {
-                names.push(name.clone());
-                next.push(name.clone());
+        let mut end = start + ch.len_utf8();
+        while let Some(&(at, next)) = chars.peek() {
+            if next.is_alphanumeric() || next == '_' {
+                end = at + next.len_utf8();
+                chars.next();
+            } else {
+                break;
             }
         }
-        if next.is_empty() {
-            break;
-        }
-        called = next;
+        let word = &text[start..end];
+        visit(word, previous_is_fn);
+        previous_is_fn = word == "fn";
     }
+}
+
+/// How many times `name` appears in the raw text of every indexed file,
+/// outside a `fn <name>` definition. Raw, not masked: a comment, string,
+/// doctest, `macro_rules!` body or non-function item that mentions the name
+/// counts, so a runner no relation machinery places still shows here.
+pub(in crate::analysis) fn owner_name_mentions(index: &RustIndex, name: &str) -> usize {
     index
-        .tests()
-        .iter()
-        .filter(|test| {
-            let body = mask(test.body.as_ref());
-            (mentions_call(&body, &owner.name)
-                && (test.file == owner.file || body.contains(type_name)))
-                || names.iter().any(|helper| mentions_call(&body, helper))
+        .call_identity_memos
+        .identifier_mentions(|| {
+            let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+            for (_, facts) in index.files().iter() {
+                for_each_identifier(&facts.source, |word, definition| {
+                    if !definition {
+                        *counts.entry(word.to_string()).or_insert(0) += 1;
+                    }
+                });
+            }
+            counts
         })
-        .collect()
+        .get(name)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// How many times `name` appears in `text`, a `fn <name>` definition not
+/// counted (the same reading as [`owner_name_mentions`]).
+pub(in crate::analysis) fn mentions_in(text: &str, name: &str) -> usize {
+    let mut count = 0;
+    for_each_identifier(text, |word, definition| {
+        if word == name && !definition {
+            count += 1;
+        }
+    });
+    count
 }
 
 /// Whether a test in `test_file` can spell a read of a field of `reach`

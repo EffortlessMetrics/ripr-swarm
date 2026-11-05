@@ -317,15 +317,18 @@ rejected alternative. Any can be reversed later without touching the rest.
    the exact check these rules do not place: no other statement, assertion or
    not, names the field or uses the binding except as the owner call or its
    `let` (an alias, a helper call, a destructure, a move, an `if`/`panic!`
-   check withholds); every test that may run the owner is itself a placed weak
-   read: the related tests that establish reach, plus every test in the index
-   that calls the owner's name on its type (it sits in the owner's file or
-   names the type) or calls a function that does, up to three hops. A test
-   among them that is not a direct caller with a placed weak read (an observer
-   through a getter, `Display` or `Debug`, an assertion held in a helper, an
-   `if`/`panic!` or `Err` check, an aliased, iterated or closure receiver, a
-   call through a helper, a test with no assertion) withholds. Tests that only
-   share a file or a name with the owner are not among them; the owner's `Self` type is also not a non-plain `Drop`
+   check withholds); every related test that establishes reach is itself a placed weak
+   read (a direct caller; an observer through a getter, `Display` or `Debug`,
+   a helper-held assertion, an `if`/`panic!` or `Err` check, an aliased,
+   iterated or closure receiver, a call through a helper or a test with no
+   assertion withholds), and the owner's name is mentioned nowhere else in the
+   index: the identifier occurs, outside a `fn <name>` definition, exactly as
+   often in the raw text of every indexed file as in the placed weak-read test
+   bodies. Another test or helper in any file, a `macro_rules!` body, a
+   doctest, an alias path (`C::bump`), a method value (`for_each(C::bump)`), a
+   turbofish call, an ignored or `should_panic` test, or production code that
+   mentions the name withholds; a name shared with another type only
+   over-withholds. This also tightens the plain `pub` field start; the owner's `Self` type is also not a non-plain `Drop`
    type. A strong read stays "nothing to do"; no read, a
    sibling field, another binding, a later write, a by-value owner, an
    equality, a bare boolean, a getter and a private field start nothing.
@@ -493,8 +496,12 @@ changes `self.count += 2` to `self.count += 1`.
   the owner withholds, for private and plain `pub` fields),
   `every_test_that_runs_the_owner_must_be_a_placed_weak_read` (a helper-held
   assertion, an `if`/`panic!` or `Err` check, an aliased, iterated or closure
-  receiver and a non-direct call through a helper each withhold, for private
-  and plain `pub` fields), and `seam_inventory.rs`
+  receiver, a non-direct call through a helper, an alias UFCS path, an
+  inferred-type runner, a turbofish call, a method value, a four-hop helper
+  chain and a `macro_rules!` body each withhold, for private and plain `pub`
+  fields), and `seam_inventory.rs`
+  `any_other_mention_of_the_owner_name_withholds_a_private_field_seam`, `field_reach/tests.rs`
+  `mentions_count_every_use_of_the_name_but_not_its_definition` and
   `a_cancelled_inventory_reports_the_cancellation_from_field_admission`.
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.
 - Probe boundary (#6676, #6675): `lexical.rs`

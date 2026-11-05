@@ -95,3 +95,11 @@ fn a_test_names_a_field_only_where_its_visibility_reaches() {
         other_module
     ));
 }
+
+#[test]
+fn mentions_count_every_use_of_the_name_but_not_its_definition() {
+    let text = "fn bump(&mut self) {}\nfn t() {\n    c.bump();\n    C::bump(&mut c);\n    v.for_each(C::bump);\n    c.bump::<u8>();\n    let bumper = 1;\n}\n";
+    assert_eq!(mentions_in(text, "bump"), 4);
+    assert_eq!(mentions_in(text, "bumper"), 1);
+    assert_eq!(mentions_in(text, "missing"), 0);
+}
