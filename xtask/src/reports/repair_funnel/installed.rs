@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Component, Path};
 const MANIFEST_SCHEMA: &str = "retained_installed_ordinary_manifest.v1";
 const SELECTOR: &str =
@@ -66,6 +67,34 @@ fn relative(path: &str) -> bool {
             .components()
             .all(|c| matches!(c, Component::Normal(_)))
 }
+fn read_limited(reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    require(
+        bytes.len() as u64 <= limit,
+        "retained input exceeds admitted byte budget",
+    )?;
+    Ok(bytes)
+}
+
+fn read_regular(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    // Refuse special files before open, then verify the opened object. Actual
+    // bytes read remain capped even if a regular file grows after metadata.
+    require(
+        fs::metadata(path).map_err(|e| e.to_string())?.is_file(),
+        "retained input must be a regular file",
+    )?;
+    let file = fs::File::open(path).map_err(|e| e.to_string())?;
+    require(
+        file.metadata().map_err(|e| e.to_string())?.is_file(),
+        "opened retained input is not a regular file",
+    )?;
+    read_limited(file, limit)
+}
+
 struct Receipts {
     bytes: BTreeMap<String, Vec<u8>>,
     hashes: BTreeMap<String, String>,
@@ -98,10 +127,11 @@ impl Receipts {
                 .canonicalize()
                 .map_err(|e| format!("{name}: {e}"))?;
             require(path.starts_with(&root), "receipt symlink escapes bundle")?;
-            let size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
-            total = total.checked_add(size).ok_or("receipt size overflow")?;
-            require(total <= 64 * 1024 * 1024, "receipt bundle exceeds 64 MiB")?;
-            let body = fs::read(path).map_err(|e| format!("{name}: {e}"))?;
+            let body = read_regular(&path, 64 * 1024 * 1024 - total)
+                .map_err(|e| format!("{name}: {e}"))?;
+            total = total
+                .checked_add(body.len() as u64)
+                .ok_or("receipt size overflow")?;
             require(
                 digest(&body) == *expected,
                 &format!("receipt digest mismatch: {name}"),
@@ -161,6 +191,13 @@ fn clean(result: &Value) -> bool {
     ]
     .iter()
     .all(|key| result.get(key).is_some_and(Value::is_null))
+        && result.get("spawn_error").is_none_or(Value::is_null)
+        && result
+            .get("native_exit_code")
+            .and_then(Value::as_i64)
+            .is_some_and(|code| {
+                result.get("native_success").and_then(Value::as_bool) == Some(code == 0)
+            })
 }
 
 fn one_finding(report: &Value) -> Result<&Value, String> {
@@ -177,8 +214,8 @@ fn one_finding(report: &Value) -> Result<&Value, String> {
         .and_then(Value::as_array)
         .ok_or("missing findings")?;
     require(
-        findings.len() == 1,
-        "ordinary producer requires exactly one finding",
+        findings.len() == 1 && report.pointer("/summary/probes") == Some(&json!(1)),
+        "ordinary producer requires exactly one analyzed probe and finding",
     )?;
     let finding = findings.first().ok_or("missing finding")?;
     let gap = object(finding, "canonical_gap")?;
@@ -530,7 +567,7 @@ fn project(receipts: &Receipts) -> Result<FunnelCaseRowV1, String> {
 }
 
 pub(super) fn report(path: &Path) -> Result<FirstHourRepairFunnelReportV1, String> {
-    let bytes = fs::read(path).map_err(|e| format!("read input manifest: {e}"))?;
+    let bytes = read_regular(path, 1024 * 1024).map_err(|e| format!("read input manifest: {e}"))?;
     report_bytes(path, &bytes)
 }
 
@@ -889,6 +926,80 @@ mod tests {
             &serde_json::to_vec(&value).map_err(|e| e.to_string())?,
         )?;
         assert_eq!(report.case_count, 1);
+        Ok(())
+    }
+    #[test]
+    fn repair_funnel_zero_analyzed_subject_cannot_claim_retained_improvement() -> Result<(), String>
+    {
+        let mut receipts = retained()?;
+        let mut after = receipts.json("journey/after.json")?;
+        after["summary"]["probes"] = json!(0);
+        repin_check(&mut receipts, "journey/after.json", 11, &after)?;
+        assert!(
+            project(&receipts).is_err(),
+            "zero analyzed subjects must not become verified improvement"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repair_funnel_conflicting_raw_native_status_cannot_claim_improvement() -> Result<(), String>
+    {
+        let mut receipts = retained()?;
+        let mut result = receipts.json("journey/command-010/result.json")?;
+        result["native_success"] = json!(false);
+        repin(&mut receipts, "journey/command-010/result.json", &result)?;
+        assert!(
+            project(&receipts).is_err(),
+            "contradictory native status must not become verified improvement"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repair_funnel_missing_native_status_and_overflow_are_refused() -> Result<(), String> {
+        let mut receipts = retained()?;
+        let mut native = receipts.json("journey/native-after.json")?;
+        native["native_exit_code"] = Value::Null;
+        repin(&mut receipts, "journey/native-after.json", &native)?;
+        let mut result = receipts.json("journey/command-010/result.json")?;
+        result["native_exit_code"] = Value::Null;
+        repin(&mut receipts, "journey/command-010/result.json", &result)?;
+        assert!(project(&receipts).is_err());
+        let mut receipts = retained()?;
+        let mut native = receipts.json("journey/native-after.json")?;
+        native["passed"] = json!(u64::MAX);
+        native["failed"] = json!(1);
+        repin(&mut receipts, "journey/native-after.json", &native)?;
+        assert!(project(&receipts).is_err());
+        Ok(())
+    }
+    #[test]
+    fn repair_funnel_read_budget_limits_consumption_and_aggregate_remainder() -> Result<(), String>
+    {
+        let mut input = std::io::Cursor::new(vec![0_u8; 64]);
+        assert!(read_limited(&mut input, 16).is_err());
+        assert_eq!(
+            input.position(),
+            17,
+            "oversize detection may read only the budget plus one byte"
+        );
+        let mut exact = std::io::Cursor::new(vec![0_u8; 16]);
+        assert_eq!(read_limited(&mut exact, 16)?.len(), 16);
+        let mut remainder = std::io::Cursor::new(vec![0_u8; 16]);
+        assert!(read_limited(&mut remainder, 0).is_err());
+        assert_eq!(remainder.position(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn repair_funnel_manifest_and_receipts_refuse_special_files() -> Result<(), String> {
+        assert!(read_regular(manifest_path().parent().ok_or("fixture parent")?, 16).is_err());
+        #[cfg(unix)]
+        if Path::new("/dev/zero").exists() {
+            assert!(report(Path::new("/dev/zero")).is_err());
+            assert!(read_regular(Path::new("/dev/zero"), 16).is_err());
+        }
         Ok(())
     }
 }

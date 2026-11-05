@@ -76,7 +76,11 @@ The input envelope is `retained_installed_ordinary_manifest.v1`, with exactly
 `files` mapping every consumed relative filename to its `sha256:<hex>` digest.
 Unknown envelope fields, traversal, escaping symlinks and digest disagreement
 refuse. Paths resolve relative to the manifest. A bundle is bounded to 1,024
-files / 64 MiB and the manifest to 1 MiB.
+files / 64 MiB and the manifest to 1 MiB. Both paths admit regular files and
+cap actual reads at the remaining byte budget plus one byte for overflow
+detection; metadata lengths cannot establish that limit. Native exit status and
+its recorded success flag must agree, and a retained static improvement requires
+a nonzero analyzed probe as well as its matching finding.
 
 The adapter understands the historical producer's explicit legacy field shape:
 wheel schema 2, check schema 0.2, admitted installed identity, invocation,

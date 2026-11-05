@@ -21619,6 +21619,20 @@ id = "RIPR-SPEC-0410"
 name = "First-hour repair funnel projection"
 spec = "docs/specs/RIPR-SPEC-0410-first-hour-repair-funnel-projection.md"
 tests = [
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_required_identity_fields_cannot_disappear_in_pairs",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_native_pass_without_static_movement_stays_limited",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_retained_installed_public_input_round_trip",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_rejects_manifest_digest_and_real_cohort_tampering",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_rejects_repinned_identity_and_raw_stream_tampering",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_retains_zero_failed_and_missing_native_without_credit",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_refuses_repinned_native_and_check_command_argv",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_conflicting_views_reject_missing_native",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_duplicate_channel_views_count_one_opportunity",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_zero_analyzed_subject_cannot_claim_retained_improvement",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_conflicting_raw_native_status_cannot_claim_improvement",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_missing_native_status_and_overflow_are_refused",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_read_budget_limits_consumption_and_aggregate_remainder",
+  "xtask/src/reports/repair_funnel/installed.rs::tests::repair_funnel_manifest_and_receipts_refuse_special_files",
   "xtask/src/reports/repair_funnel.rs::tests::repair_funnel_controls_corpus_projects_and_enforces_controls",
   "xtask/src/reports/repair_funnel.rs::tests::verified_improvement_requires_verification_and_movement",
   "xtask/src/reports/repair_funnel.rs::tests::verification_pass_alone_does_not_claim_improvement",
@@ -21628,6 +21642,7 @@ fixtures = [
   "fixtures/repair_funnel/controls/corpus.json",
 ]
 code = [
+  "xtask/src/reports/repair_funnel/installed.rs",
   "xtask/src/reports/repair_funnel.rs",
   "xtask/src/reports/dx_scoreboard.rs",
   "benchmarks/dx_scoreboard/scoreboards.toml",
