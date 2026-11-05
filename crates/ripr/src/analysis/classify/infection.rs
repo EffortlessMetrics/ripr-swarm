@@ -739,7 +739,14 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     // credit separation the literal reading cannot see. The `Unknown`
     // delegation only applies when related tests reach the owner
     // (`related_tests` non-empty): with no related tests the return-value
-    // summary stands, not the predicate one.
+    // summary stands, not the predicate one. The empty-input `Unknown`
+    // arm is further scoped to a related test that directly calls the
+    // owner (`test.calls` naming `owner`): a test linked only by a name
+    // token or an unexpanded macro invocation (for example `check_small!`
+    // mentioning `bulk`) does not delegate on that arm, and when the
+    // owner is unknown (`owner` is `None`) that arm does not delegate at
+    // all. The missing-discriminator and unresolved-boundary arms keep
+    // their prior scope.
     if let Some(mut predicate) = returned_comparison_view(probe) {
         predicate.family = ProbeFamily::Predicate;
         let evidence = infection_evidence_for_owner(
@@ -751,9 +758,14 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             owner_has_other_callers,
             assertion_macros_rebound,
         );
+        let directly_calls_owner = owner.is_some_and(|owner| {
+            related_tests
+                .iter()
+                .any(|test| test.calls.iter().any(|call| call.name == owner.name))
+        });
         if (evidence.state == StageState::Unknown
             && !related_tests.is_empty()
-            && (owner_input_values(activation).is_empty()
+            && ((owner_input_values(activation).is_empty() && directly_calls_owner)
                 || !activation.missing_discriminators.is_empty()
                 || unresolved_boundary.is_some()))
             || (matches!(evidence.state, StageState::Weak)
