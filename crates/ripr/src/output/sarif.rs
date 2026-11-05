@@ -93,7 +93,16 @@ fn parse_sarif_results_bytes(value: &str) -> Result<Option<usize>, String> {
     }
 }
 
-/// Keep the leading results that fit `budget` pretty-printed bytes (plus
+/// Byte size of one result as it will appear nested under
+/// `runs[].results` in the final pretty document: the standalone pretty
+/// rendering plus two spaces per nesting level (four levels) on every
+/// line after the first. Counting the final form keeps the budget a hard
+/// cap on rendered results bytes, not an undercount.
+fn nested_result_bytes(rendered: &str) -> usize {
+    rendered.len() + 8 * (rendered.matches('\n').count() + 1)
+}
+
+/// Keep the leading results that fit `budget` final-form bytes (plus
 /// separators), always keeping the first result so a nonempty analysis
 /// never yields an empty bounded subset. Returns the kept results and the
 /// disclosed bound when results were omitted; `None` budget renders all.
@@ -109,7 +118,7 @@ fn bound_sarif_results(
     let mut array_bytes = 0usize;
     for result in results {
         let payload_bytes = serde_json::to_string_pretty(&result)
-            .map(|rendered| rendered.len())
+            .map(|rendered| nested_result_bytes(&rendered))
             .unwrap_or(usize::MAX);
         let next_bytes = array_bytes
             .saturating_add(payload_bytes)
@@ -1783,6 +1792,19 @@ mod tests {
             bound_sarif_results(vec![json!({"id": 0}), json!({"id": 1})], Some(usize::MAX));
         assert_eq!(all.len(), 2);
         assert!(none.is_none());
+        // Final-form accounting: a budget holding exactly two nested
+        // results (plus separator) keeps two, not one.
+        let pair: Vec<Value> = (0..3)
+            .map(|index| json!({"id": index, "pad": "x".repeat(64)}))
+            .collect();
+        let nested = |value: &Value| {
+            serde_json::to_string_pretty(value)
+                .map(|rendered| nested_result_bytes(&rendered))
+                .unwrap_or(0)
+        };
+        let two_budget = nested(&pair[0]) + 2 + nested(&pair[1]);
+        let (two, _) = bound_sarif_results(pair, Some(two_budget));
+        assert_eq!(two.len(), 2);
     }
 
     #[test]
