@@ -1,5 +1,7 @@
-use crate::domain::language_capability::{CapabilityFamily, family_established_for_any_framework};
 use crate::domain::{ExposureClass, Finding, LanguageId, ProbeFamily, RelatedTest};
+use ripr_contract::domain::language_capability::{
+    CapabilityFamily, family_established_for_any_framework,
+};
 use serde_json::{Map, Value, json};
 use std::path::{Component, Path};
 

@@ -1863,7 +1863,8 @@ pub(in crate::analysis::language::typescript) fn typescript_adapter_excludes_pat
 ) -> bool {
     is_detectable_generated_typescript_path(path)
         || crate::config::path_matches_preview_excluded_patterns(excluded_file_patterns, path)
-        || (is_detectable_excluded_typescript_path(path)
+        || ((is_detectable_excluded_typescript_path(path)
+            || crate::config::is_typescript_docs_site_path(path))
             && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
 }
 

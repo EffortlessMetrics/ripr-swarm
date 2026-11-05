@@ -3,6 +3,57 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-11-03: Backlog-campaign merge operations: funnel order, label discipline, dual runs, one writer, exact-head review
+
+Nov 1-3 backlog-campaign triage across a crowded PR funnel distilled five
+operational rules for merge work on `ripr-swarm`:
+
+- Triage in funnel order: `mergeable_state` first (BLOCKED/BEHIND/DIRTY stop
+  before any CI read), then required-on-exact-head status, then review
+  threads. Read mergeability via REST; the GraphQL `mergeStateStatus` field
+  lags reality by 5-35 min after pushes and label changes, so a stale
+  BLOCKED/UNSTABLE read must be re-checked before acting on it.
+- Cycle `merge-ready` deliberately, never rapidly. Fast remove/re-add
+  manufactures superseded FAILURE+SUCCESS check pairs on the same head that
+  poison the rollup into UNSTABLE and burn a full qualification each lap.
+  Remove the label, confirm the removal landed, let in-flight runs settle,
+  re-add, then confirm a single fresh run started.
+- Expect dual runs on one head. A label cycle or push-while-queued routinely
+  leaves a SUCCESS and a FAILURE side by side on the same SHA. Compare
+  latest-per-check-name before diagnosing: a superseded FAILURE beside a
+  newer SUCCESS for the same workflow is funnel noise, not a product signal.
+- One writer per owner-active branch. When a lane owner is mid-repair, do
+  recon read-only (status, checks, threads) and hand findings back;
+  concurrent pushes, label flips or thread resolves from a second writer
+  invalidate the owner's exact-head evidence and force re-qualification.
+- Exact-head review checklist before any merge judgment: (1) diffstat scope
+  matches the claimed objective, no drive-by files; (2) no gate, policy,
+  public-API or workflow-trigger changes hiding in the diff; (3) required
+  checks green on the published head itself, not a sibling SHA or an older
+  base; (4) all threads read back, including outdated unresolved inlines.
+  Never dispatch workflows manually to help a funnel along; the label route
+  owns CI requests.
+
+## 2026-11-03: A gate that builds the merge base fails every PR when main is broken; re-runs cannot fix it (#12466)
+
+The rust-gates base-matcher step checks out the merge-base worktree and compiles it, so an uncompilable base fails EVERY PR, including the repair: the E0061 arity break (combined #12322 + #12357 merge without a combined build) kept the verified-green head of #12466 red on pre-fix base code, and main healed only via #12496. Distinguish candidate failure from harness-on-broken-base by comparing the merge-ref content against the failing compile unit; a re-run tests the same broken base. Resolution needs an owner decision (admin merge or harness fail-open, cf. #12759), not another retry.
+
+## 2026-11-03: Label-cycle re-queues can reuse a stale merge ref; verify the tested SHA (#12471)
+
+Removing and re-adding `merge-ready` does not recompute GitHub's merge ref; the run tests the SHA computed at creation (seen on #12271 and #12471). Before attributing any re-queued failure, compare the run's tested merge SHA against the current head. A push recomputes the ref; a label toggle alone never does (same family as the #11875 entry below and the draft-to-ready re-route note under the #7150 entry).
+
+## 2026-11-03: A `CANCELLED` run with no failed steps is a supersede-cancel, not an infra kill (docs/CI.md)
+
+Cancellations showing no failed steps and no logs are supersede-cancels from concurrency cancel-in-progress (documented in `docs/CI.md`), not runner deaths; true preemption shows exit 143 mid-step with partial logs. Open a product repair lane for neither without that distinguishing evidence: a supersede-cancel means "a newer run replaced this one," and a logless cancel carries no failure signal at all.
+
+## 2026-11-03: Adjudicate each bot-thread claim against current source before replying (#12492)
+
+Bot claims must be verified one by one against current source: all 3 of 3 checked on #12492 were real, including a fail-open; other threads came back mixed. Unverified agree-replies and a premature REVIEW_READY on an unreviewed head (#12736) must be superseded in writing with exact resume conditions. Agreement without source evidence is endorsement of an unread diff.
+
+## 2026-11-03: Re-derive schema version numbers from current main at rebase time (#12460)
+
+Main moves fast (cache schema 1.136 to 1.148 in days), so a rebased schema bump must re-derive the next free number from current main, never assume the pre-rebase one; the collision recurred 3x across #12376/#12460. At rebase time, re-check `CACHE_SCHEMA_VERSION` plus its sharded and compact twins together; bumping one twin against a stale number re-collides on the next gate.
+
 ## 2026-11-02: A step timeout below the job cap is not leftover time (#12338)
 
 Shard 3 of `windows-advisory-shards.yml` was cancelled at the 80-minute job
@@ -3577,3 +3628,43 @@ mir_borrowck is diffuse (115 s over 76,536 bodies), mono breadth is 673,763
 instances — no single hotspot, so targeted simplification (option 3) is
 contraindicated as the primary lever; the ~5 GB gap to ≤8 GB must come from
 cfg(test) extraction and/or the crate split.
+
+## 2026-11-04: Agent-efficiency study — needed subset is 26% of delivered context; uplift needs harder scenarios
+
+A 3-scenario × 3-variant A/B (Nov 2-4; run on a local off-repo harness tree
+whose corpus encoding lands at `benchmarks/agent-discrimination/`) measured
+whether ripr context helps an agent write a discriminating test. Three scenario crates (`inserted-guard`,
+`flipped-comparison`, `silent-return`), three context variants (vanilla
+diff-only, ripr-context handed over, ripr-tool runnable), one model, and one
+objective mutation evaluator — the test must fail on the changed behavior and
+pass on the original. All nine solvers wrote a discriminating test in exactly
+one test-production round, so discrimination uplift was unmeasurable at this
+difficulty (the Wilson 95% floor at 3/3 is 43.8% — with every run a success
+there is no separator to measure). That makes ripr's value proposition for
+agents unproven on easy diffs, not disproven.
+
+The measured cost delta: ripr-context delivered 3.69× the vanilla context
+bytes (14,897 vs 4,039 across the three scenarios), and a
+mechanically-extracted needed subset was 26.1% of that delivered context
+(−73.9%) with zero loss of the facts all six ripr-variant runs named
+decisive — the top finding's one-line check record (150 bytes in the study's
+measure, 101-153 re-measured from the retained contexts) carried the
+discriminating input (`missing=age == 65`). The same payloads expose the
+render problem: the explain surface triple-rendered each related-test
+assertion (check `t1=` line, evidence bullet, "Why this verdict" row) and
+repeated an unconfirmed-observation phrase to 28.5% of one context.
+
+Durable rules:
+
+- An analyzer's agent-surface value must be measured with scenarios hard
+  enough that the vanilla baseline sometimes fails, at N ≥ 12 with Wilson
+  intervals; an all-success baseline cannot certify or refute uplift.
+- Render each fact once. Duplication is not emphasis; it is context cost
+  plus drift risk across the copies.
+- The harness is part of the measurement: 9/9 PATH failures, 4-5/9 writer
+  collisions on shared scenario crates, a swallowed evaluator exit code, and
+  zeroed structured record fields invalidated or unrecorded more than the
+  study measured (fixes tracked on #13113).
+
+The benchmark corpus encoding lives at `benchmarks/agent-discrimination/`
+(sibling entry).

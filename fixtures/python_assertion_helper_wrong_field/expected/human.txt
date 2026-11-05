@@ -24,7 +24,7 @@ Start here:
   Missing check: A strong Python oracle reaches `record_write`, but its assertion does not observe
     the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_stats.py:6 test_writes (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_stats.py:6 test_writes
   Suggested test file: tests/test_stats.py
   Suggested test: test_writes
   Test node: tests/test_stats.py::test_writes

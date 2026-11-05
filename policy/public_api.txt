@@ -64,7 +64,6 @@ pub const ripr::output::start_here_state::START_HERE_UNSAFE_PATH
 pub const ripr::output::start_here_state::START_HERE_UNSUPPORTED_SCHEMA
 pub const ripr::output::start_here_state::START_HERE_WRONG_ROOT
 pub enum ripr::analysis::AnalysisMode
-pub enum ripr::analysis::LanguageRunStatus
 pub enum ripr::app::Mode
 pub enum ripr::domain::language_availability::AutoDetectionPolicy
 pub enum ripr::domain::language_availability::AvailabilityState
@@ -174,7 +173,6 @@ pub mod ripr::output::start_here_state
 pub mod ripr::provider_contract
 pub struct ripr::analysis::AnalysisOptions
 pub struct ripr::analysis::AnalysisResult
-pub struct ripr::analysis::LanguageRun
 pub struct ripr::analysis::PreviewLanguageAdvisory
 pub struct ripr::app::CheckInput
 pub struct ripr::app::CheckOutput
@@ -246,8 +244,15 @@ pub use ripr::RiprRepositorySnapshotV1
 pub use ripr::RiprSourceViewV1
 pub use ripr::provider_contract::BoundaryFamilyV1
 pub use ripr::provider_contract::CrossLanguageEdgeDirectionV1
+pub use ripr::provider_contract::CrossLanguageEdgeEffectiveRecordV1
+pub use ripr::provider_contract::CrossLanguageEdgeMovementKindV1
+pub use ripr::provider_contract::CrossLanguageEdgeMovementRecordV1
+pub use ripr::provider_contract::CrossLanguageEdgeRegistryAnomalyKindV1
+pub use ripr::provider_contract::CrossLanguageEdgeRegistryAnomalyV1
+pub use ripr::provider_contract::CrossLanguageEdgeRegistryCurrentnessReportV1
 pub use ripr::provider_contract::CrossLanguageEdgeRegistryErrorCodeV1
 pub use ripr::provider_contract::CrossLanguageEdgeRegistryErrorV1
+pub use ripr::provider_contract::CrossLanguageEdgeRegistryMovementReportV1
 pub use ripr::provider_contract::CrossLanguageEdgeRegistryV1
 pub use ripr::provider_contract::CrossLanguageEdgeV1
 pub use ripr::provider_contract::CrossLanguageGeneratedArtifactV1
@@ -261,7 +266,15 @@ pub use ripr::provider_contract::EdgeNonClaimV1
 pub use ripr::provider_contract::EdgeObligationV1
 pub use ripr::provider_contract::EdgeProducerBasisV1
 pub use ripr::provider_contract::EdgeStrengthV1
+pub use ripr::provider_contract::LoadedCrossLanguageEdgeRegistryV1
+pub use ripr::provider_contract::analyze_cross_language_edge_registry_currentness
+pub use ripr::provider_contract::compare_cross_language_edge_registries
+pub use ripr::provider_contract::cross_language_edge_content_digest
 pub use ripr::provider_contract::cross_language_edge_registry_semantic_digest
+pub use ripr::provider_contract::cross_language_edge_semantic_key
+pub use ripr::provider_contract::edge_connects_subjects
+pub use ripr::provider_contract::load_cross_language_edge_registry_from_json
+pub use ripr::provider_contract::subjects_related_by_effective_registered_edge
 pub use ripr::provider_contract::subjects_related_by_registered_edge
 pub use ripr::SourceCurrentness
 pub use ripr::Summary
@@ -269,6 +282,8 @@ pub use ripr::SuppressedCheckFinding
 pub use ripr::TestEvidenceEntry
 pub use ripr::TestEvidenceSummary
 pub use ripr::analysis::DiffScopeFilter
+pub use ripr::analysis::LanguageRun
+pub use ripr::analysis::LanguageRunStatus
 pub use ripr::analysis::PARTIAL_DIFF_LANGUAGE_TIER_VERSION
 pub use ripr::analysis::PARTIAL_DIFF_SELECTION_VERSION
 pub use ripr::analysis::PartialDiffScope

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 
 mod diagnostic;
+pub(crate) mod language_detection;
 mod model;
 #[cfg(test)]
 mod override_tests;
@@ -85,7 +86,8 @@ pub(crate) use typescript::{
 // rust-only build as in a full build (#10730).
 pub(crate) use typescript::{
     is_declared_handwritten_typescript_path, is_detectable_excluded_typescript_path,
-    is_detectable_generated_typescript_path, is_typescript_excluded_dir_everywhere,
+    is_detectable_generated_typescript_path, is_typescript_docs_site_path,
+    is_typescript_excluded_dir_everywhere,
 };
 
 /// Without `lang-typescript` no-config detection never selects the adapter,

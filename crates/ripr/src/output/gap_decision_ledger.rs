@@ -2685,7 +2685,7 @@ fn gap_record_from_python_no_repair_card_finding(
     // (`"analysis_scope": "repo"`); that, not placement, is why no card exists.
     let repo_reason = (string_at(finding, &["analysis_scope"]) == Some("repo"))
         .then(|| {
-            crate::domain::language_capability::repo_mode_no_repair_routing_reason(
+            ripr_contract::domain::language_capability::repo_mode_no_repair_routing_reason(
                 crate::domain::LanguageId::Python,
             )
         })

@@ -1,0 +1,156 @@
+{
+  "cells": [
+    {
+      "channel": "cargo",
+      "install_seconds": 729.0,
+      "platform": "macos-15-intel",
+      "status": "works",
+      "version": "ripr 0.10.0"
+    },
+    {
+      "channel": "cargo",
+      "install_seconds": 182.0,
+      "platform": "macos-latest",
+      "status": "works",
+      "version": "ripr 0.10.0"
+    },
+    {
+      "channel": "cargo",
+      "install_seconds": 91.0,
+      "platform": "ubuntu-24.04-arm",
+      "status": "works",
+      "version": "ripr 0.10.0"
+    },
+    {
+      "channel": "cargo",
+      "install_seconds": 101.0,
+      "platform": "ubuntu-latest",
+      "status": "works",
+      "version": "ripr 0.10.0"
+    },
+    {
+      "channel": "cargo",
+      "install_seconds": 243.0,
+      "platform": "windows-latest",
+      "status": "works",
+      "version": "ripr 0.10.0"
+    },
+    {
+      "channel": "npm",
+      "install_seconds": null,
+      "platform": "macos-15-intel",
+      "status": "known_gap",
+      "version": null
+    },
+    {
+      "channel": "npm",
+      "install_seconds": null,
+      "platform": "macos-latest",
+      "status": "known_gap",
+      "version": null
+    },
+    {
+      "channel": "npm",
+      "install_seconds": null,
+      "platform": "ubuntu-24.04-arm",
+      "status": "known_gap",
+      "version": null
+    },
+    {
+      "channel": "npm",
+      "install_seconds": 3.0,
+      "platform": "ubuntu-latest",
+      "status": "works",
+      "version": "ripr 0.11.0-alpha.2"
+    },
+    {
+      "channel": "npm",
+      "install_seconds": null,
+      "platform": "windows-latest",
+      "status": "known_gap",
+      "version": null
+    },
+    {
+      "channel": "pypi",
+      "install_seconds": null,
+      "platform": "macos-15-intel",
+      "status": "known_gap",
+      "version": null
+    },
+    {
+      "channel": "pypi",
+      "install_seconds": null,
+      "platform": "macos-latest",
+      "status": "known_gap",
+      "version": null
+    },
+    {
+      "channel": "pypi",
+      "install_seconds": null,
+      "platform": "ubuntu-24.04-arm",
+      "status": "known_gap",
+      "version": null
+    },
+    {
+      "channel": "pypi",
+      "install_seconds": 4.0,
+      "platform": "ubuntu-latest",
+      "status": "works",
+      "version": "ripr 0.11.0-alpha.1"
+    },
+    {
+      "channel": "pypi",
+      "install_seconds": null,
+      "platform": "windows-latest",
+      "status": "known_gap",
+      "version": null
+    }
+  ],
+  "channel_dispositions": [
+    {
+      "channel": "archive",
+      "reason": "Install seconds and first-run walk per platform come from first-run-archive.yml (weekly and on demand), whose report artifact records them; five platforms were green on 2026-11-04 (run 41882613579).",
+      "status": "tested_elsewhere"
+    },
+    {
+      "channel": "binstall",
+      "reason": "cargo binstall ripr falls back to a source build until a release carries binstall metadata and archives (0.11.0); verify with a real cargo binstall after publication.",
+      "status": "not_tested"
+    },
+    {
+      "channel": "vscode_extension",
+      "reason": "Marketplace and Open VSX install needs a desktop VS Code host; no hosted check installs the listed extension and starts the server.",
+      "status": "not_tested"
+    },
+    {
+      "channel": "ci_init",
+      "reason": "The generated GitHub workflow downloads the release archive when one exists for the runner; no scheduled check runs a generated workflow on a clean repository.",
+      "status": "not_tested"
+    },
+    {
+      "channel": "homebrew",
+      "reason": "No tap exists; creating it needs the owner's go-ahead (docs/INSTALL_CHANNELS.md).",
+      "status": "not_shipped"
+    }
+  ],
+  "r0_install": {
+    "reasons": [
+      "cargo on macos-15-intel took 729 s, over 300 s",
+      "npm on macos-15-intel is an unavailable platform",
+      "npm on macos-latest is an unavailable platform",
+      "npm on ubuntu-24.04-arm is an unavailable platform",
+      "npm on windows-latest is an unavailable platform",
+      "pypi on macos-15-intel is an unavailable platform",
+      "pypi on macos-latest is an unavailable platform",
+      "pypi on ubuntu-24.04-arm is an unavailable platform",
+      "pypi on windows-latest is an unavailable platform",
+      "channel binstall is not tested",
+      "channel vscode_extension is not tested",
+      "channel ci_init is not tested"
+    ],
+    "status": "not_met"
+  },
+  "schema_version": "ripr-install-receipt-v1",
+  "source_run_id": "41902877159",
+  "threshold_seconds": 300.0
+}
