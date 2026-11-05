@@ -76,6 +76,11 @@ registration; the repository has not yet retained cold-session proof that
 either client completes the flow (tracked in #3092), so treat them as
 configuration, not a support claim.
 
+For Muse, use the [native RIPR package](../../plugins/muse/ripr/README.md).
+It declares the `core` MCP server and the `ripr-setup` and `ripr-repair`
+skills; its guide covers installation, explicit approval, updates, and
+starting a fresh session in the target repository.
+
 Every `ripr_refresh` result carries a top-level `fresh_for_working_tree`
 (`true` for a saved-worktree snapshot or a committed one with no uncommitted
 edits outside the analysis; `false` after a failed attempt or with edits the
