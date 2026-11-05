@@ -260,6 +260,10 @@ fn native_muse_envelope_joins_pins_without_aliasing_namespaces() -> Result<(), S
         ("/identity/plugin_version", json!("another-version")),
         ("/identity/muse_version", json!("another-version")),
         ("/environment/os", json!("another-platform")),
+        ("/environment/ripr_binary", json!("missing")),
+        ("/environment/ripr_binary", json!("predates_mcp")),
+        ("/mcp/setup_outcome", json!("approval_required")),
+        ("/mcp/setup_outcome", json!("server_unavailable")),
         ("/model/model", json!("another-model")),
         ("/model/trial_id", json!("another-trial")),
         ("/model/configuration", json!("changed configuration bytes")),
@@ -286,6 +290,14 @@ fn native_muse_envelope_joins_pins_without_aliasing_namespaces() -> Result<(), S
     to_input(&base)?;
     base["observations"]["schema_version"] = json!(SCHEMA_VERSION);
     to_input(&base).err().ok_or("nested version accepted")?;
+    let mut failed = fixture()?;
+    failed["observations"]["setup"]["status"] = json!("failed");
+    failed["observations"]["setup"]["plugin_loaded"] = json!(false);
+    failed["observations"]["setup"]["mcp_available"] = json!(false);
+    let err = to_input(&failed).err().ok_or("ready setup accepted failed MCP")?;
+    assert!(err.contains("canonical setup context"), "{err}");
+    failed["mcp"]["setup_outcome"] = json!("server_unavailable");
+    to_input(&failed)?;
     Ok(())
 }
 
@@ -308,6 +320,26 @@ fn native_muse_completion_cannot_override_refuted_observations() -> Result<(), S
     for bad in [wrong_passes, stale] {
         let err = to_input(&bad).err().ok_or("refuted completion accepted")?;
         assert!(err.contains("completed_repair"), "{err}");
+    }
+    for name in ["original", "restored", "counterexample"] {
+        let mut failed = full_fixture()?;
+        let leg = &mut failed["observations"]["executions"][name];
+        leg["status"] = json!("failed");
+        leg["exit_code"] = json!(101);
+        if name == "counterexample" {
+            leg["failure_kind"] = json!("compile");
+            leg["tests_executed"] = json!(0);
+            leg.as_object_mut()
+                .ok_or("execution leg")?
+                .remove("failed_test");
+        } else {
+            leg["failure_kind"] = json!("assertion");
+            leg["failed_test"] = json!("fixture_boundary");
+        }
+        to_input(&failed)?;
+        failed["verdicts"]["combined_claim"] = json!("completed_repair");
+        let err = to_input(&failed).err().ok_or("failed completion accepted")?;
+        assert!(err.contains("completed_repair"), "{name}: {err}");
     }
     for class in ["weakly_exposed", "reachable_unrevealed", "no_static_path"] {
         let mut negative = base.clone();
