@@ -1126,12 +1126,3 @@ surface = "ci"
 classification = "metadata"
 reason = "Checked-in install receipt and channel dispositions (#13064); written and re-validated by the Rust xtask command, not hand-maintained logic."
 covered_by = ["cargo xtask install-receipt --check"]
-
-[[allow]]
-glob = "benchmarks/agentic/cohort/harness/*.py"
-kind = "benchmark_harness"
-owner = "agent-eval"
-surface = "repo"
-classification = "tooling"
-reason = "Stdlib Python cohort scoring and accounting owner retained from #13071; the Rust-owned selftest executes native and accounting controls without model calls (#12902)."
-covered_by = ["cargo test -p xtask --test agent_cohort_selftest", "cargo xtask check-file-policy"]
