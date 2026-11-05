@@ -33,7 +33,9 @@ const GITHUB_PAT = /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g;
 const ACCESS_TOKEN_URL = /x-access-token:[^@\s]+/gi;
 // Retained process transcripts may include proxy/download failures. Remove URL
 // userinfo before any byte clipping, while retaining scheme/endpoint/path context.
-const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)([^/\s?#]+)@/gi;
+// A scheme starts at a token boundary, not at every dot/hyphen inside a long
+// credential-free token. This avoids rescanning each suffix of that token.
+const URL_USERINFO = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)([^/\s?#]+)@/gi;
 
 export interface RetainHostDiagnosticsInput {
   artifactRoot: string;

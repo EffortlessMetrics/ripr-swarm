@@ -90,6 +90,7 @@ if (tool === 'git') process.stdout.write('a'.repeat(40) + '\\n');
 else if (tool === 'rustc') process.stdout.write('rustc 1.95.0\\nhost: x86_64-unknown-linux-gnu\\nLLVM version: 22.1.0\\n');
 else if (tool.startsWith('llvm-')) process.stdout.write('LLVM version 22.1.0\\n');
 else if (tool === 'rustfmt') process.stdout.write('rustfmt 1.9.0\\n');
+else if (tool === 'cargo-clippy' || tool === 'clippy-driver') process.stdout.write('clippy 0.1.95\\n');
 else if (tool === 'vsce') process.stdout.write('3.9.2\\n');
 else if (tool === 'compiler') {
   if (process.env.RIPR_FULL_CONTROL_FAIL === 'compiler') process.exit(23);
@@ -134,7 +135,7 @@ else if (tool === 'compiler') {
   }
 } else throw new Error('Unexpected controlled owner: ' + tool);
 `);
-    for (const tool of ['git', 'cargo', 'rustc', 'rustfmt', 'llvm-cov', 'llvm-profdata']) {
+    for (const tool of ['git', 'cargo', 'rustc', 'rustfmt', 'cargo-clippy', 'clippy-driver', 'llvm-cov', 'llvm-profdata']) {
       fs.writeFileSync(path.join(root, 'tool bin', tool), '#!/bin/sh\nexec ' + shellLiteral(process.execPath)
         + ' ' + shellLiteral(driver) + ' ' + shellLiteral(tool) + ' "$@"\n', { mode: 0o755 });
     }
@@ -202,11 +203,14 @@ else if (tool === 'compiler') {
     const native = calls();
     assert.ok(native.filter(call => call.tool !== 'git').every(call => call.selected && call.proxy_preserved));
     const selectedCargo = native.filter(call => call.tool === 'cargo').map(call => call.args);
-    assert.deepStrictEqual(selectedCargo, [['-vV'], ['nextest', '--version'], ['clippy', '--version'],
+    assert.deepStrictEqual(selectedCargo, [['-vV'], ['nextest', '--version'],
       ['test', '--locked', '-p', 'repo-policy', '--lib', profileTest, '--', '--exact', '--nocapture'],
       ['policy', 'preflight'], ['xtask', 'ci-full'], ['xtask', 'vscode-test-e2e'], ['xtask', 'vscode-package']]);
     assert.ok(native.findIndex(call => call.tool === 'host') < native.findIndex(call => call.args.join(' ') === 'xtask ci-full'));
-    assert.ok(native.filter(call => call.tool === 'cargo').slice(0, 6).every(call => call.cwd === root));
+    assert.ok(native.filter(call => call.tool === 'cargo').slice(0, 5).every(call => call.cwd === root));
+    for (const binary of ['rustfmt', 'cargo-clippy', 'clippy-driver']) {
+      assert.deepStrictEqual(native.filter(call => call.tool === binary).map(call => call.args), [['--version']]);
+    }
     assert.ok(native.findIndex(call => call.tool === 'vsce') < native.findIndex(call => call.args[0] === 'test'));
     assert.strictEqual(report.stages.find(stage => stage.stage_id === 'editor_suite')?.canonical_invocations, 1);
     const retained = fs.readdirSync(report.evidence_directory).map(name => fs.readFileSync(path.join(report.evidence_directory, name), 'utf8')).join('\n');
@@ -306,9 +310,18 @@ else if (tool === 'compiler') {
     fs.rmSync(path.join(editor, 'test/hostDiagnostics.ts'));
     const prior = JSON.stringify({ status: 'pass', full_development_ready: true, run_id: 'old' });
     fs.writeFileSync(path.join(artifacts, 'setup-full-development.json'), prior);
-    await runFixtureProducer(process.execPath, [npmCli, 'run', 'setup:check', '--', '--json'], {
+    const output = await runFixtureProducer(process.execPath, [npmCli, 'run', 'setup:check', '--', '--json'], {
       cwd: editor, env, timeoutMs: 5000
     });
+    const report = JSON.parse(output.slice(output.indexOf('{'))) as {
+      mode: string; full_development_ready: boolean;
+      checks: Array<{ check_id: string; next_action: { cwd: string; command: string[] } }>;
+    };
+    const next = report.checks.find(check => check.check_id === 'full_development_validation')?.next_action;
+    assert.strictEqual(report.mode, 'read_only');
+    assert.strictEqual(report.full_development_ready, false);
+    assert.deepStrictEqual({ cwd: next?.cwd, command: next?.command },
+      { cwd: 'editors/vscode', command: ['npm', 'run', 'setup:verify-full'] });
     assert.strictEqual(fs.readFileSync(path.join(artifacts, 'setup-full-development.json'), 'utf8'), prior);
     assert.deepStrictEqual(fs.readdirSync(artifacts), ['setup-full-development.json']);
     assert.strictEqual(calls().length, 0);
@@ -320,6 +333,20 @@ else if (tool === 'compiler') {
     assert.strictEqual(report.failure?.stage_id, 'activation');
     assert.deepStrictEqual(calls().map(call => call.tool), ['git']);
   });
+
+  for (const component of ['rustfmt', 'cargo-clippy', 'clippy-driver']) {
+    test('missing selected ' + component + ' refuses before broad work despite a foreign PATH executable', async () => {
+      const foreign = path.join(root, 'foreign components');
+      fs.mkdirSync(foreign);
+      fs.copyFileSync(path.join(root, 'tool bin', component), path.join(foreign, component));
+      fs.rmSync(path.join(root, 'tool bin', component));
+      const { report, status } = await invoke({ PATH: path.join(root, 'tool bin') + ':' + foreign + ':' + process.env.PATH });
+      assert.strictEqual(status, 127);
+      assert.strictEqual(report.failure?.stage_id, 'tool_versions');
+      assert.strictEqual(report.full_development_ready, false);
+      assert.ok(!calls().some(call => call.args[0] === 'test' || call.tool === 'compiler'));
+    });
+  }
 
   test('zero selected native profile cases stop before editor or broad Rust work', async () => {
     const { report, status } = await invoke({ RIPR_FULL_CONTROL_FAIL: 'profile' });

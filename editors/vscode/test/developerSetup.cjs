@@ -166,8 +166,8 @@ function collectDeveloperSetup(options = {}) {
   add('genuine_editor_producer', 'not_run', 'No Cargo producer, fixture or editor suite has run.',
     { cwd: 'editors/vscode', command: ['npm', 'run', 'test:e2e'] });
   add('full_development_validation', 'not_run', 'No workspace qualification or full-build resource measurement has run.',
-    { cwd: '.', command: ['cargo', 'xtask', 'ci-full'],
-      instruction: 'Follow the serial full-development sequence in CONTRIBUTING.md, then the canonical editor suite once.' });
+    { cwd: 'editors/vscode', command: ['npm', 'run', 'setup:verify-full'],
+      instruction: 'Explicit Linux validation delegates the serial owners in CONTRIBUTING.md; ordinary startup stays read-only.' });
   return { schema_version: 1, kind: 'ripr.developer-setup', mode: 'read_only',
     root: bounded(root), platform, requirement_sources: sources, requirements: requirements ?? null,
     checks, known_blockers: checks.filter(check => check.status === 'fail').map(check => check.check_id),
@@ -419,9 +419,13 @@ async function runFullDevelopment(options = {}) {
         report.tools[name] = redact(await command(executable, args, root), 4096).toString('utf8').trim();
       }
       for (const component of report.requirements.rust_components) {
-        const executable = component === 'rustfmt' ? 'rustfmt' : 'cargo';
-        const args = component === 'rustfmt' ? ['--version'] : ['clippy', '--version'];
-        report.tools[component] = redact(await command(executable, args, root), 4096).toString('utf8').trim();
+        // Activation proves RUSTC=$sysroot/bin/rustc. A missing selected
+        // component must not fall through to a foreign executable on PATH.
+        const binaries = component === 'rustfmt' ? ['rustfmt'] : ['cargo-clippy', 'clippy-driver'];
+        for (const binary of binaries) {
+          report.tools[binary] = redact(await command(path.join(path.dirname(env.RUSTC), binary),
+            ['--version'], root), 4096).toString('utf8').trim();
+        }
       }
       report.tools.vsce = redact(await command(path.join(root, 'editors/vscode/node_modules/.bin/vsce'),
         ['--version'], path.join(root, 'editors/vscode')), 4096).toString('utf8').trim();
