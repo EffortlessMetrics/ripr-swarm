@@ -543,6 +543,10 @@ fn profile_warning(line: &str) -> Option<(PathBuf, &'static str)> {
             ": unrecognized instrumentation profile encoding format",
             "unrecognized_instrumentation_profile_encoding_format",
         ),
+        (
+            ": raw profile version mismatch:",
+            "raw_profile_version_mismatch",
+        ),
     ]
     .into_iter()
     .find_map(|(marker, family)| {
@@ -973,6 +977,69 @@ mod tests {
             fs::read(file).map_err(|error| error.to_string())?,
             b"malformed profile bytes"
         );
+        Ok(())
+    }
+    #[test]
+    fn raw_profile_version_mismatch_capture_requires_known_warning_and_exact_path() -> Result<()> {
+        let t = temp()?;
+        let bytes = b"version-mismatched profile";
+        let (dir, file, list) = seed(&t.0, bytes)?;
+        // Rust 1.99.1's LLVM emits this error before inspecting a v10 payload.
+        let mismatch = concat!(
+            "raw profile version mismatch: ",
+            "Profile uses raw profile format version = 10; expected version = 11\n",
+            "PLEASE update this tool to version in the raw profile, or ",
+            "regenerate raw profile with expected version."
+        );
+        for (name, message, use_pinned, count) in [
+            ("mismatch", mismatch, true, 1),
+            ("unknown", "unsupported instrumentation profile hash type", true, 0),
+            ("lookalike", "raw profile version mismatch-extra: unknown error", true, 0),
+            ("source_path", mismatch, false, 0),
+        ] {
+            let out = t.0.join(format!("evidence-{name}"));
+            let report = capture(&dir, &list, &out, |args| {
+                if !args.iter().any(|arg| arg == "merge") {
+                    return runner(args, None);
+                }
+                let listing = args
+                    .windows(2)
+                    .find(|pair| pair[0] == "-f")
+                    .map(|pair| PathBuf::from(&pair[1]))
+                    .ok_or("merge list missing")?;
+                let names = fs::read_to_string(listing).map_err(|e| e.to_string())?;
+                let path = if use_pinned {
+                    names.lines().next().ok_or("merge input missing")?.to_owned()
+                } else {
+                    file.to_string_lossy().into_owned()
+                };
+                let stderr =
+                    format!("warning: {path}: {message}\nerror: no profile can be merged\n");
+                Ok(tool_result(Some(1), b"", stderr.as_bytes(), false, false, false))
+            })?;
+            assert_eq!(report["merge_replay"]["exit"], 1);
+            assert_eq!(report["original_coverage_outcome"], "failure");
+            assert_eq!(
+                report["captured"].as_array().map(Vec::len),
+                Some(count),
+                "{name}: {report}"
+            );
+            assert_eq!(report["unclassified_profile_warnings"], 1 - count);
+            if count == 1 {
+                assert_eq!(
+                    report["captured"][0]["error_family"],
+                    "raw_profile_version_mismatch"
+                );
+                assert_eq!(report["captured"][0]["binary_ids"]["status"], "unavailable");
+                assert_eq!(
+                    fs::read(out.join("profile-00.prefix.profraw")).map_err(|e| e.to_string())?,
+                    bytes
+                );
+            } else {
+                assert!(!out.join("profile-00.prefix.profraw").exists());
+            }
+            assert_eq!(fs::read(&file).map_err(|e| e.to_string())?, bytes);
+        }
         Ok(())
     }
     #[cfg(target_os = "linux")]

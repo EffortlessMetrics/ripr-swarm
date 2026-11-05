@@ -63,6 +63,13 @@ available or partial ID results report `llvm_raw64_le_v10` or
 `llvm_raw64_le_v11`. Other versions, variant flags and magic values remain
 explicitly unsupported; accepting an ID does not validate the rest of a profile.
 
+Replaying an older profile with newer LLVM can report a raw profile version
+mismatch. The manifest retains that warned profile's bounded prefix as
+`raw_profile_version_mismatch` only when the warning names an exact validated
+snapshot input. Unknown warnings and unrelated paths remain unclassified.
+This retains diagnostic evidence without converting the profile or changing
+the failed coverage result.
+
 The failure manifest also associates supported raw-profile binary IDs with GNU
 build IDs in instrumented Linux ELF files found only as direct entries in the
 coverage target's `debug`, `debug/deps`, `release`, and `release/deps`

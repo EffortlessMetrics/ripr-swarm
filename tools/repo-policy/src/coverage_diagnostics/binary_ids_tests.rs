@@ -184,9 +184,10 @@ fn retained_october_14_header_maps_only_instrumented_exact_id_and_preserves_fail
     )?;
     let out = f.0.join("evidence");
     let report = capture(&f.0, &list, &out, tool)?;
-    assert_eq!(report["merge_replay"]["exit"], 1);
+    assert_eq!(report["merge_replay"]["exit"], 1, "{report}");
     assert_eq!(report["original_coverage_outcome"], "failure");
-    assert_eq!(report["captured"][0]["retained_bytes"], 160);
+    assert_eq!(report["captured"].as_array().map(Vec::len), Some(1), "{report}");
+    assert_eq!(report["captured"][0]["retained_bytes"], 160, "{report}");
     assert_eq!(
         report["captured"][0]["binary_ids"]["ids"],
         json!([expected])

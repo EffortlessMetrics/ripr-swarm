@@ -8,7 +8,7 @@ Created: 2026-10-13
 
 Linked issues: #4978, #13116
 
-Linked PRs: #7579
+Linked PRs: #7579, #13121
 
 Standalone reason: #4978 records failed coverage diagnostics from the CI
 coverage adapter. This contract governs only the additive diagnostic evidence;
@@ -24,8 +24,9 @@ change any language or platform support tier.
 
 Policy impact:
 
-- Version-aware layout metadata in the CI failure manifest. No required gate,
-  profile input, profile retention, or original failure outcome changes.
+- Version-aware layout metadata and bounded raw-version-mismatch capture in the
+  CI failure manifest. Required gates, validated profile inputs, retention limits
+  and the original failure outcome remain unchanged.
 - A focused stable-toolchain job in the existing advisory future-Clippy workflow
   exercises the real compiler/LLVM boundary without running workspace coverage.
 
@@ -55,6 +56,15 @@ counter data, mask variant flags, or guess a future version's layout. Unknown
 versions, flagged variants and other magic values remain unsupported. Available
 and partial results identify the selected layout; a short version-specific
 header remains unavailable even when it declares an empty ID block.
+
+When the active compiler's matching LLVM tool reports
+`warning: <snapshot path>: raw profile version mismatch: ...`, the manifest
+retains the bounded prefix with `error_family: raw_profile_version_mismatch`.
+This [LLVM diagnostic](https://github.com/rust-lang/llvm-project/blob/1b9c0d5ff9bbe7634aead059efe6b11a7eeba145/llvm/lib/ProfileData/InstrProf.cpp)
+can occur when replaying a retained v10 profile with a newer LLVM reader. The
+warning must identify an exact validated snapshot path; unknown warnings and
+other paths remain unclassified. Capturing the diagnostic does not convert a
+profile or change the failed merge result.
 
 Each profile retains at most 32 ID entries of at most 128 bytes each, within an
 8,192-byte ID block. If a later
@@ -89,9 +99,12 @@ coverage failure.
 
 ## Required Evidence
 
-- Exercise the genuine retained 160-byte header/ID from run 38613901957 with
-  matching LLVM: retain its bytes and failed merge outcome; associate only a
-  controlled exact-ID instrumented ELF, never claiming a historical producer.
+- Exercise the genuine retained 160-byte header/ID from run 38613901957 with the
+  active compiler's matching LLVM: retain its bytes and failed merge outcome
+  for malformed data or a raw-version mismatch; associate only a controlled
+  exact-ID instrumented ELF, never claiming a historical producer.
+- Capture a known raw-version-mismatch warning only for an exact pinned input
+  path. Refuse unknown warnings, inexact warning names and other paths.
 - Parse v10 and v11 fixtures with exact IDs and layout labels, including a v11
   header containing a decoy at the old v10 ID offset. Require the real ID after
   byte 152 and reject unsupported versions and variant flags.
@@ -164,6 +177,13 @@ The committed controls in
   of the original failed-profile evidence.
 - `real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata`: native
   LLVM association; missing matching LLVM tools are a proof failure.
+
+The Linux capture seam is covered in
+`tools/repo-policy/src/coverage_diagnostics/linux.rs`:
+
+- `raw_profile_version_mismatch_capture_requires_known_warning_and_exact_path`
+  retains the recognized diagnostic and bytes only for an exact pinned input;
+  unknown warning text and unrelated paths remain unclassified.
 
 The stable advisory job is covered in `tools/repo-policy/tests/future_clippy.rs`:
 

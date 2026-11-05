@@ -9771,6 +9771,7 @@ spec = "docs/specs/RIPR-SPEC-0266-coverage-binary-id-diagnostics.md"
 tests = [
   "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs::raw_binary_ids_are_exact_and_unknown_layouts_are_explicit",
   "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs::raw_v11_ids_start_after_the_extended_header",
+  "tools/repo-policy/src/coverage_diagnostics/linux.rs::raw_profile_version_mismatch_capture_requires_known_warning_and_exact_path",
   "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs::raw_supported_headers_are_required_even_without_ids",
   "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs::raw_id_block_and_length_limits_remain_bounded",
   "tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs::raw_id_truncation_preserves_only_valid_prefixes",
