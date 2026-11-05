@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "candidate_tree": "9639eca69ec36fb5ca153d713eb2253f2b15d339",
+  "source_base_commit": "90cd49ff051aafdb7ac16b4f5eb2087ab80530fd",
+  "binary": {
+    "sha256": "150ec3fbdb935a8edeeb6c022a7e0c47455e3f2443a9116a02b78d2e293702d2",
+    "bytes": 368182072,
+    "build_tree": "9639eca69ec36fb5ca153d713eb2253f2b15d339",
+    "compiler_artifact": "fixture-git-compiler-artifact.json",
+    "receipt": "fixture_git_doctor.result.json",
+    "features": [
+      "default",
+      "lang-python",
+      "lang-rust",
+      "lang-typescript"
+    ],
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": true
+    }
+  },
+  "full_command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-qualification-hb6zem9n\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-qualification-hb6zem9n\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-qualification-hb6zem9n\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "--",
+    "--test-threads=1"
+  ],
+  "full_native_exit": 0,
+  "full_counts": {
+    "passed": 17971,
+    "failed": 0,
+    "ignored": 1,
+    "measured": 0,
+    "filtered": 0
+  },
+  "harness_seconds": 787.03,
+  "command_seconds": 787.8346784114838,
+  "start_utc": "2026-11-05T02:19:31.278992+00:00",
+  "end_utc": "2026-11-05T02:32:39.113670+00:00",
+  "peak_memory_bytes": 4351848448,
+  "min_workspace_free_bytes": 23501729792,
+  "min_temp_free_bytes": 9265750016,
+  "guard_stop": null,
+  "log_sha256": "a10e454bf7a121fba4dbbb95486a9c3cdb7af568434656cbe0103b5dab9d0c32",
+  "ignored_tests": [
+    "output::executed_control::tests::write_executed_control_contract_fixtures"
+  ],
+  "focused_subjects_passed": 96,
+  "focused_results": [
+    {
+      "label": "fixture_git_doctor",
+      "counts": [
+        84,
+        0,
+        0
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "log_sha256": "4e14d419ee05d89ccc59b772169d511e3c37506d755a0d76d4f8e9aea9fe4d1f"
+    },
+    {
+      "label": "fixture_rust_skip",
+      "counts": [
+        5,
+        0,
+        0
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "log_sha256": "cc02a26da1f8aaa42fbc0a481a1c28250cce2ad8d128567dba09c30ebd3e6820"
+    },
+    {
+      "label": "fixture_git_markers",
+      "counts": [
+        5,
+        0,
+        0
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "log_sha256": "35be86376d73bded5ab70629b19a368a57f24d36a63efc2cd1359b8702cafb14"
+    },
+    {
+      "label": "fixture_unanchored_gate",
+      "counts": [
+        1,
+        0,
+        0
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "log_sha256": "86cdcb157ae3d3a30b43f4b48bfc2baf7853bc2b834d02b5a47a9c3694246f39"
+    },
+    {
+      "label": "fixture_plain_package",
+      "counts": [
+        1,
+        0,
+        0
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "log_sha256": "9c490fe1d5d9c8c95b8b1b2cb592b39e7e755bc00ccea0634fd6aaaba54134e4"
+    }
+  ],
+  "source_review": "Exact9639source-ownerreviewclean; no weakenedassertions or productionchangesinlastfixture-onlydelta. Prior1dfsubstantivereviewcontrolsaccepted. No formalhostedapprovalclaimed.",
+  "environment": "Ordinarilyreviewedrealmarker-freecleanroot; process-localCargoCLIenvTMPDIR/TMP/TEMPoverrides accountforrepositoryforce=true. Existingmarkers/globalsettingsunchanged. NativefeaturesdefaultRust/Python/TypeScript, jobs1,incremental0,dev/testdebug0,testthreads1.",
+  "status": "FULL_DEFAULT_FEATURE_LIB_AND96SCOPED_SUBJECTSPASSED; freshfmt/traceability/honesty/changelogcurrentlyrunning beforefinalpacket.",
+  "nonclaims": [
+    "No separate new zero-path cancellation result.",
+    "Framed control is weakLSP+staleresponse+separatepositiveproductioninventory, notpositiveLSPpacket.",
+    "No release/package/channel/platform/current-maincomposition qualification or full#7490umbrella closure.",
+    "Allpriorfailingruns remain historical; none rewritten aspassed."
+  ]
+}
+
