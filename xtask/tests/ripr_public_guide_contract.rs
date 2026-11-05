@@ -903,3 +903,42 @@ fn public_leads_ask_the_question_and_qualify_the_test_to_add() -> Result<(), Str
     }
     Ok(())
 }
+
+/// The CLI First Hour shows the first result before any mechanism: the quoted
+/// finding lines (whole lines of the checked boundary fixture, in order) must
+/// precede the progress/glossary reference subsection, which must still exist.
+#[test]
+fn cli_first_hour_shows_the_finding_before_the_reference() -> Result<(), String> {
+    let section = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    let excerpt = section
+        .split("```text\n")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .ok_or("CLI First Hour must quote a finding in a text block")?;
+    let mut fixture_lines = BOUNDARY_GAP_HUMAN.lines();
+    let mut quoted = 0;
+    for line in excerpt.lines().filter(|l| !l.trim().is_empty()) {
+        quoted += 1;
+        if !fixture_lines.any(|fixture_line| fixture_line == line) {
+            return Err(format!(
+                "quoted line is missing or out of order in the fixture: {line}"
+            ));
+        }
+    }
+    if quoted < 4 {
+        return Err("expected the four-line boundary excerpt".to_string());
+    }
+    let finding = section
+        .find("Changed behavior:")
+        .ok_or("finding excerpt missing")?;
+    let reference = section
+        .find("### Progress, terms and machine output")
+        .ok_or("reference subsection missing")?;
+    let progress = section
+        .find("ripr progress: <stage>")
+        .ok_or("progress rules lost from the reference")?;
+    if !(finding < reference && reference < progress) {
+        return Err("mechanism must follow the first result, inside the reference".to_string());
+    }
+    Ok(())
+}
