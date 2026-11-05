@@ -503,6 +503,11 @@ pub enum StaticLimitKind {
     /// reaches the change is withheld and the class is `static_unknown`: the
     /// missing test may be one the walk never read. See RIPR-SPEC-0240.
     TypescriptWorkspaceDiscoveryTruncated,
+    /// Workspace source reads refused one or more files under the per-file
+    /// or aggregate byte cap. Those files may contain tests or a call path
+    /// to the change, so a finding that would claim `no_static_path` is
+    /// withheld as `static_unknown`. See RIPR-SPEC-0240 / #11985.
+    TypescriptWorkspaceReadLimited,
 }
 
 impl StaticLimitKind {
@@ -580,6 +585,7 @@ impl StaticLimitKind {
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
                 "typescript_workspace_discovery_truncated"
             }
+            StaticLimitKind::TypescriptWorkspaceReadLimited => "typescript_workspace_read_limited",
         }
     }
 
@@ -774,6 +780,12 @@ impl StaticLimitKind {
                  were never read. ripr cannot say that no test \
                  reaches this change, so it does not claim a gap; this is a named limitation, \
                  not a coverage claim."
+            }
+            StaticLimitKind::TypescriptWorkspaceReadLimited => {
+                "TypeScript workspace source files were not read because they exceeded the \
+                 per-file or aggregate byte limit. They may contain tests or a call path to \
+                 this change, so ripr does not claim that no test reaches it; this is a named \
+                 limitation, not a coverage claim."
             }
         }
     }
@@ -1142,6 +1154,10 @@ mod tests {
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated.as_str(),
             "typescript_workspace_discovery_truncated"
         );
+        assert_eq!(
+            StaticLimitKind::TypescriptWorkspaceReadLimited.as_str(),
+            "typescript_workspace_read_limited"
+        );
     }
 
     #[test]
@@ -1180,6 +1196,7 @@ mod tests {
             StaticLimitKind::ProofHarnessNotEvaluated,
             StaticLimitKind::RustInherentReceiverUnestablished,
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
+            StaticLimitKind::TypescriptWorkspaceReadLimited,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

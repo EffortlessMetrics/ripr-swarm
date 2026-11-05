@@ -233,3 +233,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_snapshot_hidden_second_call (19)
+
+Reason:
+RIPR-SPEC-0258: clarify weak snapshot evidence and its limitation
+
+Command:
+`cargo xtask goldens bless typescript_snapshot_hidden_second_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

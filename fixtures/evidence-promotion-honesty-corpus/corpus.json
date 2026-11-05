@@ -26,7 +26,13 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-literal-unused-callback.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-cloned-unused-callback.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-bound-cloned-unused-callback.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-eager-literal-callback.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-ordinary-value-clone.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-same-named-call-kinds.json"
   ],
   "cases": [
     {
@@ -14308,6 +14314,38 @@
       ]
     },
     {
+      "id": "ts_committed_snapshot_block_comment_cannot_pin_entry",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_snapshot_block_comment",
+      "vector": "commented_snapshot_entry_is_not_executable",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "snapshot", "strength": "medium" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "ts_committed_snapshot_nested_counter_cannot_pin_entry",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_snapshot_nested_counter",
+      "vector": "nested_snapshot_counter_can_change_the_runner_entry",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "snapshot", "strength": "medium" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "ts_committed_snapshot_single_call_control",
       "language": "typescript",
       "tier": "pure",
@@ -17805,6 +17843,52 @@
         { "type": "must_not_report_clean" },
         { "type": "expected_finding_count", "count": 1 },
         { "type": "expected_class", "class": "no_static_path" }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_same_named_call_kinds_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-same-named-call-kinds.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/same-named-call-kinds",
+      "vector": "repo_exposure_assertion_call_kind_does_not_pin_same_named_other_owner",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::consume",
+          "expression": "_ =>",
+          "test": "receiver_contract",
+          "file": "src/lib.rs",
+          "oracle_strength": "none",
+          "relation_reason": "same_test_file"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::consume",
+          "expression": "_ =>",
+          "test": "free_contract",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::impl Widget::consume",
+          "expression": "_ =>",
+          "test": "free_contract",
+          "file": "src/lib.rs",
+          "oracle_strength": "none",
+          "relation_reason": "same_test_file"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::impl Widget::consume",
+          "expression": "_ =>",
+          "test": "receiver_contract",
+          "file": "src/lib.rs",
+          "oracle_strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
       ]
     }
   ]

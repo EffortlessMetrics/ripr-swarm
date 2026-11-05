@@ -20,7 +20,7 @@ const TEST_COVERED_BY_BUILD_TIMEOUT: Duration = Duration::from_mins(30);
 /// The longest single Cargo build `check_file_policy` itself allows. A caller
 /// that bounds the whole check with a shorter deadline cuts the check off
 /// inside its own documented budget (#12510).
-#[cfg(test)]
+#[cfg(all(test, windows))]
 pub(crate) const FILE_POLICY_COVERED_BY_BUILD_BUDGET: Duration = TEST_COVERED_BY_BUILD_TIMEOUT;
 const COVERED_BY_INSTRUMENT_PREFIX: &str = "covered_by_instrument_timeout:";
 /// Infrastructure state: the spawn timed out while Cargo was blocked on a
@@ -115,11 +115,13 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
     let policy_path = "policy/non-rust-allowlist.toml";
     let allowlist = read_file_policy_allowlist(policy_path)?;
     let mut diagnostics = Vec::new();
-    let coverage = match validate_test_covered_by_recorded(
-        policy_path,
-        &read_file_policy_test_commands(policy_path)?,
-        &mut diagnostics,
-    ) {
+    let coverage = match accept_file_policy_coverage(|| {
+        validate_test_covered_by_recorded(
+            policy_path,
+            &read_file_policy_test_commands(policy_path)?,
+            &mut diagnostics,
+        )
+    }) {
         Ok(coverage) => coverage,
         Err(error) => {
             return file_policy_failure_report(
@@ -221,6 +223,86 @@ struct TestCoverageObservation {
     host: FilePolicyHost,
     // None is explicitly inapplicable, never a successful empty enumeration.
     selected: Option<Vec<String>>,
+}
+
+const PACKET_COMMON_COMMAND: &str =
+    "cargo test -p xtask --bin xtask --locked --offline portable_consumer";
+const PACKET_NATIVE_COMMAND: &str =
+    "cargo test -p ripr --locked --offline --test portable_consumer_packet";
+const PACKET_COMMON_SUBJECTS: [&str; 2] = [
+    "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client",
+    "portable_consumer::tests::packet_digest_matches_the_producer_formula",
+];
+const PACKET_NATIVE_SUBJECTS: [&str; 2] = [
+    "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback",
+    "native_packet_pilot_consumes_the_summary_artifact",
+];
+
+/// The production acceptance boundary for fresh file-policy inventories.
+/// Reuse the enumeration already paid for by this gate; never read a retained
+/// report or launch another Cargo inventory to establish packet coverage.
+fn accept_file_policy_coverage(
+    enumerate: impl FnOnce() -> Result<Vec<TestCoverageObservation>, String>,
+) -> Result<Vec<TestCoverageObservation>, String> {
+    let coverage = enumerate()?;
+    validate_packet_coverage(&coverage)?;
+    Ok(coverage)
+}
+
+fn validate_packet_coverage(coverage: &[TestCoverageObservation]) -> Result<(), String> {
+    let observation = |command: &str| -> Result<&TestCoverageObservation, String> {
+        coverage
+            .iter()
+            .find(|row| row.selector.command == command)
+            .ok_or_else(|| format!("packet coverage selector absent: {command}"))
+    };
+    let common = observation(PACKET_COMMON_COMMAND)?;
+    if common.selector.host.is_some() {
+        return Err("common packet coverage must be declared for all hosts".to_string());
+    }
+    validate_packet_subjects(common, &PACKET_COMMON_SUBJECTS)?;
+
+    let native = observation(PACKET_NATIVE_COMMAND)?;
+    if native.host != common.host || native.selector.host != Some(FilePolicyHost::Unix) {
+        return Err(
+            "native packet coverage host/declaration disagrees with common coverage".to_string(),
+        );
+    }
+    match native.host {
+        FilePolicyHost::Unix => validate_packet_subjects(native, &PACKET_NATIVE_SUBJECTS),
+        FilePolicyHost::Windows if native.selected.is_none() => Ok(()),
+        FilePolicyHost::Windows => {
+            Err("Windows native packet coverage must remain not enumerated".to_string())
+        }
+    }
+}
+
+fn validate_packet_subjects(
+    row: &TestCoverageObservation,
+    required: &[&str],
+) -> Result<(), String> {
+    let selected = row.selected.as_ref().ok_or_else(|| {
+        format!(
+            "applicable packet coverage was not enumerated: {}",
+            row.selector.command
+        )
+    })?;
+    if selected.len() < required.len()
+        || selected.iter().any(|name| {
+            name.is_empty()
+                || name.contains([',', '[', ']', ';'])
+                || name.contains(char::is_whitespace)
+        })
+        || required
+            .iter()
+            .any(|name| !selected.iter().any(|test| test.as_str() == *name))
+    {
+        return Err(format!(
+            "packet coverage lost exact selected subjects: {}: {selected:?}",
+            row.selector.command
+        ));
+    }
+    Ok(())
 }
 
 impl TestCoverageObservation {
@@ -715,6 +797,234 @@ fn validate_test_covered_by_with(
 
 #[cfg(test)]
 mod tests {
+    // Literal selectors and subjects are independent of the production table.
+    fn packet_commands() -> [crate::FilePolicyTestCommand; 2] {
+        [
+            crate::FilePolicyTestCommand {
+                line: 1,
+                command: "cargo test -p xtask --bin xtask --locked --offline portable_consumer"
+                    .to_string(),
+                host: None,
+            },
+            crate::FilePolicyTestCommand {
+                line: 2,
+                command: "cargo test -p ripr --locked --offline --test portable_consumer_packet"
+                    .to_string(),
+                host: Some(crate::FilePolicyHost::Unix),
+            },
+        ]
+    }
+
+    fn packet_listing(native: bool) -> String {
+        if native {
+            concat!(
+                "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback: test\n",
+                "native_packet_pilot_consumes_the_summary_artifact: test\n",
+            )
+            .to_string()
+        } else {
+            concat!(
+                "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client: test\n",
+                "portable_consumer::tests::packet_digest_matches_the_producer_formula: test\n",
+            )
+            .to_string()
+        }
+    }
+
+    fn packet_observations(
+        host: crate::FilePolicyHost,
+    ) -> Result<Vec<super::TestCoverageObservation>, String> {
+        super::validate_test_covered_by_with("policy.toml", &packet_commands(), host, |args| {
+            let native = args.iter().any(|arg| arg == "portable_consumer_packet");
+            if host == crate::FilePolicyHost::Windows && native {
+                return Err("Windows attempted native packet enumeration".to_string());
+            }
+            Ok((true, packet_listing(native), String::new()))
+        })
+    }
+
+    #[test]
+    fn packet_coverage_acceptance_uses_fresh_host_scoped_inventory() -> Result<(), String> {
+        for host in [crate::FilePolicyHost::Unix, crate::FilePolicyHost::Windows] {
+            let accepted = super::accept_file_policy_coverage(|| packet_observations(host))?;
+            assert_eq!(accepted.len(), 2);
+            let common = accepted[0].render();
+            assert!(common.contains("declared=all; applicable; selected=2; tests=["));
+            let native = accepted[1].render();
+            if host == crate::FilePolicyHost::Windows {
+                assert!(native.contains(
+                    "host=windows; declared=unix; not_applicable; selected=not_enumerated;"
+                ));
+                assert!(!native.contains("tests=["));
+            } else {
+                assert!(
+                    native.contains("host=unix; declared=unix; applicable; selected=2; tests=[")
+                );
+            }
+            // Additional genuine tests do not invalidate the pinned subjects.
+            super::accept_file_policy_coverage(|| {
+                let mut rows = packet_observations(host)?;
+                rows[0]
+                    .selected
+                    .as_mut()
+                    .ok_or("common tests missing")?
+                    .push("neighboring_control".to_string());
+                Ok(rows)
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packet_coverage_acceptance_rejects_nonzero_neighbor_inventory() {
+        // Restoring the old acceptance (enumerate()? without packet validation)
+        // makes this test fail even though the real listing parser found tests.
+        for host in [crate::FilePolicyHost::Unix, crate::FilePolicyHost::Windows] {
+            for changed_native in [false, true] {
+                if host == crate::FilePolicyHost::Windows && changed_native {
+                    continue;
+                }
+                for changed_subject in 0..2 {
+                    for suffix in [false, true] {
+                        let result = super::accept_file_policy_coverage(|| {
+                            super::validate_test_covered_by_with(
+                                "policy.toml",
+                                &packet_commands(),
+                                host,
+                                |args| {
+                                    let native =
+                                        args.iter().any(|arg| arg == "portable_consumer_packet");
+                                    let listing = packet_listing(native);
+                                    let listing = if native == changed_native {
+                                        listing
+                                            .lines()
+                                            .enumerate()
+                                            .map(|(index, line)| {
+                                                if index != changed_subject {
+                                                    line.to_string()
+                                                } else if suffix {
+                                                    line.replace(": test", "_neighbor: test")
+                                                } else {
+                                                    format!("neighbor::{line}")
+                                                }
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n")
+                                    } else {
+                                        listing
+                                    };
+                                    Ok((true, listing, String::new()))
+                                },
+                            )
+                        });
+                        assert!(
+                            matches!(result, Err(error) if error.contains("lost exact selected subjects"))
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn packet_coverage_acceptance_rejects_selector_and_host_drift() {
+        for host in [crate::FilePolicyHost::Unix, crate::FilePolicyHost::Windows] {
+            for change in 0..10 {
+                let result = super::accept_file_policy_coverage(|| {
+                    let mut rows = packet_observations(host)?;
+                    match change {
+                        0 => {
+                            rows.remove(0);
+                        }
+                        1 => {
+                            rows.remove(1);
+                        }
+                        2 => {
+                            rows[0].selector.command = rows[0]
+                                .selector
+                                .command
+                                .replace("--bin xtask", "--bin neighbor");
+                        }
+                        3 => rows[0].selector.host = Some(host),
+                        4 => rows[1].selector.host = None,
+                        5 => {
+                            rows[1].host = if host == crate::FilePolicyHost::Unix {
+                                crate::FilePolicyHost::Windows
+                            } else {
+                                crate::FilePolicyHost::Unix
+                            };
+                        }
+                        6 => rows[0].selected = None,
+                        7 => {
+                            rows[1].selected = if host == crate::FilePolicyHost::Windows {
+                                Some(vec!["unexpected_native_enumeration".to_string()])
+                            } else {
+                                None
+                            };
+                        }
+                        8 => {
+                            rows[1].selector.command = rows[1]
+                                .selector
+                                .command
+                                .replace("--test portable_consumer_packet", "--test neighbor");
+                        }
+                        _ => rows[1].selector.host = Some(crate::FilePolicyHost::Windows),
+                    }
+                    Ok(rows)
+                });
+                assert!(result.is_err(), "accepted {host:?} drift case {change}");
+            }
+        }
+    }
+
+    #[test]
+    fn packet_coverage_acceptance_rejects_malformed_extra_identities() {
+        for host in [crate::FilePolicyHost::Unix, crate::FilePolicyHost::Windows] {
+            for changed_native in [false, true] {
+                if host == crate::FilePolicyHost::Windows && changed_native {
+                    continue;
+                }
+                for extra in [
+                    "",
+                    "white space",
+                    "comma,name",
+                    "[bracket",
+                    "bracket]",
+                    "semi;colon",
+                    "tab\tname",
+                ] {
+                    let result = super::accept_file_policy_coverage(|| {
+                        super::validate_test_covered_by_with(
+                            "policy.toml",
+                            &packet_commands(),
+                            host,
+                            |args| {
+                                let native =
+                                    args.iter().any(|arg| arg == "portable_consumer_packet");
+                                let mut listing = packet_listing(native);
+                                if native == changed_native {
+                                    listing.push_str(&format!("{extra}: test\n"));
+                                }
+                                Ok((true, listing, String::new()))
+                            },
+                        )
+                    });
+                    assert!(
+                        result.is_err(),
+                        "accepted malformed extra identity {extra:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn packet_coverage_acceptance_preserves_enumerator_failure() {
+        let result =
+            super::accept_file_policy_coverage(|| Err("native inventory failed".to_string()));
+        assert!(matches!(result, Err(error) if error == "native inventory failed"));
+    }
+
     #[test]
     fn cargo_child_announcements_name_start_finish_and_the_exact_selector() {
         let args = |name: &str| ["test", "--test", name].map(String::from).to_vec();

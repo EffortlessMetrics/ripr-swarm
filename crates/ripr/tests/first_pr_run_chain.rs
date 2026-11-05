@@ -705,3 +705,134 @@ fn run_chain_in_a_python_repo_runs_the_check_output_route() -> Result<(), String
 fn run_chain_in_a_typescript_repo_runs_the_check_output_route() -> Result<(), String> {
     assert_preview_chain(&typescript_repo("ts-chain")?, "typescript")
 }
+
+#[cfg(feature = "lang-typescript")]
+fn assert_unknown_preview_chain(extension: &str, language: &str) -> Result<(), String> {
+    let root = preview_repo(
+        &format!("{extension}-unknown"),
+        (
+            "package.json",
+            "{\"name\":\"demo\",\"type\":\"module\",\"devDependencies\":{\"vitest\":\"1.0.0\"}}\n",
+        ),
+        &format!("src/mod.{extension}"),
+        &format!("src/mod.test.{extension}"),
+        "export function add(a, b) {\n  return validate(a) + b;\n}\nfunction validate(a) {\n  if (a > 0) {\n    return a;\n  }\n  throw new Error('positive only');\n}\n",
+        "export function add(a, b) {\n  return validate(a) + b;\n}\nfunction validate(a) {\n  if (a >= 0) {\n    return a;\n  }\n  throw new Error('positive only');\n}\n",
+    )?;
+    let output = ripr(&root, &["first-pr", "--base", "main", "--run-chain"])?;
+    assert!(output.status.success(), "{}", stdout_of(&output));
+    let check: Value = serde_json::from_str(
+        &fs::read_to_string(root.join("target/ripr/reports/check.json"))
+            .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let findings = check["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 1, "{check}");
+    assert_eq!(findings[0]["classification"], "static_unknown");
+    assert_eq!(findings[0]["language"], language);
+    assert_eq!(
+        findings[0]["preview_actionability"]["repair_packet_ready"],
+        false
+    );
+    let reason = findings[0]["preview_actionability"]["why_not_actionable"]
+        .as_str()
+        .ok_or("missing reason")?;
+    assert!(!reason.is_empty());
+    let ledger: Value = serde_json::from_str(
+        &fs::read_to_string(root.join("target/ripr/reports/gap-decision-ledger.json"))
+            .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    let records = ledger["records"].as_array().ok_or("missing records")?;
+    assert_eq!(records.len(), 1, "{ledger}");
+    assert_eq!(records[0]["language"], language);
+    assert_eq!(records[0]["gap_state"], "static_limitation");
+    assert_eq!(records[0]["static_limit_detail"], reason);
+    assert!(records[0]["repair_route"].is_null());
+    let result = packet(&root)?;
+    assert_eq!(
+        result["selected"]["reason_code"],
+        "source_currentness_unavailable"
+    );
+    assert!(stdout_of(&output).contains(reason));
+    assert!(!stdout_of(&output).contains("projected no records"));
+    // The advisory row does not manufacture a current no-action success.
+    let checked = ripr(&root, &["first-pr", "--base", "main", "--check"])?;
+    assert_eq!(checked.status.code(), Some(2));
+    for (label, pointer, replacement) in [
+        ("unsupported", "/findings/0/language", Value::from("rust")),
+        (
+            "missing-reason",
+            "/findings/0/preview_actionability/why_not_actionable",
+            Value::from(""),
+        ),
+        (
+            "ready",
+            "/findings/0/preview_actionability/repair_packet_ready",
+            Value::from(true),
+        ),
+        (
+            "exposed",
+            "/findings/0/classification",
+            Value::from("exposed"),
+        ),
+        (
+            "no-path",
+            "/findings/0/classification",
+            Value::from("no_static_path"),
+        ),
+        (
+            "already-observed",
+            "/findings/0/preview_actionability/gap_state",
+            Value::from("already_observed"),
+        ),
+    ] {
+        let mut control = check.clone();
+        *control
+            .pointer_mut(pointer)
+            .ok_or("missing control field")? = replacement;
+        fs::write(root.join("control-check.json"), control.to_string())
+            .map_err(|e| e.to_string())?;
+        let output = ripr(
+            &root,
+            &[
+                "reports",
+                "gap-ledger",
+                "--check-output",
+                "control-check.json",
+                "--out",
+                "control-ledger.json",
+                "--out-md",
+                "control-ledger.md",
+            ],
+        )?;
+        assert!(output.status.success(), "{label}: {}", stdout_of(&output));
+        let ledger: Value = serde_json::from_str(
+            &fs::read_to_string(root.join("control-ledger.json")).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        let records = ledger["records"]
+            .as_array()
+            .ok_or("missing control records")?;
+        assert!(
+            records
+                .iter()
+                .all(|record| record["gap_state"] != "static_limitation"),
+            "{label}: {ledger}"
+        );
+    }
+    fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-typescript")]
+fn run_chain_retains_javascript_unknown_as_advisory_limitation() -> Result<(), String> {
+    assert_unknown_preview_chain("js", "javascript")
+}
+
+#[test]
+#[cfg(feature = "lang-typescript")]
+fn run_chain_retains_typescript_unknown_as_advisory_limitation() -> Result<(), String> {
+    assert_unknown_preview_chain("ts", "typescript")
+}

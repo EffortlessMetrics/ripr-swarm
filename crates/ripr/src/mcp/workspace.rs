@@ -1790,18 +1790,25 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
 
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
+    let empty_scope = empty_scope_hint(session).is_some();
     let snapshot = session.last_good.as_ref().map(|snapshot| {
-        tag_source(
-            json!({
-                "snapshot_id": snapshot.snapshot_id,
-                "outcome_kind": snapshot.outcome.kind.as_str(),
-                "finding_count": snapshot.outcome.counts.finding_count,
-                "total_items": snapshot.selection.total_canonical_items,
-                "list_route": "ripr_list_gaps",
-                "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
-            }),
-            snapshot,
-        )
+        let mut summary = json!({
+            "snapshot_id": snapshot.snapshot_id,
+            "outcome_kind": snapshot.outcome.kind.as_str(),
+            "finding_count": snapshot.outcome.counts.finding_count,
+            "total_items": snapshot.selection.total_canonical_items,
+            "list_route": "ripr_list_gaps",
+            "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
+        });
+        // #13096: an empty-scope snapshot completed without examining any
+        // behavior. Say so in the primary fields an agent reads first, not
+        // only in the later `empty_scope_hint`, so zero findings never read
+        // as a clean result.
+        if empty_scope {
+            summary["analysis_status"] = json!("not_analyzed");
+            summary["clean"] = json!(false);
+        }
+        tag_source(summary, snapshot)
     });
     // `requested_base` appears only when the request named one, so a base-less
     // refresh keeps the unchanged v1 shape.
@@ -1843,7 +1850,15 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             json!(snapshot.source == RefreshSource::Worktree || !snapshot.scope.uncommitted_edits)
         }
     };
-    document["verify"] = super::repair::verify_after_editing_tests();
+    // The re-check follows the analysed subject: the retained snapshot's base,
+    // else the caller's latest request (#13196).
+    // Select the snapshot first and keep its `None`: a retained default-base
+    // snapshot must not inherit a later failed request's base.
+    document["verify"] =
+        super::repair::verify_after_editing_tests(match session.last_good.as_ref() {
+            Some(snapshot) => snapshot.base.as_deref(),
+            None => session.desired_base.as_deref(),
+        });
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
     }
@@ -5331,6 +5346,14 @@ mod tests {
             {
                 return Err(format!("hint must name why, base and source: {text}"));
             }
+            // #13096: the primary snapshot fields disclose the empty scope.
+            if document["snapshot"]["analysis_status"] != json!("not_analyzed")
+                || document["snapshot"]["clean"] != json!(false)
+            {
+                return Err(format!(
+                    "{kind:?} snapshot must say not_analyzed and not clean: {document}"
+                ));
+            }
             let default_why = document["empty_scope_hint"]["why"].to_string();
             if (kind == AnalysisOutcomeKind::NoBehavioralCandidates)
                 == default_why.contains("the diff is empty")
@@ -5342,12 +5365,52 @@ mod tests {
             if !named.contains("origin/main") {
                 return Err(format!("requested base must be named: {named}"));
             }
+            // #13196: the post-edit re-check follows the retained snapshot's
+            // base, never a later request's.
+            // Retained default-base snapshot (`base: None`) keeps the base-less
+            // route even though a later (failed) request named a base.
+            let retained_none = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            if retained_none != json!({ "source": "worktree" }) {
+                return Err(format!(
+                    "retained default-base snapshot inherited the request base: {retained_none}"
+                ));
+            }
+            // Retained explicit-base snapshot keeps its own base, not the later request's.
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("snapshot should be uniquely owned in the test")?;
+            snapshot.base = Some("snapshot-base".to_string());
+            let retained_some = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            if retained_some != json!({ "source": "worktree", "base": "snapshot-base" }) {
+                return Err(format!(
+                    "retained snapshot base was replaced: {retained_some}"
+                ));
+            }
+            // No snapshot: fall back to the request's base.
+            let snapshot_slot = session.last_good.take();
+            let no_snapshot = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            if no_snapshot != json!({ "source": "worktree", "base": "origin/main" }) {
+                return Err(format!(
+                    "no-snapshot fallback lost the request base: {no_snapshot}"
+                ));
+            }
+            session.last_good = snapshot_slot;
+            if let Some(snapshot) = session.last_good.as_mut().and_then(Arc::get_mut) {
+                snapshot.base = None;
+            }
         }
         for (kind, findings) in [
             (AnalysisOutcomeKind::CompleteNoFindings, 0),
             (AnalysisOutcomeKind::CompleteWithFindings, 1),
         ] {
             let document = refresh_document(&session_with(kind, findings)?);
+            if document["snapshot"].get("analysis_status").is_some() {
+                return Err(format!(
+                    "{kind:?} must not carry analysis_status: {document}"
+                ));
+            }
             if document.get("empty_scope_hint").is_some() {
                 return Err(format!("{kind:?} must not carry a hint: {document}"));
             }
