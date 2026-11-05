@@ -1,3 +1,0 @@
-# path|pattern|max_count|tier|reason
-crates/ripr/tests/json_compact_cli.rs|Command::new|1|test|Launch the Cargo-selected ripr binary on owned fixtures to compare json/json-compact reports, refusals and exit status; no shell or network.
-crates/ripr/tests/json_compact_cli.rs|use std::process::Command|1|test|Command import for the single public-CLI comparison helper in issue #13103.
