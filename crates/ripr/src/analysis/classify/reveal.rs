@@ -2744,7 +2744,9 @@ fn analyze_related_assertions(
                     || is_inline_expect_snapshot(assertion));
             let wrapper_pinned = matches!(probe.family, ProbeFamily::ReturnValue)
                 && (return_admission.wrapper_return_pin)(test, assertion);
-            let owner_bound = !match_context.owner_scoped_tokens.is_empty()
+            let owner_bound = !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
                 && oracle_binds_sink_identity(
                     &assertion.text,
                     &test.body,
@@ -3103,19 +3105,26 @@ fn analyze_related_assertions(
                     probe_relative_oracle_strength(&probe.family, assertion)
                 };
                 relative_strength = self_computed_cap(relative_strength, self_computed);
-                let identity = matches!(
-                    reason,
-                    RelationReason::DirectOwnerCall
-                        | RelationReason::HelperOwnerCall
-                        | RelationReason::AssertionTargetAffinity
-                        | RelationReason::OwnerNamedTest
-                ) || owner_return_pin_holds(
-                    &assertion_context,
-                    assertion,
-                    owner_pinned,
-                    import_defeats_owner,
-                    cross_package_defeats_owner,
-                ) || wrapper_pinned
+                // A call elsewhere in this test establishes reach, not what
+                // this oracle reads. Bind the assertion itself to the owner's
+                // result; retain the existing producer-authenticated observers.
+                let identity = (owner_bound
+                    && matches!(
+                        reason,
+                        RelationReason::DirectOwnerCall
+                            | RelationReason::HelperOwnerCall
+                            | RelationReason::AssertionTargetAffinity
+                    ))
+                    || owner_return_pin_holds(
+                        &assertion_context,
+                        assertion,
+                        owner_pinned,
+                        import_defeats_owner,
+                        cross_package_defeats_owner,
+                    )
+                    || wrapper_pinned
+                    || (matches!(probe.family, ProbeFamily::Predicate)
+                        && (return_admission.wrapper_return_pin)(test, assertion))
                     || implicit_observer == Some(true)
                     || recording_double_read
                     || field_collection_read

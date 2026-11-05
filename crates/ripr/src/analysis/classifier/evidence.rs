@@ -1050,16 +1050,20 @@ impl ClassifiedProbeEvidence {
         // #9849: only an established unconditional bool whole-return may
         // borrow the existing predicate boundary authority through a wrapper.
         // This view supplies activation facts, never a second classification.
-        let wrapper_boundary_probe = (matches!(context.probe.family, ProbeFamily::ReturnValue)
-            && helper_only_reach(&context.related_tests)
-            && owner_return_pin
-                .as_ref()
-                .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail))
-        .then(|| {
-            let mut predicate = context.probe.clone();
-            predicate.family = ProbeFamily::Predicate;
-            predicate
-        });
+        let wrapper_boundary_probe = if matches!(context.probe.family, ProbeFamily::Predicate) {
+            Some(context.probe.clone())
+        } else {
+            (matches!(context.probe.family, ProbeFamily::ReturnValue)
+                && helper_only_reach(&context.related_tests)
+                && owner_return_pin
+                    .as_ref()
+                    .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail))
+            .then(|| {
+                let mut predicate = context.probe.clone();
+                predicate.family = ProbeFamily::Predicate;
+                predicate
+            })
+        };
         // Reveal asks once per assertion. Compute the whole-test activation
         // only once per original test, and borrow its rows instead of copying
         // them for each assertion. File/name/coordinate retain provenance.

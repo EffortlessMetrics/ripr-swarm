@@ -2,7 +2,11 @@ use super::*;
 
 #[test]
 fn sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can() {
-    let probe = probe(ProbeFamily::Predicate, "current.status == recorded.status");
+    let probe = owned_probe(
+        ProbeFamily::Predicate,
+        "current.status == recorded.status",
+        "decision",
+    );
     let exact = test_with_assertions(
         "other_status_is_terminal",
         vec![oracle(
@@ -24,7 +28,17 @@ fn sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can() {
         RelationReason::DirectOwnerCall,
         RelationReason::HelperOwnerCall,
     ] {
-        let (_, discriminate, _) = reveal_evidence(&probe, &[(&exact, reason)]);
+        let (_, unrelated, _) = reveal_evidence(&probe, &[(&exact, reason)]);
+        assert_eq!(unrelated.state, StageState::Weak);
+        let bound = test_with_assertions(
+            "owner_result",
+            vec![oracle(
+                "assert!(decision());",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, discriminate, _) = reveal_evidence(&probe, &[(&bound, reason)]);
         assert_eq!(
             discriminate.state,
             StageState::Yes,
@@ -35,7 +49,7 @@ fn sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can() {
 
 #[test]
 fn sink_identity_equal_strength_bound_oracle_wins_in_either_order() {
-    let probe = probe(ProbeFamily::Predicate, "status == expected");
+    let probe = owned_probe(ProbeFamily::Predicate, "status == expected", "decision");
     let exact = test_with_assertions(
         "status_observation",
         vec![oracle(
@@ -44,13 +58,21 @@ fn sink_identity_equal_strength_bound_oracle_wins_in_either_order() {
             OracleStrength::Strong,
         )],
     );
+    let bound = test_with_assertions(
+        "owner_result",
+        vec![oracle(
+            "assert!(decision());",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        )],
+    );
     for related in [
         vec![
             (&exact, RelationReason::SameTestFile),
-            (&exact, RelationReason::DirectOwnerCall),
+            (&bound, RelationReason::DirectOwnerCall),
         ],
         vec![
-            (&exact, RelationReason::DirectOwnerCall),
+            (&bound, RelationReason::DirectOwnerCall),
             (&exact, RelationReason::SameTestFile),
         ],
     ] {
@@ -61,7 +83,11 @@ fn sink_identity_equal_strength_bound_oracle_wins_in_either_order() {
 
 #[test]
 fn sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_before_controls() {
-    let mut probe = probe(ProbeFamily::ReturnValue, "\"verifies catalog consistency\"");
+    let mut probe = owned_probe(
+        ProbeFamily::ReturnValue,
+        "\"verifies catalog consistency\"",
+        "description",
+    );
     probe.before = Some("\"checks catalog consistency\"".to_string());
     let shared = test_with_assertions(
         "catalog_shape",
@@ -74,7 +100,7 @@ fn sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_b
     let exact = test_with_assertions(
         "description_text",
         vec![oracle(
-            "assert_eq!(description, \"verifies catalog consistency\");",
+            "assert_eq!(description(), \"verifies catalog consistency\");",
             OracleKind::ExactValue,
             OracleStrength::Strong,
         )],
@@ -98,14 +124,21 @@ fn sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_b
         reveal_evidence(&probe, &[(&shared, RelationReason::DirectOwnerCall)]);
     assert_eq!(
         discriminate.state,
-        StageState::Yes,
-        "no-before: {discriminate:?}"
+        StageState::Weak,
+        "unrelated no-before: {discriminate:?}"
     );
+    let (_, observed_no_before, _) =
+        reveal_evidence(&probe, &[(&exact, RelationReason::DirectOwnerCall)]);
+    assert_eq!(observed_no_before.state, StageState::Yes);
 }
 
 #[test]
 fn sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token() {
-    let mut probe = probe(ProbeFamily::ReturnValue, "\"verifies catalog consistency\"");
+    let mut probe = owned_probe(
+        ProbeFamily::ReturnValue,
+        "\"verifies catalog consistency\"",
+        "description",
+    );
     probe.before = Some("\"checks catalog consistency\"".to_string());
     let shared = test_with_assertions(
         "catalog_shape",
@@ -136,4 +169,51 @@ fn sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token() {
         let (_, discriminate, _) = reveal_evidence(&probe, &related);
         assert_eq!(discriminate.state, StageState::Weak, "{discriminate:?}");
     }
+}
+
+#[test]
+fn sink_identity_real_parser_discarded_return_cannot_lend_identity_to_another_assertion()
+-> Result<(), String> {
+    use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+    let mut probe = owned_probe(
+        ProbeFamily::ReturnValue,
+        "\"verifies catalog\".to_string()",
+        "description",
+    );
+    probe.before = Some("\"checks catalog\".to_string()".into());
+    for (assertions, expected) in [
+        ("assert_eq!(other, \"verifies catalog\");", StageState::Weak),
+        (
+            "assert_eq!(description(), \"verifies catalog\");",
+            StageState::Yes,
+        ),
+        (
+            "assert_eq!(other, \"verifies catalog\"); assert_eq!(description(), \"verifies catalog\");",
+            StageState::Yes,
+        ),
+        (
+            "assert_eq!(description(), \"verifies catalog\"); assert_eq!(other, \"verifies catalog\");",
+            StageState::Yes,
+        ),
+        (
+            "let result = description(); assert_eq!(result, \"verifies catalog\");",
+            StageState::Yes,
+        ),
+    ] {
+        let source = format!(
+            "pub fn description() -> String {{ \"verifies catalog\".into() }}\n#[test] fn checks_text() {{ let _ = description(); let other = \"verifies catalog\"; {assertions} }}"
+        );
+        let facts = RaRustSyntaxAdapter.summarize_file(&PathBuf::from("src/lib.rs"), &source)?;
+        assert!(!facts.used_lexical_fallback);
+        let test = facts.tests.first().ok_or("parsed test missing")?;
+        assert!(!test.assertions.is_empty());
+        assert!(test.calls.iter().any(|call| call.name == "description"));
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(test, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            discriminate.state, expected,
+            "{assertions}: {discriminate:?}"
+        );
+    }
+    Ok(())
 }
