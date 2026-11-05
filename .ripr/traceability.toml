@@ -20001,11 +20001,14 @@ tests = [
   "xtask/tests/policy_all.rs::policy_all_keeps_early_io_error_and_does_not_trust_stale_leaf_report",
   "xtask/tests/policy_all.rs::policy_all_report_write_error_preserves_leaf_failures",
   "xtask/tests/policy_all.rs::policy_all_healthy_leaves_still_fail_when_aggregate_report_cannot_be_written",
+  "xtask/tests/policy_all.rs::policy_all_reads_metadata_without_compiling_members_or_changing_the_lockfile",
+  "xtask/tests/policy_all.rs::policy_all_keeps_membership_discovery_failure_and_other_leaf_failures",
 ]
 fixtures = []
 code = [
   "xtask/src/main.rs::publish_precommit_policy_report",
   "xtask/src/policy/all.rs::check_policy_all",
+  "xtask/src/policy/workspace_lint_inheritance.rs",
   "xtask/src/policy/mod.rs",
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",

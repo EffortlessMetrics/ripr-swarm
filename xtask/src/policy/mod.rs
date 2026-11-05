@@ -32,6 +32,7 @@ mod static_language;
 mod test_inventory;
 mod text_encoding;
 mod workflows;
+mod workspace_lint_inheritance;
 mod workspace_lints;
 
 pub(crate) use all::check_policy_all;
@@ -67,6 +68,7 @@ pub(crate) use static_language::check_static_language;
 pub(crate) use text_encoding::check_text_encoding;
 pub(crate) use user_text::{check_user_text, check_user_text_full, check_user_text_with_args};
 pub(crate) use workflows::check_workflows;
+pub(crate) use workspace_lint_inheritance::workspace_lint_inheritance_violations;
 pub(crate) use workspace_lints::parse_workspace_lints_section;
 
 pub(crate) fn check_release_targets() -> Result<(), String> {

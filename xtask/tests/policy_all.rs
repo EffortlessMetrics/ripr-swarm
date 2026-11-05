@@ -58,8 +58,18 @@ impl Fixture {
         for dir in [".ripr", "policy", "crates/sample/src", "target"] {
             std::fs::create_dir_all(fixture.0.join(dir)).map_err(|error| error.to_string())?;
         }
-        fixture.write("Cargo.toml", "[workspace]\nmembers = [\"crates/sample\"]\n")?;
-        fixture.write("crates/sample/Cargo.toml", "[package]\nname = \"sample\"\n")?;
+        fixture.write(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/sample\"]\nresolver = \"2\"\n[workspace.lints.rust]\nunsafe_code = \"forbid\"\n",
+        )?;
+        fixture.write(
+            "crates/sample/Cargo.toml",
+            "[package]\nname = \"sample\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[lints]\nworkspace = true\n",
+        )?;
+        fixture.write(
+            "Cargo.lock",
+            "version = 4\n\n[[package]]\nname = \"sample\"\nversion = \"0.0.0\"\n",
+        )?;
         fixture.write("crates/sample/src/lib.rs", "#[test]\nfn sample_test() {}\n")?;
         fixture.write("README.md", "Draft exposure evidence.\n")?;
         fixture.write("ordinary", "ordinary file\n")?;
@@ -78,6 +88,10 @@ impl Fixture {
         ] {
             fixture.write(path, "")?;
         }
+        fixture.write(
+            "policy/clippy-lints.toml",
+            "[[active.rust]]\nname = \"unsafe_code\"\nlevel = \"forbid\"\n",
+        )?;
         fixture.git(&["init", "--quiet"])?;
         fixture.git(&["-c", "core.filemode=false", "add", "."])?;
         fixture.git(&["update-index", "--chmod=-x", "ordinary"])?;
@@ -256,6 +270,95 @@ fn policy_all_healthy_fixture_passes_with_original_leaf_reports() -> Result<(), 
     assert!(report.contains("Status: pass"));
     fixture.compare_leaves(&output, &[])?;
     assert!(!fixture.reports().join("file-policy.md").exists());
+    Ok(())
+}
+
+#[test]
+fn lint_policy_rejects_missing_disabled_and_replaced_member_inheritance() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    for lints in [
+        "",
+        "[lints]\nworkspace = false\n",
+        "[lints.rust]\nunsafe_code = \"allow\"\n",
+    ] {
+        fixture.write(
+            "crates/sample/Cargo.toml",
+            &format!(
+                "[package]\nname = \"sample\"\nversion = \"0.0.0\"\nedition = \"2024\"\n{lints}"
+            ),
+        )?;
+        let output = fixture.run("check-lint-policy")?;
+        assert_eq!(output.status.code(), Some(1), "{lints:?}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("Cargo.toml"), "{stderr}");
+        assert!(stderr.contains("workspace"), "{stderr}");
+    }
+    Ok(())
+}
+
+#[test]
+fn policy_all_reads_metadata_without_compiling_members_or_changing_the_lockfile()
+-> Result<(), String> {
+    let fixture = Fixture::new()?;
+    // Build, test and Clippy would fail these canaries. Metadata only reads them.
+    fixture.write(
+        "crates/sample/src/lib.rs",
+        "compile_error!(\"policy scans must not compile targets\");\n#[test]\nfn sample_test() {}\n",
+    )?;
+    fixture.write(
+        "crates/sample/build.rs",
+        "compile_error!(\"policy scans must not compile build scripts\");\nfn main() {}\n",
+    )?;
+    let lockfile = std::fs::read(fixture.0.join("Cargo.lock")).map_err(|error| error.to_string())?;
+    let output = fixture.run("check-policy-all")?;
+    assert!(output.status.success(), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("check-lint-policy: pass"));
+    assert_eq!(
+        std::fs::read(fixture.0.join("Cargo.lock")).map_err(|error| error.to_string())?,
+        lockfile
+    );
+    assert!(!fixture.reports().join("file-policy.md").exists());
+    Ok(())
+}
+
+#[test]
+fn policy_all_keeps_membership_discovery_failure_and_other_leaf_failures() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let stale_lint_report = std::fs::read(fixture.reports().join("lint-policy.md"))
+        .map_err(|error| error.to_string())?;
+    fixture.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/sample\", \"missing/member\"]\nresolver = \"2\"\n[workspace.lints.rust]\nunsafe_code = \"forbid\"\n",
+    )?;
+    fixture.write(
+        "policy/clippy-lints.toml",
+        "[[active.rust]]\nname = \"unsafe_code\"\nlevel = \"deny\"\n",
+    )?;
+    fixture.git(&["update-index", "--chmod=+x", "ordinary"])?;
+    let output = fixture.run("check-policy-all")?;
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "check-policy-all: 2 gate(s) failed: check-executable-files, check-lint-policy"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("not allowlisted: ordinary"), "{stderr}");
+    assert!(stderr.contains("workspace membership"), "{stderr}");
+    assert!(stderr.contains("cargo metadata"), "{stderr}");
+    assert!(stderr.contains("--locked --offline"), "{stderr}");
+    assert!(stderr.contains("missing"), "{stderr}");
+    let report = std::fs::read_to_string(fixture.reports().join("check-policy-all.md"))
+        .map_err(|error| error.to_string())?;
+    assert!(report.contains("check-lint-policy`: fail"), "{report}");
+    assert!(report.contains("workspace membership"), "{report}");
+    let lint_report = std::fs::read_to_string(fixture.reports().join("lint-policy.md"))
+        .map_err(|error| error.to_string())?;
+    assert_ne!(lint_report.as_bytes(), stale_lint_report.as_slice());
+    assert!(lint_report.contains("Status: fail"), "{lint_report}");
+    assert!(lint_report.contains("unsafe_code"), "{lint_report}");
+    assert!(lint_report.contains("workspace membership"), "{lint_report}");
     Ok(())
 }
 
