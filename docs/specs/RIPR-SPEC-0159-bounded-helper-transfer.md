@@ -881,6 +881,10 @@ forwarding that return unchanged. The closed profile is one root free owner
 `fn owner(bytes: &[u8]) -> u32`, imported into one ordinary test module through
 `use super::*`, and an unannotated helper with exactly one immutable builtin
 `u32` parameter and a sole tail `owner(&parameter.to_be_bytes()) == parameter`.
+The production owner's name uses the existing bounded plain ASCII identifier
+grammar, matching the helper-name premise. Unicode or other unproved owner
+spellings supply no comparison receipt; this profile does not extend the shared
+macro scanner's identifier grammar.
 The same source file must be the exact root of one current Cargo library target
 collected under Cargo defaults with the ordinary libtest harness. The shared
 target inventory binds metadata ownership, selected default package membership,

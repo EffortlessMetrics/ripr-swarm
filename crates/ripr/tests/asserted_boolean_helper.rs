@@ -53,6 +53,22 @@ fn finding_with_manifest(
     local_macro: bool,
     library_settings: &str,
 ) -> Result<Value, String> {
+    finding_with_stimulus(
+        &postimage(source)?,
+        DIFF,
+        repo,
+        local_macro,
+        library_settings,
+    )
+}
+
+fn finding_with_stimulus(
+    source_postimage: &str,
+    diff_text: &str,
+    repo: bool,
+    local_macro: bool,
+    library_settings: &str,
+) -> Result<Value, String> {
     let scratch = Scratch::new()?;
     let mut manifest = MANIFEST.to_owned();
     manifest.push_str(library_settings);
@@ -70,10 +86,10 @@ fn expansion() -> TokenStream {
 "#).map_err(|error| error.to_string())?;
     }
     std::fs::write(scratch.0.join("Cargo.toml"), manifest).map_err(|error| error.to_string())?;
-    std::fs::write(scratch.0.join("src/lib.rs"), postimage(source)?)
+    std::fs::write(scratch.0.join("src/lib.rs"), source_postimage)
         .map_err(|error| error.to_string())?;
     let diff = scratch.0.join("case.diff");
-    std::fs::write(&diff, DIFF).map_err(|error| error.to_string())?;
+    std::fs::write(&diff, diff_text).map_err(|error| error.to_string())?;
     let input = CheckInput {
         root: scratch.0.clone(),
         diff_file: (!repo).then_some(diff),
@@ -95,9 +111,13 @@ fn expansion() -> TokenStream {
         .iter()
         .filter(|finding| {
             finding["probe"]["family"] == "return_value"
+                && finding["probe"]["line"] == 26
                 && finding["probe"]["expression"]
                     .as_str()
-                    .is_some_and(|expression| expression.starts_with("u32::from_be_bytes"))
+                    .is_some_and(|expression| {
+                        expression.starts_with("u32::from_be_bytes")
+                            || expression.starts_with("u32::from_le_bytes")
+                    })
         })
         .collect();
     let [finding] = found.as_slice() else {
@@ -146,6 +166,43 @@ fn disabled_library_targets_withhold_the_new_helper_observer() -> Result<(), Str
                     .iter()
                     .all(|value| !value.to_string().contains("bytes = [")),
                 "disabled target must not lend owner byte rows: {finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn non_ascii_owner_names_cannot_borrow_the_helper_receipt() -> Result<(), String> {
+    let source = ORIGINAL.replace("read_u32", "read_é");
+    let wrong_return = OWNER.replace("from_be_bytes", "from_le_bytes");
+    let wrong_owner = source.replacen(OWNER, &wrong_return, 1);
+    let shadowed = wrong_owner.replacen(
+        "    use super::*;",
+        "    use super::*; macro_rules! shadow { () => { fn read_é(b: &[u8])->u32 { u32::from_be_bytes([b[0],b[1],b[2],b[3]]) } }; } shadow!();",
+        1,
+    );
+    let shadow_diff = DIFF.replace("read_u32", "read_é").replace(
+        &format!("+    {OWNER} | 0"),
+        &format!("+    {wrong_return}"),
+    );
+    for repo in [false, true] {
+        let plain = finding(&source, repo)?;
+        let shadow = finding_with_stimulus(&shadowed, &shadow_diff, repo, false, "")?;
+        for finding in [plain, shadow] {
+            assert!(
+                !finding
+                    .to_string()
+                    .contains("asserted_u32_helper_comparison"),
+                "repo={repo}: {finding}"
+            );
+            assert!(
+                finding["observed_values"]
+                    .as_array()
+                    .ok_or("unsupported owner observed values")?
+                    .iter()
+                    .all(|value| !value.to_string().contains("bytes = [")),
+                "unsupported owner must not lend helper byte rows: {finding}"
             );
         }
     }

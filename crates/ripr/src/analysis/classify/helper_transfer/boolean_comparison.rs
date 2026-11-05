@@ -159,7 +159,8 @@ pub(in crate::analysis) fn boolean_comparison_receipt(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> Option<BooleanComparisonReceipt> {
-    if !owner.body.contains("u32")
+    if !super::is_identifier(&owner.name)
+        || !owner.body.contains("u32")
         || !test.body.contains("for")
         || !test.body.contains("assert")
         || owner.file != test.file
