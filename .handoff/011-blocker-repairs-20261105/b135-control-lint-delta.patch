@@ -1,0 +1,98 @@
+diff --git a/crates/ripr/src/analysis/classify/helper_transfer.rs b/crates/ripr/src/analysis/classify/helper_transfer.rs
+index 9605ea017..2ff1c1e23 100644
+--- a/crates/ripr/src/analysis/classify/helper_transfer.rs
++++ b/crates/ripr/src/analysis/classify/helper_transfer.rs
+@@ -5557,7 +5557,7 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn transparent_macro_scan_concurrent_calls_preserve_uncached_answer() {
++    fn transparent_macro_scan_concurrent_calls_preserve_uncached_answer() -> Result<(), String> {
+         let mut index = RustIndex::default();
+         let path = PathBuf::from("src/lib.rs");
+         index.insert_file_only(
+@@ -5568,7 +5568,7 @@ mod tests {
+                 ..Default::default()
+             },
+         );
+-        std::thread::scope(|scope| {
++        std::thread::scope(|scope| -> Result<(), String> {
+             let mut handles = Vec::new();
+             for _ in 0..8 {
+                 let index = &index;
+@@ -5577,15 +5577,19 @@ mod tests {
+                 }));
+             }
+             for handle in handles {
+-                assert!(handle.join().is_ok());
++                handle
++                    .join()
++                    .map_err(|error| format!("macro scan worker panicked: {error:?}"))?;
+             }
+-        });
++            Ok(())
++        })?;
+         assert!(transparent_macro_name_rebound_uncached(&index));
+         let scans = index
+             .call_identity_memos
+             .transparent_macro_scans
+             .load(std::sync::atomic::Ordering::Relaxed);
+         assert!((1..=8).contains(&scans));
++        Ok(())
+     }
+ 
+     #[test]
+@@ -5706,8 +5710,12 @@ mod tests {
+                     .map_err(|error| error.to_string())?,
+                 Err(error) => return Err(error.to_string()),
+             };
+-            assert!(poisoner.join().is_ok());
+-            assert!(reader.join().is_ok());
++            poisoner
++                .join()
++                .map_err(|error| format!("manifest poisoner panicked: {error:?}"))?;
++            reader
++                .join()
++                .map_err(|error| format!("manifest reader panicked: {error:?}"))?;
+             assert!(
+                 blocked,
+                 "cached lookup returned while verifier lock was held"
+diff --git a/crates/ripr/src/analysis/classify/owner_pin/tests.rs b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+index ad41a11ea..84a896e5d 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin/tests.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+@@ -14093,7 +14093,7 @@ fn empty_macro_candidate_fast_path_matches_full_scan_and_is_memoized() -> Result
+             .call_identity_memos
+             .empty_macro_candidates
+             .set(false)
+-            .map_err(|_| "occupied reference memo")?;
++            .map_err(|value| format!("occupied reference memo: {value}"))?;
+         let expected = format!(
+             "{:?}",
+             full.context_ambiguities(
+@@ -14160,8 +14160,10 @@ fn empty_macro_candidate_fast_path_refuses_withheld_and_invalidates_on_index_cha
+     warmed
+         .context_ambiguities(first_test, first_test.start_line + 1, &first)
+         .map_err(|e| format!("{e:?}"))?;
+-    let mut replacement = WithheldMacroBindings::default();
+-    replacement.any_name = true;
++    let replacement = WithheldMacroBindings {
++        any_name: true,
++        ..Default::default()
++    };
+     let withheld = warmed.with_withheld(replacement);
+     let result = withheld
+         .context_ambiguities(first_test, first_test.start_line + 1, &first)
+diff --git a/crates/ripr/src/lsp/tests.rs b/crates/ripr/src/lsp/tests.rs
+index 4e1be96db..6bc978cbb 100644
+--- a/crates/ripr/src/lsp/tests.rs
++++ b/crates/ripr/src/lsp/tests.rs
+@@ -23882,7 +23882,7 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
+     let (_, pending_duplicate) = tokio::join!(first_reload, pending_duplicate);
+     gate_owner
+         .join()
+-        .map_err(|_| "pending reload gate owner panicked")??;
++        .map_err(|error| format!("pending reload gate owner panicked: {error:?}"))??;
+     pending_duplicate?;
+     assert_eq!(
+         settled_quarantine_refresh(backend).await?,

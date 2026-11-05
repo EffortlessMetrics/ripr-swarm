@@ -1,0 +1,457 @@
+{
+  "stage": "clippy-all-targets-diagnostic",
+  "candidate": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+  "base_tree": "3764db0226dc65c4c88a939fde29636b2b463051",
+  "dirty_patch_sha256": "75deb16a077b004d5d53f8353b85599532e39afc17cf0902c5f2a4fcd235622d",
+  "qualification_scope": "diagnostic dirty input; not a committed-candidate qualification",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--keep-going",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 420.08,
+  "counts": null,
+  "log_sha256": "ec3a1bbda468ebdd6c8b2ed45d72d0141f4f34bd9060b11730417e07a299c5c9",
+  "peak_cgroup_memory_bytes": 11045933056,
+  "samples": [
+    {
+      "utc": "2026-11-05T08:28:12.078873+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 1563193344,
+      "workspace_free_bytes": 23050219520,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:28:22.079636+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 2863054848,
+      "workspace_free_bytes": 23050223616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:28:32.080619+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 20.0,
+      "cgroup_memory_bytes": 3693768704,
+      "workspace_free_bytes": 23050223616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:28:42.081290+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 30.0,
+      "cgroup_memory_bytes": 3497807872,
+      "workspace_free_bytes": 23050223616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:28:52.082016+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 40.0,
+      "cgroup_memory_bytes": 3777925120,
+      "workspace_free_bytes": 23050223616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:29:02.082618+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 50.0,
+      "cgroup_memory_bytes": 3999350784,
+      "workspace_free_bytes": 23050223616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:29:12.083643+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 60.01,
+      "cgroup_memory_bytes": 4508512256,
+      "workspace_free_bytes": 23050223616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:29:22.085320+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 70.01,
+      "cgroup_memory_bytes": 5149298688,
+      "workspace_free_bytes": 23050223616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:29:32.086030+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 80.01,
+      "cgroup_memory_bytes": 5792825344,
+      "workspace_free_bytes": 23050223616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:29:42.087250+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 90.01,
+      "cgroup_memory_bytes": 6258397184,
+      "workspace_free_bytes": 23050223616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:29:52.087883+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 100.01,
+      "cgroup_memory_bytes": 6265380864,
+      "workspace_free_bytes": 23050223616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:30:02.088420+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 110.01,
+      "cgroup_memory_bytes": 6264643584,
+      "workspace_free_bytes": 23050223616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:30:12.097880+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 120.02,
+      "cgroup_memory_bytes": 1596411904,
+      "workspace_free_bytes": 23050104832,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:30:22.105184+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 130.03,
+      "cgroup_memory_bytes": 1629319168,
+      "workspace_free_bytes": 23049891840,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:30:32.106515+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 140.03,
+      "cgroup_memory_bytes": 3180802048,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:30:42.111253+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 150.03,
+      "cgroup_memory_bytes": 4051628032,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:30:52.112205+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 160.03,
+      "cgroup_memory_bytes": 4248141824,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:31:02.112777+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 170.03,
+      "cgroup_memory_bytes": 5701738496,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:31:12.114215+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 180.04,
+      "cgroup_memory_bytes": 4767825920,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:31:22.116280+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 190.04,
+      "cgroup_memory_bytes": 5038055424,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:31:32.117098+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 200.04,
+      "cgroup_memory_bytes": 5266591744,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:31:42.118503+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 210.04,
+      "cgroup_memory_bytes": 5564579840,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:31:52.119413+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 220.04,
+      "cgroup_memory_bytes": 5798240256,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:32:02.119970+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 230.04,
+      "cgroup_memory_bytes": 6039498752,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:32:12.120503+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 240.04,
+      "cgroup_memory_bytes": 6272507904,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:32:22.121130+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 250.04,
+      "cgroup_memory_bytes": 6760583168,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:32:32.121670+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 260.04,
+      "cgroup_memory_bytes": 7360274432,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:32:42.122206+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 270.04,
+      "cgroup_memory_bytes": 7931293696,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:32:52.123021+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 280.04,
+      "cgroup_memory_bytes": 8502554624,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:33:02.123927+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 290.05,
+      "cgroup_memory_bytes": 9135722496,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:33:12.124453+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 300.05,
+      "cgroup_memory_bytes": 9787199488,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:33:22.125018+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 310.05,
+      "cgroup_memory_bytes": 10630324224,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:33:32.125755+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 320.05,
+      "cgroup_memory_bytes": 11045933056,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:33:42.126723+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 330.05,
+      "cgroup_memory_bytes": 11033780224,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:33:52.127440+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 340.05,
+      "cgroup_memory_bytes": 11035463680,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:34:02.131068+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 350.05,
+      "cgroup_memory_bytes": 11037863936,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:34:12.131610+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 360.05,
+      "cgroup_memory_bytes": 11035881472,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:34:22.132694+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 370.05,
+      "cgroup_memory_bytes": 11039031296,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:34:32.133253+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 380.06,
+      "cgroup_memory_bytes": 11039784960,
+      "workspace_free_bytes": 23049867264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:34:42.137604+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 390.06,
+      "cgroup_memory_bytes": 1519607808,
+      "workspace_free_bytes": 23049711616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:34:52.140594+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 400.06,
+      "cgroup_memory_bytes": 2034958336,
+      "workspace_free_bytes": 23049674752,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:35:02.143626+00:00",
+      "stage": "clippy-all-targets-diagnostic",
+      "head": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+      "pid": 65777,
+      "elapsed": 410.07,
+      "cgroup_memory_bytes": 1610788864,
+      "workspace_free_bytes": 23049535488,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

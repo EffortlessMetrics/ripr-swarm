@@ -1,0 +1,27 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-integration/crates/ripr)
+    Checking xtask v0.1.0 (/workspace/ripr-011-integration/xtask)
+error: this `if` statement can be collapsed
+    --> crates/ripr/tests/cli_smoke.rs:1216:5
+     |
+1216 | /     if let Some(diagnostic) = object
+1217 | |         .get("analysis_outcome_error")
+1218 | |         .and_then(serde_json::Value::as_str)
+1219 | |         .map(str::to_owned)
+...    |
+1232 | |     }
+     | |_____^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#collapsible_if
+     = note: `-D clippy::collapsible-if` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+     |
+1219 ~         .map(str::to_owned)
+1220 ~         && !diagnostic.trim_end_matches('.').is_empty() {
+1221 |             for pointer in [
+ ...
+1229 |             }
+1230 ~         }
+     |
+
+error: could not compile `ripr` (test "cli_smoke") due to 1 previous error

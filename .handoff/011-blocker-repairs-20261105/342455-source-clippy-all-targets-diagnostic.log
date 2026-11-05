@@ -1,0 +1,4 @@
+    Checking xtask v0.1.0 (/workspace/ripr-011-integration/xtask)
+    Checking ripr v0.11.0 (/workspace/ripr-011-integration/crates/ripr)
+    Checking ripr-contract v0.11.0 (/workspace/ripr-011-integration/crates/ripr-contract)
+    Finished `dev` profile [unoptimized] target(s) in 6m 54s

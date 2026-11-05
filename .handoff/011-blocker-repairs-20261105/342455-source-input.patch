@@ -1,0 +1,28 @@
+diff --git a/crates/ripr/tests/cli_smoke.rs b/crates/ripr/tests/cli_smoke.rs
+index 596600a21..b5317b6db 100644
+--- a/crates/ripr/tests/cli_smoke.rs
++++ b/crates/ripr/tests/cli_smoke.rs
+@@ -1217,16 +1217,14 @@ fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::er
+         .get("analysis_outcome_error")
+         .and_then(serde_json::Value::as_str)
+         .map(str::to_owned)
++        && !diagnostic.trim_end_matches('.').is_empty()
+     {
+-        if !diagnostic.trim_end_matches('.').is_empty() {
+-            for pointer in [
+-                "/summary/next_action/recommended_action",
+-                "/summary/next_recommendation",
+-            ] {
+-                if let Some(serde_json::Value::String(text)) = value.pointer_mut(pointer) {
+-                    *text =
+-                        text.replace(diagnostic.trim_end_matches('.'), "<analysis_outcome_error>");
+-                }
++        for pointer in [
++            "/summary/next_action/recommended_action",
++            "/summary/next_recommendation",
++        ] {
++            if let Some(serde_json::Value::String(text)) = value.pointer_mut(pointer) {
++                *text = text.replace(diagnostic.trim_end_matches('.'), "<analysis_outcome_error>");
+             }
+         }
+     }

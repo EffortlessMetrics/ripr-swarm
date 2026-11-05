@@ -1,0 +1,654 @@
+{
+  "stage": "fresh-workspace-clippy",
+  "candidate": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+  "tree": "683dd80fb6023057d82350b1acf2e52f5a6510b8",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--",
+    "-D",
+    "warnings"
+  ],
+  "native_exit": 101,
+  "guard_stop": null,
+  "seconds": 620.09,
+  "counts": null,
+  "log_sha256": "115718eae33b3087bbbe2a8aaba5292c6022502188da4cc7fc8b10f284925ef6",
+  "peak_cgroup_memory_bytes": 11785179136,
+  "samples": [
+    {
+      "utc": "2026-11-05T08:07:55.389193+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 2428182528,
+      "workspace_free_bytes": 23052128256,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:08:05.389761+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3730890752,
+      "workspace_free_bytes": 23052132352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:08:15.390390+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 20.0,
+      "cgroup_memory_bytes": 4220076032,
+      "workspace_free_bytes": 23052132352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:08:25.391164+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 30.0,
+      "cgroup_memory_bytes": 4187865088,
+      "workspace_free_bytes": 23052132352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:08:35.392161+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 40.0,
+      "cgroup_memory_bytes": 4465524736,
+      "workspace_free_bytes": 23052132352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:08:45.393472+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 50.0,
+      "cgroup_memory_bytes": 4931137536,
+      "workspace_free_bytes": 23052132352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:08:55.394099+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 60.01,
+      "cgroup_memory_bytes": 5466017792,
+      "workspace_free_bytes": 23052132352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:09:05.394853+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 70.01,
+      "cgroup_memory_bytes": 6065987584,
+      "workspace_free_bytes": 23052132352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:09:15.395521+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 80.01,
+      "cgroup_memory_bytes": 6626762752,
+      "workspace_free_bytes": 23052132352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:09:25.396164+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 90.01,
+      "cgroup_memory_bytes": 6610108416,
+      "workspace_free_bytes": 23052132352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:09:35.397036+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 100.01,
+      "cgroup_memory_bytes": 6625030144,
+      "workspace_free_bytes": 23052132352,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:09:45.397923+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 110.01,
+      "cgroup_memory_bytes": 2640539648,
+      "workspace_free_bytes": 23051636736,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:09:55.399931+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 120.01,
+      "cgroup_memory_bytes": 3801227264,
+      "workspace_free_bytes": 23051599872,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:10:05.402067+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 130.01,
+      "cgroup_memory_bytes": 4430381056,
+      "workspace_free_bytes": 23051591680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:10:15.404236+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 140.02,
+      "cgroup_memory_bytes": 4389384192,
+      "workspace_free_bytes": 23051591680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:10:25.407054+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 150.02,
+      "cgroup_memory_bytes": 4671954944,
+      "workspace_free_bytes": 23051591680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:10:35.409446+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 160.02,
+      "cgroup_memory_bytes": 4782350336,
+      "workspace_free_bytes": 23051591680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:10:45.410169+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 170.02,
+      "cgroup_memory_bytes": 5317443584,
+      "workspace_free_bytes": 23051591680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:10:55.410761+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 180.02,
+      "cgroup_memory_bytes": 5898313728,
+      "workspace_free_bytes": 23051591680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:11:05.411579+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 190.02,
+      "cgroup_memory_bytes": 6555676672,
+      "workspace_free_bytes": 23051591680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:11:15.412483+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 200.02,
+      "cgroup_memory_bytes": 7081922560,
+      "workspace_free_bytes": 23051591680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:11:25.413239+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 210.02,
+      "cgroup_memory_bytes": 7086501888,
+      "workspace_free_bytes": 23051591680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:11:35.413771+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 220.03,
+      "cgroup_memory_bytes": 7088648192,
+      "workspace_free_bytes": 23051591680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:11:45.414299+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 230.03,
+      "cgroup_memory_bytes": 2408529920,
+      "workspace_free_bytes": 23051571200,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:11:55.415312+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 240.03,
+      "cgroup_memory_bytes": 3137298432,
+      "workspace_free_bytes": 23051558912,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:12:05.417897+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 250.03,
+      "cgroup_memory_bytes": 3462705152,
+      "workspace_free_bytes": 23051517952,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:12:15.421930+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 260.03,
+      "cgroup_memory_bytes": 3717251072,
+      "workspace_free_bytes": 23051517952,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:12:25.423869+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 270.04,
+      "cgroup_memory_bytes": 4295536640,
+      "workspace_free_bytes": 23051517952,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:12:35.424394+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 280.04,
+      "cgroup_memory_bytes": 4898893824,
+      "workspace_free_bytes": 23051517952,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:12:45.425173+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 290.04,
+      "cgroup_memory_bytes": 5052538880,
+      "workspace_free_bytes": 23051517952,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:12:55.427077+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 300.04,
+      "cgroup_memory_bytes": 2291507200,
+      "workspace_free_bytes": 23051427840,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:13:05.428511+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 310.04,
+      "cgroup_memory_bytes": 2310840320,
+      "workspace_free_bytes": 23051251712,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:13:15.429339+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 320.04,
+      "cgroup_memory_bytes": 2312011776,
+      "workspace_free_bytes": 23051038720,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:13:25.430137+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 330.04,
+      "cgroup_memory_bytes": 2458308608,
+      "workspace_free_bytes": 23050862592,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:13:35.431139+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 340.04,
+      "cgroup_memory_bytes": 3944796160,
+      "workspace_free_bytes": 23050862592,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:13:45.431702+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 350.04,
+      "cgroup_memory_bytes": 4717527040,
+      "workspace_free_bytes": 23050862592,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:13:55.432386+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 360.04,
+      "cgroup_memory_bytes": 5086633984,
+      "workspace_free_bytes": 23050858496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:14:05.433279+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 370.04,
+      "cgroup_memory_bytes": 5921734656,
+      "workspace_free_bytes": 23050858496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:14:15.434884+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 380.05,
+      "cgroup_memory_bytes": 5794480128,
+      "workspace_free_bytes": 23050858496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:14:25.435866+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 390.05,
+      "cgroup_memory_bytes": 5715329024,
+      "workspace_free_bytes": 23050858496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:14:35.438395+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 400.05,
+      "cgroup_memory_bytes": 5897760768,
+      "workspace_free_bytes": 23050858496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:14:45.440343+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 410.05,
+      "cgroup_memory_bytes": 6202515456,
+      "workspace_free_bytes": 23050858496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:14:55.441894+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 420.05,
+      "cgroup_memory_bytes": 6432632832,
+      "workspace_free_bytes": 23050858496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:15:05.442419+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 430.05,
+      "cgroup_memory_bytes": 6628196352,
+      "workspace_free_bytes": 23050858496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:15:15.443005+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 440.05,
+      "cgroup_memory_bytes": 6830145536,
+      "workspace_free_bytes": 23050801152,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:15:25.443615+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 450.06,
+      "cgroup_memory_bytes": 7110574080,
+      "workspace_free_bytes": 23050801152,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:15:35.445367+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 460.06,
+      "cgroup_memory_bytes": 7437598720,
+      "workspace_free_bytes": 23050801152,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:15:45.446857+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 470.06,
+      "cgroup_memory_bytes": 7978676224,
+      "workspace_free_bytes": 23050801152,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:15:55.447937+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 480.06,
+      "cgroup_memory_bytes": 8424796160,
+      "workspace_free_bytes": 23050801152,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:16:05.449984+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 490.06,
+      "cgroup_memory_bytes": 8978604032,
+      "workspace_free_bytes": 23050801152,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:16:15.450553+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 500.06,
+      "cgroup_memory_bytes": 9491009536,
+      "workspace_free_bytes": 23050801152,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:16:25.451253+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 510.06,
+      "cgroup_memory_bytes": 10061307904,
+      "workspace_free_bytes": 23050801152,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:16:35.451773+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 520.06,
+      "cgroup_memory_bytes": 10606260224,
+      "workspace_free_bytes": 23050801152,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:16:45.452334+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 530.06,
+      "cgroup_memory_bytes": 11179372544,
+      "workspace_free_bytes": 23050801152,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:16:55.452961+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 540.06,
+      "cgroup_memory_bytes": 11785179136,
+      "workspace_free_bytes": 23050801152,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:17:05.453486+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 550.06,
+      "cgroup_memory_bytes": 11768942592,
+      "workspace_free_bytes": 23050788864,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:17:15.454027+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 560.07,
+      "cgroup_memory_bytes": 11771174912,
+      "workspace_free_bytes": 23050788864,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:17:25.454573+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 570.07,
+      "cgroup_memory_bytes": 11774046208,
+      "workspace_free_bytes": 23050788864,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:17:35.455212+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 580.07,
+      "cgroup_memory_bytes": 11775913984,
+      "workspace_free_bytes": 23050788864,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:17:45.456230+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 590.07,
+      "cgroup_memory_bytes": 11694354432,
+      "workspace_free_bytes": 23050788864,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:17:55.457933+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 600.07,
+      "cgroup_memory_bytes": 11697180672,
+      "workspace_free_bytes": 23050784768,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T08:18:05.459030+00:00",
+      "stage": "fresh-workspace-clippy",
+      "head": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
+      "pid": 63546,
+      "elapsed": 610.07,
+      "cgroup_memory_bytes": 11701776384,
+      "workspace_free_bytes": 23050784768,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

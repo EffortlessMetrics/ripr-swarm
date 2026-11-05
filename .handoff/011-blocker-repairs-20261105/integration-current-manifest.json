@@ -1,6 +1,6 @@
 {
-  "candidate": "41e36f4d135aa5f899342b1d8ab99e87a6b834a0",
-  "tree": "683dd80fb6023057d82350b1acf2e52f5a6510b8",
+  "candidate": "3424553ce6b55732b3403fa327722b51a295f3b7",
+  "tree": "6edd558d5ccccb6f2647442ef555721ac5711fdc",
   "branch": "successor/011-integration-20261105",
   "product_source_review": {
     "candidate": "c0287c53f83aee5db1b74862ff10701612303bc6",
@@ -15,11 +15,11 @@
     "carried_forward_limit": "ten production plus four native subjects ran on c028, before canonical cfg authority integration and equivalent Clippy refactor; not relabeled current qualification"
   },
   "current_delta": {
-    "base": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
-    "path": "41e36-clippy-composition-delta.patch",
-    "bytes": 2742,
-    "sha256": "e024010ac36061de29eb98788eedb5b45bc2abe681abe1a50195339872c1bf86",
-    "meaning": "equivalent boolean simplification; group existing shared tree indexes behind one borrowed context; no lint suppression"
+    "base": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+    "path": "342455-receipt-normalization-delta.patch",
+    "bytes": 1289,
+    "sha256": "75deb16a077b004d5d53f8353b85599532e39afc17cf0902c5f2a4fcd235622d",
+    "meaning": "equivalent nested-if collapse in CLI receipt test normalization; no product behavior or lint suppression change"
   },
   "retained_policy_leaves": {
     "allow_attributes": 0,
@@ -28,25 +28,25 @@
     "full_policy": "FD045 aggregate ci-policy exit 0; exact current refresh pending"
   },
   "qualification": {
-    "status": "current sequential guarded qualification running",
-    "tool_session": 7838,
+    "status": "running locally on clean committed candidate",
+    "tool_session": 53125,
     "sequence": [
-      "workspace Clippy",
-      "ci-policy",
-      "check-fast",
       "cfg authority controls",
       "macro binding controls",
-      "enum production",
       "reveal",
-      "full library"
+      "full library",
+      "production return/sink controls and native paths",
+      "enum producer",
+      "retained CLI rerun",
+      "check-fast",
+      "ci-policy",
+      "goldens",
+      "promotion honesty"
     ],
-    "prior_candidate": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
-    "prior_policy_native_exit": 0,
-    "prior_check_fast_exit": 1,
-    "prior_check_fast_reason": "two Clippy diagnostics, now repaired in current delta",
-    "runtime_tests_prior_pipeline": "not reached; one help/parser selected subject passed",
-    "video_pause": "driver paused for coordinator resource priority; supplemental process-terminal and memory samples retained; FD policy driver wall duration includes pause",
-    "remote_actions": "ordinary successor and evidence branch publication only; no remote CI/settings/merge/release"
+    "current_phase": "cfg authority controls; default library test compilation in progress",
+    "prior_policy_candidate": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+    "prior_policy_exit": 0,
+    "remote_actions": "ordinary successor/evidence branch preparation only; no remote CI requested, merge/settings/release performed"
   },
   "history": {
     "public_source": "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a",
@@ -61,5 +61,13 @@
     "release selection scope_pending"
   ],
   "status": "not fully qualified; no remote CI request, protected merge, settings change or release performed",
-  "subsequent_delta_review": "FD cfg authority and 41 shared-index context patches are available for affected source review; no new independent acceptance inferred."
+  "subsequent_delta_review": "FD canonical cfg producer, 41 borrowed tree-index context and b135/342455 test-only lint deltas available for affected source review; prior independent review is not silently extended.",
+  "clippy_diagnostic": {
+    "base": "b135d8cf382821bcd6deafff8ca50dc02547d852",
+    "frozen_patch_sha256": "75deb16a077b004d5d53f8353b85599532e39afc17cf0902c5f2a4fcd235622d",
+    "source_patch_equals_current_commit_delta": true,
+    "workspace_all_targets_keep_going_exit": 0,
+    "receipt": "342455-source-clippy-all-targets-diagnostic-receipt.json",
+    "scope": "diagnostic exact source bytes; current commit qualification and native check-fast still pending"
+  }
 }

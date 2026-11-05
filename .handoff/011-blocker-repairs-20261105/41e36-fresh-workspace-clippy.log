@@ -1,0 +1,63 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-integration/crates/ripr)
+   Compiling repo-policy v0.1.0 (/workspace/ripr-011-integration/tools/repo-policy)
+    Checking xtask v0.1.0 (/workspace/ripr-011-integration/xtask)
+error: called `assert!` with `Result::is_ok`
+    --> crates/ripr/src/analysis/classify/helper_transfer.rs:5580:17
+     |
+5580 |                 assert!(handle.join().is_ok());
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace with: `handle.join().unwrap()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#assertions_on_result_states
+     = note: requested on the command line with `-D clippy::assertions-on-result-states`
+
+error: called `assert!` with `Result::is_ok`
+    --> crates/ripr/src/analysis/classify/helper_transfer.rs:5709:13
+     |
+5709 |             assert!(poisoner.join().is_ok());
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace with: `poisoner.join().unwrap()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#assertions_on_result_states
+
+error: called `assert!` with `Result::is_ok`
+    --> crates/ripr/src/analysis/classify/helper_transfer.rs:5710:13
+     |
+5710 |             assert!(reader.join().is_ok());
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace with: `reader.join().unwrap()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#assertions_on_result_states
+
+error: `map_err(|_|...` wildcard pattern discards the original error
+     --> crates/ripr/src/analysis/classify/owner_pin/tests.rs:14096:22
+      |
+14096 |             .map_err(|_| "occupied reference memo")?;
+      |                      ^^^
+      |
+      = help: consider storing the original error as a source in the new error, or silence this warning using an ignored identifier (`.map_err(|_foo| ...`)
+      = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#map_err_ignore
+      = note: requested on the command line with `-D clippy::map-err-ignore`
+
+error: field assignment outside of initializer for an instance created with Default::default()
+     --> crates/ripr/src/analysis/classify/owner_pin/tests.rs:14164:5
+      |
+14164 |     replacement.any_name = true;
+      |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      |
+note: consider initializing the variable with `analysis::classify::owner_pin::WithheldMacroBindings { any_name: true, ..Default::default() }` and removing relevant reassignments
+     --> crates/ripr/src/analysis/classify/owner_pin/tests.rs:14163:5
+      |
+14163 |     let mut replacement = WithheldMacroBindings::default();
+      |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#field_reassign_with_default
+      = note: `-D clippy::field-reassign-with-default` implied by `-D warnings`
+      = help: to override `-D warnings` add `#[allow(clippy::field_reassign_with_default)]`
+
+error: `map_err(|_|...` wildcard pattern discards the original error
+     --> crates/ripr/src/lsp/tests.rs:23885:18
+      |
+23885 |         .map_err(|_| "pending reload gate owner panicked")??;
+      |                  ^^^
+      |
+      = help: consider storing the original error as a source in the new error, or silence this warning using an ignored identifier (`.map_err(|_foo| ...`)
+      = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.95.0/index.html#map_err_ignore
+
+error: could not compile `ripr` (lib test) due to 6 previous errors
