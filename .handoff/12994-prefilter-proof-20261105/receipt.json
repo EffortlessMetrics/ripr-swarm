@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "recorded_utc": "2026-11-05T01:50:42.403235+00:00",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "source_sha": "26c073c5896a0c03a02602bc84f31da6d09df6b8",
+  "source_tree": "b9c19b875bf06f51d04fd0b340e451dc239acce7",
+  "carrier_parent": "d58f183dc84edea461c5c632ac947d63b35e2a08",
+  "observed_main": "807aa7251bc493206156e63ce6dbe88103835911",
+  "merge_base": "05b9f30daab2c734d4eb7203d2fb95a8a08787bc",
+  "command": "cargo test --locked -p ripr --lib --no-default-features --features lang-rust package_prefilter -- --test-threads=1",
+  "environment": {
+    "host": "Linux",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "CARGO_TARGET_DIR": "/workspace/12994-proof/target",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0"
+  },
+  "native_exit": 0,
+  "counts": {
+    "passed": 2,
+    "failed": 0,
+    "ignored": 0,
+    "filtered": 13764
+  },
+  "log_sha256": "e077c1803e77ad8d004112f4ac2ad9103fae3da81c691dcc276bf2c5bbaaedfa",
+  "binary_sha256": "8fbaa646c30361b67f01c4f2cb009e6775cd5cb5e8c86f6559859592634322d0",
+  "checks": {
+    "changed_test_rustfmt": "passed",
+    "git_diff_check": "passed",
+    "check_fast": "not_run",
+    "precommit": "not_run",
+    "hosted_qualification": "not_requested_hold_preserved"
+  },
+  "review": {
+    "disposition": "REVIEW_INCOMPLETE",
+    "source_delta": "41 test-only lines; production find_related_tests_with_context derives and forwards package scope; both tests observe excluded expensive work and retained valid owner credit",
+    "counterexample": "Existing no-prefix helper controls execute the full foreign/prefix-sharing bucket and compare admitted credit; production assertions require only admitted checks",
+    "traceability": "Existing SPEC0005 mapping already names both extended tests",
+    "changelog": "Test-only proof extension; no behavior/API/output/workflow change; existing carrier fragments remain",
+    "residuals": [
+      "No default-feature/full-suite/Windows/combined-7490 qualification",
+      "No original carrier edit, Draft/Ready transition, CI request, merge, settings change, tag or release"
+    ]
+  },
+  "history_import": {
+    "source": "c09c438e5646fcb244bbafcabe57036bc58d8f3d",
+    "head": "161c59becc919be3ce4ff7a6e256531ba0176887",
+    "destination": "807aa7251bc493206156e63ce6dbe88103835911",
+    "merge_tree_exit": 1,
+    "conflicted_paths": 17,
+    "status": "Unresolved conflict witness; no accepted resolution or qualification"
+  }
+}

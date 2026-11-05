@@ -1,0 +1,310 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-12994-successor/crates/ripr)
+warning: unused import: `sort_value_facts`
+  --> crates/ripr/src/analysis/classify/mod.rs:64:82
+   |
+64 |     pushed_collection_compared_whole, pushed_literal_path, signature_parameters, sort_value_facts,
+   |                                                                                  ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `withhold_truncated_discovery_gap`
+   --> crates/ripr/src/analysis/classify/mod.rs:116:32
+    |
+116 |     withhold_should_panic_gap, withhold_truncated_discovery_gap, withhold_unsupported_gap,
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `model::lines_look_alike`
+  --> crates/ripr/src/analysis/diff/mod.rs:30:16
+   |
+30 | pub(crate) use model::lines_look_alike;
+   |                ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `LanguageAdapter`
+ --> crates/ripr/src/analysis/pipeline.rs:8:5
+  |
+8 |     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused imports: `expected_sinks` and `required_oracles`
+  --> crates/ripr/src/analysis/probes/mod.rs:32:31
+   |
+32 | pub(crate) use expectations::{expected_sinks, required_oracles};
+   |                               ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+
+warning: unused imports: `collision_ordinals` and `collision_rank_key`
+  --> crates/ripr/src/analysis/probes/mod.rs:34:5
+   |
+34 |     collision_ordinals, collision_rank_key, fingerprint_probe_id, legacy_whole_line_diff_probe_id,
+   |     ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `normalize_expression`
+   --> crates/ripr/src/analysis/mod.rs:132:60
+    |
+132 |     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+    |                                                            ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `HashMap`
+   --> crates/ripr/src/analysis/mod.rs:567:34
+    |
+567 | use std::collections::{BTreeSet, HashMap};
+    |                                  ^^^^^^^
+
+warning: unused import: `is_probable_fixture_or_data_path`
+  --> crates/ripr/src/config.rs:55:5
+   |
+55 |     is_probable_fixture_or_data_path, path_matches_preview_excluded_patterns,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `declared_python_handwritten_under` and `is_python_dir_pruned_from_repo_discovery`
+  --> crates/ripr/src/config.rs:60:56
+   |
+60 |     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, declared_python_handwritten_under,
+   |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+63 |     is_python_dir_pruned_from_repo_discovery, is_python_excluded_dir_everywhere,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ConfidenceBasisInputs`
+  --> crates/ripr/src/domain/mod.rs:76:27
+   |
+76 |     ConfidenceBasisEntry, ConfidenceBasisInputs, basis_entries, why_capped_line,
+   |                           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `row_exact_discriminator_fact`
+   --> crates/ripr/src/domain/mod.rs:145:5
+    |
+145 |     row_exact_discriminator_fact,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `typescript_oracle_seam::ts_oracle_kind_matches_seam`
+   --> crates/ripr/src/domain/mod.rs:181:16
+    |
+181 | pub(crate) use typescript_oracle_seam::ts_oracle_kind_matches_seam;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `disable_retained_analysis_actions`
+ --> crates/ripr/src/lsp/tests.rs:2:53
+  |
+2 |     SERVER_EXECUTED_COMMANDS, code_action_response, disable_retained_analysis_actions,
+  |                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> crates/ripr/src/app/repair_attempt/mod.rs:5230:13
+     |
+5230 |         let mut targets = vec!["test/pricing.test.ts"];
+     |             ----^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> crates/ripr/src/app/repair_attempt/mod.rs:5487:13
+     |
+5487 |         let mut targets = vec!["tests/pricing.rs", "tests/helpers/mod.rs", "test/smoke.py"];
+     |             ----^^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: function `withhold_truncated_discovery_gap` is never used
+  --> crates/ripr/src/analysis/classify/gap_admission.rs:78:28
+   |
+78 | pub(in crate::analysis) fn withhold_truncated_discovery_gap(
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `zero_work` is never used
+  --> crates/ripr/src/analysis/language/adapter.rs:41:19
+   |
+37 | impl PreviewFactCacheStats {
+   | -------------------------- associated function in this implementation
+...
+41 |     pub(crate) fn zero_work() -> Self {
+   |                   ^^^^^^^^^
+
+warning: variant `Discovery` is never constructed
+   --> crates/ripr/src/analysis/language/adapter.rs:135:5
+    |
+133 | pub(crate) enum RepoLimitingStage {
+    |                 ----------------- variant in this enum
+134 |     /// The discovery walk stopped at its entry cap.
+135 |     Discovery,
+    |     ^^^^^^^^^
+    |
+    = note: `RepoLimitingStage` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `summed` is never used
+    --> crates/ripr/src/analysis/pipeline.rs:6874:8
+     |
+6874 |     fn summed(aggregate: &DiffLanguageAggregate) -> usize {
+     |        ^^^^^^
+
+warning: function `cache_layer_versioned_dir` is never used
+   --> crates/ripr/src/analysis/seam_cache.rs:141:15
+    |
+141 | pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `encode_integrity_body_compact` is never used
+    --> crates/ripr/src/analysis/seam_cache.rs:4226:15
+     |
+4226 | pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `preview_entry` is never used
+ --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:5:4
+  |
+5 | fn preview_entry(rendered: &str, context: &str) -> Result<Value, String> {
+  |    ^^^^^^^^^^^^^
+
+warning: function `write` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:16:4
+   |
+16 | fn write(path: &Path, contents: &str) -> Result<(), String> {
+   |    ^^^^^
+
+warning: function `temp_root` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:20:4
+   |
+20 | fn temp_root(name: &str) -> Result<std::path::PathBuf, String> {
+   |    ^^^^^^^^^
+
+warning: function `assert_renderer_agreement` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:30:4
+   |
+30 | fn assert_renderer_agreement(
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `language_runtime_probes` is never used
+    --> crates/ripr/src/cli/commands/doctor.rs:1549:4
+     |
+1549 | fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'static str)> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `posix_words` is never used
+    --> crates/ripr/src/cli/commands.rs:4997:8
+     |
+4997 |     fn posix_words(command: &str) -> Result<Vec<String>, String> {
+     |        ^^^^^^^^^^^
+
+warning: function `javascript_led_manifest_name` is never used
+   --> crates/ripr/src/config/typescript.rs:240:15
+    |
+240 | pub(crate) fn javascript_led_manifest_name(name: &str) -> Option<&'static str> {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `typescript_project_marker_name` is never used
+   --> crates/ripr/src/config/typescript.rs:381:15
+    |
+381 | pub(crate) fn typescript_project_marker_name(name: &str) -> Option<&'static str> {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `typescript_source_dir_marker_name` is never used
+   --> crates/ripr/src/config/typescript.rs:387:15
+    |
+387 | pub(crate) fn typescript_source_dir_marker_name(name: &str) -> Option<&'static str> {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `source_dir_contains_detectable_typescript` is never used
+   --> crates/ripr/src/config/typescript.rs:446:15
+    |
+446 | pub(crate) fn source_dir_contains_detectable_typescript(root: &Path, marker: &str) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `row_exact_discriminator_fact` is never used
+   --> crates/ripr/src/domain/probe.rs:459:15
+    |
+459 | pub(crate) fn row_exact_discriminator_fact<'a>(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_action_specs_omitted` is never used
+    --> crates/ripr/src/lsp/tests.rs:4708:4
+     |
+4708 | fn assert_gap_action_specs_omitted(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_actions_refresh_only` is never used
+    --> crates/ripr/src/lsp/tests.rs:4728:4
+     |
+4728 | fn assert_gap_actions_refresh_only(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `gap_action_commands_for_artifact` is never used
+    --> crates/ripr/src/lsp/tests.rs:4744:4
+     |
+4744 | fn gap_action_commands_for_artifact(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `gap_action_diagnostic_repair_ready` is never used
+    --> crates/ripr/src/lsp/tests.rs:6634:4
+     |
+6634 | fn gap_action_diagnostic_repair_ready() -> tower_lsp_server::ls_types::Diagnostic {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `PushPullParityProfile` is never used
+    --> crates/ripr/src/lsp/tests.rs:7914:6
+     |
+7914 | enum PushPullParityProfile {
+     |      ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `label` is never used
+    --> crates/ripr/src/lsp/tests.rs:7926:8
+     |
+7925 | impl PushPullParityProfile {
+     | -------------------------- method in this implementation
+7926 |     fn label(self) -> &'static str {
+     |        ^^^^^
+
+warning: function `push_pull_parity_initialize_params` is never used
+    --> crates/ripr/src/lsp/tests.rs:7939:4
+     |
+7939 | fn push_pull_parity_initialize_params(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `commit_push_pull_parity_fixture` is never used
+    --> crates/ripr/src/lsp/tests.rs:7994:4
+     |
+7994 | fn commit_push_pull_parity_fixture(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `action_availability_signature` is never used
+    --> crates/ripr/src/lsp/tests.rs:8055:4
+     |
+8055 | fn action_availability_signature(actions: &[CodeActionOrCommand]) -> Result<Vec<String>, String> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_parity_snapshot_admitted` is never used
+    --> crates/ripr/src/lsp/tests.rs:8094:4
+     |
+8094 | fn assert_parity_snapshot_admitted(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_actions_present` is never used
+    --> crates/ripr/src/lsp/tests.rs:8129:4
+     |
+8129 | fn assert_gap_actions_present(actions: &[CodeActionOrCommand], leg: &str) -> Result<(), String> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `run_push_pull_parity_leg` is never used
+    --> crates/ripr/src/lsp/tests.rs:8154:10
+     |
+8154 | async fn run_push_pull_parity_leg(profile: PushPullParityProfile) -> Result<(), String> {
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_rust_toolchain_skipped` is never used
+    --> crates/ripr/src/output/doctor.rs:3860:8
+     |
+3860 |     fn assert_rust_toolchain_skipped(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `ripr` (lib test) generated 46 warnings (run `cargo fix --lib -p ripr --tests` to apply 16 suggestions)
+    Finished `test` profile [unoptimized] target(s) in 4m 22s
+     Running unittests src/lib.rs (/workspace/12994-proof/target/debug/deps/ripr-2d27a0634e8158d6)
+
+running 2 tests
+test analysis::test_grip_evidence::related_tests::direct_owner_prefilter_tests::direct_owner_package_prefilter_skips_excluded_receiver_work_without_changing_credit ... ok
+test analysis::test_grip_evidence::related_tests::helper_owner_prefilter_tests::helper_owner_package_prefilter_skips_excluded_traversal_without_changing_credit ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 13764 filtered out; finished in 0.03s
+

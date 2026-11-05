@@ -1,0 +1,103 @@
+7eb802b8bd617adfc907f63be7e6f64e6775bfe7
+crates/ripr/src/analysis/classify/mod.rs
+crates/ripr/src/app/review_comments_receipt.rs
+crates/ripr/src/config.rs
+fixtures/boundary_gap/expected/calibrated-gate/acknowledged-waiver/gate-decision.json
+fixtures/boundary_gap/expected/calibrated-gate/baseline-check-existing/gate-decision.json
+fixtures/boundary_gap/expected/calibrated-gate/calibrated-high-confidence-new-gap/gate-decision.json
+fixtures/boundary_gap/expected/calibrated-gate/calibration-disagreement/gate-decision.json
+fixtures/boundary_gap/expected/calibrated-gate/visible-only-advisory/gate-decision.json
+fixtures/boundary_gap/expected/gate-adoption/acknowledged/gate-decision.json
+fixtures/boundary_gap/expected/gate-adoption/baseline-aware/gate-decision.json
+fixtures/boundary_gap/expected/gate-adoption/baseline-new-gap/gate-decision.json
+fixtures/boundary_gap/expected/gate-adoption/calibrated-gate/gate-decision.json
+fixtures/boundary_gap/expected/gate-adoption/missing-baseline-config/gate-decision.json
+fixtures/boundary_gap/expected/gate-adoption/visible-only/gate-decision.json
+policy/non-rust-allowlist.toml
+xtask/src/main.rs
+xtask/src/policy/file_policy.rs
+
+Auto-merging .ripr/traceability.toml
+Auto-merging CHANGELOG.md
+Auto-merging crates/ripr/src/analysis/classifier/evidence.rs
+Auto-merging crates/ripr/src/analysis/classifier/finding.rs
+Auto-merging crates/ripr/src/analysis/classify/activation.rs
+Auto-merging crates/ripr/src/analysis/classify/mod.rs
+CONFLICT (content): Merge conflict in crates/ripr/src/analysis/classify/mod.rs
+Auto-merging crates/ripr/src/analysis/classify/related_tests.rs
+Auto-merging crates/ripr/src/analysis/language/perl/tests.rs
+Auto-merging crates/ripr/src/analysis/probes/diff.rs
+Auto-merging crates/ripr/src/app.rs
+Auto-merging crates/ripr/src/app/pr_evidence.rs
+Auto-merging crates/ripr/src/app/review_comments_receipt.rs
+CONFLICT (content): Merge conflict in crates/ripr/src/app/review_comments_receipt.rs
+Auto-merging crates/ripr/src/cli/commands/doctor.rs
+Auto-merging crates/ripr/src/cli/commands/review_comments.rs
+Auto-merging crates/ripr/src/config.rs
+CONFLICT (content): Merge conflict in crates/ripr/src/config.rs
+Auto-merging crates/ripr/src/lib.rs
+Auto-merging crates/ripr/src/lsp/tests.rs
+Auto-merging crates/ripr/src/output/doctor.rs
+Auto-merging crates/ripr/src/output/review_comments/mod.rs
+Auto-merging crates/ripr/src/output/review_comments_receipt.rs
+Auto-merging crates/ripr/tests/cli_smoke.rs
+Auto-merging docs/CI.md
+Auto-merging docs/DOCUMENTATION.md
+Auto-merging docs/OUTPUT_SCHEMA.md
+Auto-merging docs/PR_AUTOMATION.md
+Auto-merging docs/TESTING.md
+Auto-merging docs/specs/README.md
+Auto-merging docs/specs/RIPR-SPEC-0012-pr-test-guidance.md
+Auto-merging fixtures/boundary_gap/expected/calibrated-gate/acknowledged-waiver/gate-decision.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/calibrated-gate/acknowledged-waiver/gate-decision.json
+Auto-merging fixtures/boundary_gap/expected/calibrated-gate/baseline-check-existing/gate-decision.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/calibrated-gate/baseline-check-existing/gate-decision.json
+Auto-merging fixtures/boundary_gap/expected/calibrated-gate/calibrated-high-confidence-new-gap/gate-decision.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/calibrated-gate/calibrated-high-confidence-new-gap/gate-decision.json
+Auto-merging fixtures/boundary_gap/expected/calibrated-gate/calibration-disagreement/gate-decision.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/calibrated-gate/calibration-disagreement/gate-decision.json
+Auto-merging fixtures/boundary_gap/expected/calibrated-gate/visible-only-advisory/gate-decision.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/calibrated-gate/visible-only-advisory/gate-decision.json
+Auto-merging fixtures/boundary_gap/expected/gate-adoption/acknowledged/gate-decision.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/gate-adoption/acknowledged/gate-decision.json
+Auto-merging fixtures/boundary_gap/expected/gate-adoption/baseline-aware/gate-decision.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/gate-adoption/baseline-aware/gate-decision.json
+Auto-merging fixtures/boundary_gap/expected/gate-adoption/baseline-new-gap/gate-decision.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/gate-adoption/baseline-new-gap/gate-decision.json
+Auto-merging fixtures/boundary_gap/expected/gate-adoption/calibrated-gate/gate-decision.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/gate-adoption/calibrated-gate/gate-decision.json
+Auto-merging fixtures/boundary_gap/expected/gate-adoption/missing-baseline-config/gate-decision.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/gate-adoption/missing-baseline-config/gate-decision.json
+Auto-merging fixtures/boundary_gap/expected/gate-adoption/visible-only/gate-decision.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/gate-adoption/visible-only/gate-decision.json
+Auto-merging fixtures/boundary_gap/expected/pr-guidance/capped/comments.json
+Auto-merging fixtures/boundary_gap/expected/pr-guidance/changed-test-skip/comments.json
+Auto-merging fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json
+Auto-merging fixtures/boundary_gap/expected/pr-guidance/owner-function-line/comments.json
+Auto-merging fixtures/boundary_gap/expected/pr-guidance/same-file-line/comments.json
+Auto-merging fixtures/boundary_gap/expected/pr-guidance/summary-only/comments.json
+Auto-merging fixtures/infect_wildcard_discard/expected/CHANGELOG.md
+Auto-merging fixtures/rust_constructor_field_observation/expected/CHANGELOG.md
+Auto-merging policy/doc-artifacts.toml
+Auto-merging policy/non-rust-allowlist.toml
+CONFLICT (content): Merge conflict in policy/non-rust-allowlist.toml
+Auto-merging policy/process_allowlist.txt
+Auto-merging policy/public_api.txt
+Auto-merging policy/workflow_allowlist.txt
+Auto-merging schemas/ripr/review-comments.schema.json
+Auto-merging tests/fixtures/verification/ripr/review-comments.capped.valid.json
+Auto-merging tests/fixtures/verification/ripr/review-comments.gap-ledger.valid.json
+Auto-merging tests/fixtures/verification/ripr/review-comments.valid.json
+Auto-merging tools/repo-policy/src/lib.rs
+Auto-merging xtask/src/command.rs
+Auto-merging xtask/src/dispatch.rs
+Auto-merging xtask/src/main.rs
+CONFLICT (content): Merge conflict in xtask/src/main.rs
+Auto-merging xtask/src/policy/file_policy.rs
+CONFLICT (content): Merge conflict in xtask/src/policy/file_policy.rs
+Auto-merging xtask/src/policy/user_text.rs
+Auto-merging xtask/src/reports/fixtures.rs
+Auto-merging xtask/src/reports/mod.rs
+Auto-merging xtask/src/reports/release.rs
+Auto-merging xtask/src/run.rs
+Auto-merging xtask/src/tests.rs
