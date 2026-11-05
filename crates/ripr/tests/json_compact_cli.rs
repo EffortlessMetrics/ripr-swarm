@@ -9,7 +9,8 @@ use common::fixture_git::fixture_git_ok;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Command;
+use std::process::Output;
 
 const SOURCE: &str = r#"pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
     if amount >= threshold {
@@ -58,15 +59,15 @@ impl Fixture {
             "ripr-json-compact-{label}-{}-{stamp}",
             std::process::id()
         ));
-        // Own cleanup before any fallible setup, including Git initialization.
+        // Claim the directory exclusively before constructing its cleanup
+        // owner. A collision must never remove another test's existing tree.
+        std::fs::create_dir(&home)
+            .map_err(|error| format!("create owned fixture {}: {error}", home.display()))?;
         let fixture = Self {
             root: home.join("repo with spaces"),
             decoy: home.join("foreign cwd"),
             home,
         };
-        if fixture.home.exists() {
-            return Err("fixture path unexpectedly exists".to_string());
-        }
         std::fs::create_dir_all(fixture.root.join("src")).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(fixture.root.join("tests")).map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&fixture.decoy).map_err(|e| e.to_string())?;
@@ -108,8 +109,17 @@ impl Fixture {
     fn check(&self, format: &str, extra: &[&str], budget: Option<&str>) -> Result<Output, String> {
         let root = self.root.to_string_lossy();
         let mut args = vec![
-            "check", "--root", root.as_ref(), "--base", "HEAD", "--worktree", "--quiet",
-            "--timeout", "30", "--format", format,
+            "check",
+            "--root",
+            root.as_ref(),
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--quiet",
+            "--timeout",
+            "30",
+            "--format",
+            format,
         ];
         args.extend_from_slice(extra);
         run_cli(&self.decoy, &args, budget)
@@ -180,16 +190,23 @@ fn equivalent(pretty: &Output, compact: &Output, expected_exit: i32) -> Result<V
 }
 
 fn findings(value: &Value) -> Result<&Vec<Value>, String> {
-    value["findings"].as_array().ok_or_else(|| "missing findings array".to_string())
+    value["findings"]
+        .as_array()
+        .ok_or_else(|| "missing findings array".to_string())
 }
 
 fn nonempty_analysis(value: &Value) -> Result<(), String> {
     if findings(value)?.len() < 2
-        || value["summary"]["findings"].as_u64().is_none_or(|count| count < 2)
+        || value["summary"]["findings"]
+            .as_u64()
+            .is_none_or(|count| count < 2)
         || value["analysis_outcome"]["analysis_complete"] != true
         || value["canonical_next_action"].is_null()
     {
-        return Err("fixture must produce at least two findings, complete analysis and a canonical action".to_string());
+        return Err(
+            "fixture must produce at least two findings, complete analysis and a canonical action"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -199,8 +216,11 @@ fn json_compact_cli_live_report_preserves_evidence_and_measures_bytes() -> Resul
     let fixture = Fixture::new("live")?;
     let (pretty, compact, value) = fixture.pair(&[], None, 0)?;
     nonempty_analysis(&value)?;
-    if value["head"]["source"] != "worktree" {
-        return Err(format!("fixture must retain its actual source identity: {}", value["head"]));
+    if value["head"]["source"] != "working_tree" {
+        return Err(format!(
+            "fixture must retain its actual source identity: {}",
+            value["head"]
+        ));
     }
     let repeated = fixture.check("json", &[], None)?;
     if repeated.status.code() != Some(0) || repeated.stdout != pretty.stdout {
@@ -209,8 +229,11 @@ fn json_compact_cli_live_report_preserves_evidence_and_measures_bytes() -> Resul
     // Native execution witness, not a tokenizer benchmark or an efficacy claim.
     eprintln!(
         "json-compact live comparison: findings={} pretty_bytes={} compact_bytes={} pretty_sha256={:x} compact_sha256={:x} source_sha256={:x}",
-        findings(&value)?.len(), pretty.stdout.len(), compact.stdout.len(),
-        Sha256::digest(&pretty.stdout), Sha256::digest(&compact.stdout),
+        findings(&value)?.len(),
+        pretty.stdout.len(),
+        compact.stdout.len(),
+        Sha256::digest(&pretty.stdout),
+        Sha256::digest(&compact.stdout),
         Sha256::digest(SOURCE.as_bytes())
     );
     Ok(())
@@ -223,22 +246,32 @@ fn json_compact_cli_preserves_real_omissions_and_full_counts() -> Result<(), Str
     nonempty_analysis(&complete)?;
     let (_, _, bounded) = fixture.pair(&[], Some("1"), 0)?;
     let retained = findings(&bounded)?.len();
-    if retained == 0 || retained >= findings(&complete)?.len()
+    if retained == 0
+        || retained >= findings(&complete)?.len()
         || bounded["summary"] != complete["summary"]
         || bounded["analysis_outcome"]["document_complete"] != false
         || bounded["canonical_next_action"] != complete["canonical_next_action"]
     {
-        return Err("bounded output must retain a genuine subset, full counts and the same primary action".to_string());
+        return Err(
+            "bounded output must retain a genuine subset, full counts and the same primary action"
+                .to_string(),
+        );
     }
-    let limits = bounded["run_limitations"].as_array().ok_or("missing budget disclosure")?;
-    if !limits.iter().any(|limit| limit["category"] == "limited_findings_bound") {
+    let limits = bounded["run_limitations"]
+        .as_array()
+        .ok_or("missing budget disclosure")?;
+    if !limits
+        .iter()
+        .any(|limit| limit["category"] == "limited_findings_bound")
+    {
         return Err("compact output must retain the findings-bound limitation".to_string());
     }
     Ok(())
 }
 
 #[test]
-fn json_compact_cli_applies_root_relative_policy_and_keeps_implicit_policy_notice() -> Result<(), String> {
+fn json_compact_cli_applies_root_relative_policy_and_keeps_implicit_policy_notice()
+-> Result<(), String> {
     let fixture = Fixture::new("policy")?;
     let (_, _, original) = fixture.pair(&[], None, 0)?;
     nonempty_analysis(&original)?;
@@ -258,15 +291,22 @@ fn json_compact_cli_applies_root_relative_policy_and_keeps_implicit_policy_notic
         return Err("an implicit policy must be disclosed, not silently applied".to_string());
     }
     let (applied, _, filtered) = fixture.pair(
-        &["--suppression-policy", ".ripr/suppressions.toml"], None, 0,
+        &["--suppression-policy", ".ripr/suppressions.toml"],
+        None,
+        0,
     )?;
     if filtered["suppression_policy"]["suppressed"] != 1
         || findings(&filtered)?.len() != findings(&original)?.len()
         || String::from_utf8_lossy(&applied.stderr).contains("it was not applied")
     {
-        return Err("explicit policy must suppress exactly its real finding without dropping evidence".to_string());
+        return Err(
+            "explicit policy must suppress exactly its real finding without dropping evidence"
+                .to_string(),
+        );
     }
-    let subject = findings(&filtered)?.iter().find(|finding| finding["id"] == id)
+    let subject = findings(&filtered)?
+        .iter()
+        .find(|finding| finding["id"] == id)
         .ok_or("suppressed subject must remain visible")?;
     if subject["suppressed"] != true {
         return Err("the policy subject must be marked suppressed".to_string());
@@ -302,9 +342,15 @@ fn json_compact_cli_preserves_structured_refusal_exit_and_recovery() -> Result<(
     let fixture = Fixture::new("missing-root")?;
     let missing = fixture.home.join("does not exist");
     let root = missing.to_string_lossy();
-    let pretty = run_cli(&fixture.decoy, &["check", "--root", &root, "--format", "json"], None)?;
+    let pretty = run_cli(
+        &fixture.decoy,
+        &["check", "--root", &root, "--format", "json"],
+        None,
+    )?;
     let compact = run_cli(
-        &fixture.decoy, &["check", "--root", &root, "--format", "json-compact"], None,
+        &fixture.decoy,
+        &["check", "--root", &root, "--format", "json-compact"],
+        None,
     )?;
     let value = equivalent(&pretty, &compact, 2)?;
     if value["analysis_scope"]["run_status"] != "repository_root_unusable"
@@ -323,8 +369,10 @@ fn json_compact_cli_rejects_conflicting_selection_before_analysis() -> Result<()
         ["check", "--format", "json-compact", "--json"],
     ] {
         let output = run_cli(&fixture.decoy, &argv, None)?;
-        if output.status.code() != Some(2) || !output.stdout.is_empty()
-            || !String::from_utf8_lossy(&output.stderr).contains("select different output formats; pass one")
+        if output.status.code() != Some(2)
+            || !output.stdout.is_empty()
+            || !String::from_utf8_lossy(&output.stderr)
+                .contains("select different output formats; pass one")
         {
             return Err("argv conflicts must remain prose-only usage failures".to_string());
         }
