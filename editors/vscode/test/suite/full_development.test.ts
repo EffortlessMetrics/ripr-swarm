@@ -145,8 +145,11 @@ else if (tool === 'compiler') {
     process.stdout.write('controlled aggregate; full native Rust proof not supplied\\n');
   } else if (args.join(' ') === 'xtask vscode-test-e2e') {
     if (process.env.RIPR_FULL_CONTROL_FAIL !== 'stale_host') receipt();
+    if (process.env.RIPR_FULL_CONTROL_FAIL === 'editor_suite') process.exit(41);
     process.stdout.write('  3 passing (1s)\\n  1 pending\\n  1 passing (1s)\\n');
-  } else if (!['policy preflight', 'xtask vscode-package'].includes(args.join(' '))) {
+  } else if (args.join(' ') === 'xtask vscode-package') {
+    if (process.env.RIPR_FULL_CONTROL_FAIL === 'editor_package') process.exit(43);
+  } else if (args.join(' ') !== 'policy preflight') {
     throw new Error('Unexpected Cargo operation: ' + args.join(' '));
   }
 } else throw new Error('Unexpected controlled owner: ' + tool);
@@ -235,7 +238,8 @@ else if (tool === 'compiler') {
   });
 
   for (const [failure, expected, lastStage] of [['compiler', 23, 'editor_prerequisites'], ['host', 29, 'editor_prerequisites'],
-    ['rust', 37, 'rust_full']] as const) {
+    ['rust', 37, 'rust_full'], ['editor_suite', 41, 'editor_suite'],
+    ['editor_package', 43, 'editor_package']] as const) {
     test('preserves native ' + failure + ' failure and does not start later work', async () => {
       const { report, status } = await invoke({ RIPR_FULL_CONTROL_FAIL: failure });
       assert.strictEqual(status, expected);
@@ -246,7 +250,10 @@ else if (tool === 'compiler') {
       assert.ok(report.stages.slice(0, last).every(stage => stage.status === 'pass'));
       assert.ok(report.stages.slice(last + 1).every(stage => stage.status === 'not_run'));
       assert.strictEqual(report.full_development_ready, false);
-      assert.ok(!calls().some(call => call.args.join(' ') === 'xtask vscode-test-e2e'));
+      assert.strictEqual(calls().filter(call => call.args.join(' ') === 'xtask vscode-test-e2e').length,
+        lastStage === 'editor_suite' || lastStage === 'editor_package' ? 1 : 0);
+      assert.strictEqual(calls().filter(call => call.args.join(' ') === 'xtask vscode-package').length,
+        lastStage === 'editor_package' ? 1 : 0);
     });
   }
 
