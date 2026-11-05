@@ -1,67 +1,98 @@
 # Muse integration
 
-RIPR ships a native Muse plugin at `plugins/muse/ripr`
-(`.muse-plugin/plugin.json` is the authoritative manifest). The native
-manifest is deliberate: the formal cross-agent Agent Plugins format
-does not currently import its MCP declarations as working Muse
-servers, while a native manifest declares the server directly.
-Claude Code, Codex, and Agent Plugins distributions may follow as
-separate adapters over the same workflow contract; none ships in 0.1.0.
+RIPR's native Muse package lives at
+[`plugins/muse/ripr`](../../plugins/muse/ripr/README.md). Start with that guide
+for installation, approval, a first repair, input selection, and troubleshooting.
+The [native manifest](../../plugins/muse/ripr/.muse-plugin/plugin.json) is the
+authority for the installed capabilities. The Meta-plugin workstream currently
+ships this Muse adapter; Claude Code, Codex, and Agent Plugins distributions
+are separate adapters and are not part of plugin 0.1.0.
 
-## What the package declares
+## Declared capabilities
 
-| Capability | Identity | Notes |
+| Capability | Identity | Contract |
 | --- | --- | --- |
-| MCP server | `core`, stdio, `ripr mcp --stdio` | The existing read-only server (see `mcp.md`, ADR 0022). No new transport. |
-| Skill | `ripr-setup` | Session diagnostics with explicit outcomes. |
-| Skill | `ripr-repair` | One bounded repair with durable CLI attempt and separately executed proof. |
+| MCP server | `core`, stdio, `ripr mcp --stdio` | Existing [read-only MCP server](mcp.md); no new transport or source-edit/test-execution authority. |
+| Setup skill | `ripr-setup`, qualified invocation `/ripr:ripr-setup` | Binary capability, server approval, live tools, startup root, and an explicit first analysis. |
+| Repair skill | `ripr-repair`, qualified invocation `/ripr:ripr-repair` | One bounded repair with a [durable CLI attempt](../REPAIR_ATTEMPT.md) and separately executed checks. |
 
-No hooks, no reminders, no bundled executable, no credentials. Plugin
-version (0.1.0) is independent of the RIPR CLI version.
+The package declares no separate commands, hooks, reminders, bundled
+executable, or credentials. Plugin version 0.1.0 is independent of the RIPR
+CLI version. Its native manifest declares the MCP server directly; these
+receipts do not establish support for another host's Agent Plugins import.
 
-## Host behavior that shapes the workflow
+## Session and approval behavior
 
-- MCP servers are optional at startup. A failed or unapproved server
-  leaves the session running with no `ripr_*` tools; successful Claude
-  Code startup therefore proves nothing about this plugin. Setup
-  inspects the live tool inventory and stops visibly.
-- Installation, approval, and package updates affect new sessions, not
-  a running one. Updating the package invalidates the prior server
-  approval.
-- The MCP process resolves its workspace at startup. Moving to a
-  different repository or worktree in the same session does not
-  retarget it; start a new session at the intended root.
-- Tools appear under the plugin namespace (for example the `core`
-  server's refresh tool). Required names: `ripr_workspace_status`,
-  `ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`,
-  `ripr_get_top_limitation`, `ripr_prepare_repair`,
-  `ripr_get_repair_attempt`, `ripr_get_receipt_status`,
-  `ripr_get_repair_card`, `ripr_list_repair_attempts`.
+Muse can start successfully while a plugin MCP server is absent or
+unapproved. Inspect the installed capability and the live tools; application
+startup alone does not establish a working RIPR session.
 
-## Prerequisite and version floor
+The declared capability is `plugin:ripr:mcp_server:core`. The installation
+guide uses that full identity for approval and re-inspects it for
+`trusted_enabled`. Both skills can be effective while the server still
+requires review. After editing the package's installation source, run
+`muse plugins update ripr --json`, then inspect it again. Approval covers the
+whole installed package: even a README or skill edit returns an approved MCP
+capability to `modified`. That state and `review_needed` both require review
+and approval of the current package before the server can load in a new session.
+An unchanged update retains approval. An existing session keeps its already
+started MCP server, while updated skills refresh on the next prompt. Start a
+fresh session after the capability is `trusted_enabled` to activate the current
+MCP declaration. Muse's [trust rules](https://meta-models.github.io/muse-code-sdk/next/guides/plugins/concepts/trust-review-and-scopes/)
+define these states.
 
-The `ripr` binary must be on `PATH` and MCP-capable. Released
-`ripr 0.10.0` has no `mcp` command (`ripr mcp --stdio` exits 2), so its
-server never starts and no tools register; this was observed in the
-2026-11-04 cold-install evaluation, not inferred. Development against a
-pre-release binary must identify it as a development build; it does not
-create a released-product claim.
+The manifest does not specify `--root`. The MCP process resolves its root at
+startup from the session's launch directory and repository markers. A later
+shell `cd` cannot retarget it. `ripr_workspace_status` takes no arguments;
+it reports validation posture and a hashed identity, not an absolute host
+path. Launch a new session from the intended repository when the root differs
+or cannot be established.
 
-## Validation and evaluation
+Tools appear under the host's plugin namespace. Match these ten tool names
+within that namespace:
 
-```text
-muse plugins validate ./plugins/muse/ripr
-muse skills validate ./plugins/muse/ripr/skills/ripr-setup
-muse skills validate ./plugins/muse/ripr/skills/ripr-repair
-muse plugins install ./plugins/muse/ripr
-muse plugins inspect ripr
-muse plugins approve ripr:mcp_server:core
-```
+| Purpose | Tool names |
+| --- | --- |
+| Establish current inputs | `ripr_workspace_status`, `ripr_refresh` |
+| Read gaps and limitations | `ripr_list_gaps`, `ripr_get_gap`, `ripr_get_top_limitation` |
+| Inspect repair readiness | `ripr_get_repair_card`, `ripr_prepare_repair` |
+| Discover and read attempts | `ripr_list_repair_attempts`, `ripr_get_repair_attempt`, `ripr_get_receipt_status` |
 
-Manifest validation alone is insufficient. The acceptance journey —
-cold install, approval, new session, tool discovery, boundary repair,
-refusal cases — and its retained receipts live under
-`benchmarks/muse-plugin/` (the `muse-plugin-eval-v1` JSON Schema
-lands with the scoreboard-ingestion change that owns its version
-bindings, #13120). Plugin results report
-beside the DX scoreboard; plugin runs never edit its baselines.
+`ripr_prepare_repair` is in-memory session state. It does not create a durable
+CLI baseline, authorize edits, or run tests. A refresh can write its analysis
+cache under `target/ripr/` while remaining read-only with respect to source.
+
+## Binary and analysis inputs
+
+The binary on Muse's inherited `PATH` must expose `ripr mcp`. Check both
+`ripr --version` and `ripr mcp --help`, then discover the live tools. The
+[historical cold-install receipt](../../benchmarks/muse-plugin/receipts/2026-11-04-cold-install-and-repair.md)
+records the released 0.10.0 binary refusing that subcommand and a pinned
+0.11.0 development binary serving it. A version label alone is insufficient,
+and a development-build result is not a released-product claim.
+
+Pass `source` on every refresh and repeat any explicitly selected `base`.
+Omission independently restores `committed` source or the default base; these
+are not sticky settings. Saved worktree analysis excludes wholly untracked
+files until deliberately included and never reads unsaved editor buffers.
+Check the captured source/base, snapshot identity, freshness, and typed outcome
+before dependent reads. A failed refresh's last-known-good snapshot is not
+new after-edit evidence. The [MCP reference](mcp.md) owns these schemas and
+failure contracts.
+
+## Validation and evidence
+
+Use the [package installation sequence](../../plugins/muse/ripr/README.md#install-and-check-the-connection)
+for plugin and skill validation, installation, approval, and a fresh session.
+Manifest validation establishes package structure, not tool discovery or a
+successful repair.
+
+The [evaluation suite](../../benchmarks/muse-plugin/README.md) defines eight
+scenarios and the retained evidence boundaries. The shared evaluation consumer
+owns the canonical `schemas/ripr/muse-plugin-eval.schema.json` and its version
+bindings ([#13120](https://github.com/EffortlessMetrics/ripr-swarm/issues/13120),
+implemented in [#13165](https://github.com/EffortlessMetrics/ripr-swarm/pull/13165));
+this package does not publish an independent schema. The full run-record schema
+is distinct from the scenario expected-verdict files and historical prose receipts.
+Plugin results report beside the DX scoreboard; these runs do not change
+scoreboard baselines or establish effectiveness targets.

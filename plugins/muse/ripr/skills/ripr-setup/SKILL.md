@@ -24,9 +24,11 @@ the live tool inventory and stop visibly when the server is absent.
 3. Confirm the plugin and approval state with `muse plugins inspect
    ripr` when the CLI is available: the `ripr-setup` and `ripr-repair`
    skills effective, and the MCP capability `plugin:ripr:mcp_server:core`
-   present. If it is `review_needed`, the result is `approval_required`
-   below — tell the user to approve it (`muse plugins approve
-   ripr:mcp_server:core`) and start a new session; approval does not
+   present. If it is `review_needed` or `modified`, the result is
+   `approval_required` below. `modified` means the installed package
+   differs from the approved one, including after a skill or README update.
+   Have the current package reviewed and approved (`muse plugins approve
+   plugin:ripr:mcp_server:core`), then start a new session; approval does not
    retarget an already-running session.
 4. Check the live tool inventory in this session. Expect
    `ripr_workspace_status`, `ripr_refresh`, `ripr_list_gaps`,
