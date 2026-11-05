@@ -925,8 +925,10 @@ fn cli_first_hour_shows_the_finding_before_the_reference() -> Result<(), String>
             ));
         }
     }
-    if quoted < 4 {
-        return Err("expected the four-line boundary excerpt".to_string());
+    if quoted != 4 {
+        return Err(format!(
+            "expected the four-line boundary excerpt, got {quoted}"
+        ));
     }
     let finding = section
         .find("Changed behavior:")

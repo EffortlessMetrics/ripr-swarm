@@ -153,9 +153,11 @@ No `ripr.toml` is required. The development CLI prints a summary and a bounded
 `Start here:` section with a finding, a no-action result, or the limitation
 preventing useful guidance. No findings does not mean the tests are complete.
 
-For a change that tightens a comparison from `>` to `>=`, the finding names the
-changed behavior, the check no test makes, and the next test to add (selected
-lines from the [boundary example's checked output](../fixtures/boundary_gap/expected/human.txt)):
+Read the changed behavior, the related test, and the suggested next test. For a
+change that moves a comparison from `>` to `>=`, the static, advisory finding
+names the changed behavior, the check no test makes, and the next test to add
+(selected lines from the
+[boundary example's checked output](../fixtures/boundary_gap/expected/human.txt)):
 
 ```text
   Changed behavior: amount >= discount_threshold
