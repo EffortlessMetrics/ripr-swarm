@@ -704,7 +704,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.169`: seal tuple Iterator pins to the unshadowed standard prelude.
 /// `1.170`: complete workspace context is required for tuple Iterator dispatch.
 /// `1.171`: tuple field-type queries bind the exact indexed owner location.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.171";
+/// `1.172`: compose importer-aware tuple pins with current module-glob ancestry.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.172";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -921,7 +922,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.171";
 /// `0.171`: same sealed prelude scope as full `1.169`.
 /// `0.172`: same complete-context tuple dispatch as full `1.170`.
 /// `0.173`: same exact-owner field-type query as full `1.171`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.173";
+/// `0.174`: same composed module-glob ancestry as full `1.172`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.174";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1140,7 +1142,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.173";
 /// `0.171`: same sealed prelude scope as full `1.169`.
 /// `0.172`: same complete-context tuple dispatch as full `1.170`.
 /// `0.173`: same exact-owner field-type query as full `1.171`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.173";
+/// `0.174`: same composed module-glob ancestry as full `1.172`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.174";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5296,7 +5299,7 @@ mod tests {
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
         // Composed main and successor invalidate both predecessor branches.
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.171");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.172");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5442,8 +5445,8 @@ mod tests {
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.173");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.173");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.174");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.174");
     }
 
     #[test]
@@ -5779,6 +5782,7 @@ mod tests {
             ("pre-sealed-tuple-iterator-scope", "1.168", "0.170"),
             ("pre-complete-tuple-dispatch-context", "1.169", "0.171"),
             ("pre-exact-tuple-field-owner", "1.170", "0.172"),
+            ("pre-main-glob-composition", "1.171", "0.173"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
