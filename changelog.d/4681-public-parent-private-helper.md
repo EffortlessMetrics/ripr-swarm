@@ -1,1 +1,2 @@
-- Rust analysis keeps the public-parent to private-helper proof path when a helper moves into an inline, file-backed or parent-inline module, and folds changed-value contradictions through a uniquely delegating public parent (#4681).
+<!-- section: Fixed -->
+- Rust analysis keeps the public-parent to private-helper proof path when a helper moves into an inline, file-backed or parent-inline module, and folds changed-value contradictions through a uniquely delegating public parent that directly returns the helper call (#4681).

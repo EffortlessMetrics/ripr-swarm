@@ -687,3 +687,8 @@ Proposed metrics to track as the implementation lands:
 - `stable_id_collision_rate`: collisions per seam inventory run (must be zero).
 - `seam_to_finding_link_rate`: percentage of diff findings that reference a
 known `SeamId`.
+
+A public parent can supply an exact-value contradiction for a private helper
+only when its complete return expression directly calls that helper. A helper
+call whose result is discarded or transformed does not establish the parent
+result; the helper fold stays not evaluable through that parent.

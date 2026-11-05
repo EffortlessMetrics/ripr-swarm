@@ -32,7 +32,11 @@ fn public_parent_fixture(
     )
     .map_err(|error| error.to_string())?;
 
-    let helper_body = format!("fn compute_value() -> i32 {{ {helper_value} }}\n");
+    let visibility = match placement {
+        HelperPlacement::ParentInline => "",
+        HelperPlacement::InlineChild | HelperPlacement::FileChild => "pub(super) ",
+    };
+    let helper_body = format!("{visibility}fn compute_value() -> i32 {{ {helper_value} }}\n");
     let (lib_extra, helper_call, owner_file, expected_owner) = match placement {
         HelperPlacement::ParentInline => (
             helper_body.clone(),
@@ -238,5 +242,66 @@ fn module_extraction_public_parent_controls() -> Result<(), String> {
     module_extraction_public_parent_same_named_sibling_with_wrapper_call_stays_witness()?;
     module_extraction_public_parent_same_named_sibling_stays_unrelated()?;
     module_extraction_public_parent_changed_value_keeps_discriminator()?;
+    Ok(())
+}
+
+#[test]
+fn module_extraction_public_parent_transformed_or_discarded_values_are_not_contradictions()
+-> Result<(), String> {
+    for placement in HELPER_PLACEMENTS {
+        for (parent_body, expected) in [
+            ("let value = HELPER; value + 1", 10),
+            ("HELPER + 1", 10),
+            ("HELPER; 10", 10),
+            ("({ HELPER }) + 1", 10),
+        ] {
+            let (root, _index, _seam) = public_parent_fixture(placement, 9, false, true)?;
+            let helper = match placement {
+                HelperPlacement::ParentInline => "compute_value()",
+                _ => "child::compute_value()",
+            };
+            let file = root.join("src/lib.rs");
+            let source = fs::read_to_string(&file).map_err(|error| error.to_string())?;
+            let direct = format!("pub fn entry() -> i32 {{ {helper} }}");
+            assert!(
+                source.contains(&direct),
+                "fixture must contain the direct parent"
+            );
+            let changed = source
+                .replace(
+                    &direct,
+                    &format!(
+                        "pub fn entry() -> i32 {{ {} }}",
+                        parent_body.replace("HELPER", helper)
+                    ),
+                )
+                .replace(
+                    "assert_eq!(super::entry(), 9)",
+                    &format!("assert_eq!(super::entry(), {expected})"),
+                );
+            fs::write(&file, changed).map_err(|error| error.to_string())?;
+            let mut files = vec![PathBuf::from("src/lib.rs")];
+            if matches!(placement, HelperPlacement::FileChild) {
+                files.push(PathBuf::from("src/child.rs"));
+            }
+            let index = build_index(&root, &files)?;
+            assert_eq!(index.tests().len(), 1);
+            let owner = index
+                .functions()
+                .iter()
+                .find(|owner| owner.name == "compute_value")
+                .ok_or_else(|| "missing helper".to_string())?;
+            assert_eq!(
+                super::super::value_contradiction::exact_value_assertion_verdict_for_test(
+                    Some(owner),
+                    &format!("assert_eq!(super::entry(), {expected})"),
+                    &index.tests()[0],
+                    &index,
+                ),
+                super::super::value_contradiction::ExactValueVerdict::NotEvaluable,
+                "{placement:?}: {parent_body}"
+            );
+        }
+    }
     Ok(())
 }

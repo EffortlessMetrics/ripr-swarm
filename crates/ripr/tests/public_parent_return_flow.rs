@@ -1,0 +1,175 @@
+//! Public renderer regression for #4681: parent output flow owns contradiction.
+#![cfg(feature = "lang-rust")]
+
+use ripr::{CheckInput, OutputFormat, render_check};
+use serde_json::Value;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[derive(Clone, Copy, Debug)]
+enum Placement {
+    Parent,
+    InlineChild,
+    FileChild,
+}
+const PLACEMENTS: [Placement; 3] = [
+    Placement::Parent,
+    Placement::InlineChild,
+    Placement::FileChild,
+];
+struct Fixture {
+    root: PathBuf,
+    owner: &'static str,
+}
+impl Fixture {
+    fn new(
+        placement: Placement,
+        helper_value: i32,
+        parent_body: &str,
+        expected: i32,
+    ) -> Result<Self, String> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-parent-output-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        let (extra, helper, owner) = match placement {
+            Placement::Parent => (
+                format!("fn compute_value() -> i32 {{ {helper_value} }}"),
+                "compute_value()",
+                "src/lib.rs::compute_value",
+            ),
+            Placement::InlineChild => (
+                format!(
+                    "mod child {{ pub(super) fn compute_value() -> i32 {{ {helper_value} }} }}"
+                ),
+                "child::compute_value()",
+                "src/lib.rs::child::compute_value",
+            ),
+            Placement::FileChild => {
+                std::fs::write(
+                    root.join("src/child.rs"),
+                    format!("pub(super) fn compute_value() -> i32 {{ {helper_value} }}"),
+                )
+                .map_err(|e| e.to_string())?;
+                (
+                    "mod child;".to_string(),
+                    "child::compute_value()",
+                    "src/child.rs::compute_value",
+                )
+            }
+        };
+        let fixture = Self { root, owner };
+        std::fs::write(
+            fixture.root.join("Cargo.toml"),
+            "[package]\nname='parent-output-flow'\nversion='0.0.0'\nedition='2024'\n[workspace]\n",
+        )
+        .map_err(|e| e.to_string())?;
+        let source = format!(
+            "{extra}\npub fn entry() -> i32 {{ {} }}\n#[cfg(test)] mod tests {{ #[test] fn observes_public_parent() {{ assert_eq!(super::entry(), {expected}); }} }}\n",
+            parent_body.replace("HELPER", helper)
+        );
+        std::fs::write(fixture.root.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
+        Ok(fixture)
+    }
+    fn seam(&self) -> Result<Value, String> {
+        let output = ripr::app::repo_seam_inventory_input(CheckInput {
+            root: self.root.clone(),
+            ..CheckInput::default()
+        });
+        let rendered = render_check(&output, &OutputFormat::RepoExposureJson)?;
+        let report: Value = serde_json::from_str(&rendered).map_err(|e| e.to_string())?;
+        assert_eq!(report["run_status"], "complete", "{report}");
+        let seams = report["seams"].as_array().ok_or("missing seams")?;
+        let matching = seams
+            .iter()
+            .filter(|seam| seam["kind"] == "return_value" && seam["owner"] == self.owner)
+            .collect::<Vec<_>>();
+        assert_eq!(matching.len(), 1, "actual helper return seam: {report}");
+        assert!(
+            matching[0]["evidence_record"].is_object(),
+            "missing evidence record"
+        );
+        Ok(matching[0].clone())
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+fn contradictions(seam: &Value) -> Result<u64, String> {
+    let total = seam
+        .get("related_tests_total")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format!("missing or untyped related test count: {seam}"))?;
+    let tests = seam
+        .get("related_tests")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("missing related test observations: {seam}"))?;
+    assert_eq!(total, 1, "must observe the fixture test: {seam}");
+    assert_eq!(tests.len(), 1, "must retain the fixture test: {seam}");
+    let name = tests[0]
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("missing or untyped observed test identity: {seam}"))?;
+    assert_eq!(
+        name.rsplit("::").next(),
+        Some("observes_public_parent"),
+        "{seam}"
+    );
+    let record = seam
+        .get("evidence_record")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("missing evidence record: {seam}"))?;
+    // The producer deliberately omits this field at zero. A present value,
+    // including null, must still satisfy its unsigned-count schema.
+    match record.get("statically_contradicted_related_tests") {
+        None => Ok(0),
+        Some(value) => value
+            .as_u64()
+            .ok_or_else(|| format!("untyped contradiction count: {seam}")),
+    }
+}
+
+#[test]
+fn direct_parent_returns_preserve_agreement_and_actual_contradiction() -> Result<(), String> {
+    for placement in PLACEMENTS {
+        for body in ["HELPER", "return HELPER;"] {
+            let positive = Fixture::new(placement, 9, body, 9)?.seam()?;
+            assert_eq!(
+                contradictions(&positive)?,
+                0,
+                "{placement:?} {body}: {positive}"
+            );
+            assert_eq!(positive["evidence"]["discriminate"], "yes", "{positive}");
+            let changed = Fixture::new(placement, 10, body, 9)?.seam()?;
+            assert_eq!(
+                contradictions(&changed)?,
+                1,
+                "{placement:?} {body}: {changed}"
+            );
+            assert_ne!(changed["evidence"]["discriminate"], "yes", "{changed}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn transformed_or_discarded_helper_outputs_do_not_create_false_contradictions() -> Result<(), String>
+{
+    for placement in PLACEMENTS {
+        for body in [
+            "let value = HELPER; value + 1",
+            "HELPER + 1",
+            "HELPER; 10",
+            "({ HELPER }) + 1",
+        ] {
+            let seam = Fixture::new(placement, 9, body, 10)?.seam()?;
+            assert_eq!(contradictions(&seam)?, 0, "{placement:?} {body}: {seam}");
+        }
+    }
+    Ok(())
+}

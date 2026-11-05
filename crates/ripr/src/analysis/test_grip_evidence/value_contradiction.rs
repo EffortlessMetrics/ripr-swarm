@@ -31,7 +31,10 @@ use crate::analysis::classify::oracle_owner_call_is_shadowed;
 use crate::analysis::extract::{equality_assertion_arguments, outer_assertion_condition};
 use crate::analysis::facts::{FunctionSummary, RustIndex, SourceText, TestFact as TestSummary};
 use crate::analysis::syntax::parse_clean_source_file;
-use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
+use ra_ap_syntax::{
+    AstNode, ast,
+    ast::{HasArgList, HasAttrs, HasGenericArgs, HasName},
+};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
@@ -1095,6 +1098,40 @@ fn parent_uniquely_delegates_to_owner(
     true
 }
 
+/// Only direct forwarding preserves the helper's exact value. Calling the
+/// helper and then discarding or transforming its result does not.
+fn parent_returns_owner_value(parent: &FunctionSummary, owner_name: &str) -> Option<()> {
+    let parse = parse_clean_source_file(&parent.body)?;
+    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let list = function.body()?.stmt_list()?;
+    let statements = list.statements().collect::<Vec<_>>();
+    let returned = match (statements.as_slice(), list.tail_expr()) {
+        ([], Some(ast::Expr::ReturnExpr(returned))) => returned.expr()?,
+        ([], Some(tail)) => tail,
+        ([ast::Stmt::ExprStmt(statement)], None) => {
+            let ast::Expr::ReturnExpr(returned) = statement.expr()? else {
+                return None;
+            };
+            returned.expr()?
+        }
+        _ => return None,
+    };
+    let ast::Expr::CallExpr(call) = returned else {
+        return None;
+    };
+    if call.arg_list()?.args().next().is_some() {
+        return None;
+    }
+    let ast::Expr::PathExpr(callee) = call.expr()? else {
+        return None;
+    };
+    let segment = callee.path()?.segment()?;
+    if segment.generic_arg_list().is_some() || segment.name_ref()?.text() != owner_name {
+        return None;
+    }
+    Some(())
+}
+
 fn fold_through_unique_public_parent(
     actual: &str,
     owner: &FunctionSummary,
@@ -1114,6 +1151,7 @@ fn fold_through_unique_public_parent(
     if !parent_uniquely_delegates_to_owner(parent, owner, index) {
         return None;
     }
+    parent_returns_owner_value(parent, &owner.name)?;
     fold_owner_call(owner, &[])
 }
 

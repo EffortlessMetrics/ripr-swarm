@@ -565,6 +565,9 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests/module_extraction_public_parent.rs::module_extraction_public_parent_transformed_or_discarded_values_are_not_contradictions",
+  "crates/ripr/tests/public_parent_return_flow.rs::direct_parent_returns_preserve_agreement_and_actual_contradiction",
+  "crates/ripr/tests/public_parent_return_flow.rs::transformed_or_discarded_helper_outputs_do_not_create_false_contradictions",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_shares_facts_and_complete_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity",
