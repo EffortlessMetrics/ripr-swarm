@@ -1,0 +1,270 @@
+{
+  "stage": "selected-error-production",
+  "candidate": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+  "tree": "8433062d94585a2e5ef1a5fd856555031089d619",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "return_diagnostic_confirmation",
+    "--test",
+    "native_path_roots",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 210.05,
+  "counts": {
+    "passed": 21,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 0
+  },
+  "all_test_summaries": [
+    {
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    },
+    {
+      "passed": 21,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    }
+  ],
+  "log_sha256": "e1ea23dd6600bcfc627c6ae92f3d5e1f60c61526ab696aaa1d2e560cc3a60471",
+  "peak_cgroup_memory_bytes": 8196718592,
+  "samples": [
+    {
+      "utc": "2026-11-05T22:51:57.970541+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 2891993088,
+      "workspace_free_bytes": 20879593472,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:52:07.971534+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3658342400,
+      "workspace_free_bytes": 21348548608,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:52:17.972930+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 20.0,
+      "cgroup_memory_bytes": 4197285888,
+      "workspace_free_bytes": 21348548608,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:52:27.973636+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 30.0,
+      "cgroup_memory_bytes": 4149325824,
+      "workspace_free_bytes": 21348548608,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:52:37.974695+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 40.0,
+      "cgroup_memory_bytes": 4414812160,
+      "workspace_free_bytes": 21348548608,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:52:47.976660+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 50.01,
+      "cgroup_memory_bytes": 4698103808,
+      "workspace_free_bytes": 21348548608,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:52:57.978375+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 60.01,
+      "cgroup_memory_bytes": 5046267904,
+      "workspace_free_bytes": 21348548608,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:53:07.979195+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 70.01,
+      "cgroup_memory_bytes": 5478813696,
+      "workspace_free_bytes": 21348548608,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:53:17.979892+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 80.01,
+      "cgroup_memory_bytes": 5913456640,
+      "workspace_free_bytes": 21348548608,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:53:27.980629+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 90.01,
+      "cgroup_memory_bytes": 6375686144,
+      "workspace_free_bytes": 21348548608,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:53:37.982001+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 100.01,
+      "cgroup_memory_bytes": 6887206912,
+      "workspace_free_bytes": 21279625216,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:53:47.983728+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 110.01,
+      "cgroup_memory_bytes": 7316217856,
+      "workspace_free_bytes": 21279625216,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:53:57.984889+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 120.01,
+      "cgroup_memory_bytes": 7720935424,
+      "workspace_free_bytes": 21279625216,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:54:07.986191+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 130.02,
+      "cgroup_memory_bytes": 7815868416,
+      "workspace_free_bytes": 21326868480,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:54:17.994863+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 140.03,
+      "cgroup_memory_bytes": 7754379264,
+      "workspace_free_bytes": 21277257728,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:54:28.002880+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 150.03,
+      "cgroup_memory_bytes": 7791124480,
+      "workspace_free_bytes": 21229998080,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:54:38.005586+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 160.04,
+      "cgroup_memory_bytes": 7857668096,
+      "workspace_free_bytes": 21190127616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:54:48.006390+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 170.04,
+      "cgroup_memory_bytes": 7917711360,
+      "workspace_free_bytes": 21129043968,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:54:58.008839+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 180.04,
+      "cgroup_memory_bytes": 8196718592,
+      "workspace_free_bytes": 21102088192,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:55:08.010377+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 190.04,
+      "cgroup_memory_bytes": 8041824256,
+      "workspace_free_bytes": 21031960576,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:55:18.011628+00:00",
+      "stage": "selected-error-production",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1420599,
+      "elapsed": 200.04,
+      "cgroup_memory_bytes": 3186909184,
+      "workspace_free_bytes": 20879384576,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

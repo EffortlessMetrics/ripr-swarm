@@ -1,0 +1,398 @@
+diff --git a/changelog.d/12010-sink-identity.md b/changelog.d/12010-sink-identity.md
+index 8f7f62c45..741565389 100644
+--- a/changelog.d/12010-sink-identity.md
++++ b/changelog.d/12010-sink-identity.md
+@@ -4,3 +4,4 @@
+ - Keep the split-test returned-comparison honesty control non-promoting: the unasserted boundary calls cannot borrow the far-input test oracle.
+ - Preserve primitive boolean helper and eager-callback boundary observers only when the helper compares the exact returned value (#12010).
+ - Bind a unit-error pattern to the first guarded return selected by its literal input, without lending that witness to a later identical return (#12010).
++- Refuse intercepted boolean Clone observers and apply the same boundary pairing to a returned comparison; retain standard dispatch and unrelated nominal observers (#12010).
+diff --git a/crates/ripr/src/analysis/classify/boundary_pairing/borrowed_result.rs b/crates/ripr/src/analysis/classify/boundary_pairing/borrowed_result.rs
+index cbb90d331..e731b113d 100644
+--- a/crates/ripr/src/analysis/classify/boundary_pairing/borrowed_result.rs
++++ b/crates/ripr/src/analysis/classify/boundary_pairing/borrowed_result.rs
+@@ -63,6 +63,7 @@ pub(super) fn pairs(
+             if clone.name_ref().is_none_or(|name| name.text() != "clone")
+                 || clone.generic_arg_list().is_some()
+                 || clone.arg_list().is_none_or(|list| list.args().next().is_some())
++                || !super::super::implicit_effect::standard_bool_clone_view(index)
+                 || index.files().values().any(|file| file.source.contains("no_implicit_prelude"))
+             { return false; }
+             let Some(receiver) = clone.receiver() else { return false };
+diff --git a/crates/ripr/src/analysis/classify/call_identity.rs b/crates/ripr/src/analysis/classify/call_identity.rs
+index 1b825028a..26c374fc1 100644
+--- a/crates/ripr/src/analysis/classify/call_identity.rs
++++ b/crates/ripr/src/analysis/classify/call_identity.rs
+@@ -131,6 +131,8 @@ pub(crate) struct CallIdentityMemos {
+     /// file and masked initializer, built once per index on first use by
+     /// the owner-return pin's self-computed expected-value check.
+     constants: std::sync::OnceLock<ConstantTable>,
++    /// Standard bool-clone view, including importer and expansion authority.
++    pub(super) bool_clone_view: std::sync::OnceLock<bool>,
+     /// #9209: the workspace's non-plain `Drop` impls, read once per index so
+     /// `drop_is_plain` is a lookup instead of a per-probe corpus parse.
+     drop_impls: std::sync::OnceLock<super::element_field_pin::DropImplIndex>,
+diff --git a/crates/ripr/src/analysis/classify/implicit_effect.rs b/crates/ripr/src/analysis/classify/implicit_effect.rs
+index 6b20214c5..33f0311a5 100644
+--- a/crates/ripr/src/analysis/classify/implicit_effect.rs
++++ b/crates/ripr/src/analysis/classify/implicit_effect.rs
+@@ -163,8 +163,49 @@ impl ImplicitExpansionMemo {
+     }
+ }
+ 
++/// A bool result may pass through Clone only after shared expansion/impl
++/// authority excludes interception. Local globs are admitted solely after the
++/// importer-aware workspace import check; the original observer policy stays
++/// unchanged. An unrelated standard Drop cannot change primitive bool Clone.
++pub(super) fn standard_bool_clone_view(index: &RustIndex) -> bool {
++    // Manifest authority may change independently of immutable source memos.
++    if !super::call_identity::closed_method_dispatch_imports(index)
++        || !index.files().iter().all(|(file, _)| {
++            ["std", "core"]
++                .into_iter()
++                .all(|name| index.drop_in_manifests.unbound_standard_root(file, name))
++        })
++    {
++        return false;
++    }
++    *index.call_identity_memos.bool_clone_view.get_or_init(|| {
++        if super::owner_pin::projected_standard_roots_shadowed(index)
++            || ["Clone", "Iterator", "Add", "Drop"]
++                .into_iter()
++                .any(|name| super::owner_pin::wrapper_may_be_rebound(name, index))
++        {
++            return false;
++        }
++        let surface = ExpansionSurface::scan_with_workspace_globs(
++            index
++                .files()
++                .values()
++                .map(|facts| std::sync::Arc::clone(&facts.source)),
++            true,
++        );
++        surface.bounded_apart_from_drop && !surface.excluded_apart_from_drop.contains("bool")
++    })
++}
++
+ impl ExpansionSurface {
+     fn scan<S: AsRef<str>>(sources: impl IntoIterator<Item = S>) -> Self {
++        Self::scan_with_workspace_globs(sources, false)
++    }
++
++    fn scan_with_workspace_globs<S: AsRef<str>>(
++        sources: impl IntoIterator<Item = S>,
++        workspace_globs_verified: bool,
++    ) -> Self {
+         const BUILTIN_MACROS: &[&str] = &[
+             "assert",
+             "assert_eq",
+@@ -330,12 +371,17 @@ impl ExpansionSurface {
+                         use_text.as_str(),
+                         "usestd::ops::Add;" | "usecore::ops::Add;"
+                     );
+-                    !use_text.contains('*')
++                    let canonical_clone_import = workspace_globs_verified && matches!(
++                        use_text.as_str(),
++                        "usestd::clone::Clone;" | "usecore::clone::Clone;"
++                    );
++                    (workspace_globs_verified || !use_text.contains('*'))
+                         && use_text
+                             .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                             .all(|name| {
+                                 !BUILTIN_MACROS.contains(&name)
+-                                    && !BUILTIN_DERIVES.contains(&name)
++                                    && (!BUILTIN_DERIVES.contains(&name)
++                                        || (name == "Clone" && canonical_clone_import))
+                                     && name != "Drop"
+                                     && (name != "Iterator" || canonical_iterator_import)
+                                     && (name != "Add" || canonical_add_import)
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 0e4d7b1a0..79f2494c6 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -11438,7 +11438,7 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
+         .is_some_and(|(field, receiver)| field == receiver)
+ }
+ 
+-fn projected_standard_roots_shadowed(index: &RustIndex) -> bool {
++pub(super) fn projected_standard_roots_shadowed(index: &RustIndex) -> bool {
+     index.files().values().any(|facts| {
+         #[cfg(test)]
+         PROJECTED_WORKSPACE_FILE_VISITS.with(|count| count.set(count.get() + 1));
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index 2f5bc3e44..6c05efd54 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -709,7 +709,8 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// `1.174`: guarded-return lookup uses the indexed fn token, not visibility text.
+ /// `1.175`: borrowed bool observers pair only through their exact result argument.
+ /// `1.176`: unit-error pattern identity is tied to the selected literal guard row.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.176";
++/// `1.177`: certified bool Clone dispatch and returned-comparison pairing.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.177";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -931,7 +932,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.176";
+ /// `0.176`: same fn-token guarded-return identity as full `1.174`.
+ /// `0.177`: same exact borrowed-bool pairing as full `1.175`.
+ /// `0.178`: same selected unit-error row identity as full `1.176`.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.179";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1155,7 +1156,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
+ /// `0.176`: same fn-token guarded-return identity as full `1.174`.
+ /// `0.177`: same exact borrowed-bool pairing as full `1.175`.
+ /// `0.178`: same selected unit-error row identity as full `1.176`.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.179";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5311,7 +5312,7 @@ mod tests {
+         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+         // Composed main and successor invalidate both predecessor branches.
+         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.176");
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.177");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5457,8 +5458,8 @@ mod tests {
+         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.178");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.178");
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.179");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.179");
+     }
+ 
+     #[test]
+@@ -5799,6 +5800,7 @@ mod tests {
+             ("pre-guard-fn-token-lookup", "1.173", "0.175"),
+             ("pre-borrowed-bool-pairing", "1.174", "0.176"),
+             ("pre-selected-unit-error-row", "1.175", "0.177"),
++            ("pre-bool-clone-dispatch", "1.176", "0.178"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+diff --git a/crates/ripr/src/analysis/test_grip_evidence.rs b/crates/ripr/src/analysis/test_grip_evidence.rs
+index 7492de00e..25e6991f4 100644
+--- a/crates/ripr/src/analysis/test_grip_evidence.rs
++++ b/crates/ripr/src/analysis/test_grip_evidence.rs
+@@ -784,8 +784,10 @@ fn evidence_for_seam_with_context(
+     // The stage maxima cannot borrow an equality input from one test and an
+     // exact assertion from another. Apply the existing diff pairing authority
+     // and fail closed when that pairing cannot be established.
+-    if seam.kind() == SeamKind::PredicateBoundary
+-        && activate.state == StageState::Yes
++    if matches!(
++        seam.kind(),
++        SeamKind::PredicateBoundary | SeamKind::ReturnValue
++    ) && activate.state == StageState::Yes
+         && discriminate.state == StageState::Yes
+         && boundary_oracle_pairing::missing(seam, owner_fn, &credited, context, pin_syntax)
+     {
+@@ -2656,8 +2658,10 @@ pub(crate) fn compact_evidence_for_seam(
+     // The stage maxima cannot borrow an equality input from one test and an
+     // exact assertion from another. Apply the existing diff pairing authority
+     // and fail closed when that pairing cannot be established.
+-    if seam.kind() == SeamKind::PredicateBoundary
+-        && activate.state == StageState::Yes
++    if matches!(
++        seam.kind(),
++        SeamKind::PredicateBoundary | SeamKind::ReturnValue
++    ) && activate.state == StageState::Yes
+         && discriminate.state == StageState::Yes
+         && boundary_oracle_pairing::missing(seam, owner_fn, &credited, context, pin_syntax)
+     {
+diff --git a/crates/ripr/src/analysis/test_grip_evidence/boundary_oracle_pairing.rs b/crates/ripr/src/analysis/test_grip_evidence/boundary_oracle_pairing.rs
+index 9daa5edcc..0cf7b5bc9 100644
+--- a/crates/ripr/src/analysis/test_grip_evidence/boundary_oracle_pairing.rs
++++ b/crates/ripr/src/analysis/test_grip_evidence/boundary_oracle_pairing.rs
+@@ -3,7 +3,7 @@ use super::{CompactGripContext, FunctionSummary, RepoSeam, TestSummary};
+ use crate::analysis::classify::{
+     OwnerPinSyntax, OwnerReturnPin, ProbeContext, WrapperEntryPairing,
+     activation_and_boundary_input, has_same_test_boundary_oracle_pairing,
+-    has_wrapper_boundary_oracle_pairing, targeted_free_call_reaches_owner,
++    has_wrapper_boundary_oracle_pairing, returned_boundary_probe, targeted_free_call_reaches_owner,
+ };
+ use crate::domain::{DeltaKind, Probe, ProbeFamily, ProbeId, SourceLocation};
+ 
+@@ -18,9 +18,9 @@ pub(super) fn missing(
+     let Some(owner) = owner
+         .filter(|owner| owner.file == seam.file() && owner.id.0.replace('\\', "/") == seam.owner())
+     else {
+-        return true;
++        return seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary;
+     };
+-    let probe = Probe {
++    let mut probe = Probe {
+         id: ProbeId(format!("repo-boundary-pairing:{}", seam.id().as_str())),
+         location: SourceLocation::new(seam.file().to_path_buf(), seam.display_line(), 1),
+         owner: Some(owner.id.clone()),
+@@ -32,6 +32,20 @@ pub(super) fn missing(
+         expected_sinks: Vec::new(),
+         required_oracles: Vec::new(),
+     };
++    // A whole returned bool comparison has the same pairing obligation as
++    // its predicate. Other return values gain no boundary requirement.
++    if seam.kind() == crate::analysis::seams::SeamKind::ReturnValue {
++        probe.family = ProbeFamily::ReturnValue;
++        let unconditional = OwnerReturnPin::establish(&probe, owner, index)
++            .is_some_and(|pin| pin.is_unconditional_boolean_tail());
++        if !unconditional {
++            return false;
++        }
++        let Some(predicate) = returned_boundary_probe(&probe, owner, index, true) else {
++            return false;
++        };
++        probe = predicate;
++    }
+     let chain = context.boundary_chain(owner);
+     let activation = activation_and_boundary_input(
+         &probe,
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index 6c4808959..073ba9885 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -1081,6 +1081,16 @@ fn borrowed_boolean_helpers_pair_only_the_result_their_assertion_reads() -> Resu
+             false,
+         ),
+     ];
++    let cases = cases.into_iter().chain([
++        ("by-value trait clone", "trait CounterfeitClone { fn clone(self)->bool; } impl CounterfeitClone for bool { fn clone(self)->bool { true } } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", false),
++        ("aliased bool trait clone", "type Flag=bool; trait CounterfeitClone { fn clone(self)->bool; } impl CounterfeitClone for Flag { fn clone(self)->bool { true } } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", false),
++        ("rebound allowed trait name", "trait Add { fn clone(self)->bool; } impl Add for bool { fn clone(self)->bool { true } } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", false),
++        ("macro-generated clone impl", "macro_rules! emit { () => { trait CounterfeitClone { fn clone(self)->bool; } impl CounterfeitClone for bool { fn clone(self)->bool { true } } }; } emit!(); fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", false),
++        ("other nominal trait clone", "struct Other; trait CounterfeitClone { fn clone(self)->bool; } impl CounterfeitClone for Other { fn clone(self)->bool { true } } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", true),
++        ("other standard Clone", "struct Other; impl Clone for Other { fn clone(&self)->Self { Self } } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", true),
++        ("unrelated standard Drop", "struct Other; impl Drop for Other { fn drop(&mut self) {} } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", true),
++        ("explicit standard Clone", "use std::clone::Clone; fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", true),
++    ]);
+     let scratch = std::env::temp_dir().join(format!("ripr-borrowed-bool-{}", std::process::id()));
+     struct Cleanup(std::path::PathBuf);
+     impl Drop for Cleanup {
+@@ -1090,7 +1100,7 @@ fn borrowed_boolean_helpers_pair_only_the_result_their_assertion_reads() -> Resu
+     }
+     std::fs::create_dir(&scratch).map_err(|e| e.to_string())?;
+     let _cleanup = Cleanup(scratch.clone());
+-    for (at, (label, helper, body, positive)) in cases.into_iter().enumerate() {
++    for (at, (label, helper, body, positive)) in cases.enumerate() {
+         let root = scratch.join(at.to_string());
+         std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+         std::fs::write(
+@@ -1109,15 +1119,22 @@ fn borrowed_boolean_helpers_pair_only_the_result_their_assertion_reads() -> Resu
+             serde_json::from_str(&render_check(&output, &OutputFormat::RepoExposureJson)?)
+                 .map_err(|e| e.to_string())?;
+         let seams = report["seams"].as_array().ok_or("seams missing")?;
+-        let predicate = seams
++        let compared = seams
+             .iter()
+-            .find(|s| s["expression"] == "n>=10")
+-            .ok_or_else(|| format!("{label}: predicate missing: {report}"))?;
++            .filter(|s| s["expression"] == "n>=10")
++            .collect::<Vec<_>>();
+         assert_eq!(
+-            predicate["grip_class"] == "strongly_gripped",
+-            positive,
+-            "{label}: {predicate}"
++            compared.len(),
++            2,
++            "{label}: require both predicate and return-value seams: {report}"
+         );
++        for seam in compared {
++            assert_eq!(
++                seam["grip_class"] == "strongly_gripped",
++                positive,
++                "{label}: {seam}"
++            );
++        }
+     }
+     Ok(())
+ }
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index 12d1024a6..84ca3de8a 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -19795,7 +19795,7 @@ top-level `source_subject`:
+ 
+ - `digest_algorithm`: always `"sha256"`.
+ - `corpus` (additive, full Rust inventory only): the analysis-owned
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.176",
++  `{ "scope": "rust_workspace", "cache_schema_version": "1.177",
+   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+   classified inventory cache key, including both production and test Rust
+   files after the existing generated-file exclusions. Repo-exposure producers
+@@ -20580,7 +20580,7 @@ targeted-rerun receipt shape:
+     "recomputation_reasons": ["selected_test_scope_recomputed"],
+     "invalidation_status": "not_available",
+     "input_fingerprint": {
+-      "schema_version": "1.176",
++      "schema_version": "1.177",
+       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+       "workspace_root_hash": "…",
+       "files_content_hash": "…",
+diff --git a/fixtures/evidence-promotion-honesty-corpus/cases/rust_bool_clone_trait_interception.json b/fixtures/evidence-promotion-honesty-corpus/cases/rust_bool_clone_trait_interception.json
+new file mode 100644
+index 000000000..af5db6beb
+--- /dev/null
++++ b/fixtures/evidence-promotion-honesty-corpus/cases/rust_bool_clone_trait_interception.json
+@@ -0,0 +1,17 @@
++{
++  "id": "rust_bool_clone_trait_interception",
++  "language": "rust",
++  "tier": "pure",
++  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-bool-clone-trait-interception.json",
++  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/bool-clone-trait-interception",
++  "vector": "bool_clone_trait_interception_cannot_supply_an_owner_result_or_boundary_pair",
++  "assertions": [
++    {
++      "type": "expected_repo_seam_grip",
++      "owner": "src/lib.rs::gate",
++      "expression": "n>=10",
++      "grip_class": "weakly_gripped",
++      "reach": "yes"
++    }
++  ]
++}
+diff --git a/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/bool-clone-trait-interception/Cargo.toml b/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/bool-clone-trait-interception/Cargo.toml
+new file mode 100644
+index 000000000..56f957809
+--- /dev/null
++++ b/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/bool-clone-trait-interception/Cargo.toml
+@@ -0,0 +1,4 @@
++[package]
++name="clone_by_value_control"
++version="0.1.0"
++edition="2024"
+diff --git a/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/bool-clone-trait-interception/src/lib.rs b/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/bool-clone-trait-interception/src/lib.rs
+new file mode 100644
+index 000000000..7cdee17f1
+--- /dev/null
++++ b/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/bool-clone-trait-interception/src/lib.rs
+@@ -0,0 +1,8 @@
++pub fn gate(n:u32)->bool { n>=10 }
++#[cfg(test)] mod tests {
++ use super::*;
++ trait CounterfeitClone { fn clone(self)->bool; }
++ impl CounterfeitClone for bool { fn clone(self)->bool { true } }
++ fn run_test(want:bool,got:bool) { assert_eq!(got,want); }
++ #[test] fn boundary() { run_test(true,gate(10).clone()); }
++}
+diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
+index 051bd6177..5ce7ab640 100644
+--- a/xtask/src/tests/rust_corpus_projection.rs
++++ b/xtask/src/tests/rust_corpus_projection.rs
+@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.176";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.177";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";

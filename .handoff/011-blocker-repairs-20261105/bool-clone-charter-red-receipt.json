@@ -1,0 +1,28 @@
+{
+  "producer_version": "ripr 0.11.0 (4b44bda159e7c6b1326bab00ea14b3b7ba27dff9)",
+  "producer_sha256": "46954f75f0adbd90f3397ad5264ebf1ea6702c4552caeee25d4f83839a47a062",
+  "command": [
+    "/workspace/12010-proof/target/debug/ripr",
+    "check",
+    "--root",
+    "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/bool-clone-trait-interception",
+    "--mode",
+    "draft",
+    "--format",
+    "repo-exposure-json"
+  ],
+  "native_exit": 0,
+  "observed_before_repair": [
+    {
+      "kind": "predicate_boundary",
+      "grip_class": "strongly_gripped"
+    },
+    {
+      "kind": "return_value",
+      "grip_class": "strongly_gripped"
+    }
+  ],
+  "expected": "both weakly_gripped; native original and changed comparison both pass through by-value replacement trait",
+  "report_sha256": "346df5cd95eea9959cddebe4e98e3dc88674c63afab0aac93eeaed22da928e8a",
+  "artifact": "New retained capture is deliberately red until current producer regeneration; no expectation rescored."
+}

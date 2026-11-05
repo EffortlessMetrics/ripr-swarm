@@ -1,0 +1,67 @@
+{
+  "producer_version": "ripr 0.11.0 (4b44bda159e7c6b1326bab00ea14b3b7ba27dff9)",
+  "producer_sha256": "46954f75f0adbd90f3397ad5264ebf1ea6702c4552caeee25d4f83839a47a062",
+  "source_sha256": "a109bec9ea36c7f17d7fa54326aa8ec42d010152991ed6f305d6a47e1916fa9a",
+  "native_controls": [
+    {
+      "label": "current",
+      "compile_exit": 0,
+      "test_exit": 0,
+      "output": "\nrunning 1 test\ntest tests::boundary ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "label": "comparison-mutant",
+      "compile_exit": 0,
+      "test_exit": 0,
+      "output": "\nrunning 1 test\ntest tests::boundary ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    }
+  ],
+  "producer_command": [
+    "/workspace/12010-proof/target/debug/ripr",
+    "check",
+    "--root",
+    "/workspace/011-integration-proof/clone-by-value-control",
+    "--mode",
+    "draft",
+    "--format",
+    "repo-exposure-json"
+  ],
+  "producer_exit": 0,
+  "seams": [
+    {
+      "expression": "n>=10",
+      "grip_class": "weakly_gripped"
+    },
+    {
+      "expression": "n>=10",
+      "grip_class": "strongly_gripped"
+    }
+  ],
+  "report_sha256": "92469bf3d5630c845c5ca335d3a99e0ea0baca84bc2bdf73a827e490e01c7e34",
+  "initial_report_limit": "Initial capture contained two native source copies in root; not treated as isolated production proof. Moved verified copies outside project, then reran.",
+  "clean_producer_command": [
+    "/workspace/12010-proof/target/debug/ripr",
+    "check",
+    "--root",
+    "/workspace/011-integration-proof/clone-by-value-control",
+    "--mode",
+    "draft",
+    "--format",
+    "repo-exposure-json"
+  ],
+  "clean_seams": [
+    {
+      "kind": "predicate_boundary",
+      "expression": "n>=10",
+      "grip_class": "strongly_gripped",
+      "related_tests_total": 1
+    },
+    {
+      "kind": "return_value",
+      "expression": "n>=10",
+      "grip_class": "strongly_gripped",
+      "related_tests_total": 1
+    }
+  ],
+  "clean_report_sha256": "86b70a11baa34ce6382e443f0591a3210a466e45e315c6610529502e25a7ebdb"
+}

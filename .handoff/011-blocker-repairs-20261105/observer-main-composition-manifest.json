@@ -1,0 +1,16 @@
+{
+  "candidate": "8778a6608686b3bc2b0021a8bad6e1162804a3d0",
+  "tree": "2429d76564a18a5bbe46236bd5d25f2a69488283",
+  "parents": [
+    "3bf1e53aa274219f039c0fa8b25a3b2c4e998f3e",
+    "5eff6305d6e2becf98f6772b890c5d8f80af201c"
+  ],
+  "source_predecessor": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+  "data_predecessor": "3bf1e53aa",
+  "main": "5eff6305d6e2becf98f6772b890c5d8f80af201c",
+  "conflicts": [
+    "crates/ripr/src/app/pr_evidence.rs"
+  ],
+  "resolution": "Retained both current-main reconcile_root import and existing config imports; other overlapping changes auto-compose. Analysis subtree byte-identical to qualified4b44. CLI/MCP changes require affected and full qualification.",
+  "carried_source_proof": "4b44:21production+4native; real producer41captures+four chain; whole goldens0; honesty0 after five required-digest membership additions. Corpus case expectations unchanged."
+}

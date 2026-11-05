@@ -1,0 +1,31 @@
+{
+  "stage": "observer-boxed-golden-refresh",
+  "candidate": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+  "tree": "8433062d94585a2e5ef1a5fd856555031089d619",
+  "command": [
+    "/workspace/12010-proof/target/debug/xtask",
+    "goldens",
+    "bless",
+    "error_variant_boxed_wrapper_downcast_witness",
+    "--reason",
+    "RIPR-SPEC-0106: current21production+4native controls establish the current bound unit-error observer selects only the first literal guard return; later identical return, unentered, overwritten, shadowed, unrelated and sibling-variant controls remain non-exposed; wrappers retain typed unresolved binding. Native per-return contrast independently distinguishes the first from the second return."
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 10.02,
+  "counts": null,
+  "log_sha256": "2b7e7763fc576ce77e6dc948cd4566abd9200431236bfa0da3c34aaaecb8f396",
+  "peak_cgroup_memory_bytes": 3768623104,
+  "samples": [
+    {
+      "utc": "2026-11-05T23:03:42.071248+00:00",
+      "stage": "observer-boxed-golden-refresh",
+      "head": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+      "pid": 1465016,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3768623104,
+      "workspace_free_bytes": 20872925184,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}
