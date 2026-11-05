@@ -1,0 +1,100 @@
+{
+  "scope": "advisory live-tree static leaves after aggregate stopped; not final aggregate qualification",
+  "results": [
+    {
+      "command": "check-rust-source-role-authority",
+      "exit": 0,
+      "seconds": 3.72
+    },
+    {
+      "command": "check-public-api",
+      "exit": 0,
+      "seconds": 3.34
+    },
+    {
+      "command": "check-output-contracts",
+      "exit": 0,
+      "seconds": 0.23
+    },
+    {
+      "command": "check-identity-registry",
+      "exit": 0,
+      "seconds": 0.02
+    },
+    {
+      "command": "check-doc-artifacts",
+      "exit": 0,
+      "seconds": 0.07
+    },
+    {
+      "command": "check-doc-index",
+      "exit": 0,
+      "seconds": 0.03
+    },
+    {
+      "command": "check-doc-roles",
+      "exit": 0,
+      "seconds": 0.01
+    },
+    {
+      "command": "check-changelog-fragments",
+      "exit": 0,
+      "seconds": 0.06
+    },
+    {
+      "command": "check-readme-state",
+      "exit": 0,
+      "seconds": 0.02
+    },
+    {
+      "command": "markdown-links",
+      "exit": 0,
+      "seconds": 0.68
+    },
+    {
+      "command": "check-pr-shape",
+      "exit": 0,
+      "seconds": 0.51
+    },
+    {
+      "command": "check-command-catalog",
+      "exit": 0,
+      "seconds": 0.04
+    },
+    {
+      "command": "check-generated",
+      "exit": 0,
+      "seconds": 0.05
+    },
+    {
+      "command": "check-badge-diff-policy",
+      "exit": 0,
+      "seconds": 0.14
+    },
+    {
+      "command": "check-generated-clean",
+      "exit": 0,
+      "seconds": 0.17
+    },
+    {
+      "command": "check-ripr-agent-disposition",
+      "exit": 0,
+      "seconds": 0.04
+    },
+    {
+      "command": "check-proof-packs",
+      "exit": 0,
+      "seconds": 0.03
+    },
+    {
+      "command": "check-release-targets",
+      "exit": 0,
+      "seconds": 0.12
+    },
+    {
+      "command": "check-dependencies",
+      "exit": 0,
+      "seconds": 0.08
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index ada63a37b..85965d595 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -10188,11 +10188,12 @@ fn mapped_unit_enum_expectation_uncached(
+                 });
+                 text != "#[test]"
+                     && !inert_lint
+-                    && !(text == "#[cfg(test)]"
+-                        && attr
+-                            .syntax()
+-                            .parent()
+-                            .is_some_and(|parent| ast::Module::can_cast(parent.kind())))
++                    && !(crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(
++                        &attr.syntax().text().to_string(),
++                    ) && attr
++                        .syntax()
++                        .parent()
++                        .is_some_and(|parent| ast::Module::can_cast(parent.kind())))
+             })
+             || ast::MacroCall::cast(node).is_some_and(|call| {
+                 if call.syntax().text_range() == assertion_call.syntax().text_range() {
+diff --git a/policy/network_allowlist.d/12009-npm-metadata-import.txt b/policy/network_allowlist.d/12009-npm-metadata-import.txt
+index 90336ac40..c16d86995 100644
+--- a/policy/network_allowlist.d/12009-npm-metadata-import.txt
++++ b/policy/network_allowlist.d/12009-npm-metadata-import.txt
+@@ -1,2 +1,2 @@
+-.github/scripts/npm_package.py|urllib.request|3|release/npm|#12009 RIPR-SPEC-0374: imported public-source metadata reader uses fixed-origin anonymous npm registry GET with redirect refusal, 30-second timeout and 5 MB response bound; no publication, credential or staging authority added.
++.github/scripts/npm_package.py|urllib.request|3|release/npm|#12009 RIPR-SPEC-0374: imported public-source metadata reader uses fixed-origin anonymous npm registry GET with rejection of a redirected response after urllib follows it, 30-second timeout and 5 MB response bound; no publication, credential or staging authority added.
+ .github/scripts/npm_package.py|urlopen|1|release/npm|#12009 RIPR-SPEC-0374: same bounded anonymous package-metadata read; retain existing release admission and separate staging/publication approval.

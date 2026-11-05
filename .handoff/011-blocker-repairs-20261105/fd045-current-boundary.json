@@ -1,0 +1,15 @@
+{
+  "candidate": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
+  "tree": "5aae12cc27ea06c637879f94ce07695aeb471124",
+  "previous": "d074c3662cf10d7a4c5324bec5b2045534486ddc",
+  "patch_sha256": "61d24c923a8c0f8892de95dbb7697b266ad814c4eba19a9408632dda5c32ed0f",
+  "delta": "Canonical plain cfg(test) producer replaces duplicate literal role classification; network policy wording reflects rejection after urllib follows redirect.",
+  "previous_ci_policy": "exit 1 at source-role authority; compilation completed but reveal/full runtime not reached.",
+  "current": "command catalog passed; existing policy child running. Subsequent heavyweight work deferred for coordinator video priority window.",
+  "holds": [
+    "merge paused after coordinator authorization-review rejection",
+    "no remote CI/settings/release",
+    "promotion trust and release scope holds preserved"
+  ],
+  "observed_utc": "2026-11-05T07:29:36.846827+00:00"
+}
