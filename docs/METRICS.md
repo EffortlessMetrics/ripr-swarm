@@ -51,8 +51,8 @@ owner under [the release transaction](RELEASE_TRANSACTION.md) and
 | | | The classification and fail-closed core is proved on every pull request (target; the lane is advisory today). | Kani lane (`cargo xtask kani`), required ([#12904](https://github.com/EffortlessMetrics/ripr-swarm/issues/12904)). |
 | | | Flake rate under 1% on required lanes. | Test-analytics flake ledger. |
 | R2 useful | People and agents finish the loop: gap, repair, verified. | Repair starts on at least 80% of gaps `check` reports. | Not-ready harness and the nightly outcome page ([#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903)). |
-| | | Precision of "discriminator" claims at least 97% against real mutants, published by language and operator. | `mutation-spot-check` ([#12900](https://github.com/EffortlessMetrics/ripr-swarm/issues/12900)). |
-| | | Recall of runtime survivors flagged as a gap or an honest unknown at least 80%, published by language. | Same corpus ([#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901)). |
+| | | Precision of "discriminator" claims at least 97% against real mutants, published by language and operator. | `cargo xtask mutation-spot-check`; receipt `metrics/public-proof/mutation-spot-check.json` ([#12900](https://github.com/EffortlessMetrics/ripr-swarm/issues/12900)). |
+| | | Recall of runtime survivors flagged as a gap or an honest unknown at least 80%, published by language. | `cargo xtask mutation-spot-check`, same receipt (`recall_of_missed`; [#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901)). |
 | | | Every verdict class has locked-in goldens per language. | Lock-in matrix ([#12922](https://github.com/EffortlessMetrics/ripr-swarm/issues/12922)). |
 | R3 critical | Nobody wants to be without it. | Agents with ripr beat agents without it by a statistically clear margin on a public task suite. | With/without cohort ([#12902](https://github.com/EffortlessMetrics/ripr-swarm/issues/12902)). |
 | | | Under a Kani or Verus harness, a changed line gets a source-bound answer that tells a strong harness from a vacuous one. | FV cohort ([#10745](https://github.com/EffortlessMetrics/ripr-swarm/issues/10745)). |
@@ -78,9 +78,12 @@ met.
 
 ### Position on 2026-11-04
 
-Reported by the owning threads against main `b80ce950`. Recall, repair-start
-and latency figures come from their issues ([#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901),
-[#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903),
+Reported by the owning threads against main `b80ce950`; the Recall row is
+re-derived against main `9b45bd6b`. Recall is reproduced by a checked-in
+instrument: `cargo xtask mutation-spot-check` and its receipt
+`metrics/public-proof/mutation-spot-check.json`. Repair-start and latency
+figures still come from their issues
+([#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903),
 [#12947](https://github.com/EffortlessMetrics/ripr-swarm/issues/12947)) and are not yet
 reproduced by a checked-in instrument. Refresh with each new baseline.
 
@@ -96,7 +99,8 @@ reproduced by a checked-in instrument. Refresh with each new baseline.
 | Flakes on required lanes | about 1.5% | under 1% | no |
 | Repair start | Rust 6 of 22, Python 8, TypeScript 6; click 0 of 10; TypeScript 0 of 178 | 80% | no |
 | Precision | 96.8% (61 of 63) | 97% | no |
-| Recall | about 11% (34 of 322) | 80% | no |
+| Recall, strict (flagged ungripped) | 10.6% (34 of 322 runtime-missed); Rust only | 80% | no |
+| Recall, flagged or honest unknown (ungripped, weakly_gripped, activation_unknown, opaque) | 58.7% (189 of 322: 34 + 0 + 151 + 4); Rust only, Python and TypeScript not established | 80% | no |
 | Agent lift, FV strength, retention | not measured | see R3 | not established |
 
 Result: R0 is not yet met (first value across channels is unproven), and R1
