@@ -828,7 +828,7 @@ mod tests {
                 }
             ]
         });
-        let judge = |expression, present| {
+        let judge = |expression: &str, present| {
             expected_limitation_violations(
                 "nested field",
                 &report,
