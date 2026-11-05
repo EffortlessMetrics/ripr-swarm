@@ -46,7 +46,7 @@ mod recommendation;
 pub(crate) mod release;
 mod release_control;
 mod release_denominator;
-mod release_ledger;
+pub(crate) mod release_ledger;
 mod release_negative;
 #[cfg(all(test, unix))]
 pub(crate) use release_negative::capture_with_owned_root_for_test;

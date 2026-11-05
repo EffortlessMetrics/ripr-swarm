@@ -4,8 +4,23 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub(super) const SCHEMA_VERSION: &str = "0.1";
+use crate::reports::path_inventory::PathInventory;
+
+pub(super) const SCHEMA_VERSION: &str = "0.2";
 pub(super) const KIND: &str = "release_ledger";
+
+/// Role of the ledger's range-wide path inventory (#4006/#2768): every path
+/// touched by any record in the exact range, derived from the captured raw
+/// NUL-delimited records through the shared `path_inventory` authority. The
+/// retained recipe names this exact producer, so a hand-edited recipe or a
+/// digest copied from another role is rejected.
+pub(super) const RANGE_TOUCHED_SOURCE: &str =
+    "release-ledger capture: union of per-record changed paths across base..cut";
+
+/// Role of every per-record path inventory: the same captured raw
+/// NUL-delimited records, restricted to one commit against its first parent.
+pub(super) const RECORD_PATH_SOURCE: &str =
+    "release-ledger capture: per-record changed paths against the first parent";
 pub(super) const ADJUDICATION_BASIS: &str = "rule_derived";
 pub(super) const STAGE_DRY_RUN: &str = "dry_run";
 pub(super) const STAGE_FINAL: &str = "final";
@@ -91,9 +106,24 @@ pub(super) struct Ledger {
     pub(super) selected_claims: SelectedClaims,
     pub(super) open_prs: Vec<OpenPr>,
     pub(super) digests: Digests,
+    /// Raw Git path-record inventories of the range (#4006 item 6, #2768):
+    /// capture-time evidence retained like `effect_basis`, so the denominator's
+    /// path identity can be consumed without re-reading Git.
+    pub(super) path_inventories: LedgerPathInventories,
     #[serde(default)]
     pub(super) audit: Option<AuditRef>,
     pub(super) records: Vec<Record>,
+}
+
+/// Ledger-carried path inventories. `range_touched` is the union over all
+/// records; per-record identities (count + digest) live on each `Record`, and
+/// `record_recipe` names the one producer grammar behind every per-record
+/// digest, retained once instead of repeated on all records.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LedgerPathInventories {
+    pub(super) record_recipe: String,
+    pub(super) range_touched: PathInventory,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -199,6 +229,14 @@ pub(super) struct Record {
     pub(super) release_disposition: String,
     pub(super) final_tree_effect: String,
     pub(super) effect_basis: EffectBasis,
+    /// Count of this record's touched paths (#4006 item 6). Must equal
+    /// `effect_basis.alive_paths + effect_basis.absent_paths`; zero counts as
+    /// the empty inventory only with the exact empty-inventory digest.
+    pub(super) path_record_count: u64,
+    /// NUL-framed SHA-256 over this record's sorted unique touched paths,
+    /// computed by the shared `path_inventory` authority at derive time from
+    /// the captured raw records.
+    pub(super) path_record_sha256: String,
     pub(super) acceptance_owner: String,
     pub(super) review_proof_refs: Vec<String>,
     pub(super) source_sync_authority_effect: String,

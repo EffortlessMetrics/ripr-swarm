@@ -35,6 +35,19 @@ const REPORT_NAME: &str = "release-ledger";
 const JSON_FILE: &str = "release-ledger.json";
 const MARKDOWN_FILE: &str = "release-ledger.md";
 
+/// The exact recipe string any carrier of the ledger's `range_touched`
+/// inventory (the #1609 manifest range, the source-preflight inputs) must
+/// retain (#4006 item 6). Composed through the shared authority so the
+/// ledger, its validator and downstream carriers cannot drift on the
+/// spelling.
+/// The producer role behind `range_touched_recipe`, re-exposed so carriers of
+/// the ledger's range inventory name the identical producer.
+pub(crate) const RANGE_TOUCHED_SOURCE: &str = dto::RANGE_TOUCHED_SOURCE;
+
+pub(crate) fn range_touched_recipe() -> String {
+    crate::reports::path_inventory::path_inventory(&[], RANGE_TOUCHED_SOURCE).path_record_recipe
+}
+
 struct Args<'a> {
     input: &'a str,
     packet: Option<&'a str>,
@@ -535,7 +548,7 @@ fn escape_cell(value: &str) -> String {
 
 fn report_markdown(ledger: &Ledger, status: &str, reasons: &[String]) -> String {
     let mut markdown = format!(
-        "# Direct-main release ledger\n\n- Status: `{status}`\n- Stage: `{}`\n- Adjudication basis: `{}`\n- Rule version: `{}`\n- Base: `{}`\n- Cut (exact main): `{}`\n- Cut tree: `{}`\n- First-parent commits: {}\n- Reachable commits: {}\n- first-parent digest: `{}`\n- reachable digest: `{}`\n- records digest: `{}`\n- tree digest: `{}`\n\n",
+        "# Direct-main release ledger\n\n- Status: `{status}`\n- Stage: `{}`\n- Adjudication basis: `{}`\n- Rule version: `{}`\n- Base: `{}`\n- Cut (exact main): `{}`\n- Cut tree: `{}`\n- First-parent commits: {}\n- Reachable commits: {}\n- first-parent digest: `{}`\n- reachable digest: `{}`\n- records digest: `{}`\n- tree digest: `{}`\n- range-touched paths: {} (digest `{}`)\n\n",
         ledger.stage,
         ledger.adjudication_basis,
         ledger.rule_version,
@@ -548,6 +561,8 @@ fn report_markdown(ledger: &Ledger, status: &str, reasons: &[String]) -> String 
         ledger.digests.reachable,
         ledger.digests.records,
         ledger.digests.tree,
+        ledger.path_inventories.range_touched.path_record_count,
+        ledger.path_inventories.range_touched.path_record_sha256,
     );
     markdown.push_str("## Counts\n\n| Disposition | Count |\n| --- | ---: |\n");
     for (name, count) in counts(

@@ -26,10 +26,14 @@ fn commit(n: u8, position: Option<u64>, effect: &str, paths: &[&str]) -> CommitF
         paths: paths.iter().map(|path| (*path).to_string()).collect(),
         inline_test_paths: Vec::new(),
         final_tree_effect: effect.to_string(),
+        // Alive/absent partition the touched paths exactly, as real capture
+        // derives them; the path-record count must reconcile with this basis.
         effect_basis: EffectBasis {
-            alive_paths: u64::from(effect != "history_reachable_no_final_blob_effect"),
-            absent_paths: u64::from(effect == "history_reachable_no_final_blob_effect"),
-            last_toucher_paths: u64::from(owned),
+            alive_paths: u64::from(effect != "history_reachable_no_final_blob_effect")
+                * paths.len() as u64,
+            absent_paths: u64::from(effect == "history_reachable_no_final_blob_effect")
+                * paths.len() as u64,
+            last_toucher_paths: u64::from(owned) * paths.len() as u64,
             blamed_lines: 0,
         },
     }
@@ -477,7 +481,9 @@ fn bad_overrides_are_rejected() -> Result<(), String> {
 
 #[test]
 fn short_commit_ids_do_not_panic_the_override_reference() -> Result<(), String> {
-    let mut short = commit(5, Some(1), "present_effective", &[]);
+    // A blocking row the override may resolve; present_effective with no
+    // touched path cannot exist in real capture, so use an unclassified path.
+    let mut short = commit(5, Some(1), "present_effective", &["unknown/dir/state.json"]);
     short.commit_sha = "abc".to_string();
     let input = facts(vec![short]);
     let set = Overrides {
@@ -600,4 +606,63 @@ fn inline_test_only_product_paths_count_as_evidence() -> Result<(), String> {
         disposition_of(mixed)? == "included_accepted_product",
         "another product path keeps the commit product",
     )
+}
+
+#[test]
+fn path_inventories_bind_the_captured_record_partition() -> Result<(), String> {
+    // The NUL-framed digest must tell a path named `a\nb` apart from the two
+    // paths `a` and `b\nc`: same count, different partition, different digest
+    // (#4006: a newline-joined digest cannot represent names with newlines).
+    let joined = derive(&DeriveInput {
+        facts: &facts(vec![commit(
+            2,
+            Some(1),
+            "present_effective",
+            &["crates/ripr/src/a\nb.rs"],
+        )]),
+        packet: &packet(),
+        overrides: None,
+        stage: "dry_run",
+        audit: None,
+    })?;
+    let split = derive(&DeriveInput {
+        facts: &facts(vec![commit(
+            2,
+            Some(1),
+            "present_effective",
+            &["crates/ripr/src/a.rs", "crates/ripr/src/b\nc.rs"],
+        )]),
+        packet: &packet(),
+        overrides: None,
+        stage: "dry_run",
+        audit: None,
+    })?;
+    let joined_record = &joined.records[0];
+    let split_record = &split.records[0];
+    require(
+        joined_record.path_record_count == 1 && split_record.path_record_count == 2,
+        "the count names decoded records, not lines",
+    )?;
+    require(
+        joined_record.path_record_sha256 != split_record.path_record_sha256,
+        "the NUL digest separates the newline partition",
+    )?;
+    require(
+        joined.path_inventories.range_touched.path_record_count == 1,
+        "the range union matches the records it covers",
+    )?;
+    require(
+        joined.path_inventories.range_touched.path_record_sha256
+            != split.path_inventories.range_touched.path_record_sha256,
+        "the range union keeps the partition distinct",
+    )?;
+    // Both ledgers must be internally valid with their own inventories.
+    for ledger in [&joined, &split] {
+        let reasons = validate(ledger, &Context::default());
+        require(
+            reasons.is_empty(),
+            &format!("a derived ledger must validate: {reasons:?}"),
+        )?;
+    }
+    Ok(())
 }

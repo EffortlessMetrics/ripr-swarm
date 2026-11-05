@@ -6673,6 +6673,18 @@ are scoped or reviewed.
 
 ### Internal / CI
 
+- Release-ledger records and the #1609 live-head manifest now carry the raw
+  Git path-record inventories (#4006 item 6, #2768): `release-ledger derive`
+  computes one NUL-framed count/digest per record and the `range_touched`
+  union through the shared `path_inventory` authority from the captured raw
+  records (ledger schema `0.2`; validation rejects counts that contradict the
+  record's `effect_basis`, non-authority recipes, and projections that drop
+  the values), and the manifest's range binds the same count/digest/recipe
+  over `last_integrated_swarm_parent..candidate`, compared typed at source
+  admission against the retained #2768 packet bytes for the same base and cut,
+  so a substituted digest, a copied count, an LF-joined digest, a foreign
+  recipe or a packet that drops the inventory refuses the source preflight
+  input.
 - `cargo xtask mutation-spot-check` receipts (`ripr-mutation-spot-check-v2`,
   additive, no version bump) now carry generated `recall_of_missed` and
   `seam_coverage` summary rows, and `--rederive-summaries <json>` recomputes

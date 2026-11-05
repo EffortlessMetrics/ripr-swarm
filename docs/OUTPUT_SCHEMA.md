@@ -16204,7 +16204,7 @@ The stable top-level report shape is:
 ```json
 {
   "report": "release-ledger",
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "status": "valid | invalid",
   "stage": "dry_run | final",
   "final_eligible": false,
@@ -16230,12 +16230,19 @@ The stable top-level report shape is:
 
 `ledger` holds the input DTO: `source` (base, cut, cut tree, observed main
 tip), `range` (`first_parent` and `reachable`, kept separate), `merged_prs`,
-`selected_claims`, `open_prs`, `digests`, an optional `audit` reference and one
+`selected_claims`, `open_prs`, `digests`, `path_inventories`, an optional
+`audit` reference and one
 `records` entry per reachable commit. Dispositions use the closed eleven-value
 vocabulary and `final_tree_effect` is a separate closed field backed by an
-`effect_basis`. Markdown carries the same digests as
-`first-parent digest: \`...\`` lines. A `final` ledger rejects any
-`blocking_unresolved` row and requires an audit digest.
+`effect_basis`. Each record also carries `path_record_count` and
+`path_record_sha256` over its own touched paths, and `path_inventories` holds
+the one per-record producer `record_recipe` plus `range_touched` (the
+`path_record_count`, NUL-framed `path_record_sha256` and `path_record_recipe`
+of the union over all records, #4006 item 6) — both computed at derive through
+the shared `path_inventory` authority. Markdown carries the same digests as
+`first-parent digest: \`...\`` lines plus one
+`range-touched paths: <count> (digest \`...\`)` line. A `final` ledger rejects
+any `blocking_unresolved` row and requires an audit digest.
 
 `release-ledger capture` writes a `release_ledger_git_facts` document with the
 same `source`, `range` and `merged_prs` shapes plus `alive_paths_at_cut`,
