@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "candidate_tree": "1df07a7c03660049a44bc92da176649cc24c6006",
+  "patch_alternatives": [
+    {
+      "path": "ripr-7490-controls-1df07a7c.patch",
+      "input_tree": "3ae02947cca2e2e9aaa8fec47936463dcc63dc4a",
+      "output_tree": "1df07a7c03660049a44bc92da176649cc24c6006",
+      "bytes": 49189,
+      "sha256": "a1ba19f5e4ec8607e552653c2570983dcd67ed3dc7e21e49d640e302333651e9"
+    },
+    {
+      "path": "ripr-7490-review-controls-on-1b5.patch",
+      "input_tree": "1b5f9252f7e2ee212ea5e39c1cbd7efaa1e3688d",
+      "output_tree": "1df07a7c03660049a44bc92da176649cc24c6006",
+      "bytes": 14245,
+      "sha256": "e509e969b6902bb5919be057843e84996d191f2af3c514e43c550603984e17e7"
+    }
+  ],
+  "status": "Unqualified source-owner review candidate. One guarded default-feature libtest compilation is active. New pending reload and zero-total controls have not run yet. Prior1b5full17962pass7environmentfail1ignored; allsevenunchanged ancestryreruns5+1+1passed in ordinarily reviewed clean root; prior1b5fmt/traceability/honesty/changelogallpassed.",
+  "changes": [
+    "Reload positive holds the existing execution gate on a bounded owner thread, requires actual uncovered saved bytes and diverged quarantine, sends identical reload while pending, asserts unchanged revision and scheduler request count, releases gate then requires successful coverage. Existing failed-refresh reload wire retry remains.",
+    "Compact prefill zero total verifies every admitted file has no seams and rechecks inputs before empty publication; normal raw empty-store no-producer contract unchanged. Production wrong-zero reachability remains unestablished.",
+    "False-zero control seeds nonempty prior generation, requires exact cache-file bytes preserved and logical fallback/data preserved; separate truly-empty positive. Newcontrols mappedtoSPEC0222.",
+    "Framed proof remains weak LSP packet plus stale editor response plus separate strong production inventory; no positive LSP packet claim."
+  ],
+  "apply": "Choose exactly one patch matching your input tree; git apply --index; require git write-tree equals output_tree. Do not stack these alternatives."
+}

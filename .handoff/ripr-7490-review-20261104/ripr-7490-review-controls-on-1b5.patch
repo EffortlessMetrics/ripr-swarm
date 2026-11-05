@@ -1,0 +1,325 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index 4a39b4c99..58f141707 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -17059,6 +17059,8 @@ id = "RIPR-SPEC-0222"
+ name = "Byte-bounded classified-cache store publication"
+ spec = "docs/specs/RIPR-SPEC-0222-byte-bounded-classified-cache-store.md"
+ tests = [
++  "crates/ripr/src/analysis/seam_inventory/compact_prefill_generation_tests.rs::compact_windows_zero_total_with_nonempty_index_preserves_prior_generation",
++  "crates/ripr/src/analysis/seam_inventory/compact_prefill_generation_tests.rs::compact_windows_genuinely_empty_index_publishes_a_complete_empty_generation",
+   "crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_single_entry_matches_owned_codec_bytes",
+   "crates/ripr/src/atomic_file.rs::tests::stranded_temp_names_match_only_what_this_module_creates",
+   "crates/ripr/src/atomic_file.rs::tests::sweep_removes_only_old_matching_regular_files",
+diff --git a/changelog.d/12506-compact-summary-prefill.md b/changelog.d/12506-compact-summary-prefill.md
+index b7c46991f..9b1dfd432 100644
+--- a/changelog.d/12506-compact-summary-prefill.md
++++ b/changelog.d/12506-compact-summary-prefill.md
+@@ -1,2 +1,3 @@
+ <!-- section: Fixed -->
+ - Repo-wide classified runs also prepare the complete compact summary cache when inputs fit the prefill limits, so a following `repo-exposure-summary-json` can reuse it. A declined or failed prefill preserves the prior cache and the full analysis result; changed analysis inputs still refuse the run (#12506).
++- Empty compact-prefill publication verifies that the admitted index is genuinely empty; an inconsistent internal zero total preserves the prior generation (#12506).
+diff --git a/crates/ripr/src/analysis/seam_inventory/compact_prefill.rs b/crates/ripr/src/analysis/seam_inventory/compact_prefill.rs
+index c59dac757..6106f243f 100644
+--- a/crates/ripr/src/analysis/seam_inventory/compact_prefill.rs
++++ b/crates/ripr/src/analysis/seam_inventory/compact_prefill.rs
+@@ -230,6 +230,16 @@ impl Session<'_, '_> {
+         let mut files: Vec<_> = self.files.iter().collect();
+         files.sort_unstable();
+         files.dedup();
++        // The empty store intentionally skips the producer. Enforce the same
++        // exhaustion/current-input contract before that publication path.
++        if self.total == 0 {
++            for file in &files {
++                if !file_seams(file, self.index, self.limits, &mut self.retention)?.is_empty() {
++                    return Err("compact prefill has undeclared seams for a zero total".into());
++                }
++            }
++            self.verify_inputs()?;
++        }
+         let mut next_file = 0usize;
+         let mut pending = Vec::new().into_iter();
+         let mut produced = 0usize;
+@@ -366,3 +376,7 @@ impl Write for Budget {
+ #[cfg(test)]
+ #[path = "compact_prefill_tests.rs"]
+ mod tests;
++
++#[cfg(test)]
++#[path = "compact_prefill_generation_tests.rs"]
++mod generation_tests;
+diff --git a/crates/ripr/src/analysis/seam_inventory/compact_prefill_generation_tests.rs b/crates/ripr/src/analysis/seam_inventory/compact_prefill_generation_tests.rs
+new file mode 100644
+index 000000000..071a0d801
+--- /dev/null
++++ b/crates/ripr/src/analysis/seam_inventory/compact_prefill_generation_tests.rs
+@@ -0,0 +1,135 @@
++use super::super::tests::{make_tempdir, write_file};
++use super::*;
++
++fn cache_bytes(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, String> {
++    fn walk(base: &Path, dir: &Path, found: &mut BTreeMap<PathBuf, Vec<u8>>) -> Result<(), String> {
++        for entry in std::fs::read_dir(dir).map_err(|err| err.to_string())? {
++            let entry = entry.map_err(|err| err.to_string())?;
++            let path = entry.path();
++            let kind = entry.file_type().map_err(|err| err.to_string())?;
++            if kind.is_dir() {
++                walk(base, &path, found)?;
++            } else if kind.is_file() {
++                found.insert(
++                    path.strip_prefix(base)
++                        .map_err(|err| err.to_string())?
++                        .to_path_buf(),
++                    std::fs::read(path).map_err(|err| err.to_string())?,
++                );
++            } else {
++                return Err("unexpected cache fixture entry".to_string());
++            }
++        }
++        Ok(())
++    }
++    let mut found = BTreeMap::new();
++    walk(root, root, &mut found)?;
++    Ok(found)
++}
++
++#[test]
++fn compact_windows_zero_total_with_nonempty_index_preserves_prior_generation() -> Result<(), String>
++{
++    let root = super::tests::fixture("compact-windows-false-zero")?;
++    let config = RiprConfig::default();
++    let state = collect_workspace_state(&root, &config)?;
++    let mut cached = state.build_index(&config)?;
++    rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
++    let files = production_files_from_state_with_role(&state, &config);
++    assert!(!inventory_seams_from_index(&files, &cached.index).is_empty());
++    let fallback = rust_index::lexical_fallback_files(&cached.index);
++    let pass = test_grip_evidence::EvidencePass::new(&cached.index);
++    let key = state.cache_key();
++    let cache = RepoSeamFactCache::at_compact_classified(&root);
++    let (baseline, _) = inventory_compact_classified_seams_from_state_with_config(&state, &config)?;
++    assert!(
++        !baseline.is_empty(),
++        "the prior generation must be observably nonempty"
++    );
++    cache.store_compact_classified_seams_with_limit(&key, &baseline, 1)?;
++    let cache_root = crate::analysis::seam_cache::cache_base_dir(&root);
++    let before = cache_bytes(&cache_root)?;
++    let mut session = Session {
++        state: &state,
++        key: &key,
++        files: &files,
++        index: &cached.index,
++        pass: &pass,
++        total: 0,
++        fallback: &fallback,
++        limits: LIMITS,
++        retention: Retention::default(),
++        inputs_changed: std::cell::Cell::new(false),
++    };
++    let outcome = session.run();
++    assert_eq!(
++        cache_bytes(&cache_root)?,
++        before,
++        "a false zero must not replace or otherwise mutate the prior cache generation"
++    );
++    assert!(
++        outcome.is_err(),
++        "zero declared seams must refuse a nonempty index: {outcome:?}"
++    );
++    match cache.load_classified_seams_with_fallback(&key) {
++        CacheLoad::Hit((loaded, None, loaded_fallback)) => {
++            assert_eq!(
++                serde_json::to_value(loaded).map_err(|err| err.to_string())?,
++                serde_json::to_value(baseline).map_err(|err| err.to_string())?
++            );
++            assert_eq!(loaded_fallback, fallback);
++        }
++        other => return Err(format!("false zero replaced prior generation: {other:?}")),
++    }
++    std::fs::remove_dir_all(root).map_err(|err| err.to_string())?;
++    Ok(())
++}
++
++#[test]
++fn compact_windows_genuinely_empty_index_publishes_a_complete_empty_generation()
++-> Result<(), String> {
++    let root = make_tempdir("compact-windows-real-zero")?;
++    write_file(
++        &root.join("Cargo.toml"),
++        "[package]\nname='empty_window_fixture'\nversion='0.1.0'\nedition='2024'\n",
++    )?;
++    write_file(
++        &root.join("src/lib.rs"),
++        "// genuinely empty production inventory\n",
++    )?;
++    let config = RiprConfig::default();
++    let state = collect_workspace_state(&root, &config)?;
++    let cached = state.build_index(&config)?;
++    let files = production_files_from_state_with_role(&state, &config);
++    assert!(inventory_seams_from_index(&files, &cached.index).is_empty());
++    let fallback = rust_index::lexical_fallback_files(&cached.index);
++    let pass = test_grip_evidence::EvidencePass::new(&cached.index);
++    let key = state.cache_key();
++    let mut session = Session {
++        state: &state,
++        key: &key,
++        files: &files,
++        index: &cached.index,
++        pass: &pass,
++        total: 0,
++        fallback: &fallback,
++        limits: LIMITS,
++        retention: Retention::default(),
++        inputs_changed: std::cell::Cell::new(false),
++    };
++    session.run()?;
++    match RepoSeamFactCache::at_compact_classified(&root).load_classified_seams_with_fallback(&key)
++    {
++        CacheLoad::Hit((loaded, None, loaded_fallback)) => {
++            assert!(loaded.is_empty());
++            assert_eq!(loaded_fallback, fallback);
++        }
++        other => {
++            return Err(format!(
++                "genuine empty generation did not publish: {other:?}"
++            ));
++        }
++    }
++    std::fs::remove_dir_all(root).map_err(|err| err.to_string())?;
++    Ok(())
++}
+diff --git a/crates/ripr/src/analysis/seam_inventory/compact_prefill_tests.rs b/crates/ripr/src/analysis/seam_inventory/compact_prefill_tests.rs
+index c0f0aa849..627d4c846 100644
+--- a/crates/ripr/src/analysis/seam_inventory/compact_prefill_tests.rs
++++ b/crates/ripr/src/analysis/seam_inventory/compact_prefill_tests.rs
+@@ -1,7 +1,7 @@
+ use super::super::tests::{make_tempdir, write_file};
+ use super::*;
+ 
+-fn fixture(label: &str) -> Result<PathBuf, String> {
++pub(super) fn fixture(label: &str) -> Result<PathBuf, String> {
+     let root = make_tempdir(label)?;
+     write_file(
+         &root.join("Cargo.toml"),
+diff --git a/crates/ripr/src/lsp/tests.rs b/crates/ripr/src/lsp/tests.rs
+index e59a08a7d..a73fc4d66 100644
+--- a/crates/ripr/src/lsp/tests.rs
++++ b/crates/ripr/src/lsp/tests.rs
+@@ -23794,13 +23794,93 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
+     );
+     std::fs::write(&fixture.path_a, QUARANTINE_TEXT_A_DIRTY)
+         .map_err(|err| format!("rewrite a.rs failed: {err}"))?;
+-    backend
+-        .did_change(quarantine_change_params(
+-            &fixture.uri_a,
+-            3,
+-            QUARANTINE_TEXT_A_DIRTY,
+-        ))
++    // Keep the reloaded bytes uncovered while an actual refresh is pending.
++    // The execution gate lives on a bounded owner thread, never across await.
++    let gate = backend.refresh_scheduler_for_test().execution_gate();
++    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
++    let (release_tx, release_rx) = std::sync::mpsc::channel();
++    let gate_owner = std::thread::spawn(move || -> Result<(), String> {
++        let _held = gate
++            .lock()
++            .map_err(|err| format!("execution gate: {err}"))?;
++        ready_tx.send(()).map_err(|err| err.to_string())?;
++        release_rx
++            .recv_timeout(Duration::from_secs(20))
++            .map_err(|err| format!("pending reload gate was not released: {err}"))?;
++        Ok(())
++    });
++    ready_rx
++        .recv_timeout(Duration::from_secs(5))
++        .map_err(|err| format!("pending reload gate did not start: {err}"))?;
++    let requests_before = backend.refresh_telemetry_for_test().did_save_requests;
++    let first_reload = backend.did_change(quarantine_change_params(
++        &fixture.uri_a,
++        3,
++        QUARANTINE_TEXT_A_DIRTY,
++    ));
++    let pending_duplicate = async {
++        let outcome = async {
++            tokio::time::timeout(Duration::from_secs(5), async {
++                while backend.refresh_telemetry_for_test().did_save_requests == requests_before {
++                    tokio::task::yield_now().await;
++                }
++            })
++            .await
++            .map_err(|err| format!("reload never reached the scheduler: {err}"))?;
++            assert_eq!(
++                backend.refresh_telemetry_for_test().did_save_requests,
++                requests_before + 1
++            );
++            let pending = backend
++                .document_state_for_test(&fixture.uri_a)
++                .ok_or("pending reloaded document missing")?;
++            assert!(pending.saved_digest.is_some());
++            assert_ne!(
++                pending.saved_digest, pending.analyzed_saved_digest,
++                "the duplicate must arrive before coverage commits"
++            );
++            assert!(
++                matches!(
++                    backend.document_quarantine(&fixture.uri_a),
++                    Some((
++                        _,
++                        DocumentStalenessReason::BufferDivergesFromAnalyzedSavedContent
++                    ))
++                ),
++                "the repeated reload must enter the saved-content path"
++            );
++            let revision = backend.workspace_revision();
++            let repeated = tokio::time::timeout(
++                Duration::from_secs(5),
++                backend.did_change(quarantine_change_params(
++                    &fixture.uri_a,
++                    4,
++                    QUARANTINE_TEXT_A_DIRTY,
++                )),
++            )
++            .await;
++            repeated.map_err(|err| format!("pending duplicate did not deduplicate: {err}"))?;
++            assert_eq!(
++                backend.workspace_revision(),
++                revision,
++                "an uncovered duplicate with a pending refresh must not advance revision"
++            );
++            assert_eq!(
++                backend.refresh_telemetry_for_test().did_save_requests,
++                requests_before + 1,
++                "the saved-content ledger must suppress a second refresh request"
++            );
++            Ok::<(), String>(())
++        }
+         .await;
++        let _ = release_tx.send(());
++        outcome
++    };
++    let (_, pending_duplicate) = tokio::join!(first_reload, pending_duplicate);
++    gate_owner
++        .join()
++        .map_err(|_| "pending reload gate owner panicked")??;
++    pending_duplicate?;
+     assert_eq!(
+         settled_quarantine_refresh(backend).await?,
+         AnalysisAttemptState::Succeeded,
+@@ -23823,14 +23903,14 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
+     backend
+         .did_change(quarantine_change_params(
+             &fixture.uri_a,
+-            4,
++            5,
+             QUARANTINE_TEXT_A_DIRTY,
+         ))
+         .await;
+     assert_eq!(
+         backend.workspace_revision(),
+         before + 1,
+-        "a covered unchanged reload must deduplicate"
++        "a covered unchanged reload must remain a no-op"
+     );
+     assert_eq!(
+         backend
