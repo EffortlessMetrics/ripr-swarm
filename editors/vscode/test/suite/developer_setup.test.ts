@@ -8,7 +8,8 @@ import { requireEditorDisplay, verifyHostPrerequisites } from '../hostPrerequisi
 interface SetupReport {
   requirement_sources: Array<{ path: string; sha256: string }>;
   requirements: { rust_channel: string; node_major: number; typescript: string };
-  checks: Array<{ check_id: string; status: string; observed_fact: unknown }>;
+  checks: Array<{ check_id: string; status: string; observed_fact: unknown;
+    next_action: { instruction?: string; cwd?: string; command?: string[] } }>;
   known_blockers: string[];
   full_development_ready: false;
   fresh_task: string;
@@ -90,6 +91,12 @@ suite('Developer setup capability boundary', function () {
   }
 
   test('reads changed source requirements and leaves execution capabilities unclaimed', () => {
+    const linkerTemps = ['compiler temp', 'different tmp', 'separate tmpdir'];
+    fs.writeFileSync(path.join(root, '.cargo/config.toml'), ['TEMP', 'TMP', 'TMPDIR']
+      .map((name, index) => name + ' = { value = "' + linkerTemps[index]
+        + '", relative = true, force = true }\n').join(''));
+    fs.mkdirSync(path.join(root, linkerTemps[0]));
+    fs.writeFileSync(path.join(root, linkerTemps[1]), 'not a directory');
     const report = collect({ DISPLAY: ':321', RUSTUP_TOOLCHAIN: 'selected-toolchain' });
     assert.strictEqual(report.requirements.rust_channel, '1.96.2');
     assert.strictEqual(report.requirements.node_major, 25);
@@ -104,8 +111,28 @@ suite('Developer setup capability boundary', function () {
     assert.strictEqual(report.checks.find(check => check.check_id === 'editor_display')?.status, 'not_proven');
     assert.strictEqual(report.full_development_ready, false);
     assert.strictEqual(report.fresh_task, 'not_proven');
+    const locations = report.checks.find(check => check.check_id === 'work_locations')
+      ?.observed_fact as Record<string, unknown>;
+    assert.deepStrictEqual(locations.workspace_linker_temp, ['TEMP', 'TMP', 'TMPDIR']
+      .map((variable, index) => ({ variable, path: path.join(root, linkerTemps[index]),
+        observation: ['access_check_passed', 'not_a_directory', 'absent'][index] })));
+    assert.strictEqual(report.checks.find(check => check.check_id === 'node_runtime')?.status, 'pass');
+    const wrongNode = diagnostic.collectDeveloperSetup({ root, env: { DISPLAY: ':321' },
+      platform: 'linux', nodeVersion: '24.1.0' });
+    assert.strictEqual(wrongNode.checks.find(check => check.check_id === 'node_runtime')?.status, 'fail');
+    assert.ok(wrongNode.known_blockers.includes('node_runtime'));
     const human = diagnostic.renderDeveloperSetup(report);
     for (const check of report.checks) assert.ok(human.includes(check.check_id + ': ' + check.status));
+  });
+
+  test('human guidance preserves every instruction alongside its command', () => {
+    const report = collect({ DISPLAY: ':321' });
+    const human = diagnostic.renderDeveloperSetup(report);
+    for (const check of report.checks) {
+      if (check.next_action.command) assert.ok(human.includes(check.next_action.command.join(' ')), check.check_id);
+      if (check.next_action.instruction) assert.ok(human.includes(check.next_action.instruction), check.check_id);
+    }
+    assert.ok(human.includes('Use an already built ripr from this checkout'));
   });
 
   test('missing display and unsupported or oversized authorities fail visibly before downstream work', () => {
@@ -210,6 +237,33 @@ suite('Developer setup capability boundary', function () {
       assert.ok(!fs.readdirSync(root).some(name => name.startsWith('setup-host-')));
     });
   }
+
+  test('bounds redacted Unicode native failure logs by bytes', async () => {
+    const nativeFailure = path.join(root, 'native failure.js');
+    const token = 'ghp_' + 'A'.repeat(36);
+    const detail = '\u20ac'.repeat(64 * 1024) + '\n' + token + '\nx-access-token:x@example.invalid\n';
+    fs.writeFileSync(nativeFailure, 'process.stderr.write(' + JSON.stringify(detail)
+      + ', () => { process.exitCode = 17; });');
+    const error = await verifyHostPrerequisites('controlled-native-host', root, {
+      env: { ...process.env, DISPLAY: ':321' },
+      runProcess: (_command, _args, options) => runFixtureProducer(process.execPath, [nativeFailure], {
+        ...options, onProgress: () => {}, env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' }
+      })
+    }).then(() => undefined, caught => caught as Error);
+    assert.ok(error instanceof Error);
+    assert.ok(error.cause instanceof FixtureProducerError);
+    assert.strictEqual(error.cause.status, 17);
+    const retained = fs.readFileSync(path.join(root, 'setup-editor-host.log'));
+    assert.ok(retained.length > 0 && retained.length <= 64 * 1024, 'retained log exceeds its byte cap');
+    const text = retained.toString('utf8');
+    assert.ok(text.includes('\u20ac'));
+    assert.ok(!text.includes('\ufffd'), 'retained log split a UTF-8 character');
+    assert.ok(!text.includes(token));
+    assert.ok(!text.includes('x-access-token:x@'));
+    assert.ok(text.includes('[redacted-token]'));
+    assert.ok(text.includes('x-access-token:[redacted]@example.invalid'));
+    assert.strictEqual(fs.existsSync(path.join(root, 'setup-editor-host.json')), false);
+  });
 
   for (const mode of ['timeout', 'cancel'] as const) {
     test(mode + ' of the public host prerequisite terminates its actual owned descendant', async () => {

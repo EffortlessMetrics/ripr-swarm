@@ -1568,6 +1568,7 @@ jobs:
                   "Genuine fixture producer process boundary cancel-active-tree terminates an owned descendant that ignores SIGTERM and inherits pipes",
                   "Genuine fixture producer process boundary validates the deadline instead of silently disabling or overflowing it",
                   "Developer setup capability boundary reads changed source requirements and leaves execution capabilities unclaimed",
+                  "Developer setup capability boundary human guidance preserves every instruction alongside its command",
                   "Developer setup capability boundary missing display and unsupported or oversized authorities fail visibly before downstream work",
                   "Developer setup capability boundary source frontdoor succeeds when writes network and subprocess APIs are forbidden",
                   "Developer setup capability boundary display check distinguishes absent Linux display from other platforms without launching anything",
@@ -1576,6 +1577,7 @@ jobs:
                   "Developer setup capability boundary refuses absent host evidence and removes an earlier success receipt",
                   "Developer setup capability boundary refuses wrong_nonce host evidence and removes an earlier success receipt",
                   "Developer setup capability boundary refuses native_failure host evidence and removes an earlier success receipt",
+                  "Developer setup capability boundary bounds redacted Unicode native failure logs by bytes",
                   "Developer setup capability boundary timeout of the public host prerequisite terminates its actual owned descendant",
                   "Developer setup capability boundary cancel of the public host prerequisite terminates its actual owned descendant",
               }
@@ -1583,9 +1585,9 @@ jobs:
               stats = report.get('stats', {})
               if len(observed) != len(expected) or set(observed) != expected:
                   raise SystemExit('fixture producer PASS is missing native process controls')
-              if any(stats.get(key) != value for key, value in {'tests': 24, 'passes': 21, 'failures': 0, 'pending': 3}.items()):
+              if any(stats.get(key) != value for key, value in {'tests': 26, 'passes': 23, 'failures': 0, 'pending': 3}.items()):
                   raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
-              print('Verified 21 native process/setup controls; three POSIX-only adapter controls are pending.')
+              print('Verified 23 native process/setup controls; three POSIX-only adapter controls are pending.')
           PY
 
       - name: Require selector consumer receipt, log and native status

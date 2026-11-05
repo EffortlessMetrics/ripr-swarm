@@ -95,6 +95,11 @@ export function redactHostDiagnosticsText(text: string): string {
     .replace(ACCESS_TOKEN_URL, 'x-access-token:[redacted]');
 }
 
+/** Redact before applying the final UTF-8 byte cap, without splitting characters. */
+export function redactHostDiagnosticsTail(text: string, maxBytes: number): Buffer {
+  return utf8Suffix(Buffer.from(redactHostDiagnosticsText(text), 'utf8'), maxBytes);
+}
+
 export function retainHostDiagnostics(
   input: RetainHostDiagnosticsInput
 ): RetainHostDiagnosticsResult {

@@ -51,6 +51,7 @@ function collectDeveloperSetup(options = {}) {
   const add = (id, status, fact, next) => checks.push({ check_id: id, status,
     observed_fact: fact, next_action: next });
   let requirements;
+  let linkerTempPaths = [];
   try {
     const read = relative => {
       const source = readAuthority(root, relative);
@@ -78,7 +79,7 @@ function collectDeveloperSetup(options = {}) {
     const linkerTemp = ['TEMP', 'TMP', 'TMPDIR'].map(name => {
       const match = new RegExp(`^${name}\\s*=\\s*\\{\\s*value\\s*=\\s*"([^"\\r\\n]+)",\\s*relative\\s*=\\s*true,\\s*force\\s*=\\s*true\\s*\\}\\s*$`, 'm').exec(cargoConfig);
       if (!match) throw new Error(`Cannot derive ${name} from .cargo/config.toml`);
-      return { variable: name, path: bounded(path.resolve(root, match[1])) };
+      return { variable: name, path: path.resolve(root, match[1]) };
     });
     const rustComponents = JSON.parse(components);
     if (!Array.isArray(rustComponents) || rustComponents.length > 16
@@ -94,7 +95,9 @@ function collectDeveloperSetup(options = {}) {
       typescript: lock.packages['node_modules/typescript'].version,
       test_electron: lock.packages['node_modules/@vscode/test-electron'].version,
       llvm_components: llvmComponents.map(bounded), nextest_install_action: nextestAction,
-      nextest_version: 'not_pinned_by_current_install_action_input', linker_temp: linkerTemp };
+      nextest_version: 'not_pinned_by_current_install_action_input',
+      linker_temp: linkerTemp.map(entry => ({ ...entry, path: bounded(entry.path) })) };
+    linkerTempPaths = linkerTemp;
     add('source_requirements', 'pass', 'Read the checked requirement files; hashes identify these inputs only.',
       { instruction: 'Provision from these authorities; this command never installs tools.' });
   } catch (error) {
@@ -132,11 +135,14 @@ function collectDeveloperSetup(options = {}) {
       instruction: 'Use a supported live display, or an already provisioned Xvfb; this report starts neither.' });
   const artifactRoot = path.resolve(env.RIPR_TEST_ARTIFACT_ROOT ?? path.join(root, 'target/ripr'));
   const paths = { cargo_target: path.resolve(root, env.CARGO_TARGET_DIR ?? 'target'),
-    workspace_linker_temp: path.join(root, 'target'), editor_artifacts: artifactRoot,
+    editor_artifacts: artifactRoot,
     editor_host_cache: path.join(artifactRoot, 'vscode-test-cache') };
-  add('work_locations', 'not_proven', Object.fromEntries(Object.entries(paths)
-    .map(([name, filename]) => [name, { path: bounded(filename), observation: directoryObservation(filename) }])),
-    { instruction: 'Create the checkout target directory explicitly before Cargo work. Access checks do not prove writes or a full-build resource budget.' });
+  const locations = Object.fromEntries(Object.entries(paths)
+    .map(([name, filename]) => [name, { path: bounded(filename), observation: directoryObservation(filename) }]));
+  locations.workspace_linker_temp = linkerTempPaths.map(entry => ({ variable: entry.variable,
+    path: bounded(entry.path), observation: directoryObservation(entry.path) }));
+  add('work_locations', 'not_proven', locations,
+    { instruction: 'Prepare the observed Cargo target and each TEMP/TMP/TMPDIR directory derived from .cargo/config.toml before Cargo work. Access checks do not prove writes or a full-build resource budget.' });
   add('editor_host_acquisition', 'not_run', { proxy_configured: Boolean(env.HTTPS_PROXY || env.HTTP_PROXY || env.https_proxy || env.http_proxy),
     extra_ca_configured: Boolean(env.NODE_EXTRA_CA_CERTS),
     limitation: 'No network request, policy permission, proxy/CA validation or host download was performed.' },
@@ -160,8 +166,9 @@ function collectDeveloperSetup(options = {}) {
 function renderDeveloperSetup(report) {
   return ['Developer setup observations (read-only)',
     ...report.checks.map(check => `${check.check_id}: ${check.status}\n  ${bounded(typeof check.observed_fact === 'string'
-      ? check.observed_fact : JSON.stringify(check.observed_fact))}\n  Next: ${check.next_action.command
-      ? `${check.next_action.cwd}: ${check.next_action.command.join(' ')}` : check.next_action.instruction}`),
+      ? check.observed_fact : JSON.stringify(check.observed_fact))}\n  Next: ${[
+      check.next_action.command ? `${check.next_action.cwd}: ${check.next_action.command.join(' ')}` : undefined,
+      check.next_action.instruction].filter(Boolean).join('\n  ')}`),
     'Full development and fresh-task readiness: not established.'].join('\n');
 }
 

@@ -3,7 +3,7 @@ import * as path from 'path';
 import { randomBytes } from 'crypto';
 import { downloadAndUnzipVSCode } from '@vscode/test-electron';
 import { runFixtureProducer, FixtureProducerError } from './actionableQueueFixture';
-import { redactHostDiagnosticsText } from './hostDiagnostics';
+import { redactHostDiagnosticsTail } from './hostDiagnostics';
 
 const DOWNLOAD_ATTEMPTS = 3;
 const HOST_TIMEOUT_MS = 60_000;
@@ -134,7 +134,7 @@ export async function verifyHostPrerequisites(
     const detail = error instanceof FixtureProducerError
       ? `kind=${error.kind}; status=${error.status}; signal=${error.signal}\n${error.stdout}\n${error.stderr}`
       : String(error);
-    fs.writeFileSync(failureLog, redactHostDiagnosticsText(detail.slice(-64 * 1024)));
+    fs.writeFileSync(failureLog, redactHostDiagnosticsTail(detail, 64 * 1024));
     throw new Error(`Native VS Code setup failed before producer work; inspect ${failureLog}`, { cause: error });
   } finally {
     options.signal?.removeEventListener('abort', onAbort);
