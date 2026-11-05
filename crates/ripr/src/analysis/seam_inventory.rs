@@ -811,10 +811,30 @@ fn portable_store_failure_path(path: &Path) -> Option<String> {
 /// Store errors are normally path-free, but an unexpected producer message
 /// must not disclose a host path through the public receipt or stderr.
 fn portable_store_failure_error(error: &str) -> &str {
-    if error.contains(['/', '\\']) {
-        "details withheld: error contains a path separator"
-    } else {
+    if !error.contains(['/', '\\']) {
+        return error;
+    }
+    // A native OS error may itself contain a slash (for example Linux EIO or
+    // Windows error 1117). Only accept the exact platform-generated message,
+    // optionally following a path-free producer context and a single `: `.
+    let native = error
+        .rsplit_once(" (os error ")
+        .and_then(|(_, code)| code.strip_suffix(')'))
+        .and_then(|code| code.parse::<i32>().ok())
+        .map(|code| std::io::Error::from_raw_os_error(code).to_string());
+    let safe_context = native
+        .as_deref()
+        .and_then(|detail| error.strip_suffix(detail))
+        .is_some_and(|prefix| {
+            prefix.is_empty()
+                || prefix
+                    .strip_suffix(": ")
+                    .is_some_and(|context| !context.contains(['/', '\\', ':']))
+        });
+    if safe_context {
         error
+    } else {
+        "details withheld: error contains a path separator"
     }
 }
 
@@ -4500,6 +4520,64 @@ mod tests {
         let rendered = format!("{receipt} {:?}", file_fact_store_failure_summary(&stats));
         assert!(!rendered.contains("/home/user"));
         assert!(!rendered.contains("Users"));
+    }
+
+    #[test]
+    fn cache_failure_error_preserves_eio_but_not_paths_beside_it() {
+        #[cfg(target_os = "linux")]
+        let eio = format!(
+            "create file fact cache dir failed: {}",
+            std::io::Error::from_raw_os_error(5)
+        );
+        #[cfg(target_os = "linux")]
+        assert_eq!(portable_store_failure_error(&eio), eio);
+        #[cfg(target_os = "linux")]
+        {
+            let remote = format!("write: {}", std::io::Error::from_raw_os_error(121));
+            assert_eq!(portable_store_failure_error(&remote), remote);
+            for errno in 1..=255 {
+                let bare = std::io::Error::from_raw_os_error(errno).to_string();
+                assert_eq!(portable_store_failure_error(&bare), bare, "errno {errno}");
+                let detail = format!("write: {bare}");
+                assert_eq!(
+                    portable_store_failure_error(&detail),
+                    detail,
+                    "errno {errno}"
+                );
+            }
+        }
+        #[cfg(windows)]
+        {
+            let detail = format!("write: {}", std::io::Error::from_raw_os_error(1117));
+            assert_eq!(portable_store_failure_error(&detail), detail);
+        }
+        for safe in [
+            "permission denied (os error 13)",
+            "No space left on device (os error 28)",
+        ] {
+            assert_eq!(portable_store_failure_error(safe), safe);
+        }
+        for unsafe_detail in [
+            "write /home/user/cache failed",
+            "write C:\\Users\\user\\cache failed",
+            "write \\\\server\\share\\cache failed",
+            "write ../outside/cache failed",
+            "Input/output error (os error 5): /home/user/cache",
+            "/home/user/Input/output error (os error 5)",
+            "Remote I/O error (os error 121): \\\\server\\share",
+            "C:private: Input/output error (os error 5)",
+            "open /home/user: Input/output error (os error 5)",
+            "Input/output error (os error 5): ../outside",
+            "nested: context: Input/output error (os error 5)",
+            "write: Input/output error (os error 99999999999999999999999)",
+            "write: Input/output error (os error five)",
+            "write: Input/output error (os error 5) /home/user",
+        ] {
+            assert_eq!(
+                portable_store_failure_error(unsafe_detail),
+                "details withheld: error contains a path separator"
+            );
+        }
     }
 
     #[test]
