@@ -4353,6 +4353,12 @@ pub(crate) mod tests {
                 "@@ -2 +1,0 @@",
             ),
             (
+                "inside",
+                "fn f(x: i32) -> bool {\n    x > 0\n        && x < 10\n        && x != 5\n}\n",
+                "fn f(x: i32) -> bool {\n    x > 0\n        && x != 5\n}\n",
+                "@@ -3 +2,0 @@",
+            ),
+            (
                 "replacement",
                 "fn f(x: i32) -> bool {\n    x > 1\n}\n",
                 "fn f(x: i32) -> bool {\n    x > 0\n}\n",
@@ -4407,6 +4413,9 @@ pub(crate) mod tests {
                 },
                 ExpectedSink::ReturnValue,
             );
+            if name == "inside" {
+                entry.seam = entry.seam.with_source_lines(Some((2, 3)));
+            }
             let change =
                 crate::output::pilot::PilotCurrentChange::from_diff_text(&dir, None, &patch);
             assert!(seam_has_uncertain_deletion(&entry, &files), "{name}");
@@ -4481,6 +4490,12 @@ pub(crate) mod tests {
             "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -91 +90,0 @@\n-    tail\n",
         );
         assert!(seam_has_uncertain_deletion(&multiline, &after_multiline));
+        let inside = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -89 +88,0 @@\n-    removed\n",
+        );
+        assert!(!seam_touches_change(&multiline, &inside));
+        assert!(seam_has_uncertain_deletion(&multiline, &inside));
+        assert!(refuse_ambiguous_deletions(std::slice::from_ref(&multiline), &inside).is_err());
         let multiline_add = crate::analysis::parse_unified_diff(
             "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -89 +89 @@\n-old\n+new\n",
         );

@@ -4655,6 +4655,9 @@ fn pilot_deleted_expression_tail_and_unrelated_adjacent_statement_13098() {
     );
     assert!(!far.may_touch_seam(&surviving));
     assert!(!tail_change.may_touch_seam(&seam("src/other.rs", 2, "x > 0")));
+    let multi = seam("src/b.rs", 2, "x > 0\n    && x != 5");
+    assert!(!tail_change.touches_seam(&multi));
+    assert!(tail_change.may_touch_seam(&multi));
     let replacement = PilotCurrentChange::from_diff_text(
         Path::new("."),
         None,
