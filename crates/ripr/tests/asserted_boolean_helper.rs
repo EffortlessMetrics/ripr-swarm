@@ -228,6 +228,10 @@ fn primitive_and_owner_bindings_cannot_be_borrowed_from_names() -> Result<(), St
             "macro-generated owner const",
             "macro_rules! shadow { () => { const read_u32: fn(&[u8]) -> u32 = |b| u32::from_be_bytes([b[0],b[1],b[2],b[3]]); }; } shadow!();",
         ),
+        (
+            "raw macro-generated owner const",
+            "macro_rules! shadow { () => { const r#read_u32: fn(&[u8]) -> u32 = |b| u32::from_be_bytes([b[0],b[1],b[2],b[3]]); }; } shadow!();",
+        ),
         ("forged primitive", "type u32 = std::primitive::u32;"),
         ("foreign conversion trait", "use std::primitive::u32;"),
     ] {

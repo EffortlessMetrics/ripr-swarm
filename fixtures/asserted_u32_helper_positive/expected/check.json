@@ -1,0 +1,125 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/asserted_u32_helper_positive/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:c3daa187631831e04fd85e306a26a1cea8dedabe0a29ae748b05dfcc74b50baf","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:a75ca41d",
+      "canonical_gap_id": "gap:rust:src/lib.rs:read_u32:return_value:return_value:u32_from_be_bytes[bytes[0]bytes[1]bytes[2]bytes[3]]0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:read_u32:return_value:return_value:u32_from_be_bytes[bytes[0]bytes[1]bytes[2]bytes[3]]0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "read_u32",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "u32_from_be_bytes[bytes[0]bytes[1]bytes[2]bytes[3]]0"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:a75ca41d",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) | 0"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach read_u32: u32_reads_what_was_written"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Owner result is compared whole by `src/lib.rs::tests::reads_back` and its returned equality is asserted by `u32_reads_what_was_written` (asserted_u32_helper_comparison)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach read_u32: u32_reads_what_was_written", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Owner result is compared whole by `src/lib.rs::tests::reads_back` and its returned equality is asserted by `u32_reads_what_was_written` (asserted_u32_helper_comparison)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) | 0 (line 2)", "related test src/lib.rs:12 u32_reads_what_was_written uses strong relational check oracle: assert!(reads_back(value));", "source function argument value bytes = [0, 0, 0, 1] at line 14", "source function argument value bytes = [1, 2, 3, 4] at line 14", "source function argument value bytes = [222, 173, 190, 239] at line 14", "source function argument value bytes = [255, 255, 255, 254] at line 14"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) | 0","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Owner result is compared whole by `src/lib.rs::tests::reads_back` and its returned equality is asserted by `u32_reads_what_was_written` (asserted_u32_helper_comparison)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach read_u32: u32_reads_what_was_written", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "14": "assert!(reads_back(value));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 14,
+            "value": "bytes = [0, 0, 0, 1]",
+            "context": "function_argument"
+          },
+          {
+            "line": 14,
+            "value": "bytes = [1, 2, 3, 4]",
+            "context": "function_argument"
+          },
+          {
+            "line": 14,
+            "value": "bytes = [222, 173, 190, 239]",
+            "context": "function_argument"
+          },
+          {
+            "line": 14,
+            "value": "bytes = [255, 255, 255, 254]",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 14,
+          "value": "bytes = [0, 0, 0, 1]",
+          "context": "function_argument"
+        },
+        {
+          "line": 14,
+          "value": "bytes = [1, 2, 3, 4]",
+          "context": "function_argument"
+        },
+        {
+          "line": 14,
+          "value": "bytes = [222, 173, 190, 239]",
+          "context": "function_argument"
+        },
+        {
+          "line": 14,
+          "value": "bytes = [255, 255, 255, 254]",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "u32_reads_what_was_written",
+          "file": "src/lib.rs",
+          "line": 12,
+          "oracle_strength": "strong",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(reads_back(value));",
+          "relation_reason": "helper_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
