@@ -23,6 +23,29 @@ use super::source_utils::{SourceText, line_for_range_start};
 use super::{PythonAssertion, PythonFramework, PythonOracleShape, PythonOwner, PythonTest};
 use crate::domain::{OracleKind, OwnerKind};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
+use std::collections::BTreeSet;
+use std::path::Path;
+
+/// A local module or package can implement a different `pytest.raises`.
+/// Reuse the workspace's bounded import roots and compiled-module index;
+/// source entries are checked physically even when excluded from source facts.
+pub(super) fn pytest_import_unshadowed(
+    root: &Path,
+    import_roots: &BTreeSet<&Path>,
+    extension_names: Option<&BTreeSet<String>>,
+) -> bool {
+    let module = Path::new("pytest.py");
+    import_roots.contains(Path::new(""))
+        && extension_names
+            .is_some_and(|names| !super::module_value::shadowed_by_extension(names, module))
+        && !super::module_value::compiled_package_shadow(root, import_roots, module)
+        && import_roots.iter().all(|directory| {
+            matches!(
+                std::fs::symlink_metadata(root.join(directory).join(module)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound
+            )
+        })
+}
 
 pub(super) struct ExceptionVariantCredit<'a> {
     pub(super) test: &'a PythonTest,
@@ -209,7 +232,7 @@ fn credits<'a>(
 /// Only the constructor's name changes; evaluating its arguments runs no code.
 fn raised_type(line: &str) -> Option<(String, Vec<ast::Constant>)> {
     let Mod::Module(module) =
-        parse_module_result(std::path::Path::new("raise.py"), line.trim()).ok()?
+        parse_module_result(Path::new("raise.py"), line.trim()).ok()?
     else {
         return None;
     };

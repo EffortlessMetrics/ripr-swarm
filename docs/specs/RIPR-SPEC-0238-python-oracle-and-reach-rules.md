@@ -382,6 +382,20 @@ one changed raise only (#12952); the general class-only table row stays weak.
    Decorators, fixtures, parametrization, deferred bodies, dynamic namespace
    access, visible class/framework/builtin writes and unresolved identity
    refuse this reading.
+   Existing workspace import-environment checks remain required: a configured
+   `pythonpath` other than the configuration's own directory refuses this
+   identity credit, even when its spelling is `src`. It can introduce code
+   outside the bounded import proof; this rule does not relax that guard.
+   Framework identity needs a positive per-run admission fact, defaulting to
+   false. An incomplete workspace scan, unresolved compiled-file index, or
+   any visible `pytest` source module, package initializer or compiled shadow
+   at the known import roots refuses this reading. Those roots include the
+   workspace root and the directories containing the owner and tests. Source
+   file metadata is checked directly, including files excluded from source
+   discovery and symlinks; unreadable metadata cannot establish absence.
+   Removing a shadow permits credit again on the next check even when cached
+   source facts remain warm. This fact gates only this exception-class
+   reading, not independent module-value evidence.
 
    The function path to the edited statement is read through bounded `if`
    arms over literal arguments, literal values, `not`, comparisons and the
@@ -1614,12 +1628,27 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 ## Required Evidence
 
-- The six `specific_exception_variant_*` classifier tests in
+- The seven `specific_exception_variant_*` classifier tests in
   `crates/ripr/src/analysis/language/python/exception_variant_tests.rs` pin
   rule 6's class-only credit and refusal cases: exact context retention,
   sibling versus subtype/base identity, import/rebinding custody, builtin
-  shadowing, Unicode length boundaries, prior raises/returns and the sole
-  type-only replacement requirement.
+  shadowing, Unicode length boundaries, prior raises/returns, explicit
+  framework admission and the sole type-only replacement requirement.
+- `crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_preserves_import_environment_guards`
+  drives the real workspace check through cold and warm file facts, Unicode
+  activation and import-configuration refusal/restoration. A flat-layout
+  package with `pythonpath = ["."]` supplies the runnable positive case;
+  `pythonpath = ["src"]` remains a refusal control.
+- The same app test module's
+  `check_output_python_exception_variant_rejects_framework_shadows` checks
+  source modules/packages and compiled module/package presence at known
+  import roots. Adding each shadow removes credit at the same canonical gap;
+  deleting it restores the credit through the real workspace check.
+- `fixtures/python_exception_framework_shadow_no_credit` and
+  `fixtures/evidence-promotion-honesty-corpus/cases/12952-python-exception-framework-shadow.json`
+  pin the known-wrong promotion: a local `pytest.py` context that accepts
+  both exception variants remains `weakly_exposed` / `broad_error` / weak.
+  The independent RIPR-SPEC-0108 invariant rejects re-blessing it as exposed.
 - Each Problem row reads the class the rules give, through
   `classify_change_with_old` and in `ripr check --json` for a fixture.
 - Swapping two assertions in a test, or two test names, never changes a

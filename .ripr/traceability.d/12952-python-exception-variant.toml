@@ -8,6 +8,9 @@ tests = [
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_changed_raise_activation",
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_import_and_binding_identity",
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_a_type_only_single_line_edit",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_verified_framework_import",
+  "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_preserves_import_environment_guards",
+  "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_rejects_framework_shadows",
 ]
 
 [[extend]]
@@ -19,4 +22,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_changed_raise_activation",
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_import_and_binding_identity",
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_a_type_only_single_line_edit",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_verified_framework_import",
+  "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_preserves_import_environment_guards",
+  "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_rejects_framework_shadows",
+]
+fixtures = [
+  "fixtures/python_exception_framework_shadow_no_credit",
 ]

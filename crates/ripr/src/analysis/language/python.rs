@@ -1884,6 +1884,16 @@ impl PythonAdapter {
             .keys()
             .flat_map(|file| file.ancestors().skip(1))
             .collect();
+        // A canonical `import pytest` can load a local module or package.
+        // The exception-class reading needs the real framework's semantics;
+        // keep this per-run fact separate from other module-value credit.
+        let pytest_import_unshadowed = !workspace_incomplete
+            && !shadowed_import
+            && exception_variant::pytest_import_unshadowed(
+                &options.root,
+                &import_roots,
+                extension_names.as_ref(),
+            );
         let foreign_of = |file: &Path| {
             let mut foreign = foreign_index.excluding(file);
             if shadowed_import
@@ -2167,6 +2177,7 @@ impl PythonAdapter {
                         (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
                         ([added_line], [removed_line]) if added_line.line == removed_line.line
                     ),
+                    pytest_import_unshadowed,
                 };
                 if let Some(mut finding) = classify_change_with_value_origins(
                     &changed.path,

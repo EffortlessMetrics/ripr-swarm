@@ -303,8 +303,13 @@ A class-only `pytest.raises(NewError)` can supply finding-specific
 inert, distinct direct subclasses of the unshadowed builtin `Exception` in
 the owner's module. The test must import the new class and owner directly
 without aliases, and its own context must call the owner with literal inputs
-that provably reach the exact changed raise. The bounded reading and its
-refusals are specified in RIPR-SPEC-0238 rule 6. It preserves that assertion's
+that provably reach the exact changed raise. A complete current workspace
+scan must also establish that no source module, package initializer or
+compiled module at the bounded import roots shadows `pytest`; canonical
+import spelling alone supplies no framework identity. This admission fact is
+recomputed on each check, including when source facts come from the cache.
+The bounded reading and its refusals are specified in RIPR-SPEC-0238 rule 6.
+It preserves that assertion's
 context in sink alignment, including when another strong assertion exists in
 the test; it does not change the global grade of class-only exception tests.
 
@@ -1485,13 +1490,26 @@ can show:
 
 ## Test Mapping
 
-Finding-specific exception-variant credit (#12952) is covered by the six
+Finding-specific exception-variant credit (#12952) is covered by the seven
 `specific_exception_variant_*` tests in
 `crates/ripr/src/analysis/language/python/exception_variant_tests.rs`.
 They exercise the public classifier through real owner/test extraction,
 including exact selected-context alignment, passing literal prefixes and
 blocked paths, import and class identity, builtin shadowing, Unicode length
-boundaries and the sole type-only edit requirement.
+boundaries, explicit framework admission and the sole type-only edit requirement.
+The full `check_workspace_with_config` path is covered by
+`crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_preserves_import_environment_guards`:
+flat-layout imports retain credit with cold and warm file facts, Unicode
+inputs preserve the changed-raise boundary, and a non-dot configured import
+path refuses credit until the own-directory configuration is restored.
+The same module's
+`check_output_python_exception_variant_rejects_framework_shadows` checks
+source module/package and compiled-shadow presence at root, test and owner
+directories. Each shadow removes the credit without changing the canonical
+gap, and removing it restores credit through the real workspace pipeline.
+The fixture `python_exception_framework_shadow_no_credit` and its
+RIPR-SPEC-0108 corpus fragment independently forbid promoting a local
+`pytest.py` context that suppresses both exception classes.
 
 Default-prefix regression cases live in
 `crates/ripr/src/analysis/language/python/owners_tests/tests.rs`. They exercise

@@ -50,6 +50,7 @@ fn classify_with_context(
         &tests,
         PythonNoBehaviorContext {
             sole_line_replacement: sole,
+            pytest_import_unshadowed: true,
             ..PythonNoBehaviorContext::default()
         },
         Some(source),
@@ -336,6 +337,7 @@ fn specific_exception_variant_requires_import_and_binding_identity() -> Check {
         &tests,
         PythonNoBehaviorContext {
             sole_line_replacement: true,
+            pytest_import_unshadowed: true,
             ..PythonNoBehaviorContext::default()
         },
         Some(SOURCE),
@@ -382,5 +384,38 @@ fn specific_exception_variant_requires_a_type_only_single_line_edit() -> Check {
         "\t\t\t\t\t\t\t\traise EmptyError()",
         NEW,
     )?);
+    Ok(())
+}
+
+#[test]
+fn specific_exception_variant_requires_verified_framework_import() -> Check {
+    let file = Path::new("src/fx/core.py");
+    let owners = extract_owners(file, SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_core.py"),
+        &test_source("TooLongError", "'abcdefghijklmnop'"),
+    );
+    for pytest_import_unshadowed in [false, true] {
+        let finding = classify_change_with_context(
+            file,
+            8,
+            NEW,
+            Some(OLD),
+            &owners,
+            &tests,
+            PythonNoBehaviorContext {
+                sole_line_replacement: true,
+                pytest_import_unshadowed,
+                ..PythonNoBehaviorContext::default()
+            },
+            Some(SOURCE),
+        )
+        .ok_or_else(|| "framework identity control needs its changed-raise finding".to_string())?;
+        if pytest_import_unshadowed {
+            assert_credited(&finding);
+        } else {
+            assert_no_credit(&finding);
+        }
+    }
     Ok(())
 }
