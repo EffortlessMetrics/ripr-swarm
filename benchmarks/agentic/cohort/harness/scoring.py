@@ -372,7 +372,7 @@ def qualified_compile_exclusion(result, baseline):
 def quality_verified(row):
     """Check supplied record consistency, not the authenticity of referenced runs."""
     score = row.get("score")
-    if not isinstance(score, dict) or score.get("score_protocol") != PROTOCOL:
+    if row.get("error") or not isinstance(score, dict) or score.get("score_protocol") != PROTOCOL:
         return False
     n = score.get("mutants")
     if (score.get("quality_status") != "complete" or score.get("valid") is not True
