@@ -317,6 +317,68 @@ fn fstring_constant_reader_credits_an_exact_old_value_pin() -> Check {
 }
 
 #[test]
+fn module_string_reader_narrative_stays_with_the_selected_credit() -> Check {
+    use crate::domain::{FlowSinkKind, StageState};
+
+    let imports = "from hostile.settings import GREETING, greet\n\n\n";
+    let direct = "def test_direct():\n    assert GREETING == 'hello'\n";
+    let reader = "def test_reader():\n    assert greet('bob') == 'hello, bob'\n";
+    for reader_first in [false, true] {
+        let (first, second, assertion) = if reader_first {
+            (reader, direct, "assert greet('bob') == 'hello, bob'")
+        } else {
+            (direct, reader, "assert GREETING == 'hello'")
+        };
+        let test = format!("{imports}{first}\n\n{second}");
+        let finding = classify_fstring_reader("    return f'{GREETING}, {name}'", &test)?;
+        assert_credited(&finding);
+        assert_eq!(finding.observed_sink.as_deref(), Some(assertion));
+        assert_eq!(
+            finding
+                .evidence
+                .iter()
+                .filter(|line| line.starts_with("module_value_read:"))
+                .count(),
+            2,
+            "{finding:?}"
+        );
+        let (narrative, kind, text, line, propagation) = if reader_first {
+            (
+                concat!(
+                    "Related Python test reaches a string reader of `<module>` with an ",
+                    "`exact_value` oracle. The evaluated comparison accepts exactly one ",
+                    "of the old and new return values."
+                ),
+                FlowSinkKind::ReturnValue,
+                "return f'{GREETING}, {name}'",
+                5,
+                StageState::Yes,
+            )
+        } else {
+            (
+                concat!(
+                    "Related Python test reaches `<module>` with an `exact_value` oracle. ",
+                    "Static evidence suggests the changed behavior is observed under ",
+                    "an exact-value check."
+                ),
+                FlowSinkKind::Unknown,
+                "GREETING = 'hi'",
+                1,
+                StageState::Weak,
+            )
+        };
+        assert_eq!(finding.missing, vec![narrative.to_string()], "{finding:?}");
+        assert_eq!(finding.flow_sinks.len(), 1, "{finding:?}");
+        let sink = finding.flow_sinks.first().ok_or("the selected sink")?;
+        assert_eq!(sink.kind, kind);
+        assert_eq!(sink.text, text);
+        assert_eq!(sink.line, line);
+        assert_eq!(finding.ripr.propagate.state, propagation);
+    }
+    Ok(())
+}
+
+#[test]
 fn fstring_constant_reader_requires_a_deciding_assertion() -> Check {
     for assertion in [
         "assert greet('bob') == 'unrelated'",

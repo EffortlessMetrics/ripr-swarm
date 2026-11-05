@@ -1277,7 +1277,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             StageState::Yes,
             StageState::Yes,
             StageState::Yes,
-            vec![if !module_constant.string_pins.is_empty() {
+            vec![if module_value
+                .first()
+                .is_some_and(|credit| module_constant.string_pin(credit.assertion).is_some())
+            {
                 format!(
                     "Related Python test reaches a string reader of `{}` with {} `{}` oracle. The evaluated comparison accepts exactly one of the old and new return values.",
                     owner.name,
