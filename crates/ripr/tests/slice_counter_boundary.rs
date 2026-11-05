@@ -107,7 +107,11 @@ impl Drop for TempRepo {
 }
 
 fn class_for(condition: &str, assertions: &str) -> Result<ExposureClass, String> {
-    let findings = TempRepo::create(&source(condition, assertions), &diff())?.findings()?;
+    predicate_class(&source(condition, assertions), &diff())
+}
+
+fn predicate_class(lib: &str, patch: &str) -> Result<ExposureClass, String> {
+    let findings = TempRepo::create(lib, patch)?.findings()?;
     let mut predicate = findings
         .iter()
         .filter(|finding| finding.probe.family == ProbeFamily::Predicate);
@@ -117,6 +121,28 @@ fn class_for(condition: &str, assertions: &str) -> Result<ExposureClass, String>
             "premise: exactly one predicate finding, got {other:?} in {findings:?}"
         )),
     }
+}
+
+fn rewritten_predicate_class(
+    lib: &str,
+    before: &str,
+    after: &str,
+) -> Result<ExposureClass, String> {
+    let needle = format!("if {after} {{");
+    let lines = lib
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == needle)
+        .collect::<Vec<_>>();
+    let [(index, text)] = lines.as_slice() else {
+        return Err(format!("expected one rewritten predicate: {lines:?}"));
+    };
+    let line = index + 1;
+    let old = text.replace(after, before);
+    let patch = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-{old}\n+{text}\n"
+    );
+    predicate_class(lib, &patch)
 }
 
 const FF16: &str = "        assert_eq!(chunk_size(&[b'f'; 16]), Ok(u64::MAX));";
@@ -193,33 +219,7 @@ fn plain_class(assertions: &str, extra_reference: &str) -> Result<ExposureClass,
     let lib = format!(
         "{OWNER_PLAIN}{extra_reference}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn chunk_sizes() {{\n{assertions}\n    }}\n}}\n"
     );
-    let line = OWNER_PLAIN
-        .lines()
-        .position(|text| text.contains("16 < count"))
-        .map_or(0, |index| index + 1);
-    let patch = format!(
-        "diff --git a/src/lib.rs b/src/lib.rs
-index 1111111..2222222 100644
---- a/src/lib.rs
-+++ b/src/lib.rs
-@@ -{start},3 +{start},3 @@
-         count += 1;
--        if count > 16 {{
-+        if 16 < count {{
-             return Err(\"too long\");
-",
-        start = line - 1
-    );
-    let findings = TempRepo::create(&lib, &patch)?.findings()?;
-    let mut predicate = findings
-        .iter()
-        .filter(|finding| finding.probe.family == ProbeFamily::Predicate);
-    match (predicate.next(), predicate.next()) {
-        (Some(finding), None) => Ok(finding.class.clone()),
-        other => Err(format!(
-            "premise: exactly one predicate finding, got {other:?} in {findings:?}"
-        )),
-    }
+    rewritten_predicate_class(&lib, "count > 16", "16 < count")
 }
 
 const PLAIN_PINS: &str = "        assert_eq!(chunk_size(&[b'f'; 16]), Ok(u64::MAX));
@@ -264,13 +264,7 @@ fn a_later_fallback_return_keeps_the_boundary_below_exposed() -> Result<(), Stri
         ),
     ] {
         assert_ne!(masked, honest, "premise: masking mutation applied");
-        let findings = TempRepo::create(&masked, &diff())?.findings()?;
-        let predicate = findings
-            .iter()
-            .filter(|finding| finding.probe.family == ProbeFamily::Predicate)
-            .collect::<Vec<_>>();
-        assert_eq!(predicate.len(), 1, "{findings:?}");
-        assert_ne!(predicate[0].class, ExposureClass::Exposed, "{findings:?}");
+        assert_ne!(predicate_class(&masked, &diff())?, ExposureClass::Exposed);
     }
     assert_eq!(
         class_for("16 < count", &format!("{FF16}\n{FF17}"))?,
@@ -291,21 +285,10 @@ fn a_shadowed_success_constructor_keeps_the_boundary_below_exposed() -> Result<(
                 "    use super::*;\n    use std::result::Result::{Ok, Err};"
             )
     );
-    let line = lib
-        .lines()
-        .position(|line| line.contains("if count >= 17"))
-        .ok_or("missing predicate")?
-        + 1;
-    let patch = format!(
-        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-        if count > 17 {{\n+        if count >= 17 {{\n"
+    assert_ne!(
+        rewritten_predicate_class(&lib, "count > 17", "count >= 17")?,
+        ExposureClass::Exposed
     );
-    let findings = TempRepo::create(&lib, &patch)?.findings()?;
-    let predicates = findings
-        .iter()
-        .filter(|finding| finding.probe.family == ProbeFamily::Predicate)
-        .collect::<Vec<_>>();
-    assert_eq!(predicates.len(), 1, "{findings:?}");
-    assert_ne!(predicates[0].class, ExposureClass::Exposed, "{findings:?}");
     Ok(())
 }
 
@@ -388,23 +371,79 @@ fn early_error_equality_cannot_pin_the_counter_boundary() -> Result<(), String> 
                 "        let b = b'z';\n        let digit",
             );
         }
-        let line = lib
-            .lines()
-            .position(|line| line.contains("if count >= 17"))
-            .ok_or("missing predicate")?
-            + 1;
-        let patch = format!(
-            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-        if count > 17 {{\n+        if count >= 17 {{\n"
-        );
-        let findings = TempRepo::create(&lib, &patch)?.findings()?;
-        let predicates = findings
-            .iter()
-            .filter(|finding| finding.probe.family == ProbeFamily::Predicate)
-            .collect::<Vec<_>>();
-        assert_eq!(predicates.len(), 1, "{findings:?}");
         assert_eq!(
-            predicates[0].class, expected,
-            "byte={byte}, rebound={rebound}: {findings:?}"
+            rewritten_predicate_class(&lib, "count > 17", "count >= 17")?,
+            expected,
+            "byte={byte}, rebound={rebound}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn counter_mutations_cannot_supply_the_length_boundary() -> Result<(), String> {
+    for statement in [
+        "(count,) = (count + count / 16,);",
+        "(count) = count + count / 16;",
+        "[count] = [count + count / 16];",
+        "count.clone_from(&(count + count / 16));",
+        "let ref mut alias = count; *alias += *alias / 16;",
+        "let alias = &mut (count); *alias += *alias / 16;",
+    ] {
+        let lib = source("count >= 17", &format!("{FF16}\n{FF17}")).replace(
+            "        let digit",
+            &format!("        {statement}\n        let digit"),
+        );
+        assert_ne!(
+            rewritten_predicate_class(&lib, "count > 17", "count >= 17")?,
+            ExposureClass::Exposed,
+            "{statement}"
+        );
+    }
+    assert_eq!(
+        class_for("16 < count", &format!("{FF16}\n{FF17}"))?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn counter_width_must_represent_the_predicate_and_every_input() -> Result<(), String> {
+    for (ty, short, long, expected) in [
+        ("i8", 127, 128, ExposureClass::InfectionUnknown),
+        ("u8", 255, 256, ExposureClass::InfectionUnknown),
+        ("i8", 126, 127, ExposureClass::Exposed),
+        ("u8", 254, 255, ExposureClass::Exposed),
+        ("usize", 255, 256, ExposureClass::Exposed),
+    ] {
+        let overflowing = expected != ExposureClass::Exposed;
+        let short_result = if overflowing {
+            "Err(ChunkError::BadDigit)"
+        } else {
+            "Ok(u64::MAX)"
+        };
+        let assertions = format!(
+            "        assert_eq!(chunk_size(&[b'f'; {short}]), {short_result});\n        assert_eq!(chunk_size(&[b'f'; {long}]), Err(ChunkError::TooLong));"
+        );
+        let mut lib = source(&format!("count >= {long}"), &assertions)
+            .replace("let mut count = 0", &format!("let mut count: {ty} = 0"));
+        if overflowing {
+            lib = format!(
+                "#![allow(overflowing_literals)]\n{}",
+                lib.replace("#[derive(Debug, PartialEq)]", "#[derive(Debug)]")
+            );
+            lib.push_str(
+                "\nimpl PartialEq for ChunkError { fn eq(&self, _: &Self) -> bool { true } }\n",
+            );
+        }
+        assert_eq!(
+            rewritten_predicate_class(
+                &lib,
+                &format!("count > {long}"),
+                &format!("count >= {long}")
+            )?,
+            expected,
+            "type={ty}, length={long}"
         );
     }
     Ok(())

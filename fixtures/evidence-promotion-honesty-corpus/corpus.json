@@ -17865,6 +17865,32 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "must_not_promote" }
       ]
+    },
+    {
+      "id": "rust_slice_counter_tuple_assignment",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_counter_tuple_assignment",
+      "probe_family": "predicate",
+      "vector": "tuple_assignment_changes_counter_trajectory",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"}
+      ]
+    },
+    {
+      "id": "rust_slice_counter_overflowing_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_counter_overflowing_predicate",
+      "probe_family": "predicate",
+      "vector": "integer_literal_truncation_changes_counter_predicate",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"}
+      ]
     }
   ]
 }

@@ -405,3 +405,14 @@ counts their calls. Other early-return, conditional, post-loop and fallible
 paths retain the existing refusals. Thus the earlier conversion cannot produce
 an error on the credited rows, even when custom error equality makes its error
 equal to the firing error. No-fallible-suffix shapes retain their existing gate.
+
+Counter trajectory credit also requires exactly one parsed assignment place: the
+initial per-byte increment. Grouped/destructuring assignments, mutable or raw
+borrows, ref-mut patterns in any context and unknown methods on the counter
+refuse credit. The primitive counter must represent both the predicate literal
+and every admitted input length. An unannotated integer-zero binding proves
+only the common nonnegative range 0..127; explicit unshadowed primitive integer
+annotations prove their corresponding range (pointer-sized types use their
+minimum supported width). Unknown annotations refuse. Overflowing literal lints
+are not a type proof. Representable default 16/17 and explicit usize grids remain
+admitted.

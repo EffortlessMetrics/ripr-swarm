@@ -83,6 +83,7 @@ struct SliceCounterShape {
     predicate: CounterPredicate,
     fire_value: String,
     requires_hex_input: bool,
+    counter_max: usize,
 }
 
 struct SliceCounterRow {
@@ -273,6 +274,7 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
         predicate,
         fire_value,
         requires_hex_input,
+        counter_max,
     } = per_byte_counter_shape(
         owner,
         &context.probe.expression,
@@ -295,7 +297,7 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
             let arguments = super::activation::call_arguments(&call.text, &call.name)?;
             let argument = arguments.get(slice_position)?.trim();
             let length = slice_argument_byte_length(argument)?;
-            if length == 0 {
+            if length == 0 || length > counter_max {
                 return None;
             }
             admitted_calls += 1;
@@ -413,7 +415,7 @@ fn per_byte_counter_shape(
         .filter(|binary| {
             binary
                 .lhs()
-                .is_some_and(|lhs| compact(&lhs.syntax().text().to_string()) == counter)
+                .is_some_and(|lhs| expression_mentions_local(&lhs, counter))
         })
         .count();
     let escapes = body
@@ -424,9 +426,17 @@ fn per_byte_counter_shape(
         .any(|reference| {
             reference
                 .expr()
-                .is_some_and(|inner| compact(&inner.syntax().text().to_string()) == counter)
+                .is_some_and(|inner| expression_mentions_local(&inner, counter))
         });
-    if writes != 1 || escapes {
+    let implicit_mutation = body.syntax().descendants().any(|node| {
+        ast::MethodCallExpr::cast(node.clone()).is_some_and(|call| call.receiver()
+            .is_some_and(|receiver| expression_mentions_local(&receiver, counter)))
+            // Ref-mut patterns borrow in let/match/if-let contexts. The
+            // bounded loop needs none, so unsupported aliases all refuse.
+            || ast::IdentPat::cast(node).is_some_and(|binding|
+                binding.ref_token().is_some() && binding.mut_token().is_some())
+    });
+    if writes != 1 || escapes || implicit_mutation {
         return None;
     }
     let statements = body.stmt_list()?.statements().collect::<Vec<_>>();
@@ -436,7 +446,7 @@ fn per_byte_counter_shape(
             ast::Stmt::ExprStmt(expr) if matches!(expr.expr(), Some(ast::Expr::ForExpr(_)))
         )
     })?;
-    let mut counter_initialized = false;
+    let mut counter_max = None;
     for statement in &statements[..for_index] {
         let ast::Stmt::LetStmt(binding) = statement else {
             return None;
@@ -463,12 +473,13 @@ fn per_byte_counter_shape(
             {
                 return None;
             }
-            counter_initialized = true;
+            counter_max = Some(counter_nonnegative_max(binding.ty().as_ref())?);
+            if predicate.literal > counter_max? {
+                return None;
+            }
         }
     }
-    if !counter_initialized {
-        return None;
-    }
+    let counter_max = counter_max?;
     let ast::Stmt::ExprStmt(loop_statement) = &statements[for_index] else {
         return None;
     };
@@ -652,7 +663,60 @@ fn per_byte_counter_shape(
         predicate,
         fire_value,
         requires_hex_input,
+        counter_max,
     })
+}
+
+/// Unannotated integer zero can infer a narrow integer through later uses.
+/// Only the common nonnegative i8 range is proved without a type annotation.
+/// Explicit primitive names are admitted only after lexical shadow checks.
+fn counter_nonnegative_max(ty: Option<&ast::Type>) -> Option<usize> {
+    let Some(ty) = ty else {
+        return Some(127);
+    };
+    let text = compact(&ty.syntax().text().to_string());
+    match text.as_str() {
+        "i8" => Some(127),
+        "u8" => Some(255),
+        "i16" | "isize" => Some(32767),
+        "u16" | "usize" => Some(65535),
+        "i32" => Some(i32::MAX as usize),
+        "u32" => Some(usize::try_from(u32::MAX).unwrap_or(usize::MAX)),
+        "i64" => Some(usize::try_from(i64::MAX).unwrap_or(usize::MAX)),
+        "u64" | "i128" | "u128" => Some(usize::MAX),
+        _ => None,
+    }
+}
+
+fn counter_primitive_name(name: &str) -> bool {
+    matches!(
+        name.trim_start_matches("r#"),
+        "i8" | "u8"
+            | "i16"
+            | "u16"
+            | "i32"
+            | "u32"
+            | "i64"
+            | "u64"
+            | "i128"
+            | "u128"
+            | "isize"
+            | "usize"
+    )
+}
+
+/// Conservative place/receiver read for the local counter. Groups and
+/// destructuring keep their path nodes; fields named `count` do not become a
+/// read of the local. Unknown receiver methods can implicitly borrow it mutably.
+fn expression_mentions_local(expression: &ast::Expr, local: &str) -> bool {
+    std::iter::once(expression.syntax().clone())
+        .chain(expression.syntax().descendants())
+        .filter_map(ast::PathExpr::cast)
+        .any(|path| {
+            path.path().is_some_and(|path| {
+                compact(&path.syntax().text().to_string()).trim_start_matches("r#") == local
+            })
+        })
 }
 
 /// The only admitted `?` must receive the unchanged byte from this exact loop.
@@ -743,7 +807,8 @@ fn result_constructors_unshadowed(function: &ast::Fn, retained_source: &str) -> 
             matches!(
                 name.text().trim_start_matches("r#"),
                 "Ok" | "Err" | "Result"
-            ) || (needs_primitives && matches!(name.text().trim_start_matches("r#"), "char" | "u8"))
+            ) || counter_primitive_name(name.text())
+                || (needs_primitives && name.text().trim_start_matches("r#") == "char")
         })
     };
     let scoped = source
@@ -777,8 +842,8 @@ fn result_constructors_unshadowed(function: &ast::Fn, retained_source: &str) -> 
                     .descendants_with_tokens()
                     .filter_map(|entry| entry.into_token())
                     .any(|token| {
-                        (needs_primitives
-                            && matches!(token.text().trim_start_matches("r#"), "char" | "u8"))
+                        counter_primitive_name(token.text())
+                            || (needs_primitives && token.text().trim_start_matches("r#") == "char")
                             || matches!(
                                 token.text().trim_start_matches("r#"),
                                 "Ok" | "Err"
@@ -1182,6 +1247,7 @@ mod tests {
             predicate: found,
             fire_value: fire,
             requires_hex_input,
+            ..
         } = shape(&owner, "16 < count").ok_or(())?;
         assert!(requires_hex_input);
         assert_eq!(fire, "Err(ChunkError::TooLong)");
@@ -1374,6 +1440,75 @@ mod tests {
         ] {
             assert!(!repeated_element_is_hex_digit(element), "{element}");
         }
+    }
+
+    #[test]
+    fn counter_places_and_receivers_cannot_change_the_length_trajectory() {
+        for statement in [
+            "(count,) = (count + count / 16,);",
+            "(count) = count + count / 16;",
+            "[count] = [count + count / 16];",
+            "count.clone_from(&(count + count / 16));",
+            "(count).clone_from(&(count + count / 16));",
+            "let ref mut alias = count; *alias += *alias / 16;",
+            "let ignored = match count { ref mut alias => { *alias += *alias / 16; 0 } };",
+            "let ignored = if let ref mut alias = count { *alias += *alias / 16; 0 } else { 0 };",
+            "let alias = &mut (count); *alias += *alias / 16;",
+            "let alias = &raw mut (count);",
+        ] {
+            let source = GRID_BITS.replace(
+                "        let digit",
+                &format!("        {statement}\n        let digit"),
+            );
+            assert!(
+                shape(&owner_body(&source), "16 < count").is_none(),
+                "{statement}"
+            );
+        }
+        assert!(shape(&owner_body(GRID_BITS), "16 < count").is_some());
+        assert!(
+            shape(
+                &owner_body(&GRID_BITS.replace(
+                    "        let digit",
+                    "        let read = count;\n        let digit"
+                )),
+                "16 < count"
+            )
+            .is_some(),
+            "an ordinary by-value counter read is unchanged"
+        );
+    }
+
+    #[test]
+    fn counter_representation_bounds_the_predicate_and_input_lengths() {
+        for (ty, limit) in [("i8", 127), ("u8", 255), ("usize", 65535)] {
+            let base = GRID_BITS.replace("let mut count = 0", &format!("let mut count: {ty} = 0"));
+            let valid = base.replace("16 < count", &format!("count >= {limit}"));
+            let invalid = base.replace("16 < count", &format!("count >= {}", limit + 1));
+            assert_eq!(
+                shape(&owner_body(&valid), &format!("count >= {limit}"))
+                    .map(|shape| shape.counter_max),
+                Some(limit)
+            );
+            assert!(shape(&owner_body(&invalid), &format!("count >= {}", limit + 1)).is_none());
+        }
+        let inferred = GRID_BITS.replace("16 < count", "count >= 128");
+        assert!(shape(&owner_body(&inferred), "count >= 128").is_none());
+        let alias = GRID_BITS.replace("let mut count = 0", "let mut count: Counter = 0");
+        assert!(shape(&owner_body(&alias), "16 < count").is_none());
+        let shadow = GRID_BITS.replace("let mut count = 0", "let mut count: usize = 0");
+        assert!(
+            per_byte_counter_shape(
+                &owner_body(&shadow),
+                "16 < count",
+                &format!("type usize = u8;\n{shadow}")
+            )
+            .is_none()
+        );
+        assert_eq!(
+            shape(&owner_body(GRID_BITS), "16 < count").map(|shape| shape.counter_max),
+            Some(127)
+        );
     }
 
     #[test]
