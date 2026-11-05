@@ -11,8 +11,9 @@ pub enum OutputFormat {
     HumanFull,
     /// Versioned JSON report for automation.
     Json,
-    /// The same versioned report and findings budget as `Json`, with only
-    /// insignificant whitespace removed and one final newline (#13103).
+    /// The same versioned JSON report as [`OutputFormat::Json`], minified
+    /// for machine/agent consumers (#13103). Parsed values are identical;
+    /// only insignificant whitespace differs.
     JsonCompact,
     /// Unbounded `json` check findings with the producer `artifact` identity
     /// envelope (ADR 0020 amendment), so a gap-keyed verify can reject a
@@ -220,7 +221,8 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["repo-badge-plus-json"],
         // #5263 review: the measured repo ripr+ path renders the same full
         // classified walk as repo-badge-json when a test-efficiency report
-        // exists (#5263 review), so it discloses too.
+        // exists, so it discloses the same cost class; the neutral
+        // missing-report path stays cheap and merely over-discloses.
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: true,
         is_repo_seam_inventory: true,
@@ -437,32 +439,13 @@ impl OutputFormat {
 mod tests {
     use super::{FORMAT_SPECS, OutputFormat};
 
-    #[test]
-    fn json_compact_is_opt_in_diff_scoped_and_machine_readable() -> Result<(), String> {
-        let format = OutputFormat::parse_cli_name("json-compact")
-            .ok_or("json-compact must be accepted by the shared format parser")?;
-        if format != OutputFormat::JsonCompact || format.primary_cli_name() != "json-compact" {
-            return Err("compact format identity did not round-trip".to_string());
-        }
-        if !format.is_machine_readable()
-            || format.is_repo_scope()
-            || format.is_full_repo_analysis()
-            || format.is_seam_fact_cache_backed()
-        {
-            return Err("compact JSON must retain the diff-scoped JSON cost/progress class".to_string());
-        }
-        if OutputFormat::parse_cli_name("json") != Some(OutputFormat::Json) {
-            return Err("the existing json spelling must stay unchanged".to_string());
-        }
-        Ok(())
-    }
-
     /// #11598: the machine/human split decides whether piped progress is off
     /// by default, so pin both sides by CLI name.
     #[test]
     fn machine_readable_formats_are_the_documents_and_the_agent_report() {
         for (name, machine) in [
             ("json", true),
+            ("json-compact", true),
             ("sarif", true),
             ("badge-json", true),
             ("repo-exposure-json", true),
