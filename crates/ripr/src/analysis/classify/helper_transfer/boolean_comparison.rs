@@ -192,11 +192,19 @@ pub(in crate::analysis) fn boolean_comparison_receipt(
     }
     let parse = parse_clean_source_file(&facts.source)?;
     let file = parse.tree();
+    // Rust normalizes identifiers to NFC, including macro inputs. The bounded
+    // name scanner proves ASCII spellings only; a Unicode identifier can name
+    // the same binding as an ASCII owner. Comments and strings are not names.
     // Sibling custom derives/attributes can emit a shadowing value item.
     // Only closed builtin attributes and no macro imports are admitted.
     if file
-        .items()
-        .any(|item| matches!(item, ast::Item::ExternCrate(_)))
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .any(|token| token.kind() == ra_ap_syntax::SyntaxKind::IDENT && !token.text().is_ascii())
+        || file
+            .items()
+            .any(|item| matches!(item, ast::Item::ExternCrate(_)))
         || file
             .syntax()
             .descendants()

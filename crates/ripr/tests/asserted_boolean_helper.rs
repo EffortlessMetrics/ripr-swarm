@@ -211,6 +211,56 @@ fn non_ascii_owner_names_cannot_borrow_the_helper_receipt() -> Result<(), String
 }
 
 #[test]
+fn nfc_owner_shadowing_refuses_identifiers_but_preserves_unicode_text() -> Result<(), String> {
+    let renamed = ORIGINAL.replace("read_u32", "read_K");
+    let renamed_diff = DIFF.replace("read_u32", "read_K");
+    let text_only = renamed.replacen(
+        "    use super::*;",
+        "    use super::*; // read_K café\n    const _: &str = \"read_K café\";",
+        1,
+    );
+    let wrong_return = OWNER.replace("from_be_bytes", "from_le_bytes");
+    let shadowed = renamed.replacen(OWNER, &wrong_return, 1).replacen(
+        "    use super::*;",
+        "    use super::*; macro_rules! shadow { () => { fn read_K(b: &[u8])->u32 { u32::from_be_bytes([b[0],b[1],b[2],b[3]]) } }; } shadow!();",
+        1,
+    );
+    let shadow_diff = renamed_diff.replace(
+        &format!("+    {OWNER} | 0"),
+        &format!("+    {wrong_return}"),
+    );
+    for repo in [false, true] {
+        for source in [&renamed, &text_only] {
+            let positive =
+                finding_with_stimulus(&postimage(source)?, &renamed_diff, repo, false, "")?;
+            assert_eq!(positive["classification"], "exposed", "{positive}");
+            assert!(
+                positive
+                    .to_string()
+                    .contains("asserted_u32_helper_comparison"),
+                "{positive}"
+            );
+        }
+        let negative = finding_with_stimulus(&shadowed, &shadow_diff, repo, false, "")?;
+        assert!(
+            !negative
+                .to_string()
+                .contains("asserted_u32_helper_comparison"),
+            "{negative}"
+        );
+        assert!(
+            negative["observed_values"]
+                .as_array()
+                .ok_or("NFC owner observed values")?
+                .iter()
+                .all(|value| !value.to_string().contains("bytes = [")),
+            "{negative}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn full_original_asserted_comparison_observes_the_changed_owner_return() -> Result<(), String> {
     assert_eq!(ORIGINAL.len(), 3136);
     for repo in [false, true] {

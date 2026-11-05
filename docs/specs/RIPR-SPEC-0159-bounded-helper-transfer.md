@@ -882,9 +882,14 @@ forwarding that return unchanged. The closed profile is one root free owner
 `use super::*`, and an unannotated helper with exactly one immutable builtin
 `u32` parameter and a sole tail `owner(&parameter.to_be_bytes()) == parameter`.
 The production owner's name uses the existing bounded plain ASCII identifier
-grammar, matching the helper-name premise. Unicode or other unproved owner
-spellings supply no comparison receipt; this profile does not extend the shared
-macro scanner's identifier grammar.
+grammar, matching the helper-name premise. All parsed identifier tokens in the
+file must have ASCII spellings, including macro definitions, arguments and
+ordinary declarations. Rust [normalizes identifiers to NFC, including macro
+inputs](https://doc.rust-lang.org/reference/identifiers.html#normalization), so
+an unproved Unicode spelling can bind the same name as an ASCII owner. Unicode
+comments and strings remain supported. Unproved identifier spellings supply no
+comparison receipt; this profile does not extend the shared macro scanner's
+identifier grammar.
 The same source file must be the exact root of one current Cargo library target
 collected under Cargo defaults with the ordinary libtest harness. The shared
 target inventory binds metadata ownership, selected default package membership,
