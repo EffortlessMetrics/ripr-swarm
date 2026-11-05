@@ -430,13 +430,24 @@ fn field_origin(
         root = next;
     }
     match &root {
-        ast::Expr::CallExpr(call) => super::OwnerReturnPin::field_call_binds_owner(
-            function,
-            index,
-            test,
-            &call.syntax().text().to_string(),
-            syntax,
-        ),
+        ast::Expr::CallExpr(call) => {
+            let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                return false;
+            };
+            let names_owner = callee
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|name| name.text() == function.name);
+            names_owner
+                && super::OwnerReturnPin::field_call_binds_owner(
+                    function,
+                    index,
+                    test,
+                    &call.syntax().text().to_string(),
+                    syntax,
+                )
+        }
         ast::Expr::PathExpr(path) => {
             let Some(binding) = single_identifier(path) else {
                 return false;

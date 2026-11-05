@@ -470,13 +470,20 @@ fn returned_fields_and_builders_keep_real_identity_and_reject_replaced_values() 
 fn returned_field_constructor_identity_respects_namespace() -> Result<(), String> {
     let source = "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n}\n";
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,1 +4,1 @@\n-  Self { attempts:3 }\n+  Self { attempts:4 }\n";
-    let foreign = "mod foreign { pub struct Builder { pub attempts:u32 } impl Builder { pub fn new()->Self { Self { attempts:4 } } } }";
+    let foreign = "mod foreign { pub struct Builder { pub attempts:u32 } impl Builder { pub fn new()->Self { Self { attempts:4 } } } pub fn replace(_discarded: rust_catalog_description_structural_oracle::Builder)->Builder { Builder::new() } }";
     for (constructor, exposed) in [
-        ("rust_catalog_description_structural_oracle::Builder", true),
-        ("foreign::Builder", false),
+        (
+            "rust_catalog_description_structural_oracle::Builder::new()",
+            true,
+        ),
+        ("foreign::Builder::new()", false),
+        (
+            "foreign::replace(rust_catalog_description_structural_oracle::Builder::new())",
+            false,
+        ),
     ] {
         let test = format!(
-            "{foreign}\n#[test]\nfn observes() {{\n let _=rust_catalog_description_structural_oracle::Builder::new();\n let item={constructor}::new();\n assert_eq!(item.attempts,4);\n}}\n"
+            "{foreign}\n#[test]\nfn observes() {{\n let _=rust_catalog_description_structural_oracle::Builder::new();\n let item={constructor};\n assert_eq!(item.attempts,4);\n}}\n"
         );
         let report = check_report(source, &test, MANIFEST, diff)?;
         let findings = report["findings"].as_array().ok_or("findings missing")?;
