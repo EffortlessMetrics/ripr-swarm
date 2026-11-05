@@ -244,10 +244,6 @@ fn derives_have_root_context(owner: &FunctionSummary, index: &RustIndex) -> bool
         })
 }
 
-fn closed_scope(scope: &SyntaxNode, derives: bool) -> bool {
-    closed_scope_with(scope, derives, None)
-}
-
 fn closed_scope_with(scope: &SyntaxNode, derives: bool, index: Option<&RustIndex>) -> bool {
     let preserves = |attr: ast::Attr| {
         let text = attr.syntax().text().to_string();
@@ -415,7 +411,7 @@ pub(super) fn context_is_closed(
         value_scope::owner_field(&function, expression).is_some()
             && context_scopes(&function)
                 .iter()
-                .all(|scope| closed_scope(scope, derives))
+                .all(|scope| closed_scope_with(scope, derives, Some(index)))
     })
 }
 
@@ -427,7 +423,7 @@ pub(super) fn type_is_primitive(
     index: &RustIndex,
     site: TypeSite,
 ) -> bool {
-    type_is_primitive_with(ty, owner, index, site, None)
+    type_is_primitive_with(ty, owner, index, site, Some(index))
 }
 
 fn type_is_primitive_with(
