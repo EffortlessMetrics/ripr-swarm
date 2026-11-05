@@ -23882,7 +23882,7 @@ async fn external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save() ->
     let (_, pending_duplicate) = tokio::join!(first_reload, pending_duplicate);
     gate_owner
         .join()
-        .map_err(|_| "pending reload gate owner panicked")??;
+        .map_err(|error| format!("pending reload gate owner panicked: {error:?}"))??;
     pending_duplicate?;
     assert_eq!(
         settled_quarantine_refresh(backend).await?,

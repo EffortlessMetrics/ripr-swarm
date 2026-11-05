@@ -14093,7 +14093,7 @@ fn empty_macro_candidate_fast_path_matches_full_scan_and_is_memoized() -> Result
             .call_identity_memos
             .empty_macro_candidates
             .set(false)
-            .map_err(|_| "occupied reference memo")?;
+            .map_err(|value| format!("occupied reference memo: {value}"))?;
         let expected = format!(
             "{:?}",
             full.context_ambiguities(
@@ -14160,8 +14160,10 @@ fn empty_macro_candidate_fast_path_refuses_withheld_and_invalidates_on_index_cha
     warmed
         .context_ambiguities(first_test, first_test.start_line + 1, &first)
         .map_err(|e| format!("{e:?}"))?;
-    let mut replacement = WithheldMacroBindings::default();
-    replacement.any_name = true;
+    let replacement = WithheldMacroBindings {
+        any_name: true,
+        ..Default::default()
+    };
     let withheld = warmed.with_withheld(replacement);
     let result = withheld
         .context_ambiguities(first_test, first_test.start_line + 1, &first)

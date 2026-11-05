@@ -5557,7 +5557,7 @@ mod tests {
     }
 
     #[test]
-    fn transparent_macro_scan_concurrent_calls_preserve_uncached_answer() {
+    fn transparent_macro_scan_concurrent_calls_preserve_uncached_answer() -> Result<(), String> {
         let mut index = RustIndex::default();
         let path = PathBuf::from("src/lib.rs");
         index.insert_file_only(
@@ -5568,7 +5568,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        std::thread::scope(|scope| {
+        std::thread::scope(|scope| -> Result<(), String> {
             let mut handles = Vec::new();
             for _ in 0..8 {
                 let index = &index;
@@ -5577,15 +5577,19 @@ mod tests {
                 }));
             }
             for handle in handles {
-                assert!(handle.join().is_ok());
+                handle
+                    .join()
+                    .map_err(|error| format!("macro scan worker panicked: {error:?}"))?;
             }
-        });
+            Ok(())
+        })?;
         assert!(transparent_macro_name_rebound_uncached(&index));
         let scans = index
             .call_identity_memos
             .transparent_macro_scans
             .load(std::sync::atomic::Ordering::Relaxed);
         assert!((1..=8).contains(&scans));
+        Ok(())
     }
 
     #[test]
@@ -5706,8 +5710,12 @@ mod tests {
                     .map_err(|error| error.to_string())?,
                 Err(error) => return Err(error.to_string()),
             };
-            assert!(poisoner.join().is_ok());
-            assert!(reader.join().is_ok());
+            poisoner
+                .join()
+                .map_err(|error| format!("manifest poisoner panicked: {error:?}"))?;
+            reader
+                .join()
+                .map_err(|error| format!("manifest reader panicked: {error:?}"))?;
             assert!(
                 blocked,
                 "cached lookup returned while verifier lock was held"
