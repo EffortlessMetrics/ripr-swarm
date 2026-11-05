@@ -148,7 +148,8 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
 /// identity and opts into compact explain. Policy-bearing reports keep the
 /// old route, including artifact replay, which rejects the agent format.
 #[test]
-fn agent_explain_navigation_preserves_scope_format_and_policy_compatibility() -> Result<(), String> {
+fn agent_explain_navigation_preserves_scope_format_and_policy_compatibility() -> Result<(), String>
+{
     use crate::analysis::DiffScopeFilter;
     use crate::app::{CheckInput, FindingDrillIn, finding_navigation_with_worktree};
     use crate::output::suppressions::CheckSuppressionOutcome;
@@ -173,7 +174,12 @@ fn agent_explain_navigation_preserves_scope_format_and_policy_compatibility() ->
         for (case, worktree, diff, artifact) in [
             ("committed", false, None, None),
             ("worktree", true, None, None),
-            ("diff", false, Some(Path::new("change with 'quote'.diff")), None),
+            (
+                "diff",
+                false,
+                Some(Path::new("change with 'quote'.diff")),
+                None,
+            ),
             (
                 "artifact",
                 false,

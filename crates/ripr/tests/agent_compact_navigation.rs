@@ -49,8 +49,11 @@ impl Fixture {
         fs::create_dir(&fixture.foreign).map_err(|error| error.to_string())?;
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap");
         for relative in ["Cargo.toml", "src/lib.rs", "tests/pricing.rs"] {
-            fs::copy(source.join("input").join(relative), fixture.root.join(relative))
-                .map_err(|error| format!("copy {relative}: {error}"))?;
+            fs::copy(
+                source.join("input").join(relative),
+                fixture.root.join(relative),
+            )
+            .map_err(|error| format!("copy {relative}: {error}"))?;
         }
         let manifest_path = fixture.root.join("Cargo.toml");
         let mut manifest = fs::read_to_string(&manifest_path).map_err(|error| error.to_string())?;
@@ -67,7 +70,10 @@ impl Fixture {
             "amount > discount_threshold",
             1,
         );
-        assert_ne!(original, changed, "fixture must contain the changed boundary");
+        assert_ne!(
+            original, changed,
+            "fixture must contain the changed boundary"
+        );
         fs::write(&source_path, original).map_err(|error| error.to_string())?;
         fixture_git_ok(&fixture.root, &["init"])?;
         fixture_git_ok(&fixture.root, &["config", "core.autocrlf", "false"])?;
@@ -189,9 +195,7 @@ impl Drop for Fixture {
 }
 
 fn read_capture(path: &Path) -> Result<Vec<u8>, String> {
-    let size = fs::metadata(path)
-        .map_err(|error| error.to_string())?
-        .len();
+    let size = fs::metadata(path).map_err(|error| error.to_string())?.len();
     if size > MAX_CAPTURE_BYTES {
         return Err(format!(
             "capture {} exceeds {MAX_CAPTURE_BYTES} bytes",
@@ -237,7 +241,9 @@ fn compact_check_explain_context_journey_preserves_the_selected_subject() -> Res
                 .lines()
                 .find(|line| line.starts_with("weakly_exposed|"))
                 .and_then(|line| line.split_once("|id=").map(|(_, id)| id))
-                .ok_or_else(|| format!("{scope}: real fixture must report a weak gap: {checked}"))?;
+                .ok_or_else(|| {
+                    format!("{scope}: real fixture must report a weak gap: {checked}")
+                })?;
             let explain = next_command(&checked)?;
             assert!(explain.ends_with(" --format agent"), "{scope}: {explain}");
             assert_eq!(explain.contains("--from "), artifact, "{scope}: {explain}");
@@ -247,7 +253,9 @@ fn compact_check_explain_context_journey_preserves_the_selected_subject() -> Res
                 "{explained}"
             );
             assert!(
-                explained.lines().any(|line| line.ends_with(&format!("|id={id}"))),
+                explained
+                    .lines()
+                    .any(|line| line.ends_with(&format!("|id={id}"))),
                 "{explained}"
             );
             assert!(
@@ -275,7 +283,10 @@ fn compact_check_explain_context_journey_preserves_the_selected_subject() -> Res
                     .strip_suffix(" --format agent")
                     .ok_or("missing compact suffix for removal control")?;
                 let human = success_text(&fixture.follow(ordinary)?)?;
-                assert!(!human.trim().is_empty(), "human control must render evidence");
+                assert!(
+                    !human.trim().is_empty(),
+                    "human control must render evidence"
+                );
                 assert!(!human.starts_with("#ripr explain agent"), "{human}");
             }
         }
