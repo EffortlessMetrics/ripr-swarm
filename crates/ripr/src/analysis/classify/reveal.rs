@@ -3026,6 +3026,14 @@ fn analyze_related_assertions(
                     role: crate::domain::RelatedTestRole::Contributing,
                 });
             } else if matched {
+                let captured_log_read =
+                    (return_admission.captured_log_exact_membership_confirms)(test, assertion);
+                let collection_read = collection_observer_confirms(
+                    &probe.expression,
+                    matches!(probe.family, ProbeFamily::CallDeletion),
+                    test,
+                    assertion,
+                );
                 let observation_confirmed = !self_computed
                     // Refusal withholds kind-only credit, not an independently
                     // confirmed token. Retain the token path's existing identity gates.
@@ -3055,9 +3063,7 @@ fn analyze_related_assertions(
                                 || collection_argument_read
                                 || out_parameter_confirmed
                                 || recording_double_read
-                                || (return_admission.captured_log_exact_membership_confirms)(
-                                    test, assertion,
-                                )
+                                || captured_log_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
@@ -3108,7 +3114,23 @@ fn analyze_related_assertions(
                 // A call elsewhere in this test establishes reach, not what
                 // this oracle reads. Bind the assertion itself to the owner's
                 // result; retain the existing producer-authenticated observers.
-                let identity = (owner_bound
+                // The lexical binding helper is sufficient for association, but
+                // not for strong identity: it does not establish binding
+                // currentness after shadowing. Bound-result identity belongs
+                // to the indexed producer pin below. Only a direct owner call
+                // in the oracle operands can use this lexical path.
+                let direct_owner_oracle = !import_defeats_owner
+                    && !cross_package_defeats_owner
+                    && !match_context.owner_shadowed
+                    && match_context.owner_callee.is_some_and(|owner| {
+                        assertion_comparison_operands(&assertion.text).is_some_and(|operands| {
+                            operands
+                                .iter()
+                                .any(|operand| is_whole_owner_call(operand.trim(), owner))
+                        }) || crate::analysis::extract::outer_assertion_condition(&assertion.text)
+                            .is_some_and(|operand| is_whole_owner_call(operand.trim(), owner))
+                    });
+                let identity = (direct_owner_oracle
                     && matches!(
                         reason,
                         RelationReason::DirectOwnerCall
@@ -3130,7 +3152,20 @@ fn analyze_related_assertions(
                     || recording_double_read
                     || field_collection_read
                     || collection_argument_read
-                    || out_parameter_confirmed;
+                    || out_parameter_confirmed
+                    || captured_log_read
+                    || collection_read
+                    // Preserve the existing effect-family token witness when
+                    // the same assertion passes its carrier and kind gates.
+                    // A relation or unrelated whole-object oracle alone still
+                    // cannot acquire identity through this path.
+                    || (is_effect_family(&probe.family)
+                        && !is_proximity_only(*reason)
+                        && has_token_match
+                        && confirms_observation
+                        && effect_kind_confirms
+                        && effect_observer_confirms(assertion)
+                        && (return_admission.effect_state_carried)(test, assertion));
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated
                 // one regardless of encounter order; a weaker oracle cannot.

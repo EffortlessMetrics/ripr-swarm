@@ -195,9 +195,11 @@ fn sink_identity_real_parser_discarded_return_cannot_lend_identity_to_another_as
             "assert_eq!(description(), \"verifies catalog\"); assert_eq!(other, \"verifies catalog\");",
             StageState::Yes,
         ),
+        // This parser-only harness has no indexed return pin. The workspace
+        // integration control separately requires this genuine binding exposed.
         (
             "let result = description(); assert_eq!(result, \"verifies catalog\");",
-            StageState::Yes,
+            StageState::Weak,
         ),
     ] {
         let source = format!(

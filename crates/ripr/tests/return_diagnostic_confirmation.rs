@@ -236,6 +236,22 @@ fn discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle() ->
     let observed = "assert_eq!(default_check_description(), \"verifies catalog consistency\");";
     for (assertions, expected) in [
         (unrelated.to_string(), "weakly_exposed"),
+        (
+            "let result = default_check_description(); assert_eq!(other, \"verifies catalog consistency\", \"{result}\");".to_string(),
+            "weakly_exposed",
+        ),
+        (
+            "let result = default_check_description(); let result = \"verifies catalog consistency\"; assert_eq!(result, \"verifies catalog consistency\");".to_string(),
+            "weakly_exposed",
+        ),
+        (
+            "let result = { let _ = default_check_description(); \"verifies catalog consistency\" }; assert_eq!(result, \"verifies catalog consistency\");".to_string(),
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!({ let _ = default_check_description(); \"verifies catalog consistency\" }, \"verifies catalog consistency\");".to_string(),
+            "weakly_exposed",
+        ),
         (observed.to_string(), "exposed"),
         (format!("{unrelated}\n{observed}"), "exposed"),
         (format!("{observed}\n{unrelated}"), "exposed"),
