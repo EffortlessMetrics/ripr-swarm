@@ -910,6 +910,10 @@ fn public_leads_ask_the_question_and_qualify_the_test_to_add() -> Result<(), Str
 #[test]
 fn cli_first_hour_shows_the_finding_before_the_reference() -> Result<(), String> {
     let section = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    check_first_hour_order(&section)
+}
+
+fn check_first_hour_order(section: &str) -> Result<(), String> {
     let excerpt = section
         .split("```text\n")
         .nth(1)
@@ -930,17 +934,52 @@ fn cli_first_hour_shows_the_finding_before_the_reference() -> Result<(), String>
             "expected the four-line boundary excerpt, got {quoted}"
         ));
     }
+    for label in [
+        "Changed behavior:",
+        "Missing check:",
+        "Related test",
+        "Next step:",
+    ] {
+        if !excerpt
+            .lines()
+            .any(|line| line.trim_start().starts_with(label))
+        {
+            return Err(format!("finding excerpt missing {label}"));
+        }
+    }
+    let run = section
+        .find("```bash\nripr check\n```")
+        .ok_or("check command missing")?;
     let finding = section
         .find("Changed behavior:")
         .ok_or("finding excerpt missing")?;
     let reference = section
         .find("### Progress, terms and machine output")
         .ok_or("reference subsection missing")?;
+    let next = section
+        .find("When a finding is selected,")
+        .ok_or("next-step guidance missing")?;
     let progress = section
         .find("ripr progress: <stage>")
         .ok_or("progress rules lost from the reference")?;
-    if !(finding < reference && reference < progress) {
-        return Err("mechanism must follow the first result, inside the reference".to_string());
+    if !(run < finding && finding < next && next < reference && reference < progress) {
+        return Err("run, finding and next steps must precede the reference".to_string());
     }
+    Ok(())
+}
+
+#[test]
+fn first_hour_order_rejects_missing_or_late_next_steps() -> Result<(), String> {
+    let section = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    let missing_line = section.replace("  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions\n", "  Evidence: reach yes · infection weak · propagation yes · observation yes · assertion missing\n");
+    assert!(check_first_hour_order(&missing_line).is_err());
+    let guidance = "When a finding is selected,";
+    let late_guidance = section
+        .replacen(guidance, "When the finding is selected,", 1)
+        .replace(
+            "ripr progress: <stage>",
+            "When a finding is selected, ripr progress: <stage>",
+        );
+    assert!(check_first_hour_order(&late_guidance).is_err());
     Ok(())
 }
