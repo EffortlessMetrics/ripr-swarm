@@ -198,12 +198,11 @@ impl Drop for Scratch {
 
 #[test]
 fn root_and_nested_selectors_keep_libtest_names() -> Result<(), String> {
+    let root = "quickcheck_generator_rendered";
+    let nested = "ripr::analysis::facts::quickcheck_generator_tests";
+    assert_eq!(exact_selector(root, "positive")?, "positive");
     assert_eq!(
-        exact_selector("quickcheck_generator_rendered", "positive")?,
-        "positive"
-    );
-    assert_eq!(
-        exact_selector("ripr::analysis::facts::quickcheck_generator_tests", "positive")?,
+        exact_selector(nested, "positive")?,
         "analysis::facts::quickcheck_generator_tests::positive"
     );
     Ok(())
