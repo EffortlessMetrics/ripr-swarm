@@ -909,3 +909,28 @@ with a NoScope error, so it must run with a non-empty diff against
 
 - `evidence_promotion_honesty_charter_members`: count of `must_not_promote` cases in corpus
 - `evidence_promotion_honesty_control_cases`: count of `must_promote` cases in corpus
+
+## Sink identity and returned-text changes (#12010)
+
+`rust_binding_status_wrong_owner_observer` rejects strong exposure from an
+oracle on a nearby status rather than the changed binding decision.
+`rust_catalog_description_structural_oracle` rejects strong exposure for a
+wording change when the oracle checks only structure and shares unchanged
+tokens. Both controls are registered with `must_not_promote` and a maximum
+`weakly_exposed` class.
+
+Reveal keeps the selected oracle's identity, strength and observation
+confirmation together. A file/module relation alone caps a `Yes` discriminator
+to `Weak`; an admitted producer-bound return/effect witness retains its
+existing authority. Equal-strength ties prefer an identity-bound, confirmed
+oracle regardless of order. For a ReturnValue probe with nonempty before-text,
+plain lexical confirmation uses after-tokens absent from the before-text.
+A returned struct literal with parser-established changed fields retains the
+existing field-specific confirmation and overwrite refusals.
+Association still uses all tokens, and a producer-bound value pin remains
+authoritative. No-before-text probes retain the existing lexical behavior.
+
+The paired controls in `classify/reveal/tests/sink_identity_tests.rs` exercise
+proximity/direct/helper identity, reversed equal-strength ties, changed versus
+shared return tokens, no-before-text compatibility and refusal to borrow a
+weaker oracle's confirmation.

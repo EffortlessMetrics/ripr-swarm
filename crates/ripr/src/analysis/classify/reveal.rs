@@ -444,7 +444,7 @@ pub(in crate::analysis) fn reveal_outcome(
     let (related, related_tests_total, direct_rows) =
         finalize_related_tests_with_direct_rows(analysis.related, diff_touched, &owner_calls);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
-    let discriminate = if analysis.refused_context && !analysis.matched_any {
+    let mut discriminate = if analysis.refused_context && !analysis.matched_any {
         StageEvidence::new(
             StageState::No,
             Confidence::Medium,
@@ -488,6 +488,22 @@ pub(in crate::analysis) fn reveal_outcome(
         )
     };
 
+    // #12010: proximity and token coincidence cannot supply the identity of
+    // the strongest oracle. Keep identity on that same assertion alongside
+    // strength and confirmation; independent witnesses cannot be combined.
+    if discriminate.state == StageState::Yes && !analysis.strongest_identity {
+        let linkage = analysis
+            .strongest_reason
+            .map_or("unknown", RelationReason::as_str);
+        discriminate = StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "Discriminator uncredited: strongest oracle reaches only through {linkage} linkage without sink-level evidence (identity_unresolved)"
+            ),
+        );
+    }
+
     RevealOutcome {
         observe,
         discriminate,
@@ -523,6 +539,9 @@ struct RevealAssertionAnalysis {
     /// strength. A weaker token match must not upgrade an unrelated exact
     /// oracle, even when both assertions are in the same related test.
     strongest_observation_confirmed: bool,
+    /// Identity belongs to the selected assertion, never a separate weaker row.
+    strongest_identity: bool,
+    strongest_reason: Option<RelationReason>,
     matched_any: bool,
     /// #6692: some credited assertion pinned the owner's return value.
     owner_pin_credited: bool,
@@ -2310,7 +2329,33 @@ fn analyze_related_assertions(
             (error_construction_variant.as_deref() != Some(removed)).then(|| removed.to_string())
         })
         .flatten();
+    // A plain return's shared tokens survive the edit and cannot confirm it.
+    // Association keeps the full token set; producer-bound return/field/effect
+    // witnesses retain their existing authority. No-before probes keep the
+    // prior lexical behavior.
+    let delta_tokens = probe
+        .before
+        .as_deref()
+        .filter(|before| {
+            !before.trim().is_empty()
+                && matches!(probe.family, ProbeFamily::ReturnValue)
+                && changed_literal_fields(probe).is_none()
+        })
+        .map(|before| {
+            let mut before_tokens = extract_identifier_tokens(before);
+            before_tokens.extend(
+                super::value_transfer::fold_literal_integer(before)
+                    .into_iter()
+                    .flat_map(|folded| extract_identifier_tokens(&folded)),
+            );
+            probe_tokens
+                .iter()
+                .filter(|token| !before_tokens.contains(token))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
     let match_context = RevealMatchContext {
+        confirmation_tokens: delta_tokens.as_deref(),
         probe_tokens: &probe_tokens,
         effect_literals: &effect_literals,
         match_arm_variants: &match_arm_variants,
@@ -2397,6 +2442,8 @@ fn analyze_related_assertions(
     let mut strongest_kind = OracleKind::Unknown;
     let mut strongest_proximity_only = false;
     let mut strongest_observation_confirmed = false;
+    let mut strongest_identity = false;
+    let mut strongest_reason = None;
     let mut matched_any = false;
     let mut owner_pin_credited = false;
     let mut removed_variant_pin_credited = false;
@@ -3056,18 +3103,38 @@ fn analyze_related_assertions(
                     probe_relative_oracle_strength(&probe.family, assertion)
                 };
                 relative_strength = self_computed_cap(relative_strength, self_computed);
+                let identity = matches!(
+                    reason,
+                    RelationReason::DirectOwnerCall
+                        | RelationReason::HelperOwnerCall
+                        | RelationReason::AssertionTargetAffinity
+                        | RelationReason::OwnerNamedTest
+                ) || owner_return_pin_holds(
+                    &assertion_context,
+                    assertion,
+                    owner_pinned,
+                    import_defeats_owner,
+                    cross_package_defeats_owner,
+                ) || wrapper_pinned
+                    || implicit_observer == Some(true)
+                    || recording_double_read
+                    || field_collection_read
+                    || collection_argument_read
+                    || out_parameter_confirmed;
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated
                 // one regardless of encounter order; a weaker oracle cannot.
                 if relative_strength.rank() > strongest.rank()
                     || (relative_strength.rank() == strongest.rank()
                         && observation_confirmed
-                        && !strongest_observation_confirmed)
+                        && (!strongest_observation_confirmed || (identity && !strongest_identity)))
                 {
                     strongest = relative_strength.clone();
                     strongest_kind = assertion.kind.clone();
                     strongest_proximity_only = is_proximity_only(*reason);
                     strongest_observation_confirmed = observation_confirmed;
+                    strongest_identity = identity;
+                    strongest_reason = Some(*reason);
                 }
                 related.push(RelatedTest {
                     name: test.name.clone(),
@@ -3133,6 +3200,8 @@ fn analyze_related_assertions(
         strongest_kind,
         strongest_proximity_only,
         strongest_observation_confirmed,
+        strongest_identity,
+        strongest_reason,
         matched_any,
         owner_pin_credited,
         removed_variant_pin_credited,
@@ -3369,6 +3438,8 @@ fn identifier_names_error_observer(token: &str) -> bool {
 /// (grouped so the per-assertion matcher stays under the argument limit).
 struct RevealMatchContext<'a> {
     probe_tokens: &'a [String],
+    /// ReturnValue lexical confirmation only; association uses all probe tokens.
+    confirmation_tokens: Option<&'a [String]>,
     effect_literals: &'a [String],
     match_arm_variants: &'a [String],
     match_arm_literals: &'a [String],
@@ -4370,6 +4441,7 @@ fn assertion_matches_probe_detail_with_literals(
 ) -> (bool, bool) {
     let RevealMatchContext {
         probe_tokens,
+        confirmation_tokens,
         effect_literals,
         match_arm_variants,
         match_arm_literals,
@@ -4430,10 +4502,14 @@ fn assertion_matches_probe_detail_with_literals(
         .then(|| crate::analysis::extract::assertion_oracle_text(&assertion.text))
         .flatten();
     let confirmation_text = return_operands.as_deref().unwrap_or(&assertion.text);
-    let confirming_token_match = probe_tokens.iter().any(|token| {
-        contains_as_whole_word(confirmation_text, token)
-            && (owner_bound || !owner_scoped_tokens.contains(token))
-    });
+    let confirming_token_match = confirmation_tokens
+        .unwrap_or(probe_tokens)
+        .iter()
+        .any(|token| {
+            probe_tokens.contains(token)
+                && contains_as_whole_word(confirmation_text, token)
+                && (owner_bound || !owner_scoped_tokens.contains(token))
+        });
     let effect_literal_match = !effect_literals.is_empty()
         && rust_string_literals(&assertion.text)
             .iter()
@@ -4685,6 +4761,7 @@ fn assertion_matches_probe_detail(
     assertion_matches_probe_detail_with_literals(
         &RevealMatchContext {
             probe_tokens,
+            confirmation_tokens: None,
             effect_literals: &[],
             match_arm_variants,
             match_arm_literals,
@@ -8547,9 +8624,9 @@ mod tests {
                 ],
                 &|_| true,
             );
-            if discriminate.state != StageState::Yes {
+            if discriminate.state != StageState::Weak {
                 return Err(format!(
-                    "{proximity:?} test lost its oracle credit: {discriminate:?}"
+                    "{proximity:?} test acquired sink identity from possible reach alone: {discriminate:?}"
                 ));
             }
         }
@@ -9265,6 +9342,7 @@ mod tests {
         ] {
             let context = RevealMatchContext {
                 probe_tokens: &empty,
+                confirmation_tokens: None,
                 effect_literals: &empty,
                 match_arm_variants: &empty,
                 match_arm_literals: &pattern_literals,
@@ -9784,7 +9862,7 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions("max_header_size", vec![exact_error]);
         let (_, proximity, _) = reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
-        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
+        assert_eq!(proximity.state, StageState::Weak, "{proximity:?}");
         assert!(
             !proximity.summary.contains("error variant"),
             "proximity-linked assertion kind was named: {proximity:?}"
@@ -9792,6 +9870,7 @@ return Err(\"typed pin\".into());
         // Discriminating alternate: the same assertion reached by a call
         // keeps its kind-specific wording.
         let (_, called, _) = reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+        assert_eq!(called.state, StageState::Yes);
         assert_eq!(
             called.summary, "Strong oracle found: exact error variant assertion",
             "{called:?}"
@@ -9810,10 +9889,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions("max_header_size", vec![exact_error]);
         let (_, proximity, _) = reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
-        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
+        assert_eq!(proximity.state, StageState::Weak, "{proximity:?}");
         assert_eq!(
             proximity.summary,
-            "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)",
+            "Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without sink-level evidence (identity_unresolved)",
             "{proximity:?}"
         );
     }
@@ -11750,7 +11829,7 @@ return Err(\"typed pin\".into());
             for (text, expected) in [
                 (
                     "assert_eq!(persist_audit(record), expected);",
-                    StageState::Yes,
+                    StageState::Weak,
                 ),
                 ("assert_eq!(parsed, expected);", StageState::Weak),
             ] {
@@ -11890,10 +11969,10 @@ return Err(\"typed pin\".into());
                 None,
             );
             assert_eq!(implicit.state, StageState::Yes);
-            // A solitary proximity observer retains the prior reading.
+            // A solitary proximity observer has no sink identity (#12010).
             let (_, alone, _) =
                 reveal_evidence(&probe, &[(&sibling, RelationReason::SameTestFile)]);
-            assert_eq!(alone.state, StageState::Yes);
+            assert_eq!(alone.state, StageState::Weak);
             // Direct/helper relations confirm without a shared token.
             for reason in [
                 RelationReason::DirectOwnerCall,
@@ -11908,7 +11987,7 @@ return Err(\"typed pin\".into());
                 );
                 assert_eq!(direct.state, StageState::Yes);
             }
-            // Actual token confirmation remains independent of kind.
+            // Token confirmation alone still cannot bind this sibling to the sink.
             let token = test_with_assertions(
                 "effect_named",
                 vec![oracle(
@@ -11925,8 +12004,8 @@ return Err(\"typed pin\".into());
                 ],
                 &|_| true,
             );
-            assert_eq!(confirmed.state, StageState::Yes);
-            // The established opaque-macro allowance remains explicit.
+            assert_eq!(confirmed.state, StageState::Weak);
+            // Opaque macro reach alone cannot establish sink identity either.
             let mut opaque = sibling.clone();
             opaque.body = "fixture_setup!();".into();
             let (_, allowed, _) = reveal_evidence(
@@ -11936,7 +12015,7 @@ return Err(\"typed pin\".into());
                     (&opaque, RelationReason::SameTestFile),
                 ],
             );
-            assert_eq!(allowed.state, StageState::Yes);
+            assert_eq!(allowed.state, StageState::Weak);
         }
     }
 
@@ -12202,10 +12281,10 @@ return Err(\"typed pin\".into());
         assert_eq!(may_reach.state, StageState::Weak, "{}", may_reach.summary);
         assert_eq!(may_reach.summary, PROXIMITY_CONFIRMATION_WITHHELD);
 
-        // Without the pin the unindexed-call allowance still confirms.
+        // Without the pin, possible reach still does not establish sink identity.
         let (_, unpinned, _) =
             reveal_evidence_proximity_reach_pinning(&probe, &related, &|_| true, &|_, _| false);
-        assert_eq!(unpinned.state, StageState::Yes, "{}", unpinned.summary);
+        assert_eq!(unpinned.state, StageState::Weak, "{}", unpinned.summary);
     }
 
     /// #6297: a same-file test that names the arm's variant through another
@@ -12266,10 +12345,9 @@ return Err(\"typed pin\".into());
         assert_eq!(reaching_only.state, StageState::Weak);
         assert_ne!(reaching_only.summary, PROXIMITY_CONFIRMATION_WITHHELD);
 
-        // Alone, the same-file test still confirms: proximity keeps crediting
-        // when no related test reaches the owner by a call.
+        // Alone, the same-file test still lacks sink identity (#12010).
         let (_, alone, _) = reveal_evidence(&probe, &[(&naming, RelationReason::SameTestFile)]);
-        assert_eq!(alone.state, StageState::Yes, "{}", alone.summary);
+        assert_eq!(alone.state, StageState::Weak, "{}", alone.summary);
 
         // A seam callee call runs the callee, not the owner, so it does not
         // withhold the same-file confirmation either.
@@ -12282,13 +12360,13 @@ return Err(\"typed pin\".into());
         );
         assert_eq!(
             beside_seam.state,
-            StageState::Yes,
+            StageState::Weak,
             "{}",
             beside_seam.summary
         );
 
         // A same-file test that may run the owner (it calls a public wrapper
-        // of `seconds`) keeps confirming beside the reaching test.
+        // of `seconds`) still lacks an admitted sink-identity witness.
         let (_, may_reach, _, _) = reveal_evidence_with_expression(
             &probe,
             &probe.expression,
@@ -12330,7 +12408,7 @@ return Err(\"typed pin\".into());
             },
             None,
         );
-        assert_eq!(may_reach.state, StageState::Yes, "{}", may_reach.summary);
+        assert_eq!(may_reach.state, StageState::Weak, "{}", may_reach.summary);
     }
 
     /// #7063: an exact error variant is shared by every function returning
@@ -12393,12 +12471,12 @@ return Err(\"typed pin\".into());
                 reveal_evidence(&probe, &[(&other_owner, RelationReason::SameTestFile)]);
             assert_eq!(
                 alone.state,
-                StageState::Yes,
+                StageState::Weak,
                 "{expression}: {}",
                 alone.summary
             );
 
-            // A same-file test that may run the owner keeps confirming.
+            // Possible reach alone does not bind the changed sink (#12010).
             let (_, may_reach, _, _) = reveal_evidence_with_expression(
                 &probe,
                 &probe.expression,
@@ -12442,7 +12520,7 @@ return Err(\"typed pin\".into());
             );
             assert_eq!(
                 may_reach.state,
-                StageState::Yes,
+                StageState::Weak,
                 "{expression}: {}",
                 may_reach.summary
             );
@@ -12522,8 +12600,8 @@ return Err(\"typed pin\".into());
             PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
         );
 
-        // A return value that names no error variant keeps the #4486
-        // same-file credit beside a reaching test.
+        // A return value that names no error variant still needs sink identity;
+        // possible reach through a same-file sibling cannot supply it (#12010).
         let ok_probe = probe(ProbeFamily::ReturnValue, "return Ok(amount + 1);");
         let same_file_ok = test_with_assertions(
             "refund_adds_one",
@@ -12542,7 +12620,7 @@ return Err(\"typed pin\".into());
             &|_| true,
         );
         assert_ne!(ok_beside.summary, PROXIMITY_VARIANT_CONFIRMATION_WITHHELD);
-        assert_eq!(ok_beside.state, StageState::Yes, "{}", ok_beside.summary);
+        assert_eq!(ok_beside.state, StageState::Weak, "{}", ok_beside.summary);
     }
 
     /// #9167: beside a test that calls the owner, a same-file test that cannot

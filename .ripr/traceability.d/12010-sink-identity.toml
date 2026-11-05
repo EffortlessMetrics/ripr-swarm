@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can",
+  "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_equal_strength_bound_oracle_wins_in_either_order",
+  "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_before_controls",
+  "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token",
+]
