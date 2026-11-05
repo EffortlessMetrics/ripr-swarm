@@ -1,0 +1,25 @@
+{
+  "main": "7adfad9a5d7feb132700485de5362997a7448b47",
+  "cache_constants": [
+    [
+      "CACHE_SCHEMA_VERSION",
+      "1.161"
+    ],
+    [
+      "SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION",
+      "0.163"
+    ],
+    [
+      "COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION",
+      "0.163"
+    ]
+  ],
+  "compact_prefill_module": false,
+  "compact_prefill_publish": false,
+  "returned_boundary_view_present": false,
+  "overlap_prs": {
+    "13314": "open/unmerged, head478a4c7d; metadata mergeablefalse cause not independently established",
+    "13110": "open/unmerged, headb26a0298; metadata mergeablefalse cause not independently established"
+  },
+  "limit": "Specific current implementations checked; absence of ancestor alone is not used as absence of equivalent work."
+}

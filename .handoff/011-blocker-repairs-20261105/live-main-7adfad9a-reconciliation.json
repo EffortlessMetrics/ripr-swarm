@@ -1,0 +1,75 @@
+{
+  "observed_utc": "2026-11-05T19:33:39.832731+00:00",
+  "main": "7adfad9a5d7feb132700485de5362997a7448b47",
+  "composition_base": "898197c2ef0ec508fd4e1d5ac52b53e25d1ee320",
+  "candidate": "0402cb776a96d21324b53792dc41356915e3aa31",
+  "new_commits": [
+    "7adfad9a5d7feb132700485de5362997a7448b47 fix(agent-format): bounded records and a named route for all-limited diffs (#13322)",
+    "734389b783aad8b017dde07cf06a0bbf5eee77e6 test(coverage): repair QuickCheck fixtures and validate test debuginfo stripping (#13288)",
+    "5c55faed5194d9a00199b3ce041f780d434a4a79 fix(output): status poll emits one-line shell note; -v restores full essay (#13242) (#13312)"
+  ],
+  "changed_paths": [
+    ".github/workflows/coverage.yml",
+    ".ripr/traceability.d/13285-quickcheck-coverage-fixtures.toml",
+    ".ripr/traceability.d/4978-coverage-strip.toml",
+    "Cargo.lock",
+    "changelog.d/13238-agent-format-limited-records.md",
+    "changelog.d/13242-status-shell-note.md",
+    "changelog.d/13285-quickcheck-coverage-fixtures.md",
+    "changelog.d/4978-coverage-strip.md",
+    "crates/ripr/src/analysis/facts/quickcheck_generator_tests.rs",
+    "crates/ripr/src/analysis/language/rust/mod.rs",
+    "crates/ripr/src/app/agent_status.rs",
+    "crates/ripr/src/cli/help/agent.rs",
+    "crates/ripr/src/output/human/agent.rs",
+    "crates/ripr/src/output/human/agent_tests.rs",
+    "crates/ripr/src/output/markdown.rs",
+    "crates/ripr/src/testing/compiler_environment.rs",
+    "crates/ripr/src/testing/mod.rs",
+    "crates/ripr/tests/cli_smoke.rs",
+    "crates/ripr/tests/cli_smoke/leftover_status.rs",
+    "crates/ripr/tests/quickcheck_generator_rendered.rs",
+    "docs/AGENT_AS_USER_RUNS.md",
+    "docs/ci/coverage.md",
+    "docs/specs/RIPR-SPEC-0153-rust-source-role.md",
+    "docs/specs/RIPR-SPEC-0266-coverage-binary-id-diagnostics.md",
+    "policy/process_allowlist.d/13285-quickcheck-compiler-fixtures.txt",
+    "policy/process_allowlist.d/4978-coverage-process.txt",
+    "tools/repo-policy/Cargo.toml",
+    "tools/repo-policy/src/coverage_diagnostics.rs",
+    "tools/repo-policy/src/coverage_diagnostics/process.rs",
+    "tools/repo-policy/src/coverage_diagnostics/process_tests.rs",
+    "tools/repo-policy/src/coverage_diagnostics/strip_tests.rs",
+    "tools/repo-policy/src/workflow_tests.rs"
+  ],
+  "merge_tree_exit": 0,
+  "merge_tree_output": "c6fe2b2671b521a023d43ad79c71df8ef61cf0e2\n\nAuto-merging crates/ripr/tests/cli_smoke.rs\nAuto-merging docs/ci/coverage.md\n",
+  "ancestry": {
+    "history_source": {
+      "input": "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a",
+      "resolved": "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a",
+      "ancestor": false
+    },
+    "7490_reviewed_source": {
+      "input": "9639eca69ec36fb5ca153d713eb2253f2b15d339",
+      "resolved": "9639eca69ec36fb5ca153d713eb2253f2b15d339",
+      "ancestor": false
+    },
+    "7490_materialized_core": {
+      "input": "339e4c1d",
+      "resolved": "339e4c1dea913e10a95c3efb0e198190274f2a65",
+      "ancestor": false
+    },
+    "12010_returned_boundary": {
+      "input": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "resolved": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "ancestor": false
+    },
+    "current_observer_repair": {
+      "input": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "resolved": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "ancestor": false
+    }
+  },
+  "landing_window": "latest #13325 and #13314 comments unchanged: no acknowledgement; no hold imposed"
+}
