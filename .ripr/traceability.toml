@@ -9344,6 +9344,9 @@ id = "RIPR-SPEC-0108"
 name = "evidence-promotion honesty meta-gate"
 spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
 tests = [
+  "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::projected_effect_payload_requires_fresh_state_and_a_preserving_map",
+  "crates/ripr/tests/owner_pin_execution.rs::awaited_predicate_identity_does_not_credit_discarded_or_overwritten_results",
+  "crates/ripr/tests/owner_pin_execution.rs::exact_error_kind_projection_keeps_its_own_result_identity",
   "crates/ripr/tests/operand_whitespace.rs::primitive_type_aliases_do_not_hide_observed_operator_effects",
   "crates/ripr/tests/operand_whitespace.rs::whitespace_does_not_supply_the_missing_shipping_discriminator",
   "crates/ripr/tests/operand_callee_identity.rs::a_genuine_primitive_call_retains_the_operand_pin_downgrade",
@@ -9445,6 +9448,7 @@ tests = [
   "crates/ripr/src/analysis/language/perl/tests.rs::empty_diff_with_supplied_perl_packet_reports_findings",
 ]
 fixtures = [
+  "fixtures/rust_effect_receiver_intercepted_first",
   "fixtures/typescript_reassigned_setup_hook",
   "fixtures/typescript_parameter_default_setup_hook",
   "fixtures/typescript_trailing_setup_hook_argument",

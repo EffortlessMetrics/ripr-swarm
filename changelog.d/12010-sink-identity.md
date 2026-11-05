@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- Withhold strong Rust discrimination from proximity-only oracles and unchanged return-value tokens; keep identity and confirmation on the selected oracle, including established returned-array fields and bound bare or qualified wrapper results, awaited scalar results, and exact error-kind projections (#12010).
+- Keep strong Rust discrimination tied to the assertion that observes the changed result or effect; reject proximity-only oracles, unchanged return tokens, stale results and intercepted collection reads while retaining validated wrapper, array, async and error observers (#12010).

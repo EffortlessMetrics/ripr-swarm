@@ -3164,7 +3164,7 @@ fn module_reexports_owner(
     })
 }
 
-fn qualified_call_names_owner(
+pub(super) fn qualified_call_names_owner(
     index: &RustIndex,
     owner: &FunctionSummary,
     test: &TestSummary,

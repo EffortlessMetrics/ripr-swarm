@@ -79,7 +79,11 @@ fn field_root(mut expression: ast::Expr, index: &RustIndex) -> Option<(String, S
             }
             ast::Expr::MethodCallExpr(call)
                 if matches!(call.name_ref()?.text(), "first" | "last")
-                    && call.arg_list()?.args().next().is_none() =>
+                    && call.arg_list()?.args().next().is_none()
+                    && !crate::analysis::classify::owner_pin::wrapper_may_be_rebound(
+                        call.name_ref()?.text(),
+                        index,
+                    ) =>
             {
                 projected = true;
                 call.receiver()?

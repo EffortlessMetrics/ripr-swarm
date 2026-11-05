@@ -3976,11 +3976,11 @@ fn awaited_predicate_identity_does_not_credit_discarded_or_overwritten_results()
             true,
         ),
         (
-            "let input=50; assert_eq!(input,50); let result=fetch_limit(50,50).await; assert_eq!(result,50);",
+            "let input=50;\nassert_eq!(input,50);\nlet result=fetch_limit(50,50).await;\nassert_eq!(result,50);",
             true,
         ),
         (
-            "let result=fetch_limit(50,50).await; assert_eq!(result,50); let input=50; assert_eq!(input,50);",
+            "let result=fetch_limit(50,50).await;\nassert_eq!(result,50);\nlet input=50;\nassert_eq!(input,50);",
             true,
         ),
         (

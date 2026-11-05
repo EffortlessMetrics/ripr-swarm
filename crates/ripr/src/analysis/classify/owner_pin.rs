@@ -6697,14 +6697,116 @@ impl OwnerReturnPin {
         let Some(source) = test_source else {
             return false;
         };
-        if let Some(known) = self.trait_scope_by_file.borrow().get(&test.file) {
-            return *known;
+        let known = self.trait_scope_by_file.borrow().get(&test.file).copied();
+        let in_scope = known.unwrap_or_else(|| {
+            let in_scope = trait_in_scope(source, trait_name, index);
+            self.trait_scope_by_file
+                .borrow_mut()
+                .insert(test.file.clone(), in_scope);
+            in_scope
+        });
+        in_scope || self.trait_inherited_through_super_globs(test, trait_name, index)
+    }
+
+    fn trait_inherited_through_super_globs(
+        &self,
+        test: &TestSummary,
+        trait_name: &str,
+        index: &RustIndex,
+    ) -> bool {
+        let scope = OwnerScope::new(&self.name, self.owner_start_line, &self.owner_file);
+        if test.file == self.owner_file
+            || parent_chain_shadows_trait(test, trait_name, scope, index)
+            || index
+                .files()
+                .get(&test.file)
+                .is_none_or(|facts| facts.role_provenance.earliest_unresolved_reason.is_some())
+        {
+            return false;
         }
-        let in_scope = trait_in_scope(source, trait_name, index);
-        self.trait_scope_by_file
-            .borrow_mut()
-            .insert(test.file.clone(), in_scope);
-        in_scope
+        let Some(nesting) =
+            indexed_item_nesting(index, &test.file, &test.name, test.start_line, false)
+        else {
+            return false;
+        };
+        if !nesting.modules.is_empty() {
+            return false;
+        }
+        let Some(facts) = index.files().get(&test.file) else {
+            return false;
+        };
+        let chain = &facts.role_provenance.edges;
+        let mut file = test.file.clone();
+        let mut seen = BTreeSet::new();
+        while seen.insert(file.clone()) {
+            let Some(facts) = index.files().get(&file) else {
+                return false;
+            };
+            let Some(parse) = parse_clean_source_file(&facts.source) else {
+                return false;
+            };
+            let root = parse.tree();
+            // Only imports/declarations at this file's actual module root
+            // are inherited; a sibling inline module contributes no binding.
+            let uses = root
+                .syntax()
+                .children()
+                .filter_map(ast::Use::cast)
+                .collect::<Vec<_>>();
+            let root_scope = uses
+                .iter()
+                .map(|item| item.syntax().text().to_string())
+                .chain(
+                    root.syntax()
+                        .children()
+                        .filter_map(ast::Trait::cast)
+                        .map(|item| item.syntax().text().to_string()),
+                )
+                .collect::<Vec<_>>()
+                .join("\n");
+            let owner_root_trait = index
+                .files()
+                .get(&self.owner_file)
+                .and_then(|facts| parse_clean_source_file(&facts.source))
+                .is_some_and(|parse| {
+                    parse
+                        .tree()
+                        .syntax()
+                        .children()
+                        .filter_map(ast::Trait::cast)
+                        .any(|item| item.name().is_some_and(|name| name.text() == trait_name))
+                });
+            let exact_root_import = uses.iter().any(|item| {
+                flattened_use_paths(&item.syntax().text().to_string())
+                    .iter()
+                    .any(|path| path.alias.is_none() && path.path == format!("crate::{trait_name}"))
+            });
+            let reaches_owner_root = file == self.owner_file
+                || (owner_root_trait
+                    && OwnerPinSyntax::default()
+                        .target_roots(index)
+                        .root(&file, index)
+                        .as_deref()
+                        == Some(self.owner_file.as_path())
+                    && exact_root_import);
+            if reaches_owner_root && trait_in_scope(&root_scope, trait_name, index) {
+                return true;
+            }
+            if !uses.iter().any(|item| {
+                without_rust_whitespace(&item.syntax().text().to_string()) == "usesuper::*;"
+            }) {
+                return false;
+            }
+            let mut parents = chain.iter().filter(|edge| {
+                edge.child == file
+                    && edge.kind == crate::analysis::facts::SourceRoleProvenanceEdgeKind::Module
+            });
+            let (Some(edge), None) = (parents.next(), parents.next()) else {
+                return false;
+            };
+            file = edge.parent.clone();
+        }
+        false
     }
 }
 
@@ -6804,6 +6906,32 @@ impl FreeOwnerBinding<'_> {
                 Vec::new()
             }
             _ => {
+                // A same-file module spelling uses the canonical qualified
+                // call resolver, including same-named rivals and scope shadows.
+                if test.file == *self.owner_file
+                    && index
+                        .functions()
+                        .iter()
+                        .find(|owner| {
+                            owner.file == *self.owner_file
+                                && owner.start_line == self.owner_start_line
+                                && owner.name == *self.name
+                        })
+                        .is_some_and(|owner| {
+                            super::call_identity::qualified_call_names_owner(
+                                index,
+                                owner,
+                                test,
+                                &path_prefix_segments(prefix),
+                            )
+                        })
+                {
+                    return syntax
+                        .item_nesting(index, self.owner_file, self.name, self.owner_start_line)
+                        .is_some_and(|owner| !owner.cfg_gated)
+                        && !syntax.file_cfg_gated(index, self.owner_file)
+                        && !syntax.crate_may_hide_name(index, &owner_root, self.name, roots);
+                }
                 if !owner_is_root
                     || !self.library_root_names_owner(root, test, test_source, index, syntax)
                 {
@@ -16198,7 +16326,21 @@ fn binding_type(
         // `named_or_slice` refuses a lower-case name anyway; checking first
         // skips the workspace scan for every local-variable receiver.
         if !initializer.starts_with(|character: char| character.is_ascii_uppercase())
-            || !unit_struct_value(initializer, &test.file, index, syntax)
+            || !(unit_struct_value(initializer, &test.file, index, syntax)
+                || (owner.file != test.file.as_path()
+                    && syntax
+                        .target_roots(index)
+                        .root(owner.file, index)
+                        .as_deref()
+                        == Some(owner.file)
+                    && root_unit_declared(index, owner.file, initializer)
+                    && unit_struct_value_in_definition(
+                        initializer,
+                        owner.file,
+                        index,
+                        syntax,
+                        true,
+                    )))
         {
             return None;
         }
@@ -16344,33 +16486,7 @@ impl UnitStructFacts {
     }
 }
 
-/// Whether the bare name `name`, spelled in `test_file`, evaluates to the
-/// workspace unit struct `name` (#7083). Reading what a bare name resolves
-/// to needs name resolution, so the rule admits only a shape where nothing
-/// else can supply the name:
-///
-/// - the workspace declares it exactly once, as a non-generic unit struct
-///   (`struct name;`), in the test's own file;
-/// - every other spelling of the name in the workspace is an `impl` header
-///   (`impl name {`, `impl Trait for name {`), a method call (`name.f(..)`)
-///   or a `let` initializer (`= name;`). An import, a type position, a raw
-///   identifier (`r#name`), a pattern, an enum variant, a macro argument or
-///   any `const`, `static`, `fn`, `type` or `as` rename refuses;
-/// - no workspace `macro_rules!` matcher takes an `ident` or `tt` fragment,
-///   which could declare the name from a spelling the scan reads as inert,
-///   and no file that defines a macro spells the name, since one `struct
-///   name;` in a macro body declares a type per invocation;
-/// - every workspace glob import is a `crate`, `self` or `super` path
-///   through declared workspace modules, so no glob brings in an outside
-///   item (directly or through a renamed or re-exported outside module);
-/// - the name is not a prelude value, and no workspace file uses `include!`
-///   or `#[path]` (either spelling, including raw `#[r#path]`), which
-///   splice in text the scan never reads.
-///
-/// Items a derive or attribute proc macro emits stay invisible, as for
-/// every other pin rule. An item- or statement-position macro whose
-/// definition is not in the indexed workspace text may emit unread items,
-/// so the workspace-wide scan refuses (#7160).
+/// Ranges of relative imports that resolve to this file's same unit value.
 fn same_file_unit_import_ranges(name: &str, source: &str) -> Vec<std::ops::Range<usize>> {
     if !source.contains("use") {
         return Vec::new();
@@ -16450,11 +16566,102 @@ fn same_file_unit_import_ranges(name: &str, source: &str) -> Vec<std::ops::Range
         .collect()
 }
 
+fn root_unit_declared(index: &RustIndex, file: &Path, name: &str) -> bool {
+    index
+        .files()
+        .get(file)
+        .and_then(|facts| parse_clean_source_file(&facts.source))
+        .is_some_and(|parse| {
+            parse
+                .tree()
+                .syntax()
+                .children()
+                .filter_map(ast::Struct::cast)
+                .any(|item| {
+                    item.name().is_some_and(|item| item.text() == name)
+                        && item.field_list().is_none()
+                        && item.generic_param_list().is_none()
+                        && item.attrs().next().is_none()
+                })
+        })
+}
+
+fn root_unit_import_ranges(name: &str, source: &str) -> Vec<std::ops::Range<usize>> {
+    if !source.contains(name) || !source.contains("use") {
+        return Vec::new();
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return Vec::new();
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .filter_map(|item| {
+            let paths = flattened_use_paths(&item.syntax().text().to_string());
+            let named = paths
+                .iter()
+                .filter(|path| {
+                    path.path.split("::").any(|part| part == name)
+                        || path.alias.as_deref() == Some(name)
+                })
+                .collect::<Vec<_>>();
+            (!named.is_empty()
+                && named
+                    .iter()
+                    .all(|path| path.alias.is_none() && path.path == format!("crate::{name}")))
+            .then(|| {
+                let range = item.syntax().text_range();
+                usize::from(range.start())..usize::from(range.end())
+            })
+        })
+        .collect()
+}
+
+/// Whether the bare name `name`, spelled in `test_file`, evaluates to the
+/// workspace unit struct `name` (#7083). Reading what a bare name resolves
+/// to needs name resolution, so the rule admits only a shape where nothing
+/// else can supply the name:
+///
+/// - the workspace declares it exactly once, as a non-generic unit struct
+///   (`struct name;`), in the test's own file;
+/// - every other spelling of the name in the workspace is an `impl` header
+///   (`impl name {`, `impl Trait for name {`), a method call (`name.f(..)`)
+///   a `let` initializer (`= name;`), or an explicitly resolved redundant
+///   `self`/`super` import of that same item. Other imports, a type position, a raw
+///   identifier (`r#name`), a pattern, an enum variant, a macro argument or
+///   any `const`, `static`, `fn`, `type` or `as` rename refuses;
+/// - no workspace `macro_rules!` matcher takes an `ident` or `tt` fragment,
+///   which could declare the name from a spelling the scan reads as inert,
+///   and no file that defines a macro spells the name, since one `struct
+///   name;` in a macro body declares a type per invocation;
+/// - every workspace glob import is a `crate`, `self` or `super` path
+///   through declared workspace modules, so no glob brings in an outside
+///   item (directly or through a renamed or re-exported outside module);
+/// - the name is not a prelude value, and no workspace file uses `include!`
+///   or `#[path]` (either spelling, including raw `#[r#path]`), which
+///   splice in text the scan never reads.
+///
+/// Items a derive or attribute proc macro emits stay invisible, as for
+/// every other pin rule. An item- or statement-position macro whose
+/// definition is not in the indexed workspace text may emit unread items,
+/// so the workspace-wide scan refuses (#7160).
 pub(super) fn unit_struct_value(
     name: &str,
     test_file: &Path,
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
+) -> bool {
+    unit_struct_value_in_definition(name, test_file, index, syntax, false)
+}
+
+fn unit_struct_value_in_definition(
+    name: &str,
+    test_file: &Path,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+    allow_root_imports: bool,
 ) -> bool {
     // A prelude value (`None`, `Some`, `Ok`, `Err`) is in scope without any
     // import, so the struct may not be the item the test names.
@@ -16478,6 +16685,10 @@ pub(super) fn unit_struct_value(
         let masked = mask_comments_and_strings(&facts.source);
         let local_imports = if file.as_path() == test_file {
             same_file_unit_import_ranges(name, &facts.source)
+        } else if allow_root_imports
+            && syntax.target_roots(index).root(file, index).as_deref() == Some(test_file)
+        {
+            root_unit_import_ranges(name, &facts.source)
         } else {
             Vec::new()
         };

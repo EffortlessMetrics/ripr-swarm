@@ -1286,23 +1286,36 @@ impl ClassifiedProbeEvidence {
                                     }))
                             })
                         } else if matches!(context.probe.family, ProbeFamily::Predicate) {
-                            async_result_identity.as_ref().is_some_and(|pin| {
-                                pin.admits(
-                                    test,
-                                    assertion,
-                                    context.index,
-                                    &|file, name| {
-                                        context.index.files().get(file).is_none_or(|facts| {
-                                            context.test_file_imports_foreign_callee_name(
-                                                file,
-                                                &facts.source,
-                                                name,
-                                            )
-                                        })
-                                    },
-                                    pin_syntax,
-                                )
-                            })
+                            (owner_return_pin
+                                .as_ref()
+                                .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail)
+                                && context.owner_fn.is_some_and(|owner| {
+                                    crate::analysis::classify::assertion_reads_bound_boundary_bool(
+                                        context.probe,
+                                        owner,
+                                        test,
+                                        assertion,
+                                        &activation,
+                                        context.index,
+                                    )
+                                }))
+                                || async_result_identity.as_ref().is_some_and(|pin| {
+                                    pin.admits(
+                                        test,
+                                        assertion,
+                                        context.index,
+                                        &|file, name| {
+                                            context.index.files().get(file).is_none_or(|facts| {
+                                                context.test_file_imports_foreign_callee_name(
+                                                    file,
+                                                    &facts.source,
+                                                    name,
+                                                )
+                                            })
+                                        },
+                                        pin_syntax,
+                                    )
+                                })
                         } else {
                             crate::analysis::classify::builder_override::owner_field_read_identity(
                                 context.probe,

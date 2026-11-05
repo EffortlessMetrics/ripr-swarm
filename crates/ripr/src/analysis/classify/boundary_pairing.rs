@@ -1100,6 +1100,37 @@ fn line_owner_call_count(test: &TestSummary, line: usize, owner: &FunctionSummar
         .sum()
 }
 
+/// An exact bool comparison reads this still-current boundary result as its
+/// whole operand. The existing block-result producer resolves the actual tail;
+/// a name inside a projection, diagnostic or unrelated block is not identity.
+pub(in crate::analysis) fn assertion_reads_bound_boundary_bool(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    activation: &ActivationEvidence,
+    index: &RustIndex,
+) -> bool {
+    let Some([left, right]) = assertion_comparison_operands(&assertion.text) else {
+        return false;
+    };
+    let bound = boundary_bound_locals(
+        probe,
+        owner,
+        test,
+        activation,
+        super::argument_fold::FoldScope::of_test(test, index),
+        &|text, line| {
+            super::call_identity::boundary_owner_calls_resolve(index, owner, test, text, line)
+        },
+        assertion.line,
+    );
+    bound.iter().any(|name| {
+        (left.trim() == name && matches!(right.trim(), "true" | "false"))
+            || (right.trim() == name && matches!(left.trim(), "true" | "false"))
+    })
+}
+
 fn assertion_observes_bound_name(operands: &str, bound_names: &[String]) -> bool {
     // A binding named only in a comment or string is not observed.
     let masked = crate::analysis::extract::mask_comments_and_strings(operands);

@@ -30,6 +30,54 @@
   ],
   "cases": [
     {
+      "id": "rust_effect_receiver_intercepted_first_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_effect_receiver_intercepted_first",
+      "vector": "intercepted_first_returns_a_fixed_value_instead_of_the_changed_payload",
+      "probe_family": "side_effect",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_effect_receiver_intercepted_first_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_effect_receiver_intercepted_first",
+      "vector": "intercepted_first_returns_a_fixed_value_instead_of_the_changed_payload",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_binding_status_wrong_owner_observer",
       "language": "rust",
       "tier": "pure",

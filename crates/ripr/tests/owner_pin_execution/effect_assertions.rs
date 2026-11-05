@@ -316,6 +316,7 @@ fn projected_effect_payload_requires_fresh_state_and_a_preserving_map() -> Resul
         ("seeded", true, false, false, false),
         ("constant_map", false, true, false, false),
         ("shadowed_map", false, false, true, false),
+        ("intercepted_first", false, false, false, false),
     ] {
         let mut source = effect_source(assertion, "direct")?;
         if seeded {
@@ -329,6 +330,9 @@ fn projected_effect_payload_requires_fresh_state_and_a_preserving_map() -> Resul
         }
         if shadowed_map {
             source=source.replace("use super::*;","use super::*;\nmod String { pub fn as_str(_: &std::string::String) -> &'static str { \"order-42\" } }");
+        }
+        if label == "intercepted_first" {
+            source=source.replace("use super::*;","use super::*;\ntrait First { fn first(&self)->Option<&String>; }\nimpl First for Vec<String> { fn first(&self)->Option<&String> { static FIXED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| \"order-42\".to_string()); Some(&FIXED) } }\n");
         }
         let scratch = Scratch::create()?;
         std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
