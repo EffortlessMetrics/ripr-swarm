@@ -89,6 +89,8 @@ and that binary's help. The 0.10 CLI resolves its default base by trying
 `origin/HEAD`, then `origin/main`, `origin/master`, `main`, and `master`; use
 `--base REF` with another existing branch or commit when needed.
 
+<a id="development-build"></a>
+
 To use this guide's development features, install the development build
 (Rust 1.95 or newer):
 

@@ -15,6 +15,7 @@ result means.
 | Work in VS Code | [Editor extension](EDITOR_EXTENSION.md) · [First run to first receipt](EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md) | Install the extension, inspect saved-workspace diagnostics, and complete one repair receipt. |
 | Add advisory CI or review a PR | [CI strategy](CI.md) · [PR review guidance](PR_REVIEW_GUIDANCE.md) | Generate advisory GitHub Actions, read summaries and artifacts, and keep gate authority explicit. |
 | Wire ripr into your coding agent | [Agent quickstart](AGENT_QUICKSTART.md) | One command writes the find-gap, write-test, verify loop with a done and stop rule for Claude Code, Codex, or Cursor, plus optional MCP registration. |
+| Use RIPR in Muse | [Native Muse plugin](../plugins/muse/ripr/README.md) · [Integration contract](interop/muse-code.md) | Install and update the native package, approve its MCP server, and use the two skills with an MCP-capable RIPR build. |
 | Hand work to a coding agent | [LLM operator guide](LLM_OPERATOR_GUIDE.md) · [Agent workflows](AGENT_WORKFLOWS.md) | Give an agent a bounded packet with evidence, edit limits, verification, and stop conditions. |
 | Configure RIPR or consume its output | [Configuration](CONFIGURATION.md) · [Output schema](OUTPUT_SCHEMA.md) · [Stability policy](SEMVER.md) | Repository policy, CLI and editor settings, JSON contracts, machine-readable states, and compatibility promises. |
 | Decide whether to adopt RIPR | [Proof and limits](PUBLIC_PROOF.md) | Scoreboard numbers with trends, mutation agreement, verdict-corpus rates, and where RIPR falls short. |
