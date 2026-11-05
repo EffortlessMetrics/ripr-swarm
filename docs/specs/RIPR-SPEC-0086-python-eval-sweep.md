@@ -320,7 +320,7 @@ validates and publishes.
   `skipped` — no clone is spent on an input that cannot be analyzed.
 - **Terminal states stay distinct.** The eight 0.3 statuses are derived from
   producer facts with no two merged: `timed-out` (rail-enforced deadline),
-  `crashed` (failure exit or non-JSON stdout), `unsupported`
+  `crashed` (failure exit or malformed analyzer stdout), `unsupported`
   (`unsupported_input` analysis kind), `parse-failed` (`analysis_failed` or
   degradation to a named static-unknown limitation, the same producer facts
   the 0.2 sweep reads), `complete` (producer-reported completeness),
@@ -332,6 +332,28 @@ validates and publishes.
   typed `tempfail` row over the verified facts with its cause named in the
   managed execution receipt, so the route ALWAYS produces the full eight-row
   candidate denominator instead of aborting.
+- **Raw-output admission (#13132).** Captured stdout must be genuine UTF-8 and
+  duplicate-key-free JSON. The document must be an object with a `findings`
+  array of objects whose classifications belong to the producer's exposure
+  vocabulary. Optional gap identities, alignment, static-limit and repair
+  fields must have the types the sweep consumes; present copies of a gap ID
+  must agree. Group IDs may repeat across findings, and findings without a
+  canonical ID remain valid. Additive fields are tolerated, and unfamiliar
+  string alignment tokens still enter the descriptive `unknown` bucket.
+  A present `analysis_outcome` must carry a boolean completeness value, a
+  recognized outcome kind that agrees with it, and a well-formed limitation
+  list. An absent envelope retains the historical `partial` state with a
+  named missing-completeness limitation. An unbounded complete outcome's kind
+  must agree with whether findings are empty; a genuinely complete empty
+  result stays admissible. Both findings-bound disclosure shapes remain
+  `partial`, including an empty rendered prefix. Malformed output becomes a
+  `crashed` analysis attempt, preserving the subject denominator and exact
+  captured bytes for the existing raw-retention/digest path. Timeout and
+  nonzero-exit precedence remain unchanged. The first-pass refusal reaches
+  the execution receipt's analysis limitations; a rejected repeat's reason
+  reaches its stability limitation. Neither can yield a stable comparison or
+  a passing summary. This consumed-field check does not replace the full
+  product output schema or change historical schema-0.2 receipt validation.
 - **Per-subject retention.** Each candidate row carries: the repository
   identity restating the accepted pin (`url`/`sha`; manifest-carried
   `tree_digest`/`snapshot`/`provenance`/`retention_class` are copied through,
@@ -576,7 +598,13 @@ input digest, config identity).
   managed execution receipt (binary digest, manifest sha256 + subject ids,
   host class, network authorization) that passes the full
   `eval-sweep check` artifact path, including a stale-subject run that keeps
-  all eight subjects selected.
+  all eight subjects selected. Raw-output admission controls take missing,
+  malformed, duplicate-key and invalid-UTF-8 evidence through the same
+  bytes-to-pass function as production, then row assembly and summary; both
+  first and repeat failures require review and disclose their diagnosis.
+  Real retained empty, nonempty and grouped-finding outputs are positive
+  controls, alongside partial/unsupported/parse-failed states and the existing
+  findings-bound cases.
 - The accepted-receipt publication tests (`python_eval_sweep_report` module
   in `eval_sweep_report.rs`): a valid candidate's dry run renders JSON and
   bounded Markdown that agree (same rows, same counts, numerator +
@@ -770,6 +798,21 @@ receipt rows derive repos_run = 8 but the summary claims 7
 - `eval_sweep_refresh::python_eval_sweep_refresh::non_complete_first_results_never_enter_the_repeat_phase`
   -> the complete-first gate lives inside the stability pass: a non-complete
   first result never spawns a repeat and never claims stability.
+- `eval_sweep_refresh::admission::python_eval_sweep_refresh_admission::malformed_findings_never_become_complete_or_stable`
+  (with `malformed_or_inconsistent_outcomes_never_pass`) -> malformed consumed
+  fields cannot become a complete first pass or a stable repeat; row and
+  summary assembly keep the failed attempt selected and require review.
+- `eval_sweep_refresh::admission::python_eval_sweep_refresh_admission::duplicate_keys_and_invalid_utf8_keep_a_named_execution_limitation`
+  -> strict decoding, exact raw bytes/digests and first/repeat failure
+  diagnostics retained in the execution receipt.
+- `eval_sweep_refresh::admission::python_eval_sweep_refresh_admission::real_empty_nonempty_and_grouped_reports_keep_stable_comparisons`
+  (with `missing_envelope_and_terminal_states_stay_distinct` and
+  `additive_fields_and_unknown_alignment_strings_remain_compatible`) -> real
+  empty/nonempty producer controls, grouped optional IDs, partial and terminal
+  states, and additive wire compatibility remain supported.
+- `eval_sweep_refresh::python_eval_sweep_refresh::bounded_documents_never_yield_a_passing_summary_gate`
+  -> both current and legacy findings-bound disclosures remain partial through
+  raw admission, including an empty rendered prefix; the complete control passes.
 - `eval_sweep_refresh::python_eval_sweep_refresh::binary_swap_between_subjects_is_detected`
   -> the per-subject post-run identity re-verification names a swapped
   (rebuilt) binary's drift and fails closed on an unreadable binary.
