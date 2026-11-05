@@ -4,8 +4,12 @@ use super::admission::{AdmittedScipSnapshot, ScipAdmissionError, admit_scip_snap
 use super::generated::scip::{Index, Occurrence, PositionEncoding, SymbolRole};
 #[cfg(test)]
 use prost::Message;
+use ra_ap_syntax::{
+    AstNode,
+    ast::{self, HasName},
+};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Read-only lookup built from one admitted SCIP index (#8116).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,9 +42,49 @@ impl ScipReferenceBindings {
         consumed: &crate::analysis::consumed_source::ConsumedRustSources,
         retained_sources: impl IntoIterator<Item = (&'a Path, &'a str)>,
     ) -> Result<Self, ScipAdmissionError> {
+        let retained_sources = retained_sources.into_iter().collect::<Vec<_>>();
         let (index, project_root_relative) =
-            snapshot.into_index_for_consumed_sources(consumed, retained_sources)?;
-        Ok(Self::from_index(&project_root_relative, &index))
+            snapshot.into_index_for_consumed_sources(consumed, retained_sources.iter().copied())?;
+        let mut bindings = Self::from_index(&project_root_relative, &index);
+        // A terminal SCIP name cannot identify one of several same-file Rust
+        // owners. Count the retained declarations, including inactive cfg items,
+        // rather than trusting the supplied index to enumerate every owner.
+        let counts = retained_sources
+            .into_iter()
+            .map(|(path, source)| {
+                let counts =
+                    crate::analysis::syntax::parse_clean_source_file(source).map(|parsed| {
+                        let mut counts = BTreeMap::<String, usize>::new();
+                        for function in parsed
+                            .tree()
+                            .syntax()
+                            .descendants()
+                            .filter_map(ast::Fn::cast)
+                        {
+                            if let Some(name) = function.name() {
+                                *counts
+                                    .entry(name.text().trim_start_matches("r#").to_string())
+                                    .or_default() += 1;
+                            }
+                        }
+                        counts
+                    });
+                (path.to_path_buf(), counts)
+            })
+            .collect::<BTreeMap<_, _>>();
+        bindings.owner_definition_symbols.retain(|(path, name), _| {
+            let relative = Path::new(&project_root_relative)
+                .join(path)
+                .components()
+                .filter(|part| !matches!(part, std::path::Component::CurDir))
+                .collect::<PathBuf>();
+            counts
+                .get(&relative)
+                .and_then(Option::as_ref)
+                .and_then(|counts| counts.get(name))
+                == Some(&1)
+        });
+        Ok(bindings)
     }
 
     fn from_index(project_root_relative: &str, index: &Index) -> Self {
@@ -589,6 +633,102 @@ mod tests {
             admit_scip_snapshot(&project, &index_path, &manifest_path),
             Err(ScipAdmissionError::IndexDigestMismatch)
         ));
+        std::fs::remove_dir_all(project).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn same_file_function_names_cannot_share_definition_authority() -> Result<(), String> {
+        use crate::analysis::consumed_source::ConsumedRustSources;
+        use sha2::{Digest, Sha256};
+        let project = tempfile_dir("same-file-owner")?;
+        let call_source = "#[test] fn t() { score(); }\n";
+        let call = call_source.find("score()").ok_or("missing call")?;
+        let symbol = "scip rust-analyzer cargo alpha 0.1.0 alpha/active/score().";
+        for duplicate in [false, true] {
+            let owner = if duplicate {
+                "#[cfg(any())] mod inactive { pub fn r#score() -> u32 { 1 } }\nmod active { pub fn score() -> u32 { 7 } }\npub use active::score;\n"
+            } else {
+                "mod active { pub fn score() -> u32 { 7 } }\npub use active::score;\n"
+            };
+            let definition_line = usize::from(duplicate);
+            let definition_column = owner
+                .lines()
+                .nth(definition_line)
+                .ok_or("definition line")?
+                .find("score()")
+                .ok_or("definition")?;
+            let index = Index {
+                documents: vec![
+                    Document {
+                        relative_path: "owner.rs".into(),
+                        occurrences: vec![Occurrence {
+                            symbol: symbol.into(),
+                            range: vec![
+                                definition_line as i32,
+                                definition_column as i32,
+                                (definition_column + 5) as i32,
+                            ],
+                            symbol_roles: SymbolRole::Definition as i32,
+                            ..Occurrence::default()
+                        }],
+                        ..Document::default()
+                    },
+                    Document {
+                        relative_path: "test.rs".into(),
+                        position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
+                        occurrences: vec![Occurrence {
+                            symbol: symbol.into(),
+                            range: vec![0, call as i32, (call + 5) as i32],
+                            ..Occurrence::default()
+                        }],
+                        ..Document::default()
+                    },
+                ],
+                ..Index::default()
+            };
+            let bytes = index.encode_to_vec();
+            let index_path = project.join("index.scip");
+            let manifest_path = project.join("manifest.json");
+            std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
+            std::fs::write(project.join("owner.rs"), owner).map_err(|e| e.to_string())?;
+            std::fs::write(project.join("test.rs"), call_source).map_err(|e| e.to_string())?;
+            let manifest = serde_json::json!({"schema_version":"ripr-scip-admission-manifest-v1","index_sha256":format!("{:x}",Sha256::digest(&bytes)),"producer":{"name":"same-file-definition-regression","version":"1"},"project_root_relative":".","source_files":[
+                {"relative_path":"owner.rs","source_sha256":format!("{:x}",Sha256::digest(owner.as_bytes()))},
+                {"relative_path":"test.rs","source_sha256":format!("{:x}",Sha256::digest(call_source.as_bytes()))}
+            ]});
+            std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
+            let mut consumed = ConsumedRustSources::default();
+            consumed.record(Path::new("owner.rs"), Some(owner.as_bytes()));
+            consumed.record(Path::new("test.rs"), Some(call_source.as_bytes()));
+            let bindings = ScipReferenceBindings::from_admitted_index(
+                &project,
+                &index_path,
+                &manifest_path,
+                &consumed,
+                [
+                    (Path::new("owner.rs"), owner),
+                    (Path::new("test.rs"), call_source),
+                ],
+            )
+            .map_err(|e| e.reason())?;
+            // The public lookup has only a file/name owner key. Neither the
+            // inactive nor active same-name owner may borrow this symbol.
+            assert_eq!(
+                bindings.call_resolves_to_owner(
+                    &project,
+                    &project.join("test.rs"),
+                    1,
+                    call_source.trim_end(),
+                    "score",
+                    &project.join("owner.rs"),
+                    "score",
+                    1
+                ),
+                !duplicate,
+                "same-file duplicate={duplicate}"
+            );
+        }
         std::fs::remove_dir_all(project).map_err(|e| e.to_string())?;
         Ok(())
     }

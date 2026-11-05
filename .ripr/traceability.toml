@@ -13242,6 +13242,7 @@ tests = [
   "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::bindings_use_the_admitted_snapshot_after_index_and_manifest_replacement",
   "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::binding_authority_requires_matching_raw_source_capture",
   "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::normalized_coordinate_documents_cannot_supply_raw_scip_authority",
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::same_file_function_names_cannot_share_definition_authority",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::scip_consumer_refuses_bom_normalized_coordinate_authority",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::scip_consumer_uses_retained_source_columns_with_indentation_and_unicode",
   "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::callee_spans_and_document_positions_preserve_unicode_and_refuse_ambiguity",

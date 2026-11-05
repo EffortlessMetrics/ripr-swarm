@@ -399,3 +399,11 @@ definition authority until a source-coordinate mapping is owned. Matching raw
 capture alone does not establish coordinate identity. Both adapters supply the
 actual retained source iterator; no live reread can replace it. Ordinary matching
 UTF-8/16/32 position controls and post-admission mutation behavior remain intact.
+
+A file/name definition key requires exactly one matching function declaration
+in the admitted retained document. Multiple same-terminal-name declarations
+across modules, including inactive conditional items and raw identifier names,
+withhold enrichment for every such owner. Supplied SCIP symbol count does not
+prove source-owner uniqueness. This is a conservative ambiguity refusal, not a
+claim of full definition-coordinate identity. Missing or unparseable retained
+source cannot establish this authority.
