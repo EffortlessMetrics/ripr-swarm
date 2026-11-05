@@ -61,3 +61,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_catalog_description_structural_oracle (6)
+
+Reason:
+RIPR-SPEC-0108 #12010: unchanged catalog tokens do not discriminate returned wording; preserve one weakly-exposed finding and current output contracts, with the exact-wording CLI counterpart exposed
+
+Command:
+`cargo xtask goldens bless rust_catalog_description_structural_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_catalog_description_structural_oracle (7)
+
+Reason:
+RIPR-SPEC-0108 #12010: regenerate the merged #7490 and sink-identity producer output; structural catalog assertions cannot observe returned wording, exact owner-result wording remains exposed in production controls
+
+Command:
+`cargo xtask goldens bless rust_catalog_description_structural_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

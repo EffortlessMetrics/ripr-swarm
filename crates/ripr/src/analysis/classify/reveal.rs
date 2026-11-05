@@ -104,6 +104,9 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// the changed effect writes (`EffectStateCarrier::admits`). Consulted
     /// only for effect families after `effect_observer_confirms`.
     pub(in crate::analysis) effect_state_carried: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// Affirmative call-site/established-carrier binding, never absence of a veto.
+    pub(in crate::analysis) effect_observer_identity: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    pub(in crate::analysis) value_observer_identity: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// RIPR-SPEC-0040 builder override (#6613): whether the owner type's
     /// method `(type, setter, field)` plainly stores its argument in the
     /// field (`builder_override::setter_plainly_writes`). Only a verified
@@ -166,6 +169,15 @@ fn reveal_evidence(
     probe: &Probe,
     related_tests: &[(&TestSummary, RelationReason)],
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
+    reveal_evidence_with_value_identity(probe, related_tests, &|_, _| false)
+}
+
+#[cfg(test)]
+fn reveal_evidence_with_value_identity(
+    probe: &Probe,
+    related_tests: &[(&TestSummary, RelationReason)],
+    identity: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
     let (observe, discriminate, related, _) = reveal_evidence_with_expression(
         probe,
         &probe.expression,
@@ -189,6 +201,8 @@ fn reveal_evidence(
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
             effect_state_carried: &|_, _| true,
+            effect_observer_identity: &|_, _| false,
+            value_observer_identity: identity,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
             pushed_literal_observed: &|_, _| false,
@@ -238,6 +252,8 @@ fn reveal_evidence_with_exit(
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
             effect_state_carried: &|_, _| true,
+            effect_observer_identity: &|_, _| false,
+            value_observer_identity: &|_, _| false,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
             pushed_literal_observed: &|_, _| false,
@@ -307,6 +323,8 @@ fn reveal_evidence_proximity_reach_pinning(
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
             effect_state_carried: &|_, _| true,
+            effect_observer_identity: &|_, _| false,
+            value_observer_identity: &|_, _| false,
             setter_writes_field: &|_, _, _| true,
             collection_argument_observed: &|_, _| false,
             pushed_literal_observed: &|_, _| false,
@@ -444,7 +462,7 @@ pub(in crate::analysis) fn reveal_outcome(
     let (related, related_tests_total, direct_rows) =
         finalize_related_tests_with_direct_rows(analysis.related, diff_touched, &owner_calls);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
-    let discriminate = if analysis.refused_context && !analysis.matched_any {
+    let mut discriminate = if analysis.refused_context && !analysis.matched_any {
         StageEvidence::new(
             StageState::No,
             Confidence::Medium,
@@ -488,6 +506,22 @@ pub(in crate::analysis) fn reveal_outcome(
         )
     };
 
+    // #12010: proximity and token coincidence cannot supply the identity of
+    // the strongest oracle. Keep identity on that same assertion alongside
+    // strength and confirmation; independent witnesses cannot be combined.
+    if discriminate.state == StageState::Yes && !analysis.strongest_identity {
+        let linkage = analysis
+            .strongest_reason
+            .map_or("unknown", RelationReason::as_str);
+        discriminate = StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            format!(
+                "Discriminator uncredited: strongest oracle reaches only through {linkage} linkage without sink-level evidence (identity_unresolved)"
+            ),
+        );
+    }
+
     RevealOutcome {
         observe,
         discriminate,
@@ -523,6 +557,9 @@ struct RevealAssertionAnalysis {
     /// strength. A weaker token match must not upgrade an unrelated exact
     /// oracle, even when both assertions are in the same related test.
     strongest_observation_confirmed: bool,
+    /// Identity belongs to the selected assertion, never a separate weaker row.
+    strongest_identity: bool,
+    strongest_reason: Option<RelationReason>,
     matched_any: bool,
     /// #6692: some credited assertion pinned the owner's return value.
     owner_pin_credited: bool,
@@ -2310,7 +2347,33 @@ fn analyze_related_assertions(
             (error_construction_variant.as_deref() != Some(removed)).then(|| removed.to_string())
         })
         .flatten();
+    // A plain return's shared tokens survive the edit and cannot confirm it.
+    // Association keeps the full token set; producer-bound return/field/effect
+    // witnesses retain their existing authority. No-before probes keep the
+    // prior lexical behavior.
+    let delta_tokens = probe
+        .before
+        .as_deref()
+        .filter(|before| {
+            !before.trim().is_empty()
+                && matches!(probe.family, ProbeFamily::ReturnValue)
+                && changed_literal_fields(probe).is_none()
+        })
+        .map(|before| {
+            let mut before_tokens = extract_identifier_tokens(before);
+            before_tokens.extend(
+                super::value_transfer::fold_literal_integer(before)
+                    .into_iter()
+                    .flat_map(|folded| extract_identifier_tokens(&folded)),
+            );
+            probe_tokens
+                .iter()
+                .filter(|token| !before_tokens.contains(token))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
     let match_context = RevealMatchContext {
+        confirmation_tokens: delta_tokens.as_deref(),
         probe_tokens: &probe_tokens,
         effect_literals: &effect_literals,
         match_arm_variants: &match_arm_variants,
@@ -2397,6 +2460,8 @@ fn analyze_related_assertions(
     let mut strongest_kind = OracleKind::Unknown;
     let mut strongest_proximity_only = false;
     let mut strongest_observation_confirmed = false;
+    let mut strongest_identity = false;
+    let mut strongest_reason = None;
     let mut matched_any = false;
     let mut owner_pin_credited = false;
     let mut removed_variant_pin_credited = false;
@@ -2697,7 +2762,9 @@ fn analyze_related_assertions(
                     || is_inline_expect_snapshot(assertion));
             let wrapper_pinned = matches!(probe.family, ProbeFamily::ReturnValue)
                 && (return_admission.wrapper_return_pin)(test, assertion);
-            let owner_bound = !match_context.owner_scoped_tokens.is_empty()
+            let owner_bound = !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
                 && oracle_binds_sink_identity(
                     &assertion.text,
                     &test.body,
@@ -2819,7 +2886,23 @@ fn analyze_related_assertions(
                 && !match_context.owner_shadowed
                 && !test_is_should_panic(test)
                 && (return_admission.recording_double_observed)(test, assertion);
+            let effect_receiver_read = is_effect_family(&probe.family)
+                && *reason == RelationReason::DirectOwnerCall
+                && !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
+                && (return_admission.effect_observer_identity)(test, assertion);
+            let value_receiver_read = matches!(
+                probe.family,
+                ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+            ) && *reason == RelationReason::DirectOwnerCall
+                && !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
+                && (return_admission.value_observer_identity)(test, assertion);
             let matched = matched
+                || value_receiver_read
+                || effect_receiver_read
                 || recording_double_read
                 || field_collection_read
                 || collection_argument_read
@@ -2977,6 +3060,14 @@ fn analyze_related_assertions(
                     role: crate::domain::RelatedTestRole::Contributing,
                 });
             } else if matched {
+                let captured_log_read =
+                    (return_admission.captured_log_exact_membership_confirms)(test, assertion);
+                let collection_read = collection_observer_confirms(
+                    &probe.expression,
+                    matches!(probe.family, ProbeFamily::CallDeletion),
+                    test,
+                    assertion,
+                );
                 let observation_confirmed = !self_computed
                     // Refusal withholds kind-only credit, not an independently
                     // confirmed token. Retain the token path's existing identity gates.
@@ -3005,10 +3096,10 @@ fn analyze_related_assertions(
                             ) || field_collection_read
                                 || collection_argument_read
                                 || out_parameter_confirmed
+                                || effect_receiver_read
+                                || value_receiver_read
                                 || recording_double_read
-                                || (return_admission.captured_log_exact_membership_confirms)(
-                                    test, assertion,
-                                )
+                                || captured_log_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
@@ -3056,18 +3147,72 @@ fn analyze_related_assertions(
                     probe_relative_oracle_strength(&probe.family, assertion)
                 };
                 relative_strength = self_computed_cap(relative_strength, self_computed);
+                // A call elsewhere in this test establishes reach, not what
+                // this oracle reads. Bind the assertion itself to the owner's
+                // result; retain the existing producer-authenticated observers.
+                // The lexical binding helper is sufficient for association, but
+                // not for strong identity: it does not establish binding
+                // currentness after shadowing. Bound-result identity belongs
+                // to the indexed producer pin below. Only a direct owner call
+                // in the oracle operands can use this lexical path.
+                let direct_owner_oracle = !import_defeats_owner
+                    && !cross_package_defeats_owner
+                    && !match_context.owner_shadowed
+                    && match_context.owner_callee.is_some_and(|owner| {
+                        assertion_comparison_operands(&assertion.text).is_some_and(|operands| {
+                            operands
+                                .iter()
+                                .any(|operand| is_whole_owner_call(operand.trim(), owner))
+                        }) || crate::analysis::extract::assertion_observed_operand(&assertion.text)
+                            .is_some_and(|operand| is_whole_owner_call(operand.trim(), owner))
+                    });
+                let identity = (direct_owner_oracle
+                    && matches!(
+                        reason,
+                        RelationReason::DirectOwnerCall
+                            | RelationReason::HelperOwnerCall
+                            | RelationReason::AssertionTargetAffinity
+                            | RelationReason::OwnerNamedTest
+                    ))
+                    || owner_return_pin_holds(
+                        &assertion_context,
+                        assertion,
+                        owner_pinned,
+                        import_defeats_owner,
+                        cross_package_defeats_owner,
+                    )
+                    || wrapper_pinned
+                    || (matches!(probe.family, ProbeFamily::Predicate)
+                        && (return_admission.wrapper_return_pin)(test, assertion))
+                    || implicit_observer == Some(true)
+                    || recording_double_read
+                    || field_collection_read
+                    || collection_argument_read
+                    || out_parameter_confirmed
+                    || captured_log_read
+                    || collection_read
+                    || effect_receiver_read
+                    || value_receiver_read
+                    || producer_owned_result_identity(
+                        &assertion_context,
+                        assertion,
+                        import_defeats_owner,
+                        cross_package_defeats_owner,
+                    );
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated
                 // one regardless of encounter order; a weaker oracle cannot.
                 if relative_strength.rank() > strongest.rank()
                     || (relative_strength.rank() == strongest.rank()
                         && observation_confirmed
-                        && !strongest_observation_confirmed)
+                        && (!strongest_observation_confirmed || (identity && !strongest_identity)))
                 {
                     strongest = relative_strength.clone();
                     strongest_kind = assertion.kind.clone();
                     strongest_proximity_only = is_proximity_only(*reason);
                     strongest_observation_confirmed = observation_confirmed;
+                    strongest_identity = identity;
+                    strongest_reason = Some(*reason);
                 }
                 related.push(RelatedTest {
                     name: test.name.clone(),
@@ -3133,6 +3278,8 @@ fn analyze_related_assertions(
         strongest_kind,
         strongest_proximity_only,
         strongest_observation_confirmed,
+        strongest_identity,
+        strongest_reason,
         matched_any,
         owner_pin_credited,
         removed_variant_pin_credited,
@@ -3369,6 +3516,8 @@ fn identifier_names_error_observer(token: &str) -> bool {
 /// (grouped so the per-assertion matcher stays under the argument limit).
 struct RevealMatchContext<'a> {
     probe_tokens: &'a [String],
+    /// ReturnValue lexical confirmation only; association uses all probe tokens.
+    confirmation_tokens: Option<&'a [String]>,
     effect_literals: &'a [String],
     match_arm_variants: &'a [String],
     match_arm_literals: &'a [String],
@@ -3465,7 +3614,7 @@ fn changed_literal_fields(probe: &Probe) -> Option<Vec<(String, String)>> {
     )
 }
 
-fn constructed_field_name(expression: &str) -> Option<&str> {
+pub(super) fn constructed_field_name(expression: &str) -> Option<&str> {
     let expression = expression.trim().trim_end_matches(',').trim();
     let head = match expression.find(':') {
         Some(colon) if !expression[colon + 1..].starts_with(':') => &expression[..colon],
@@ -3722,6 +3871,31 @@ fn terms_outside_owner_calls(operand: &str, owner: &str) -> Vec<String> {
 /// (#3731 review; identity resolution tracked on #3727).
 fn guarded_oracle_names_bare_callee(text: &str, callee: &str) -> bool {
     text.contains(&format!("match {callee}("))
+}
+
+fn producer_owned_result_identity(
+    context: &RevealMatchContext,
+    assertion: &OracleFact,
+    import_defeats_owner: bool,
+    cross_package_defeats_owner: bool,
+) -> bool {
+    context.owner_callee.is_some_and(|owner| {
+        matches!(assertion.kind, OracleKind::GuardedResultMatch)
+            && matches!(
+                context.family,
+                ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+            )
+            && !import_defeats_owner
+            && !cross_package_defeats_owner
+            && !context.owner_shadowed
+            && guarded_oracle_names_bare_callee(&assertion.text, owner)
+            && context
+                .error_construction_variant
+                .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
+            && (matches!(context.family, ProbeFamily::ErrorPath)
+                || context.error_construction_variant.is_some()
+                || assertion.ok_value_observed == Some(true))
+    })
 }
 
 /// String literals in a match-arm pattern (left of the arm separator `=>`).
@@ -4370,6 +4544,7 @@ fn assertion_matches_probe_detail_with_literals(
 ) -> (bool, bool) {
     let RevealMatchContext {
         probe_tokens,
+        confirmation_tokens,
         effect_literals,
         match_arm_variants,
         match_arm_literals,
@@ -4430,10 +4605,14 @@ fn assertion_matches_probe_detail_with_literals(
         .then(|| crate::analysis::extract::assertion_oracle_text(&assertion.text))
         .flatten();
     let confirmation_text = return_operands.as_deref().unwrap_or(&assertion.text);
-    let confirming_token_match = probe_tokens.iter().any(|token| {
-        contains_as_whole_word(confirmation_text, token)
-            && (owner_bound || !owner_scoped_tokens.contains(token))
-    });
+    let confirming_token_match = confirmation_tokens
+        .unwrap_or(probe_tokens)
+        .iter()
+        .any(|token| {
+            probe_tokens.contains(token)
+                && contains_as_whole_word(confirmation_text, token)
+                && (owner_bound || !owner_scoped_tokens.contains(token))
+        });
     let effect_literal_match = !effect_literals.is_empty()
         && rust_string_literals(&assertion.text)
             .iter()
@@ -4486,18 +4665,12 @@ fn assertion_matches_probe_detail_with_literals(
     //   Err-guard discriminator — the pin gate above names the changed
     //   variant — the same principle that leaves ErrorPath probes
     //   unchanged here.
-    let producer_owned_result = owner_callee.is_some_and(|owner| {
-        matches!(assertion.kind, OracleKind::GuardedResultMatch)
-            && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::ReturnValue)
-            && !import_defeats_owner
-            && !cross_package_defeats_owner
-            && guarded_oracle_names_bare_callee(&assertion.text, owner)
-            && error_construction_variant
-                .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
-            && (matches!(family, ProbeFamily::ErrorPath)
-                || error_construction_variant.is_some()
-                || assertion.ok_value_observed == Some(true))
-    });
+    let producer_owned_result = producer_owned_result_identity(
+        context,
+        assertion,
+        import_defeats_owner,
+        cross_package_defeats_owner,
+    );
     // #4478: an `assert_eq!` whose operand is a call naming the owner pins
     // the owner's whole return value, which a changed `return_value`
     // expression flows into when the owner's return paths make it the
@@ -4685,6 +4858,7 @@ fn assertion_matches_probe_detail(
     assertion_matches_probe_detail_with_literals(
         &RevealMatchContext {
             probe_tokens,
+            confirmation_tokens: None,
             effect_literals: &[],
             match_arm_variants,
             match_arm_literals,
@@ -6197,6 +6371,8 @@ pub(in crate::analysis) fn is_inline_expect_snapshot(assertion: &OracleFact) -> 
 mod tests {
     use super::*;
 
+    mod sink_identity_tests;
+
     /// RIPR-SPEC-0228 rule 2: the field collection is read after the owner
     /// call on the same, unrebound binding; comments and strings never call.
     #[test]
@@ -6556,6 +6732,8 @@ mod tests {
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
             effect_state_carried: &|_, _| true,
+            effect_observer_identity: &|_, _| false,
+            value_observer_identity: &|_, _| false,
             setter_writes_field: &|_, _, _| false,
             getter_reads_field: &|_, _, _| false,
             collection_argument_observed: &|_, _| false,
@@ -7893,9 +8071,11 @@ mod tests {
             );
             let (_, discriminate, _) =
                 reveal_evidence(&probe, &[(&failing, RelationReason::DirectOwnerCall)]);
-            if discriminate.state != StageState::Yes {
+            if discriminate.state != StageState::Weak
+                || !discriminate.summary.contains("identity_unresolved")
+            {
                 return Err(format!(
-                    "error-observing assertion `{text}` lost confirmation: {discriminate:?}"
+                    "error-observing assertion `{text}` lost token observation or incorrectly acquired identity: {discriminate:?}"
                 ));
             }
         }
@@ -8035,6 +8215,8 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -8135,6 +8317,8 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
+                    effect_observer_identity: &|_, _| false,
+                    value_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
@@ -8322,6 +8506,8 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
+                    effect_observer_identity: &|_, _| false,
+                    value_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
@@ -8362,8 +8548,11 @@ mod tests {
                 OracleStrength::Strong,
             )],
         );
-        if reveal(&deletion, &names_method).state != StageState::Yes {
-            return Err("the target's method token must still confirm".to_string());
+        let method = reveal(&deletion, &names_method);
+        if method.state != StageState::Weak || !method.summary.contains("identity_unresolved") {
+            return Err(format!(
+                "a method token without bound identity stays weak: {method:?}"
+            ));
         }
         let parameter = probe(ProbeFamily::CallDeletion, "cache.insert(\"k\", value);");
         let parameter_observer = test_with_assertions(
@@ -8374,8 +8563,12 @@ mod tests {
                 OracleStrength::Strong,
             )],
         );
-        if reveal(&parameter, &parameter_observer).state != StageState::Yes {
-            return Err("a receiver that is not an owner local must still confirm".to_string());
+        let parameter = reveal(&parameter, &parameter_observer);
+        if parameter.state != StageState::Weak || !parameter.summary.contains("identity_unresolved")
+        {
+            return Err(format!(
+                "a parameter token without bound identity stays weak: {parameter:?}"
+            ));
         }
         Ok(())
     }
@@ -8436,6 +8629,8 @@ mod tests {
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
+                    effect_observer_identity: &|_, _| false,
+                    value_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
@@ -8545,9 +8740,9 @@ mod tests {
                 ],
                 &|_| true,
             );
-            if discriminate.state != StageState::Yes {
+            if discriminate.state != StageState::Weak {
                 return Err(format!(
-                    "{proximity:?} test lost its oracle credit: {discriminate:?}"
+                    "{proximity:?} test acquired sink identity from possible reach alone: {discriminate:?}"
                 ));
             }
         }
@@ -8564,9 +8759,9 @@ mod tests {
             ],
         ] {
             let (_, discriminate, _) = reveal_evidence(&probe, &related);
-            if discriminate.state != StageState::Yes {
+            if discriminate.state != StageState::Weak {
                 return Err(format!(
-                    "relation with no reach-bearing test lost its oracle reading: {discriminate:?}"
+                    "name-only relation acquired unproved identity: {discriminate:?}"
                 ));
             }
         }
@@ -8593,7 +8788,11 @@ mod tests {
     #[test]
     fn equally_strong_confirmed_oracle_preserves_discrimination_in_either_order()
     -> Result<(), String> {
-        let probe = probe(ProbeFamily::ReturnValue, "compute_score(input)");
+        let probe = owned_probe(
+            ProbeFamily::ReturnValue,
+            "compute_score(input)",
+            "compute_score",
+        );
         let unrelated = oracle(
             "assert_eq!(unrelated, 42);",
             OracleKind::ExactValue,
@@ -8676,9 +8875,10 @@ mod tests {
 
     #[test]
     fn reveal_evidence_records_matching_assertions_and_sorts_related_tests() {
-        let probe = probe(
+        let probe = owned_probe(
             ProbeFamily::ErrorPath,
             "return Err(AuthError::RevokedToken);",
+            "score",
         );
         let late = test_with_assertions(
             "z_error_path",
@@ -8863,6 +9063,8 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -8959,6 +9161,8 @@ mod tests {
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -9263,6 +9467,7 @@ mod tests {
         ] {
             let context = RevealMatchContext {
                 probe_tokens: &empty,
+                confirmation_tokens: None,
                 effect_literals: &empty,
                 match_arm_variants: &empty,
                 match_arm_literals: &pattern_literals,
@@ -9435,15 +9640,16 @@ return Err(\"boxed identity should survive\".into());
     // involved.
     #[test]
     fn typed_variant_site_loses_credit_when_witness_pin_removed() {
-        let typed_probe = probe(
+        let typed_probe = owned_probe(
             ProbeFamily::ErrorPath,
             "return Err(ParseSummaryError::MalformedSource);",
+            "try_parse_summary",
         );
         let exact_witness = test_with_body_assertions(
             "try_parse_summary_fails_closed_on_malformed_source",
             "let result = try_parse_summary(\"@bad;\");",
             vec![oracle(
-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
+                "if !matches!(try_parse_summary(\"@bad;\"), Err(ParseSummaryError::MalformedSource)) {
 return Err(\"typed pin\".into());
 }",
                 OracleKind::ExactErrorVariant,
@@ -9615,14 +9821,15 @@ return Err(\"typed pin\".into());
 
     #[test]
     fn aligned_variant_assertion_confirms_field_construction_error_construction() {
-        let probe = probe(
+        let probe = owned_probe(
             ProbeFamily::FieldConstruction,
             "outcome: Err(CalcError::TooLarge)",
+            "build_outcome",
         );
         let test = test_with_assertions(
             "too_large_outcome_asserted",
             vec![oracle(
-                "assert_eq!(err, CalcError::TooLarge);",
+                "assert_eq!(build_outcome(), Outcome { outcome: Err(CalcError::TooLarge) });",
                 OracleKind::ExactErrorVariant,
                 OracleStrength::Strong,
             )],
@@ -9774,7 +9981,11 @@ return Err(\"typed pin\".into());
     /// variant assertion" as the oracle for a predicate it does not pin.
     #[test]
     fn proximity_only_error_variant_assertion_is_not_named_for_a_predicate() {
-        let probe = probe(ProbeFamily::Predicate, "should_remove_con_len");
+        let probe = owned_probe(
+            ProbeFamily::Predicate,
+            "should_remove_con_len",
+            "parse_resp",
+        );
         let exact_error = oracle(
             "assert!(matches!(parse_resp(Some(37)), Err(Parse::TooLarge)));",
             OracleKind::ExactErrorVariant,
@@ -9782,7 +9993,7 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions("max_header_size", vec![exact_error]);
         let (_, proximity, _) = reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
-        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
+        assert_eq!(proximity.state, StageState::Weak, "{proximity:?}");
         assert!(
             !proximity.summary.contains("error variant"),
             "proximity-linked assertion kind was named: {proximity:?}"
@@ -9790,6 +10001,7 @@ return Err(\"typed pin\".into());
         // Discriminating alternate: the same assertion reached by a call
         // keeps its kind-specific wording.
         let (_, called, _) = reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+        assert_eq!(called.state, StageState::Yes);
         assert_eq!(
             called.summary, "Strong oracle found: exact error variant assertion",
             "{called:?}"
@@ -9808,10 +10020,10 @@ return Err(\"typed pin\".into());
         );
         let test = test_with_assertions("max_header_size", vec![exact_error]);
         let (_, proximity, _) = reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
-        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
+        assert_eq!(proximity.state, StageState::Weak, "{proximity:?}");
         assert_eq!(
             proximity.summary,
-            "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)",
+            "Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without sink-level evidence (identity_unresolved)",
             "{proximity:?}"
         );
     }
@@ -10771,6 +10983,8 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -10846,6 +11060,8 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -10892,6 +11108,8 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -10957,6 +11175,8 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -11024,6 +11244,8 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -11271,6 +11493,8 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -11320,6 +11544,8 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -11389,11 +11615,34 @@ return Err(\"typed pin\".into());
         )
     }
 
+    fn builder_reveal_evidence(
+        probe: &Probe,
+        related: &[(&TestSummary, RelationReason)],
+    ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
+        let source = "#[derive(Clone)] pub struct RetryBuilder { attempts: u32, delay_ms: u64 }
+impl RetryBuilder { pub fn new()->Self { Self { attempts: 4, delay_ms: 100 } } pub fn build(self)->Self { self } pub fn attempts(mut self, n:u32)->Self { self.attempts=n; self } pub fn delay_ms(mut self,n:u64)->Self { self.delay_ms=n; self } pub fn with_attempts(&self,n:u32)->Self { Self { attempts:n, ..self.clone() } } pub fn with_other(self,_other:Self)->Self { self } }";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = crate::analysis::rust_index::summarize_file(path.clone(), source.to_string());
+        let mut index = crate::analysis::rust_index::RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.insert_file_only(path, facts);
+        index.package_names.insert("fixture".to_string());
+        for (test, _) in related {
+            let source = format!("use fixture::RetryBuilder; {}", test.body);
+            let facts = crate::analysis::rust_index::summarize_file(test.file.clone(), source);
+            index.insert_file_only(test.file.clone(), facts);
+        }
+        let syntax = super::OwnerPinSyntax::default();
+        reveal_evidence_with_value_identity(probe, related, &|test, assertion| {
+            crate::analysis::classify::builder_override::owner_field_read_identity(
+                probe, &index, test, assertion, &syntax,
+            )
+        })
+    }
+
     fn builder_override_probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
-            owner: Some(SymbolId(
-                "src/settings.rs::impl RetryBuilder::new".to_string(),
-            )),
+            owner: Some(SymbolId("src/lib.rs::impl RetryBuilder::new".to_string())),
             ..probe(family, expression)
         }
     }
@@ -11417,7 +11666,7 @@ return Err(\"typed pin\".into());
             builder_override_probe(ProbeFamily::FieldConstruction, "attempts: 4"),
         ] {
             let (observe, discriminate, _related) =
-                reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+                builder_reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
             assert_eq!(observe.state, StageState::Yes, "{}", probe.expression);
             assert_eq!(discriminate.state, StageState::Weak, "{}", probe.expression);
             assert_eq!(discriminate.summary, BUILDER_OVERRIDE_UNOBSERVED_SUMMARY);
@@ -11441,7 +11690,7 @@ return Err(\"typed pin\".into());
             "assert_eq!(retry.delay_ms, 100);",
         );
         let (_, discriminate, _) =
-            reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
+            builder_reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
         assert_ne!(
             discriminate.state,
             StageState::Yes,
@@ -11453,7 +11702,7 @@ return Err(\"typed pin\".into());
             "assert_eq!(retry.attempts, 4);",
         );
         let (_, discriminate, _) =
-            reveal_evidence(&probe, &[(&changed, RelationReason::DirectOwnerCall)]);
+            builder_reveal_evidence(&probe, &[(&changed, RelationReason::DirectOwnerCall)]);
         assert_eq!(
             discriminate.state,
             StageState::Yes,
@@ -11463,7 +11712,7 @@ return Err(\"typed pin\".into());
         // Control: with no `before`, every field stays in play.
         probe.before = None;
         let (_, discriminate, _) =
-            reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
+            builder_reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
         assert_eq!(
             discriminate.state,
             StageState::Yes,
@@ -11504,7 +11753,7 @@ return Err(\"typed pin\".into());
                 builder_override_probe(ProbeFamily::FieldConstruction, "attempts: 4"),
             ] {
                 let (_observe, discriminate, _related) =
-                    reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+                    builder_reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
                 assert_eq!(
                     discriminate.state,
                     StageState::Yes,
@@ -11521,7 +11770,7 @@ return Err(\"typed pin\".into());
     #[test]
     fn match_arm_probe_with_token_match_keeps_discriminate_yes() {
         // probe expression "Status::Idle => 0," — Idle and Status are extractable
-        let probe = probe(ProbeFamily::MatchArm, "Status::Idle => 0,");
+        let probe = owned_probe(ProbeFamily::MatchArm, "Status::Idle => 0,", "classify");
         let test = test_with_assertions(
             "idle_arm_returns_zero",
             vec![oracle(
@@ -11578,7 +11827,7 @@ return Err(\"typed pin\".into());
     #[test]
     fn return_value_with_token_match_keeps_discriminate_yes() {
         // "score + 1" — tokens: ["score"] (len 5). Assertion contains "score".
-        let probe = probe(ProbeFamily::ReturnValue, "score + 1");
+        let probe = owned_probe(ProbeFamily::ReturnValue, "score + 1", "score");
         let test = test_with_assertions(
             "score_incremented",
             vec![oracle(
@@ -11626,13 +11875,13 @@ return Err(\"typed pin\".into());
     /// must stay exposed (StageState::Yes).
     #[test]
     fn field_construction_with_token_match_keeps_discriminate_yes() {
-        // "priority: 3" — tokens: ["priority"]. Assertion "assert_eq!(item.priority, 3);"
+        // "priority: 3" — tokens: ["priority"]. Assertion "assert_eq!(make_item(), Item { priority: 3 });"
         // contains "priority".
-        let probe = probe(ProbeFamily::FieldConstruction, "priority: 3");
+        let probe = owned_probe(ProbeFamily::FieldConstruction, "priority: 3", "make_item");
         let test = test_with_assertions(
             "item_has_priority",
             vec![oracle(
-                "assert_eq!(item.priority, 3);",
+                "assert_eq!(make_item(), Item { priority: 3 });",
                 OracleKind::ExactValue,
                 OracleStrength::Strong,
             )],
@@ -11748,7 +11997,7 @@ return Err(\"typed pin\".into());
             for (text, expected) in [
                 (
                     "assert_eq!(persist_audit(record), expected);",
-                    StageState::Yes,
+                    StageState::Weak,
                 ),
                 ("assert_eq!(parsed, expected);", StageState::Weak),
             ] {
@@ -11797,6 +12046,8 @@ return Err(\"typed pin\".into());
                         owner_parameters: &[],
                         expected_reaches_owner: &|_, _| false,
                         effect_state_carried: &|_, _| true,
+                        effect_observer_identity: &|_, _| false,
+                        value_observer_identity: &|_, _| false,
                         setter_writes_field: &|_, _, _| false,
                         getter_reads_field: &|_, _, _| false,
                     },
@@ -11882,17 +12133,19 @@ return Err(\"typed pin\".into());
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
+                    effect_observer_identity: &|_, _| false,
+                    value_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| false,
                     getter_reads_field: &|_, _, _| false,
                 },
                 None,
             );
             assert_eq!(implicit.state, StageState::Yes);
-            // A solitary proximity observer retains the prior reading.
+            // A solitary proximity observer has no sink identity (#12010).
             let (_, alone, _) =
                 reveal_evidence(&probe, &[(&sibling, RelationReason::SameTestFile)]);
-            assert_eq!(alone.state, StageState::Yes);
-            // Direct/helper relations confirm without a shared token.
+            assert_eq!(alone.state, StageState::Weak);
+            // A direct/helper relation cannot bind an unrelated sibling oracle.
             for reason in [
                 RelationReason::DirectOwnerCall,
                 RelationReason::HelperOwnerCall,
@@ -11904,9 +12157,9 @@ return Err(\"typed pin\".into());
                         (&sibling, reason),
                     ],
                 );
-                assert_eq!(direct.state, StageState::Yes);
+                assert_eq!(direct.state, StageState::Weak);
             }
-            // Actual token confirmation remains independent of kind.
+            // Token confirmation alone still cannot bind this sibling to the sink.
             let token = test_with_assertions(
                 "effect_named",
                 vec![oracle(
@@ -11923,8 +12176,8 @@ return Err(\"typed pin\".into());
                 ],
                 &|_| true,
             );
-            assert_eq!(confirmed.state, StageState::Yes);
-            // The established opaque-macro allowance remains explicit.
+            assert_eq!(confirmed.state, StageState::Weak);
+            // Opaque macro reach alone cannot establish sink identity either.
             let mut opaque = sibling.clone();
             opaque.body = "fixture_setup!();".into();
             let (_, allowed, _) = reveal_evidence(
@@ -11934,7 +12187,7 @@ return Err(\"typed pin\".into());
                     (&opaque, RelationReason::SameTestFile),
                 ],
             );
-            assert_eq!(allowed.state, StageState::Yes);
+            assert_eq!(allowed.state, StageState::Weak);
         }
     }
 
@@ -11973,6 +12226,8 @@ return Err(\"typed pin\".into());
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     effect_state_carried: &carried,
+                    effect_observer_identity: &|_, _| false,
+                    value_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
@@ -12200,10 +12455,10 @@ return Err(\"typed pin\".into());
         assert_eq!(may_reach.state, StageState::Weak, "{}", may_reach.summary);
         assert_eq!(may_reach.summary, PROXIMITY_CONFIRMATION_WITHHELD);
 
-        // Without the pin the unindexed-call allowance still confirms.
+        // Without the pin, possible reach still does not establish sink identity.
         let (_, unpinned, _) =
             reveal_evidence_proximity_reach_pinning(&probe, &related, &|_| true, &|_, _| false);
-        assert_eq!(unpinned.state, StageState::Yes, "{}", unpinned.summary);
+        assert_eq!(unpinned.state, StageState::Weak, "{}", unpinned.summary);
     }
 
     /// #6297: a same-file test that names the arm's variant through another
@@ -12264,10 +12519,9 @@ return Err(\"typed pin\".into());
         assert_eq!(reaching_only.state, StageState::Weak);
         assert_ne!(reaching_only.summary, PROXIMITY_CONFIRMATION_WITHHELD);
 
-        // Alone, the same-file test still confirms: proximity keeps crediting
-        // when no related test reaches the owner by a call.
+        // Alone, the same-file test still lacks sink identity (#12010).
         let (_, alone, _) = reveal_evidence(&probe, &[(&naming, RelationReason::SameTestFile)]);
-        assert_eq!(alone.state, StageState::Yes, "{}", alone.summary);
+        assert_eq!(alone.state, StageState::Weak, "{}", alone.summary);
 
         // A seam callee call runs the callee, not the owner, so it does not
         // withhold the same-file confirmation either.
@@ -12280,13 +12534,13 @@ return Err(\"typed pin\".into());
         );
         assert_eq!(
             beside_seam.state,
-            StageState::Yes,
+            StageState::Weak,
             "{}",
             beside_seam.summary
         );
 
         // A same-file test that may run the owner (it calls a public wrapper
-        // of `seconds`) keeps confirming beside the reaching test.
+        // of `seconds`) still lacks an admitted sink-identity witness.
         let (_, may_reach, _, _) = reveal_evidence_with_expression(
             &probe,
             &probe.expression,
@@ -12313,6 +12567,8 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -12328,7 +12584,7 @@ return Err(\"typed pin\".into());
             },
             None,
         );
-        assert_eq!(may_reach.state, StageState::Yes, "{}", may_reach.summary);
+        assert_eq!(may_reach.state, StageState::Weak, "{}", may_reach.summary);
     }
 
     /// #7063: an exact error variant is shared by every function returning
@@ -12391,12 +12647,12 @@ return Err(\"typed pin\".into());
                 reveal_evidence(&probe, &[(&other_owner, RelationReason::SameTestFile)]);
             assert_eq!(
                 alone.state,
-                StageState::Yes,
+                StageState::Weak,
                 "{expression}: {}",
                 alone.summary
             );
 
-            // A same-file test that may run the owner keeps confirming.
+            // Possible reach alone does not bind the changed sink (#12010).
             let (_, may_reach, _, _) = reveal_evidence_with_expression(
                 &probe,
                 &probe.expression,
@@ -12423,6 +12679,8 @@ return Err(\"typed pin\".into());
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     effect_state_carried: &|_, _| true,
+                    effect_observer_identity: &|_, _| false,
+                    value_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
@@ -12440,7 +12698,7 @@ return Err(\"typed pin\".into());
             );
             assert_eq!(
                 may_reach.state,
-                StageState::Yes,
+                StageState::Weak,
                 "{expression}: {}",
                 may_reach.summary
             );
@@ -12476,6 +12734,8 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -12520,8 +12780,8 @@ return Err(\"typed pin\".into());
             PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
         );
 
-        // A return value that names no error variant keeps the #4486
-        // same-file credit beside a reaching test.
+        // A return value that names no error variant still needs sink identity;
+        // possible reach through a same-file sibling cannot supply it (#12010).
         let ok_probe = probe(ProbeFamily::ReturnValue, "return Ok(amount + 1);");
         let same_file_ok = test_with_assertions(
             "refund_adds_one",
@@ -12540,7 +12800,7 @@ return Err(\"typed pin\".into());
             &|_| true,
         );
         assert_ne!(ok_beside.summary, PROXIMITY_VARIANT_CONFIRMATION_WITHHELD);
-        assert_eq!(ok_beside.state, StageState::Yes, "{}", ok_beside.summary);
+        assert_eq!(ok_beside.state, StageState::Weak, "{}", ok_beside.summary);
     }
 
     /// #9167: beside a test that calls the owner, a same-file test that cannot
@@ -12651,7 +12911,7 @@ return Err(\"typed pin\".into());
     #[test]
     fn match_arm_variant_token_match_keeps_discriminate_yes() {
         // probe expression "Mode::Frozen => -1," — variant "Frozen" appears in assertion.
-        let probe = probe(ProbeFamily::MatchArm, "Mode::Frozen => -1,");
+        let probe = owned_probe(ProbeFamily::MatchArm, "Mode::Frozen => -1,", "classify");
         let test = test_with_assertions(
             "frozen_arm_returns_minus_one",
             vec![oracle(
@@ -12776,12 +13036,16 @@ return Err(\"typed pin\".into());
         // (`a_payload_change_needs_the_whole_value_owner_pin`).
         let probe = Probe {
             before: Some("Err(ParseError::Empty)".to_string()),
-            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
+            ..owned_probe(
+                ProbeFamily::ErrorPath,
+                "Err(ParseError::TooLong(len))",
+                "parse",
+            )
         };
         let test = test_with_assertions(
             "too_long_error_pinned",
             vec![oracle(
-                "assert_eq!(err, ParseError::TooLong(12));",
+                "assert_eq!(parse(), Err(ParseError::TooLong(12)));",
                 OracleKind::ExactErrorVariant,
                 OracleStrength::Strong,
             )],
@@ -12827,7 +13091,7 @@ return Err(\"typed pin\".into());
         let sibling = test_with_assertions(
             "limit_is_pinned",
             vec![oracle(
-                "assert!(matches!(e, PayError::Limit))",
+                "assert!(matches!(pay(), Err(PayError::Limit)))",
                 OracleKind::ExactValue,
                 OracleStrength::Strong,
             )],
@@ -12835,7 +13099,7 @@ return Err(\"typed pin\".into());
         let exact = test_with_assertions(
             "insufficient_is_pinned",
             vec![oracle(
-                "assert!(matches!(e, PayError::Insufficient))",
+                "assert!(matches!(pay(), Err(PayError::Insufficient)))",
                 OracleKind::ExactValue,
                 OracleStrength::Strong,
             )],
@@ -12845,7 +13109,7 @@ return Err(\"typed pin\".into());
             ProbeFamily::ReturnValue,
             ProbeFamily::FieldConstruction,
         ] {
-            let probe = probe(family.clone(), "return Err(PayError::Insufficient);");
+            let probe = owned_probe(family.clone(), "return Err(PayError::Insufficient);", "pay");
             let (_observe, discriminate, _related) =
                 reveal_evidence(&probe, &[(&sibling, RelationReason::DirectOwnerCall)]);
             assert_ne!(
@@ -12885,11 +13149,11 @@ return Err(\"typed pin\".into());
             error_path_variant_path("let d = digit(c).ok_or(CodeError::NotDigit);"),
             None
         );
-        let probe = probe(ProbeFamily::ErrorPath, LINE);
+        let probe = owned_probe(ProbeFamily::ErrorPath, LINE, "parse_code");
         let sibling = test_with_assertions(
             "too_long_is_pinned",
             vec![oracle(
-                "assert_eq!(err, CodeError::TooLong);",
+                "assert_eq!(parse_code(), Err(CodeError::TooLong));",
                 OracleKind::ExactErrorVariant,
                 OracleStrength::Strong,
             )],
@@ -12905,7 +13169,7 @@ return Err(\"typed pin\".into());
         let exact = test_with_assertions(
             "not_digit_is_pinned",
             vec![oracle(
-                "assert_eq!(err, CodeError::NotDigit);",
+                "assert_eq!(parse_code(), Err(CodeError::NotDigit));",
                 OracleKind::ExactErrorVariant,
                 OracleStrength::Strong,
             )],
@@ -12946,12 +13210,16 @@ return Err(\"typed pin\".into());
         // (`a_payload_change_needs_the_whole_value_owner_pin`).
         let probe = Probe {
             before: Some("Err(ParseError::Empty)".to_string()),
-            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
+            ..owned_probe(
+                ProbeFamily::ErrorPath,
+                "Err(ParseError::TooLong(len))",
+                "parse",
+            )
         };
         let test = test_with_assertions(
             "too_long_is_exact",
             vec![oracle(
-                "assert_eq!(err, ParseError::TooLong(12));",
+                "assert_eq!(parse(), Err(ParseError::TooLong(12)));",
                 OracleKind::ExactErrorVariant,
                 OracleStrength::Strong,
             )],
@@ -12980,6 +13248,8 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -13043,12 +13313,16 @@ return Err(\"typed pin\".into());
         // (`a_payload_change_needs_the_whole_value_owner_pin`).
         let probe = Probe {
             before: Some("Err(ParseError::Empty)".to_string()),
-            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
+            ..owned_probe(
+                ProbeFamily::ErrorPath,
+                "Err(ParseError::TooLong(len))",
+                "parse",
+            )
         };
         let test = test_with_assertions(
             "too_long_error_matches",
             vec![oracle(
-                "assert!(matches!(err, ParseError::TooLong(_)));",
+                "assert!(matches!(parse(), Err(ParseError::TooLong(_))));",
                 OracleKind::ExactErrorVariant,
                 OracleStrength::Strong,
             )],
@@ -13532,6 +13806,8 @@ return Err(\"typed pin\".into());
                 expected_reaches_owner: reaches,
                 expected_operand_value: operand_value,
                 effect_state_carried: &|_, _| true,
+                effect_observer_identity: &|_, _| false,
+                value_observer_identity: &|_, _| false,
                 setter_writes_field: &|_, _, _| true,
                 collection_argument_observed: &|_, _| false,
                 pushed_literal_observed: &|_, _| false,
@@ -13595,7 +13871,12 @@ return Err(\"typed pin\".into());
             "let subtotal = tax(300);\nassert_eq!(subtotal, 24);",
             vec![exact("assert_eq!(subtotal, 24);")],
         );
-        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &bound, &params, &|_, _| false);
+        // The indexed bound-result pin is an explicit precondition in this
+        // matching-unit harness. The workspace integration independently tests
+        // genuine bound-result production and shadow/discard refusals.
+        let bound_probe = owned_probe(ProbeFamily::ReturnValue, "subtotal * 8 / 1000", "tax");
+        let discriminate =
+            discriminate_with_owner_pin(&bound_probe, &bound_probe.expression, &bound, true);
         assert_eq!(
             discriminate.state,
             StageState::Yes,
@@ -13603,12 +13884,12 @@ return Err(\"typed pin\".into());
             discriminate.summary
         );
 
-        // Without the parameter list the old token rule still confirms, which
-        // is what the first case relied on before #5830.
+        // Missing parameter metadata cannot turn the unrelated subtotal oracle
+        // into a read of tax's result (#12010).
         let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &unrelated, &[], &|_, _| false);
         assert_eq!(
             discriminate.state,
-            StageState::Yes,
+            StageState::Weak,
             "{}",
             discriminate.summary
         );
@@ -13665,13 +13946,14 @@ return Err(\"typed pin\".into());
         );
 
         // The same assertion against an `invoice` that never calls `tax`
-        // compares tax with an independent value and keeps its credit.
+        // keeps its oracle strength. Without a producer pin, this non-whole
+        // comparison still has no established owner-result identity.
         let (discriminate, strength) =
             tax_reveal("subtotal * 8 / 1000", &test, &params, &|_, _| false);
         assert_eq!(strength, OracleStrength::Strong);
         assert_eq!(
             discriminate.state,
-            StageState::Yes,
+            StageState::Weak,
             "{}",
             discriminate.summary
         );

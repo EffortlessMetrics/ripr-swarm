@@ -13,7 +13,12 @@ fn check(test: &str) -> Result<String, String> {
     check_source(SOURCE, test)
 }
 
-fn check_source(source: &str, test: &str) -> Result<String, String> {
+fn check_report(
+    source: &str,
+    test: &str,
+    manifest: &str,
+    diff_text: &str,
+) -> Result<serde_json::Value, String> {
     struct Scratch(std::path::PathBuf);
     impl Drop for Scratch {
         fn drop(&mut self) {
@@ -35,11 +40,11 @@ fn check_source(source: &str, test: &str) -> Result<String, String> {
     std::fs::create_dir(&dir.0).map_err(|e| e.to_string())?;
     std::fs::create_dir(dir.path().join("src")).map_err(|e| e.to_string())?;
     std::fs::create_dir(dir.path().join("tests")).map_err(|e| e.to_string())?;
-    std::fs::write(dir.path().join("Cargo.toml"), MANIFEST).map_err(|e| e.to_string())?;
+    std::fs::write(dir.path().join("Cargo.toml"), manifest).map_err(|e| e.to_string())?;
     std::fs::write(dir.path().join("src/lib.rs"), source).map_err(|e| e.to_string())?;
     std::fs::write(dir.path().join("tests/catalog.rs"), test).map_err(|e| e.to_string())?;
     let diff = dir.path().join("change.diff");
-    std::fs::write(&diff, DIFF).map_err(|e| e.to_string())?;
+    std::fs::write(&diff, diff_text).map_err(|e| e.to_string())?;
     let report = check_workspace(CheckInput {
         root: dir.path().into(),
         diff_file: Some(diff),
@@ -51,6 +56,11 @@ fn check_source(source: &str, test: &str) -> Result<String, String> {
     let json: serde_json::Value =
         serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
             .map_err(|e| e.to_string())?;
+    Ok(json)
+}
+
+fn check_source(source: &str, test: &str) -> Result<String, String> {
+    let json = check_report(source, test, MANIFEST, DIFF)?;
     let findings = json["findings"].as_array().ok_or("missing findings")?;
     assert_eq!(findings.len(), 1, "{json}");
     assert_eq!(
@@ -223,5 +233,264 @@ fn diagnostic_only_token_cannot_confirm_return() -> Result<(), String> {
     assert!(test.contains("Vec::<String>::new(), \"verifies\""));
     assert!(!test.contains("entry_description_violations"));
     assert_eq!(check_source(&source, &test)?, "weakly_exposed");
+    Ok(())
+}
+
+/// #12010: a direct call elsewhere establishes reach, but cannot lend its
+/// result identity to a separate exact oracle containing the changed wording.
+#[test]
+fn discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle() -> Result<(), String>
+{
+    let prefix = "use rust_catalog_description_structural_oracle::default_check_description;\n#[test] fn wording() {\nlet _ = default_check_description();\nlet other = \"verifies catalog consistency\";\n";
+    let unrelated = "assert_eq!(other, \"verifies catalog consistency\");";
+    let observed = "assert_eq!(default_check_description(), \"verifies catalog consistency\");";
+    for (assertions, expected) in [
+        (unrelated.to_string(), "weakly_exposed"),
+        (
+            "let result = default_check_description(); assert_eq!(other, \"verifies catalog consistency\", \"{result}\");".to_string(),
+            "weakly_exposed",
+        ),
+        (
+            "let result = default_check_description(); let result = \"verifies catalog consistency\"; assert_eq!(result, \"verifies catalog consistency\");".to_string(),
+            "weakly_exposed",
+        ),
+        (
+            "let result = { let _ = default_check_description(); \"verifies catalog consistency\" }; assert_eq!(result, \"verifies catalog consistency\");".to_string(),
+            "weakly_exposed",
+        ),
+        (
+            "assert_eq!({ let _ = default_check_description(); \"verifies catalog consistency\" }, \"verifies catalog consistency\");".to_string(),
+            "weakly_exposed",
+        ),
+        (observed.to_string(), "exposed"),
+        (format!("{unrelated}\n{observed}"), "exposed"),
+        (format!("{observed}\n{unrelated}"), "exposed"),
+        (
+            "let result = default_check_description();\nassert_eq!(result, \"verifies catalog consistency\");".to_string(),
+            "exposed",
+        ),
+    ] {
+        let test = format!("{prefix}{assertions}\n}}\n");
+        assert_eq!(check(&test)?, expected, "{assertions}");
+    }
+    Ok(())
+}
+
+/// Preserve the established persisted-effect observer while refusing an
+/// assertion on a different instance after the same owner call.
+#[test]
+fn persisted_effect_observer_retains_identity_without_lending_it_to_another_instance()
+-> Result<(), String> {
+    let source =
+        include_str!("../../../fixtures/observation_verified_side_effect/input/src/lib.rs")
+            .replace(
+                "pub sent: RefCell<Vec<String>>,",
+                "pub sent: RefCell<Vec<String>>,\n    pub status: u32,",
+            )
+            .replace(
+                "Notifier { sent: RefCell::new(Vec::new()) }",
+                "Notifier { sent: RefCell::new(Vec::new()), status: 0 }",
+            )
+            .replace(
+                "self.sent.borrow_mut().push(payload.to_string());",
+                "let _ = self.status;\n        self.sent.borrow_mut().push(payload.to_string());",
+            );
+    let test = include_str!(
+        "../../../fixtures/observation_verified_side_effect/input/tests/process_tests.rs"
+    );
+    let manifest =
+        include_str!("../../../fixtures/observation_verified_side_effect/input/Cargo.toml");
+    let line = source
+        .lines()
+        .position(|line| line.trim() == "notifier.send(order_id)")
+        .ok_or("effect line missing")?
+        + 1;
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-    notifier.send(\"static_msg\")\n+    notifier.send(order_id)\n"
+    );
+    let unrelated = test.replace(
+        "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
+        "let other = Notifier::new();\n    assert_eq!(*other.sent.borrow(), Vec::<String>::new());",
+    );
+    assert_ne!(unrelated, test);
+    let renamed = test.replace("notifier", "changed");
+    let coincident_name = test
+        .replace(
+            "process_order(&notifier, \"order-42\");",
+            "let changed = Notifier::new();\n    process_order(&changed, \"order-42\");",
+        )
+        .replace("vec![\"order-42\".to_string()]", "Vec::<String>::new()");
+    let cleared = test.replace(
+        "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
+        "notifier.sent.borrow_mut().clear();\n    assert_eq!(*notifier.sent.borrow(), Vec::<String>::new());",
+    );
+    let readonly = test.replace(
+        "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
+        "assert_eq!(notifier.status, 0);",
+    );
+    assert_ne!(readonly, test);
+    assert_ne!(renamed, test);
+    assert_ne!(coincident_name, test);
+    assert_ne!(cleared, test);
+    for (test, expected) in [
+        (test, "exposed"),
+        (renamed.as_str(), "exposed"),
+        (unrelated.as_str(), "weakly_exposed"),
+        (coincident_name.as_str(), "weakly_exposed"),
+        (cleared.as_str(), "weakly_exposed"),
+        (readonly.as_str(), "weakly_exposed"),
+    ] {
+        let report = check_report(&source, test, manifest, &diff)?;
+        let finding = report["findings"]
+            .as_array()
+            .ok_or("missing findings")?
+            .iter()
+            .find(|finding| finding["probe"]["family"] == "side_effect")
+            .ok_or("side-effect row missing")?;
+        assert_eq!(finding["classification"], expected, "{report}");
+    }
+    Ok(())
+}
+
+#[test]
+fn established_effect_carrier_binds_the_called_instance_only() -> Result<(), String> {
+    let source = "#[derive(Debug, PartialEq)]\npub struct Store { pub written: Vec<u8>, pub unrelated: Vec<u8> }\nimpl Store {\n    pub fn new() -> Self { Self { written: vec![], unrelated: vec![] } }\n    pub fn record(&mut self, value: u8) {\n        self.apply(value);\n    }\n    fn apply(&mut self, value: u8) { self.written.push(value); }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -5,3 +5,3 @@\n     pub fn record(&mut self, value: u8) {\n-        self.apply(0);\n+        self.apply(value);\n     }\n";
+    for (observed, expected) in [("store", "exposed"), ("other", "weakly_exposed")] {
+        let value = if observed == "store" {
+            "vec![2]"
+        } else {
+            "vec![]"
+        };
+        let test = format!(
+            "use rust_catalog_description_structural_oracle::Store;\n#[test]\nfn records() {{\n    let mut store = Store::new();\n    let other = Store::new();\n    store.record(2);\n    assert_eq!({observed}, Store {{ written: {value}, unrelated: vec![] }});\n}}\n"
+        );
+        let report = check_report(source, &test, MANIFEST, diff)?;
+        let finding = report["findings"]
+            .as_array()
+            .ok_or("missing findings")?
+            .iter()
+            .find(|finding| finding["probe"]["family"] == "call_deletion")
+            .ok_or("call-deletion row missing")?;
+        assert_eq!(finding["classification"], expected, "{report}");
+    }
+    Ok(())
+}
+
+#[test]
+fn returned_fields_and_builders_keep_real_identity_and_reject_replaced_values() -> Result<(), String>
+{
+    let cases = [
+        (
+            "pub fn tax(subtotal:i32)->i32 {\n    subtotal*8/1000\n}\n",
+            "subtotal*8",
+            "subtotal*9",
+            "let result=tax(3000);\n    assert_eq!(result,24);",
+            true,
+        ),
+        (
+            "pub fn tax(subtotal:i32)->i32 {\n    subtotal*8/1000\n}\n",
+            "subtotal*8",
+            "subtotal*9",
+            "let result=tax(3000);\n    let result=24;\n    assert_eq!(result,24);",
+            false,
+        ),
+        (
+            "pub struct Item { pub priority:u32 }\npub fn make_item()->Item {\n    Item { priority:3 }\n}\n",
+            "priority:3",
+            "priority:4",
+            "let item=make_item();\n    assert_eq!(item.priority,3);",
+            true,
+        ),
+        (
+            "pub struct Item { pub priority:u32 }\npub fn make_item()->Item {\n    Item { priority:3 }\n}\n",
+            "priority:3",
+            "priority:4",
+            "let _=make_item();\n    let item=Item { priority:3 };\n    assert_eq!(item.priority,3);",
+            false,
+        ),
+        (
+            "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn attempts(mut self,n:u32)->Self { self.attempts=n; self }\n pub fn build(self)->Self { self }\n}\n",
+            "attempts:4",
+            "attempts:3",
+            "let item=Builder::new().build();\n    assert_eq!(item.attempts,4);",
+            true,
+        ),
+        (
+            "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn attempts(mut self,n:u32)->Self { self.attempts=n; self }\n pub fn build(self)->Self { self }\n}\n",
+            "attempts:4",
+            "attempts:3",
+            "let item=Builder::new().attempts(7).build();\n    assert_eq!(item.attempts,7);",
+            false,
+        ),
+        (
+            "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn build(self)->Self { Self { attempts:4 } }\n}\n",
+            "attempts:4",
+            "attempts:3",
+            "let item=Builder::new().build();\n    assert_eq!(item.attempts,4);",
+            false,
+        ),
+    ];
+    for (source, after, before, body, exposed) in cases {
+        let line = source
+            .lines()
+            .position(|line| line.contains(after))
+            .ok_or("changed field missing")?
+            + 1;
+        let actual = source.lines().nth(line - 1).ok_or("line missing")?;
+        let previous = actual.replace(after, before);
+        let diff = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-{previous}\n+{actual}\n"
+        );
+        let imports = if source.contains("struct Builder") {
+            "Builder"
+        } else if source.contains("make_item") {
+            "{make_item, Item}"
+        } else {
+            "tax"
+        };
+        let test = format!(
+            "use rust_catalog_description_structural_oracle::{imports};\n#[test]\nfn observes() {{\n    {body}\n}}\n"
+        );
+        let report = check_report(source, &test, MANIFEST, &diff)?;
+        let findings = report["findings"].as_array().ok_or("findings missing")?;
+        assert!(!findings.is_empty(), "{report}");
+        for finding in findings {
+            if exposed {
+                assert_eq!(finding["classification"], "exposed", "{report}");
+            } else {
+                assert_ne!(finding["classification"], "exposed", "{report}");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn returned_field_constructor_identity_respects_namespace() -> Result<(), String> {
+    let source = "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,1 +4,1 @@\n-  Self { attempts:3 }\n+  Self { attempts:4 }\n";
+    let foreign = "mod foreign { pub struct Builder { pub attempts:u32 } impl Builder { pub fn new()->Self { Self { attempts:4 } } } pub fn replace(_discarded: rust_catalog_description_structural_oracle::Builder)->Builder { Builder::new() } }";
+    for (constructor, exposed) in [
+        (
+            "rust_catalog_description_structural_oracle::Builder::new()",
+            true,
+        ),
+        ("foreign::Builder::new()", false),
+        (
+            "foreign::replace(rust_catalog_description_structural_oracle::Builder::new())",
+            false,
+        ),
+    ] {
+        let test = format!(
+            "{foreign}\n#[test]\nfn observes() {{\n let _=rust_catalog_description_structural_oracle::Builder::new();\n let item={constructor};\n assert_eq!(item.attempts,4);\n}}\n"
+        );
+        let report = check_report(source, &test, MANIFEST, diff)?;
+        let findings = report["findings"].as_array().ok_or("findings missing")?;
+        assert!(!findings.is_empty(), "{report}");
+        for finding in findings {
+            assert_eq!(finding["classification"] == "exposed", exposed, "{report}");
+        }
+    }
     Ok(())
 }

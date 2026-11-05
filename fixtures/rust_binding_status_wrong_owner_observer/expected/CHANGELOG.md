@@ -107,3 +107,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_binding_status_wrong_owner_observer (10)
+
+Reason:
+RIPR-SPEC-0108 #12010: carry the wrong-owner control through the current producer; two current probes retain reached-unrevealed and infection-unknown outcomes with zero exposed findings
+
+Command:
+`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_binding_status_wrong_owner_observer (11)
+
+Reason:
+RIPR-SPEC-0108 #12010: regenerate the composed current producer wrong-owner control; preserve reached-unrevealed and infection-unknown findings without lending identity from unrelated oracles
+
+Command:
+`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
