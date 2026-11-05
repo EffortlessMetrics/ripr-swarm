@@ -22,7 +22,13 @@
       "ba842766b7e5a521ebae33cdbefb98fa0eefc903",
       "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a"
     ],
-    "workspace_all_targets_retry": "running; no pass claimed"
+    "workspace_all_targets_retry": {
+      "command": "cargo check --locked --workspace --all-targets",
+      "exit": 0,
+      "duration": "8m54s",
+      "log": "history-workspace-all-targets.log",
+      "limitation": "compile check, not runtime or release qualification"
+    }
   },
   "qualified_7490_materialization": {
     "commit": "339e4c1dea913e10a95c3efb0e198190274f2a65",
@@ -39,5 +45,10 @@
     "queue-only CI",
     "promotion trust hold",
     "no release selection/publication claim"
-  ]
+  ],
+  "current_binding_candidate": {
+    "commit": "327ff755cf8c36ed4cc417940a19eaa6adea1a84",
+    "tree": "2cff466edf6bc15de985d877f9ac578179c52677",
+    "qualification": "workspace regression build in progress; corrected-fixture reveal compile terminated/reaped for resource guard, not a test outcome"
+  }
 }
