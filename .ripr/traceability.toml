@@ -12740,6 +12740,8 @@ id = "RIPR-SPEC-0159"
 name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
+  "crates/ripr/src/analysis/classify/macro_item_names.rs::tests",
+  "crates/ripr/src/analysis/workspace/cargo_targets/ordinary_library_tests.rs",
   "crates/ripr/tests/asserted_boolean_helper.rs",
   "crates/ripr/src/analysis/test_grip_evidence/tests/asserted_boolean_helper.rs",
   "crates/ripr/tests/concat_literal_return.rs",
@@ -12974,6 +12976,9 @@ fixtures = [
   "fixtures/helper_chain_method_entry",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/owner_pin/ordinary_library_target.rs",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs",
+  "crates/ripr/src/analysis/classify/macro_item_names.rs",
   "crates/ripr/src/analysis/facts/model.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/boolean_comparison.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
