@@ -362,6 +362,9 @@ impl StdRootedCalls {
 /// No cache outlives that immutable index; no public/file facts are changed.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct OwnerPinSyntax {
+    /// Reuse the classifier's typed caller graph for expected-side helpers;
+    /// a slice's `len` must not be mistaken for the changed `Stack::len`.
+    expected_owner_callers: crate::analysis::classifier::OwnerCallerNames,
     /// Per test file, its `std`/`core`-rooted `assert_eq!` calls and which
     /// of those roots the file itself leaves unrebound (#7857). Parsed once
     /// per file, not once per assertion.
@@ -6306,20 +6309,27 @@ impl OwnerReturnPin {
         // #7714: a test-file helper that computes its value from the owner
         // (`fn expected() -> String { check(99).unwrap_err() }`) makes the
         // expected operand the owner's own value, however it is bound.
-        if test_file_helpers_reaching_owner(index, test, expected, &self.name)
-            .iter()
-            .any(|helper| {
-                expected_reaches_owner(test, &assertion.text, expected, helper)
-                    || expected_constant_reaches_owner(
-                        index,
-                        test,
-                        expected,
-                        helper,
-                        &PinCall::Bare,
-                        &self.owner_file,
-                    )
-            })
-        {
+        if test_file_helpers_reaching_owner(
+            index,
+            test,
+            expected,
+            &self.name,
+            &self.owner_file,
+            self.owner_start_line,
+            &syntax.expected_owner_callers,
+        )
+        .iter()
+        .any(|helper| {
+            expected_reaches_owner(test, &assertion.text, expected, helper)
+                || expected_constant_reaches_owner(
+                    index,
+                    test,
+                    expected,
+                    helper,
+                    &PinCall::Bare,
+                    &self.owner_file,
+                )
+        }) {
             return false;
         }
         match (&self.path, call) {
@@ -15020,6 +15030,9 @@ fn test_file_helpers_reaching_owner(
     test: &TestSummary,
     expected: &str,
     name: &str,
+    owner_file: &Path,
+    owner_line: usize,
+    callers: &crate::analysis::classifier::OwnerCallerNames,
 ) -> Vec<String> {
     // A literal or an operand with no name in it cannot reach a helper.
     let masked_expected = mask_comments_and_strings(expected);
@@ -15034,7 +15047,7 @@ fn test_file_helpers_reaching_owner(
     };
     // Free non-test functions only: a method or a sibling test sharing a
     // common name (`new`, `len`) would otherwise withhold unrelated pins.
-    let candidates: Vec<(&str, String)> = facts
+    let candidates: Vec<&str> = facts
         .functions
         .iter()
         .filter(|function| {
@@ -15049,20 +15062,20 @@ fn test_file_helpers_reaching_owner(
                     .iter()
                     .any(|attr| attr.contains("test") || attr.contains("rstest"))
         })
-        .map(|function| (function.name.as_str(), function.body.as_str()))
-        .map(|(helper, body)| (helper, mask_comments_and_strings(body)))
+        .map(|function| function.name.as_str())
         .collect();
-    let mut reaching: BTreeSet<String> = BTreeSet::new();
-    let mut frontier = vec![name.to_string()];
-    while let Some(target) = frontier.pop() {
-        for (helper, body) in &candidates {
-            if !reaching.contains(*helper) && contains_as_whole_word(body, &target) {
-                reaching.insert((*helper).to_string());
-                frontier.push((*helper).to_string());
-            }
-        }
-    }
-    reaching.into_iter().collect()
+    let owner = index.functions().iter().find(|function| {
+        function.file == owner_file && function.start_line == owner_line && function.name == name
+    });
+    candidates
+        .into_iter()
+        .filter_map(|helper| {
+            // Missing owner identity cannot certify an independent helper.
+            owner
+                .is_none_or(|owner| callers.caller_reaches(index, owner, None, helper))
+                .then(|| helper.to_string())
+        })
+        .collect()
 }
 
 /// Names `file` imports the owner `name` under (`use crate::quota as q;`).

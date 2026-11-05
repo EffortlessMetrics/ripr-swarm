@@ -13,4 +13,9 @@ tests = [
   "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_field_constructor_identity_respects_namespace",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_field_identity_rejects_mutation_inside_let_initializers",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::persisted_effect_identity_tracks_the_changed_argument_not_written_siblings",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_comparisons_pair_the_boundary_oracle_with_its_owner_and_element",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::unit_error_variant_unwrap_identity_preserves_current_binding",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::bound_literal_matches_keeps_scalar_identity_and_currentness",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::independent_same_named_method_helper_does_not_look_self_computed",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::primitive_named_format_effect_carries_only_its_changed_argument",
 ]

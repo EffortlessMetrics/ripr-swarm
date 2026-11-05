@@ -227,9 +227,65 @@ fn changed_parameters(
     }
     (!changed.is_empty()).then_some(changed)
 }
-fn parameter_value(mut expression: ast::Expr, parameters: &BTreeSet<String>) -> bool {
+// One standard format string with named primitive captures only. No Display
+// implementation, explicit argument expression or hidden macro executes here.
+fn primitive_format_captures(
+    call: &ast::MacroCall,
+    primitive: &BTreeSet<String>,
+) -> Option<BTreeSet<String>> {
+    if call.path()?.syntax().text().to_string() != "format" {
+        return None;
+    }
+    let tokens = call.token_tree()?.syntax().text().to_string();
+    let inner = tokens.strip_prefix('(')?.strip_suffix(')')?;
+    let parsed = parse_function(&format!("fn args() {{ argument({inner}) }}"))?;
+    let ast::Expr::CallExpr(arguments) = parsed.body()?.stmt_list()?.tail_expr()? else {
+        return None;
+    };
+    let values: Vec<_> = arguments.arg_list()?.args().collect();
+    let [ast::Expr::Literal(literal)] = values.as_slice() else {
+        return None;
+    };
+    let ast::LiteralKind::String(literal) = literal.kind() else {
+        return None;
+    };
+    let template = literal.value().ok()?;
+    let chars: Vec<_> = template.chars().collect();
+    let mut at = 0;
+    let mut captures = BTreeSet::new();
+    while at < chars.len() {
+        match chars[at] {
+            '{' if chars.get(at + 1) == Some(&'{') => at += 2,
+            '}' if chars.get(at + 1) == Some(&'}') => at += 2,
+            '{' => {
+                let start = at + 1;
+                let end = start + chars.get(start..)?.iter().position(|c| *c == '}')?;
+                let name: String = chars[start..end].iter().collect();
+                if !primitive.contains(&name) {
+                    return None;
+                }
+                captures.insert(name);
+                at = end + 1;
+            }
+            '}' => return None,
+            _ => at += 1,
+        }
+    }
+    Some(captures)
+}
+fn parameter_value(
+    mut expression: ast::Expr,
+    parameters: &BTreeSet<String>,
+    primitive_format: &BTreeSet<String>,
+) -> bool {
     for _ in 0..super::MAX_DEPTH {
         let next = match expression {
+            ast::Expr::MacroExpr(expression) => {
+                return expression
+                    .macro_call()
+                    .and_then(|call| primitive_format_captures(&call, primitive_format))
+                    .is_some_and(|captures| captures.iter().any(|name| parameters.contains(name)));
+            }
             ast::Expr::PathExpr(path) => {
                 return bare_path(ast::Expr::PathExpr(path))
                     .is_some_and(|name| parameters.contains(&name));
@@ -270,14 +326,18 @@ fn storage_field(mut expression: ast::Expr) -> Option<String> {
     }
     None
 }
-fn parameter_write(expression: ast::Expr, parameters: &BTreeSet<String>) -> Option<String> {
+fn parameter_write(
+    expression: ast::Expr,
+    parameters: &BTreeSet<String>,
+    primitive_format: &BTreeSet<String>,
+) -> Option<String> {
     if expression.attrs().next().is_some() {
         return None;
     }
     match expression {
         ast::Expr::BinExpr(assignment)
             if assignment.op_kind() == Some(ast::BinaryOp::Assignment { op: None })
-                && parameter_value(assignment.rhs()?, parameters) =>
+                && parameter_value(assignment.rhs()?, parameters, primitive_format) =>
         {
             storage_field(assignment.lhs()?)
         }
@@ -295,7 +355,7 @@ fn parameter_write(expression: ast::Expr, parameters: &BTreeSet<String>) -> Opti
             if arguments.len() != arity
                 || !arguments
                     .into_iter()
-                    .any(|arg| parameter_value(arg, parameters))
+                    .any(|arg| parameter_value(arg, parameters, primitive_format))
             {
                 return None;
             }
@@ -307,12 +367,58 @@ fn parameter_write(expression: ast::Expr, parameters: &BTreeSet<String>) -> Opti
 fn parameter_fields(
     callee: &FunctionSummary,
     parameters: &BTreeSet<String>,
+    index: &RustIndex,
 ) -> Option<BTreeSet<String>> {
     let function = parse_function(&callee.body)?;
     let body = function.body()?;
+    let standard_format =
+        !crate::analysis::classify::activation::macro_names_rebound(index, &["format"]);
+    let primitive_format: BTreeSet<_> = if !standard_format {
+        BTreeSet::new()
+    } else {
+        function
+            .param_list()?
+            .params()
+            .filter_map(|parameter| {
+                let ast::Pat::IdentPat(pattern) = parameter.pat()? else {
+                    return None;
+                };
+                let ty = compact(&parameter.ty()?.syntax().text().to_string());
+                let ty = ty.strip_prefix('&').unwrap_or(&ty);
+                if !matches!(
+                    ty,
+                    "str"
+                        | "bool"
+                        | "char"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "i128"
+                        | "isize"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "u128"
+                        | "usize"
+                        | "f32"
+                        | "f64"
+                ) || crate::analysis::classify::owner_pin::wrapper_may_be_rebound(ty, index)
+                {
+                    return None;
+                }
+                Some(pattern.name()?.text().to_string())
+            })
+            .collect()
+    };
     if function.attrs().next().is_some()
         || body.syntax().descendants().any(|node| {
-            ast::MacroCall::can_cast(node.kind()) || ast::CallExpr::can_cast(node.kind())
+            ast::CallExpr::can_cast(node.kind())
+                || ast::MacroCall::cast(node).is_some_and(|call| {
+                    !standard_format
+                        || primitive_format_captures(&call, &primitive_format).is_none()
+                })
         })
     {
         return None;
@@ -343,14 +449,14 @@ fn parameter_fields(
     {
         // Unchanged arguments may still be written to other fields. They
         // establish only bounded execution, never the selected payload carrier.
-        if parameter_write(expression.clone(), &all_parameters).is_some() {
+        if parameter_write(expression.clone(), &all_parameters, &primitive_format).is_some() {
             admitted_methods += expression
                 .syntax()
                 .descendants()
                 .filter(|node| ast::MethodCallExpr::can_cast(node.kind()))
                 .count();
         }
-        if let Some(field) = parameter_write(expression, parameters) {
+        if let Some(field) = parameter_write(expression, parameters, &primitive_format) {
             *writes.entry(field).or_default() += 1;
         }
     }
@@ -444,7 +550,7 @@ impl ArgumentReceiver {
                 return None;
             }
             let parameters = changed_parameters(before, &call, callee)?;
-            let carrying = parameter_fields(callee, &parameters)?;
+            let carrying = parameter_fields(callee, &parameters, index)?;
             fields.retain(|field| carrying.contains(field));
         }
         (!fields.is_empty()).then_some(Self {

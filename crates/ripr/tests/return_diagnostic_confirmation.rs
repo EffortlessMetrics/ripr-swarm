@@ -819,3 +819,89 @@ fn bound_literal_matches_keeps_scalar_identity_and_currentness() -> Result<(), S
     }
     Ok(())
 }
+
+#[test]
+fn independent_same_named_method_helper_does_not_look_self_computed() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/owner_name_collision_helper_keeps_credit");
+    let source = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let manifest = std::fs::read_to_string(fixture.join("input/Cargo.toml"))
+        .map_err(|error| error.to_string())?;
+    let diff =
+        std::fs::read_to_string(fixture.join("diff.patch")).map_err(|error| error.to_string())?;
+    for (source, exposed) in [
+        (source.clone(), true),
+        (source.replace("count_items(&[1, 2, 3, 4])", "4"), true),
+        (
+            source
+                .replace(
+                    "values.len()",
+                    "Stack::len(&Stack::from_vec(values.to_vec()))",
+                )
+                .replace("count_items(&[1, 2, 3, 4])", "count_items(&[1, 2, 3])"),
+            false,
+        ),
+    ] {
+        let report = check_report(&source, "", &manifest, &diff)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{report}");
+        assert_eq!(
+            findings[0]["classification"] == "exposed",
+            exposed,
+            "{report}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn primitive_named_format_effect_carries_only_its_changed_argument() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/observation_verified_call_deletion");
+    let source =
+        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
+    let test = std::fs::read_to_string(fixture.join("input/tests/store_tests.rs"))
+        .map_err(|e| e.to_string())?;
+    let manifest =
+        std::fs::read_to_string(fixture.join("input/Cargo.toml")).map_err(|e| e.to_string())?;
+    let diff = std::fs::read_to_string(fixture.join("diff.patch")).map_err(|e| e.to_string())?;
+    for (source, test, diff, exposed) in [
+        (source.clone(), test.clone(), diff.clone(), true),
+        (
+            source.clone(),
+            test.replace(
+                "assert_eq!(cache.inserted, vec![\"result_key=42\".to_string()]);",
+                "assert_eq!(cache.inserted.len(), 1);",
+            ),
+            diff.clone(),
+            false,
+        ),
+        (
+            source.replace("format!(\"{key}={value}\")", "format!(\"constant\")"),
+            test.clone(),
+            diff.clone(),
+            false,
+        ),
+        (
+            format!("macro_rules! format {{ ($($t:tt)*) => {{ String::new() }}; }}\n{source}"),
+            test.clone(),
+            diff.replace("@@ -13,4 +13,4", "@@ -14,4 +14,4"),
+            false,
+        ),
+    ] {
+        let report = check_report(&source, &test, &manifest, &diff)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        let selected: Vec<_> = findings
+            .iter()
+            .filter(|finding| finding["probe"]["family"] == "side_effect")
+            .collect();
+        assert_eq!(selected.len(), 1, "{report}");
+        assert_eq!(
+            selected[0]["classification"] == "exposed",
+            exposed,
+            "{report}"
+        );
+    }
+    Ok(())
+}
