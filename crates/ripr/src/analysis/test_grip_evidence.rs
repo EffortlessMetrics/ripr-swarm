@@ -137,7 +137,7 @@ impl TestGripEvidence {
     }
 }
 
-const COMPACT_RELATED_TEST_LIMIT: usize = 12;
+pub(in crate::analysis) const COMPACT_RELATED_TEST_LIMIT: usize = 12;
 const EVIDENCE_PROGRESS_CHUNK: usize = 500;
 const HELPER_OWNER_CALL_GRAPH_MAX_HOPS: usize = 3;
 

@@ -317,7 +317,10 @@ rejected alternative. Any can be reversed later without touching the rest.
    the exact check these rules do not place: no other statement, assertion or
    not, names the field or uses the binding except as the owner call or its
    `let` (an alias, a helper call, a destructure, a move, an `if`/`panic!`
-   check withholds); the owner's `Self` type is also not a non-plain `Drop`
+   check withholds); a related test that calls the owner directly and reads the field
+   weakly nowhere withholds when an assertion of it names the binding the owner
+   ran on (a getter, `Display`, `Debug`, a helper) or the binding cannot be read
+   off the body; the owner's `Self` type is also not a non-plain `Drop`
    type. A strong read stays "nothing to do"; no read, a
    sibling field, another binding, a later write, a by-value owner, an
    equality, a bare boolean, a getter and a private field start nothing.
@@ -471,6 +474,18 @@ changes `self.count += 2` to `self.count += 1`.
   (including the non-assertion checks above) and the real-binary `repair_check_recommended_start.rs`
   `a_weak_read_of_a_written_field_starts_the_repair_check_recommends`
   (positive start, the strong read as "nothing to do", and the negatives).
+- Non-public fields (#11870): `classify/field_reach/tests.rs`
+  (`a_declared_field_reads_its_own_visibility`,
+  `an_undeclared_ambiguous_or_tuple_field_has_no_reach`,
+  `a_test_names_a_field_only_where_its_visibility_reaches`), `seam_inventory.rs`
+  `a_private_field_write_is_graded_only_when_declared_here_and_read_weakly`
+  (declared here and read weakly; struct declared in another file, unread field
+  and a same-named second struct are ungraded), and the real-binary
+  `repair_check_recommended_start.rs`
+  `a_weak_read_of_a_private_or_crate_field_starts_only_where_the_test_can_name_it`
+  and `a_second_test_that_observes_the_write_another_way_withholds_the_start`
+  (a getter, `to_string`, `format!("{c}")` or `Debug` read in a second test of
+  the owner withholds, for private and plain `pub` fields).
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.
 - Probe boundary (#6676, #6675): `lexical.rs`
   `let_binding_type_annotations_are_not_field_construction` and

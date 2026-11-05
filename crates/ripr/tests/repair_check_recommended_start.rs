@@ -792,6 +792,86 @@ fn a_weak_read_of_a_private_or_crate_field_starts_only_where_the_test_can_name_i
     Ok(())
 }
 
+/// #11870 review: one test reads the written field weakly and another test of
+/// the same owner observes the write exactly through a route that names
+/// neither the field nor the first test's binding (a getter, `Display` or
+/// `Debug`). The write is already checked exactly, so neither command starts a
+/// repair, for a private field (inline tests) and a plain `pub` field alike.
+#[test]
+fn a_second_test_that_observes_the_write_another_way_withholds_the_start() -> Result<(), String> {
+    let extras = "\nimpl Counter {\n    pub fn value(&self) -> u32 {\n        self.count\n    }\n}\n\nimpl std::fmt::Display for Counter {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        write!(f, \"{}\", self.count)\n    }\n}\n\nimpl std::fmt::Debug for Counter {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        write!(f, \"Counter({})\", self.count)\n    }\n}\n";
+    let run = "    let mut c = Counter::new();\n    c.bump();\n";
+    let weak = format!("#[test]\nfn a() {{\n{run}    assert!(c.count > 0);\n}}\n");
+    let observers = [
+        ("getter", "    assert_eq!(c.value(), 2);"),
+        ("display", "    assert_eq!(c.to_string(), \"2\");"),
+        ("capture", "    assert_eq!(format!(\"{c}\"), \"2\");"),
+        (
+            "debug",
+            "    assert_eq!(format!(\"{c:?}\"), \"Counter(2)\");",
+        ),
+    ];
+    for (visibility, field_line) in [("priv", "count"), ("pub", "pub count")] {
+        let lib = |text: &str| {
+            text.replace("pub count", field_line).replacen(
+                "}\n\nimpl Counter",
+                &format!("}}\n{extras}\nimpl Counter"),
+                1,
+            )
+        };
+        let (base, new) = (
+            lib(WRITE_BASE),
+            lib(&WRITE_BASE.replace("self.count = 1;", "self.count = 2;")),
+        );
+        // Control: the weak test alone starts (so the withholding below is
+        // the second test's doing).
+        let alone = if visibility == "priv" {
+            let wrap = |lib: &str| {
+                format!(
+                    "{lib}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    {}}}\n",
+                    weak.replace('\n', "\n    ")
+                )
+            };
+            repo(
+                &format!("mixed{visibility}alone"),
+                &wrap(&base),
+                &wrap(&new),
+                "",
+                true,
+            )?
+        } else {
+            let test = format!("use fx::Counter;\n\n{weak}");
+            repo(&format!("mixed{visibility}alone"), &base, &new, &test, true)?
+        };
+        assert_starts_check_recommendation(&alone, &format!("{visibility} alone"))?;
+        for (name, read) in observers {
+            let second = format!("#[test]\nfn b() {{\n{run}{read}\n}}\n");
+            let label = format!("mixed{visibility}{name}");
+            let mixed = if visibility == "priv" {
+                let wrap = |lib: &str| {
+                    format!(
+                        "{lib}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    {}\n    {}}}\n",
+                        weak.replace('\n', "\n    "),
+                        second.replace('\n', "\n    ")
+                    )
+                };
+                repo(&label, &wrap(&base), &wrap(&new), "", true)?
+            } else {
+                let test = format!("use fx::Counter;\n\n{weak}\n{second}");
+                repo(&label, &base, &new, &test, true)?
+            };
+            if check_start_id(&mixed.root)?.is_some() {
+                return Err(format!("{label}: check must offer no start"));
+            }
+            ripr(&mixed.root, &["repair"])?;
+            if attempts(&mixed.root) != 0 {
+                return Err(format!("{label}: repair started an attempt"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Splits a command line the way the bound-root quoting writes it: single
 /// quotes group, `'\''` is a literal quote, whitespace separates.
 fn shell_split(command: &str) -> Result<Vec<String>, String> {

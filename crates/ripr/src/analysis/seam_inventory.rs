@@ -3958,7 +3958,7 @@ fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Ve
             ) else {
                 continue;
             };
-            if admission.admits(&seam, &facts.source) {
+            if matches!(admission.admits(&seam, &facts.source, &owners), Ok(true)) {
                 seams.push(seam);
             }
         }
@@ -4138,7 +4138,7 @@ pub(crate) fn inventory_seams_from_index_bounded(
                 &line_starts,
                 &crlf_pairs,
                 &arm_ranges,
-            ) && admission.admits(&seam, &facts.source)
+            ) && admission.admits(&seam, &facts.source, &lookup)?
             {
                 collector.push(seam);
             }
@@ -4177,47 +4177,107 @@ fn match_arm_source_ranges(
 
 /// Admits a non-public written field's seam (#11870) only when a related
 /// test can name the field and reads it weakly: the seam's evidence then
-/// carries the start's missing-discriminator fact. Any other write of a
-/// private or `pub(crate)` field stays ungraded, since its tests observe it
-/// through a getter or `Display` and a missing direct read is no gap. Every
-/// other seam is admitted. The grip context is built once, on first need.
+/// satisfies the start policy over the tests that call its owner directly.
+/// Any other write of a private or `pub(crate)` field stays ungraded, since
+/// its tests observe it through a getter or `Display` and a missing direct
+/// read is no gap. Every other seam is admitted. The evidence pass later
+/// grades an admitted seam over its ranked related tests, as for any seam.
 struct FieldSeamAdmission<'a> {
     index: &'a RustIndex,
-    context: std::cell::OnceCell<test_grip_evidence::CompactGripContext<'a>>,
+    /// Every name read after a `.` in a relational or `assert_ne!` assertion
+    /// of any test: the start needs `<binding>.<field>` weakly read in some
+    /// test, so a field no such assertion names is never graded and costs no
+    /// evidence pass.
+    read_names: std::cell::OnceCell<std::collections::BTreeSet<String>>,
+    /// One parse of each file's struct declarations.
+    tables: std::cell::RefCell<BTreeMap<PathBuf, Option<crate::analysis::classify::FieldTable>>>,
 }
 
 impl<'a> FieldSeamAdmission<'a> {
     fn new(index: &'a RustIndex) -> Self {
         Self {
             index,
-            context: std::cell::OnceCell::new(),
+            read_names: std::cell::OnceCell::new(),
+            tables: std::cell::RefCell::new(BTreeMap::new()),
         }
     }
 
-    fn admits(&self, seam: &RepoSeam, source: &str) -> bool {
+    fn some_test_reads_weakly(&self, field: &str) -> bool {
+        self.read_names
+            .get_or_init(|| {
+                let mut names = std::collections::BTreeSet::new();
+                for test in self.index.tests().iter() {
+                    for assertion in test.assertions.iter() {
+                        let masked =
+                            crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+                        if !(masked.contains("assert_ne")
+                            || masked.contains(['<', '>'])
+                            || masked.contains("!="))
+                        {
+                            continue;
+                        }
+                        let mut rest = masked.as_str();
+                        while let Some(dot) = rest.find('.') {
+                            rest = &rest[dot + 1..];
+                            let end = rest
+                                .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                                .unwrap_or(rest.len());
+                            if end > 0 {
+                                names.insert(rest[..end].to_string());
+                            }
+                        }
+                    }
+                }
+                names
+            })
+            .contains(field)
+    }
+
+    /// Whether the owner's file declares `field` on the owner's impl type
+    /// (one parse per file).
+    fn field_declared(
+        &self,
+        file: &Path,
+        source: &str,
+        owner: &rust_index::FunctionSummary,
+        field: &str,
+    ) -> bool {
+        self.tables
+            .borrow_mut()
+            .entry(file.to_path_buf())
+            .or_insert_with(|| crate::analysis::classify::FieldTable::parse(source))
+            .as_ref()
+            .and_then(|table| table.reach(&owner.impl_context, field))
+            .is_some()
+    }
+
+    fn admits(
+        &self,
+        seam: &RepoSeam,
+        source: &str,
+        owners: &rust_index::FileOwnerLookup<'_>,
+    ) -> Result<bool, String> {
         if !written_field_is_nonpublic(seam, source) {
-            return true;
+            return Ok(true);
         }
+        cancellation::checkpoint()?;
         // The owner's file must show the field's declaration, so its reach is
-        // known; an undeclared one stays ungraded.
+        // known; an undeclared one, or one no relational assertion reads,
+        // stays ungraded.
         let RequiredDiscriminator::FieldValue { field } = seam.required_discriminator() else {
-            return false;
+            return Ok(false);
         };
-        let declared =
-            rust_index::find_owner_function(self.index, seam.file(), seam.display_line())
-                .is_some_and(|owner| {
-                    crate::analysis::classify::declared_field_reach(owner, field, self.index)
-                        .is_some()
-                });
-        if !declared {
-            return false;
-        }
-        let context = self
-            .context
-            .get_or_init(|| test_grip_evidence::CompactGripContext::new(self.index));
-        !test_grip_evidence::compact_evidence_for_seam(seam, context)
-            .missing_discriminators
-            .is_empty()
+        let Some(owner) = owners.owner(seam.display_line()) else {
+            return Ok(false);
+        };
+        Ok(self.field_declared(seam.file(), source, owner, field)
+            && self.some_test_reads_weakly(field)
+            && crate::analysis::classify::weak_start_over_direct_tests(
+                owner,
+                seam.expression(),
+                field,
+                self.index,
+            ))
     }
 }
 
@@ -5563,6 +5623,59 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
                 _ => None,
             })
             .collect())
+    }
+
+    /// The `self.` write seams of `files` (every file production), by owner
+    /// file, over one shared index.
+    fn written_field_seam_files(files: &[(&str, &str)]) -> Result<Vec<String>, String> {
+        let owned: Vec<(PathBuf, &str)> = files
+            .iter()
+            .map(|(path, source)| (PathBuf::from(path), *source))
+            .collect();
+        let mut index = index_from_files(&owned)?;
+        let adapter = RaRustSyntaxAdapter;
+        for (path, source) in &owned {
+            index.extend_tests(adapter.summarize_file(path, source)?.tests.iter().cloned());
+        }
+        let paths: Vec<PathBuf> = owned.iter().map(|(path, _)| path.clone()).collect();
+        Ok(inventory_seams_from_index(&paths, &index)
+            .iter()
+            .filter(|seam| seam.expression().starts_with("self."))
+            .map(|seam| seam.file().display().to_string().replace('\\', "/"))
+            .collect())
+    }
+
+    /// #11870: a non-public field's write gets a seam only when its struct is
+    /// declared in the owner's file and a test reads the field weakly.
+    #[test]
+    fn a_private_field_write_is_graded_only_when_declared_here_and_read_weakly()
+    -> Result<(), String> {
+        let tests = |read: &str| {
+            format!(
+                "\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn t() {{\n        let mut c = C::new();\n        c.bump();\n        {read}\n    }}\n}}\n"
+            )
+        };
+        let declaration = "pub struct C {\n    count: u32,\n}\n";
+        let imp = "impl C {\n    pub fn new() -> Self {\n        C { count: 0 }\n    }\n\n    pub fn bump(&mut self) {\n        self.count = 2;\n    }\n}\n";
+        let here = format!("{declaration}{imp}{}", tests("assert!(c.count > 0);"));
+        assert_eq!(
+            written_field_seam_files(&[("src/counter.rs", &here)])?,
+            vec!["src/counter.rs".to_string()]
+        );
+        // The struct is declared in another file: its visibility is unknown.
+        let split = format!("{imp}{}", tests("assert!(c.count > 0);"));
+        assert!(
+            written_field_seam_files(&[("src/counter.rs", &split), ("src/types.rs", declaration)])?
+                .is_empty()
+        );
+        // No test reads the field by name: a getter-observed write is no gap.
+        let unread = format!("{declaration}{imp}{}", tests("assert!(c.is_set());"));
+        assert!(written_field_seam_files(&[("src/counter.rs", &unread)])?.is_empty());
+        // Two same-named structs make the declaration ambiguous.
+        let twin =
+            format!("mod other {{\n    pub struct C {{\n        count: u32,\n    }}\n}}\n{here}");
+        assert!(written_field_seam_files(&[("src/counter.rs", &twin)])?.is_empty());
+        Ok(())
     }
 
     #[test]
