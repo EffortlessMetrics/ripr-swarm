@@ -885,7 +885,7 @@ fn test_pairs_boundary_element(
         ) {
             return false;
         }
-        whole_owner_call_operands(test, &assertion.text, owner)
+        whole_owner_call_operands(test, &assertion.text, owner, true)
             .iter()
             .any(|arguments| {
                 arguments_feed_boundary_element(test, None, arguments, &assertion.text, element)
@@ -925,7 +925,7 @@ fn loan_pairs_boundary_element(
     if loan.parameters.is_empty() || owner_call_count(&loan.helper, &owner.name) != 1 {
         return false;
     }
-    whole_owner_call_operands(test, assertion_text, owner)
+    whole_owner_call_operands(test, assertion_text, owner, false)
         .iter()
         .any(|arguments| {
             arguments_feed_boundary_element(test, Some(loan), arguments, assertion_text, element)
@@ -943,6 +943,7 @@ fn whole_owner_call_operands(
     test: &TestSummary,
     assertion_text: &str,
     owner: &FunctionSummary,
+    qualified_resolved: bool,
 ) -> Vec<Vec<String>> {
     let operands: Vec<String> = match assertion_comparison_operands(assertion_text) {
         // An expected side that reaches the owner again compares the owner
@@ -980,12 +981,30 @@ fn whole_owner_call_operands(
         .filter_map(|operand| {
             let operand = operand.trim();
             let lists = owner_call_argument_lists(operand, &owner.name);
-            let [(_, arguments)] = lists.as_slice() else {
+            let [(offset, arguments)] = lists.as_slice() else {
                 return None;
             };
-            (operand.starts_with(&format!("{}(", owner.name))
-                && delimited_contents_at(operand, owner.name.len())
-                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
+            // The direct assertion path has already resolved every owner call
+            // against this test's imports and module. Preserve its qualified
+            // spelling; helper loans retain their existing bare-call limit.
+            let prefix = operand.get(..*offset)?;
+            let bare_or_resolved_path = prefix.is_empty()
+                || (qualified_resolved
+                    && prefix.strip_suffix("::").is_some_and(|path| {
+                        path.split("::").all(|segment| {
+                            let segment = segment.strip_prefix("r#").unwrap_or(segment);
+                            !segment.is_empty()
+                                && segment.chars().enumerate().all(|(position, character)| {
+                                    character == '_'
+                                        || character.is_ascii_alphabetic()
+                                        || (position > 0 && character.is_ascii_digit())
+                                })
+                        })
+                    }));
+            (bare_or_resolved_path
+                && delimited_contents_at(operand, offset + owner.name.len()).is_some_and(
+                    |contents| contents.len() + offset + owner.name.len() + 2 == operand.len(),
+                ))
             .then(|| arguments.clone())
         })
         .collect()
