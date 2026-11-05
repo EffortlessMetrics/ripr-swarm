@@ -182,12 +182,13 @@ fn non_ascii_owner_names_cannot_borrow_the_helper_receipt() -> Result<(), String
         "    use super::*; macro_rules! shadow { () => { fn read_é(b: &[u8])->u32 { u32::from_be_bytes([b[0],b[1],b[2],b[3]]) } }; } shadow!();",
         1,
     );
-    let shadow_diff = DIFF.replace("read_u32", "read_é").replace(
+    let renamed_diff = DIFF.replace("read_u32", "read_é");
+    let shadow_diff = renamed_diff.replace(
         &format!("+    {OWNER} | 0"),
         &format!("+    {wrong_return}"),
     );
     for repo in [false, true] {
-        let plain = finding(&source, repo)?;
+        let plain = finding_with_stimulus(&postimage(&source)?, &renamed_diff, repo, false, "")?;
         let shadow = finding_with_stimulus(&shadowed, &shadow_diff, repo, false, "")?;
         for finding in [plain, shadow] {
             assert!(
