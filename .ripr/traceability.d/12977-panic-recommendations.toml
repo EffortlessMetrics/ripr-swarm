@@ -1,0 +1,34 @@
+# Registers producer-to-consumer panic-limitation regression evidence (#12977).
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/panic_outcome/tests.rs::named_panic_limit_with_concrete_stages_withholds_pilot_and_brief",
+  "crates/ripr/src/output/pilot/tests/panic_outcome.rs::named_panic_limit_withholds_pilot_and_brief_without_reclassifying",
+  "crates/ripr/src/output/pilot/tests/panic_outcome.rs::weak_asserting_should_panic_control_stays_actionable",
+  "crates/ripr/tests/task_first_facade.rs::pilot_and_brief_withhold_the_should_panic_limitation",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0009"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/panic_outcome/tests.rs::named_panic_limit_with_concrete_stages_withholds_pilot_and_brief",
+  "crates/ripr/src/output/pilot/tests/panic_outcome.rs::named_panic_limit_withholds_pilot_and_brief_without_reclassifying",
+  "crates/ripr/src/output/pilot/tests/panic_outcome.rs::weak_asserting_should_panic_control_stays_actionable",
+  "crates/ripr/tests/task_first_facade.rs::pilot_and_brief_withhold_the_should_panic_limitation",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0010"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/panic_outcome/tests.rs::named_panic_limit_with_concrete_stages_withholds_pilot_and_brief",
+  "crates/ripr/src/output/pilot/tests/panic_outcome.rs::named_panic_limit_withholds_pilot_and_brief_without_reclassifying",
+  "crates/ripr/src/output/pilot/tests/panic_outcome.rs::weak_asserting_should_panic_control_stays_actionable",
+  "crates/ripr/tests/task_first_facade.rs::pilot_and_brief_withhold_the_should_panic_limitation",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0021"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/panic_outcome/tests.rs::named_panic_limit_with_concrete_stages_withholds_pilot_and_brief",
+  "crates/ripr/src/output/pilot/tests/panic_outcome.rs::named_panic_limit_withholds_pilot_and_brief_without_reclassifying",
+]

@@ -64,7 +64,7 @@ fn an_unrevealed_seam_names_the_typed_limit_once_without_reclassifying() {
     );
     assert!(withhold(&seam, &mut gap, &labels()));
     assert!(gap.names_static_limit(LIMIT));
-    // Classification inputs are untouched: the seam still ranks as before.
+    // Classification inputs stay intact; consumers also honor the named limit.
     assert_eq!(gap.discriminate.state, StageState::No);
     assert_eq!(gap.missing_discriminators.len(), 1);
     assert_eq!(
@@ -101,4 +101,53 @@ fn no_deciding_test_and_an_unreached_seam_are_not_withheld() {
     let mut opaque = evidence([Yes, Yes, Yes, StageState::Opaque, No]);
     assert!(!withhold(&seam, &mut opaque, &labels()));
     assert_eq!(opaque.observe.state, StageState::Opaque);
+}
+
+/// The named limit is authoritative independently of stage uncertainty.
+/// Unlike the parser fixture, these producer inputs have concrete states;
+/// retaining only the old Unknown/Opaque filter must fail this control.
+#[test]
+fn named_panic_limit_with_concrete_stages_withholds_pilot_and_brief() {
+    use crate::analysis::ClassifiedSeam;
+    use crate::app::agent_brief::{
+        AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
+    };
+    use crate::config::RiprConfig;
+    use crate::output::evidence_record::{is_static_limited, static_limitations_for};
+    use crate::output::pilot::top_actionable_seams;
+    use StageState::{No, Yes};
+
+    let seam = seam();
+    let ordinary = evidence([Yes, Yes, Yes, No, No]);
+    let mut limited = ordinary.clone();
+    assert!(withhold(&seam, &mut limited, &labels()));
+    let config = RiprConfig::default();
+    let working_set = AgentBriefResolvedWorkingSet::files(vec!["src/lib.rs".into()]);
+    for (evidence, withheld) in [(ordinary, false), (limited, true)] {
+        let class = classify_seam(&seam, &evidence);
+        assert_eq!(class, SeamGripClass::ReachableUnrevealed);
+        let entry = ClassifiedSeam {
+            seam: seam.clone(),
+            evidence,
+            class,
+        };
+        assert_eq!(is_static_limited(&entry), withheld);
+        let limits = static_limitations_for(&entry);
+        if withheld {
+            assert_eq!(limits.len(), 1);
+            assert_eq!(limits[0].category, LIMIT.as_str());
+            assert_eq!(limits[0].state, "no");
+            assert_eq!(limits[0].reason, entry.evidence.discriminate.summary);
+        }
+        let entries = [entry];
+        assert_eq!(top_actionable_seams(&entries, 5, None).len(), usize::from(!withheld));
+        let brief = select_agent_brief_seams(
+            &entries,
+            &working_set,
+            3,
+            AgentBriefPolicy::from_config(&config),
+        );
+        assert_eq!(brief.top_seams.len(), usize::from(!withheld));
+        assert_eq!(brief.omitted_by_policy, usize::from(withheld));
+    }
 }

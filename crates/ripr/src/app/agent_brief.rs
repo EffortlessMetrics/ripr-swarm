@@ -853,6 +853,8 @@ enum AgentBriefOmission {
     /// A gap-class seam whose evidence stages are opaque or unknown
     /// ([`is_static_limited`]); the class alone would read as a repairable gap.
     EvidenceLimited(SeamGripClass),
+    /// A producer-named panic limit can retain concrete stage states.
+    PanicOutcomeUnresolved(SeamGripClass),
 }
 
 impl AgentBriefOmission {
@@ -868,6 +870,11 @@ impl AgentBriefOmission {
                 && !entry.class.is_static_limitation()
                 && crate::output::evidence_record::is_static_limited(entry)
             {
+                if entry.evidence.names_static_limit(
+                    crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved,
+                ) {
+                    return Some(Self::PanicOutcomeUnresolved(entry.class));
+                }
                 return Some(Self::EvidenceLimited(entry.class));
             }
             return Some(Self::NotActionable(entry.class));
@@ -888,6 +895,10 @@ impl AgentBriefOmission {
             ),
             Self::EvidenceLimited(class) => format!(
                 "is {} but its evidence is opaque or unknown at a stage, so it is a static limitation and is not included in agent brief results",
+                class.as_str()
+            ),
+            Self::PanicOutcomeUnresolved(class) => format!(
+                "is {} but ripr cannot tell whether the changed code causes the expected panic, so it is a static limitation and is not included in agent brief results",
                 class.as_str()
             ),
         }
@@ -912,6 +923,10 @@ impl AgentBriefOmission {
             ),
             Self::EvidenceLimited(class) => format!(
                 "{count} more matching {noun} {verb} {} with opaque or unknown evidence (static limitations) and not included in agent brief results",
+                class.as_str()
+            ),
+            Self::PanicOutcomeUnresolved(class) => format!(
+                "{count} more matching {noun} {verb} {} with unresolved expected panic outcomes (static limitations) and not included in agent brief results",
                 class.as_str()
             ),
         }
