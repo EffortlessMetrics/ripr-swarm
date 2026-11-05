@@ -117,7 +117,11 @@ When the repository's default branch is not `main` or `master` (for example
 `ripr_refresh` with its optional `base` argument (`{"base": "trunk"}`): it is
 the only way to choose a base from inside MCP, since `ripr mcp` has no `--base`
 flag. Each refresh states its own base, so omitting `base` returns to the
-default branch. The additions are explicit-base-only so a base-less caller
+default branch.
+When a later refresh fails and a previous snapshot is retained, that snapshot's
+`empty_scope_hint.why` still describes the base of the **last completed**
+analysis. The separate `requested_base` and `attempt.failure.recovery` describe
+the newer failed request; neither silently changes the retained analysis scope. The additions are explicit-base-only so a base-less caller
 sees the unchanged v1 shapes: `ripr_refresh` adds `requested_base` and
 `ripr_workspace_status` reports `session.current_desired_input.base:
 explicit` with `base_revision` only after a refresh named a base, and the

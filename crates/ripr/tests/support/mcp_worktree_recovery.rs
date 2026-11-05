@@ -63,6 +63,25 @@ fn worktree_failed_base_recovery_preserves_saved_edits_and_last_good() -> Result
         assert_eq!(failed["requested_source"], "worktree");
         assert_eq!(failed["captured_source"], "committed");
         assert_eq!(failed["last_known_good"]["snapshot_id"], committed_id);
+        assert_eq!(failed["snapshot"]["snapshot_id"], committed_id);
+        // Real native failure: desired_base changes, last_good does not.
+        // The hint must stay bound to the retained explicit-base snapshot.
+        let before_why = reset
+            .pointer("/empty_scope_hint/why")
+            .and_then(Value::as_str)
+            .ok_or("completed baseline has no empty-scope cause")?;
+        let failed_why = failed
+            .pointer("/empty_scope_hint/why")
+            .and_then(Value::as_str)
+            .ok_or("failed refresh lost the retained empty-scope cause")?;
+        assert_eq!(
+            failed_why, before_why,
+            "failed {id} request cannot rewrite the last-good scope explanation"
+        );
+        assert!(
+            failed_why.contains("trunk"),
+            "cause must still name the snapshot's selected trunk base: {failed_why}"
+        );
         let recovery = failed
             .pointer("/attempt/failure/recovery")
             .and_then(Value::as_str)

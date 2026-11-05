@@ -1777,8 +1777,10 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
     // `AnalysisOutcomeKind` owner; the LSP scope disclosure consumes the
     // same cause sentence, so the surfaces cannot drift. The bytes are the
     // pre-refactor hint wording, pinned by the tests below.
+    // A failed refresh can replace desired_base without committing a new
+    // snapshot. The hint describes the retained analysis, not that request.
     let why = snapshot.outcome.kind.empty_scope_cause_sentence(
-        session.desired_base.as_deref(),
+        snapshot.base.as_deref(),
         crate::analysis_outcome::EmptyScopeDiffAuthority::CommittedSnapshot,
     );
     Some(json!({
@@ -5337,10 +5339,35 @@ mod tests {
             {
                 return Err(format!("why must match the outcome kind: {default_why}"));
             }
-            session.desired_base = Some("origin/main".to_string());
+            // A later failed request does not change the base selected by the
+            // retained no-scope snapshot. The latest requested base remains
+            // independently visible, but may never rewrite this cause.
+            session.desired_base = Some("new-requested-base".to_string());
+            let retained = refresh_document(&session);
+            if retained["empty_scope_hint"] != document["empty_scope_hint"]
+                || retained["requested_base"] != json!("new-requested-base")
+            {
+                return Err(format!(
+                    "retained default-base hint was rewritten by the request: {retained}"
+                ));
+            }
+            // An explicitly based last-good snapshot must likewise retain its
+            // original base when the later request differs.
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("expected unique retained snapshot")?;
+            snapshot.base = Some("original-snapshot-base".to_string());
             let named = refresh_document(&session)["empty_scope_hint"]["why"].to_string();
-            if !named.contains("origin/main") {
-                return Err(format!("requested base must be named: {named}"));
+            if !named.contains("original-snapshot-base")
+                || named.contains("new-requested-base")
+            {
+                return Err(format!("hint lost the retained snapshot base: {named}"));
+            }
+            session.last_good = None;
+            if refresh_document(&session).get("empty_scope_hint").is_some() {
+                return Err("no retained snapshot must not emit an empty-scope hint".into());
             }
         }
         for (kind, findings) in [
