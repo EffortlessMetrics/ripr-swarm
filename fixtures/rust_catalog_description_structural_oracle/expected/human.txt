@@ -2,29 +2,48 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_catalog_description_structural_oracle/input
 
-Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
-Analysis outcome: complete_with_findings (analysis complete).
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 Start here:
-  State: top_gap
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
-  File: fixtures/rust_catalog_description_structural_oracle/input/src/lib.rs:11
-  Static exposure: weakly_exposed (warning, confidence 0.92)
-  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:11
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Gap ID (for scripts): gap:rust:src/lib.rs:default_check_description:return_value:return_value:lit766572696669657320636174616c6f6720636f6e73697374656e6379.to_string
   Changed behavior: "verifies catalog consistency".to_string()
-  Missing discriminator: No strong discriminator was detected
-  Related test: tests/catalog.rs:6 catalog_with_single_consistent_entry_has_no_violations
-  Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value.
-  Evidence:
+  Missing check: No assertion was tied to the changed value
+  Related test: tests/catalog.rs:6 catalog_with_single_consistent_entry_has_no_violations (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: The related test `catalog_with_single_consistent_entry_has_no_violations` already has
+    an exact assertion; this does not establish observation of the returned value. Check whether the
+    change can affect the returned value. If it can, add a separating input and assert the exact
+    returned value. If it cannot, test the changed effect separately; another input cannot
+    distinguish unchanged returns
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach default_check_description: catalog_with_single_consistent_entry_has_no_violations
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 5 more evidence line(s) hidden
+    - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/rust_catalog_description_structural_oracle/input --diff fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:90200739
-  ripr context --root fixtures/rust_catalog_description_structural_oracle/input --diff fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:90200739
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_catalog_description_structural_oracle/input --diff <cwd>/fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:90200739
+  ripr context --root <cwd>/fixtures/rust_catalog_description_structural_oracle/input --diff <cwd>/fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:90200739
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_catalog_description_structural_oracle/input --at src/lib.rs:11 --kind return_value
 
 More:
   Full evidence: rerun with --format human-full
