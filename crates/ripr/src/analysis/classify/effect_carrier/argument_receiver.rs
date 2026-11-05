@@ -63,14 +63,28 @@ fn mentions(node: &ra_ap_syntax::SyntaxNode, binding: &str) -> bool {
 // projection witness. Ordinary field identity and closed standard imports
 // keep their existing admission.
 fn projection_imports_closed(index: &RustIndex) -> bool {
-    let known = |root: &str| {
-        matches!(root, "std" | "core" | "alloc" | "crate" | "self" | "super")
-            || index
-                .package_names
-                .iter()
-                .any(|name| name.replace('-', "_") == root)
-    };
-    index.files().values().all(|facts| {
+    // MemberCrates admits only a witnessed library target at src/lib.rs.
+    // A globally familiar crate name is not its binding in this importer:
+    // Cargo can bind the package's own name, or even `alloc`, to an outside
+    // dependency. Resolve each nonstandard root through manifest authority.
+    // The value-equality witness separately certifies the std/core roots.
+    let library_roots: Vec<_> = index
+        .files()
+        .iter()
+        .map(|(path, _)| path)
+        .filter(|path| path.ends_with("src/lib.rs"))
+        .collect();
+    index.files().iter().all(|(file, facts)| {
+        let known = |root: &str| {
+            matches!(root, "std" | "core" | "crate" | "self" | "super")
+                || library_roots.iter().any(|library| {
+                    index
+                        .member_crates
+                        .import_names(file, library)
+                        .iter()
+                        .any(|bound| bound == root)
+                })
+        };
         if crate::analysis::classify::reveal::flattened_use_paths(&facts.source)
             .iter()
             .any(|import| {

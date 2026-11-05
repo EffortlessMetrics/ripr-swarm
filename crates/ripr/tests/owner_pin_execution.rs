@@ -4182,7 +4182,8 @@ fn external_collection_trait_cannot_supply_payload_identity() -> Result<(), Stri
     let external = scratch.0.join("external");
     std::fs::create_dir_all(subject.join("src")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(external.join("src")).map_err(|e| e.to_string())?;
-    std::fs::write(subject.join("Cargo.toml"), "[package]\nname=\"subject\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n[dependencies]\nexternal_first={path=\"../external\"}\n").map_err(|e| e.to_string())?;
+    let manifest = subject.join("Cargo.toml");
+    let target = scratch.0.join("cargo-target");
     std::fs::write(
         external.join("Cargo.toml"),
         "[package]\nname=\"external_first\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n",
@@ -4190,31 +4191,25 @@ fn external_collection_trait_cannot_supply_payload_identity() -> Result<(), Stri
     .map_err(|e| e.to_string())?;
     let external_source = external.join("src/lib.rs");
     std::fs::write(&external_source, "pub trait First { fn first(&self)->Option<&String>; fn last(&self)->Option<&String>; }\nimpl First for std::cell::Ref<'_,Vec<String>> { fn first(&self)->Option<&String> { static FIXED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| \"order-42\".to_string()); Some(&FIXED) } fn last(&self)->Option<&String> { self.first() } }\n").map_err(|e| e.to_string())?;
-    let library = external.join("libexternal_first.rlib");
-    compiles(
-        run(
-            Path::new("rustc"),
-            &[
-                "--edition=2024".as_ref(),
-                "--crate-name=external_first".as_ref(),
-                "--crate-type=rlib".as_ref(),
-                external_source.as_os_str(),
-                "-o".as_ref(),
-                library.as_os_str(),
-            ],
-        )?,
-        "external observer library",
-    )?;
     for method in ["first", "last"] {
-        for (import, exposed) in [
-            ("", true),
-            ("use std::fmt::Debug as _;", true),
-            ("use external_first::First;", false),
-            ("use external_first::First as _;", false),
-            ("use external_first::*;", false),
+        for (alias, import, exposed) in [
+            ("external_first", "", true),
+            ("external_first", "use std::fmt::Debug as _;", true),
+            ("external_first", "use external_first::First;", false),
+            ("external_first", "use external_first::First as _;", false),
+            ("external_first", "use external_first::*;", false),
+            ("subject", "use subject::First;", false),
+            ("alloc", "use alloc::First;", false),
+            ("subject", "use crate::First;", true),
         ] {
-            let input = format!("{}{}{}", &original[..start], import, &original[end..])
-                .replace(".first()", &format!(".{method}()"));
+            std::fs::write(&manifest, format!("[package]\nname=\"subject\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n[dependencies]\n{alias}={{package=\"external_first\",path=\"../external\"}}\n")).map_err(|e| e.to_string())?;
+            let input = format!(
+                "{}{}{}\npub trait First {{}}\n",
+                &original[..start],
+                import,
+                &original[end..]
+            )
+            .replace(".first()", &format!(".{method}()"));
             std::fs::write(subject.join("src/lib.rs"), &input).map_err(|e| e.to_string())?;
             let report = check_workspace(CheckInput {
                 root: subject.clone(),
@@ -4233,40 +4228,37 @@ fn external_collection_trait_cannot_supply_payload_identity() -> Result<(), Stri
                     .findings
                     .iter()
                     .all(|f| (f.class == ExposureClass::Exposed) == exposed),
-                "{method}/{import}: {:?}",
+                "{method}/{alias}/{import}: {:?}",
                 report.findings
             );
             for wrong in [false, true] {
-                let source = scratch.0.join("runtime.rs");
                 let text = if wrong {
                     input.replace("notifier.send(order_id);", "notifier.send(\"static_msg\");")
                 } else {
                     input.clone()
                 };
-                std::fs::write(&source, text).map_err(|e| e.to_string())?;
-                let executable = subject.join(format!("control{}", std::env::consts::EXE_SUFFIX));
-                let binding = format!("external_first={}", library.display());
-                compiles(
-                    run(
-                        Path::new("rustc"),
-                        &[
-                            "--edition=2024".as_ref(),
-                            "--test".as_ref(),
-                            source.as_os_str(),
-                            "--extern".as_ref(),
-                            binding.as_ref(),
-                            "-o".as_ref(),
-                            executable.as_os_str(),
-                        ],
-                    )?,
-                    "external observer subject",
+                std::fs::write(subject.join("src/lib.rs"), text).map_err(|e| e.to_string())?;
+                // Cargo resolves the alias. A compile error cannot satisfy
+                // the nonzero native test inventory and runtime outcome.
+                let result = run(
+                    Path::new("cargo"),
+                    &[
+                        "test".as_ref(),
+                        "--offline".as_ref(),
+                        "--manifest-path".as_ref(),
+                        manifest.as_os_str(),
+                        "--target-dir".as_ref(),
+                        target.as_os_str(),
+                        "--".as_ref(),
+                        "--test-threads=1".as_ref(),
+                    ],
                 )?;
-                let result = run(&executable, &["--test-threads=1".as_ref()])?;
                 let failed = usize::from(wrong && exposed);
+                assert!(String::from_utf8_lossy(&result.stdout).contains("running 1 test"));
                 assert!(
                     String::from_utf8_lossy(&result.stdout)
                         .contains(&format!("{} passed; {failed} failed;", 1 - failed)),
-                    "{method}/{import}/wrong={wrong}: {}",
+                    "{method}/{alias}/{import}/wrong={wrong}: {}",
                     String::from_utf8_lossy(&result.stdout)
                 );
                 assert_eq!(
