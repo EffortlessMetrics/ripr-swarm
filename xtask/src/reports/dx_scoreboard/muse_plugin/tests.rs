@@ -285,7 +285,7 @@ fn native_muse_envelope_joins_pins_without_aliasing_namespaces() -> Result<(), S
     base["repair"] = Value::Null;
     to_input(&base)?;
     base["observations"]["schema_version"] = json!(SCHEMA_VERSION);
-    assert!(to_input(&base).is_err());
+    to_input(&base).err().ok_or("nested version accepted")?;
     Ok(())
 }
 
@@ -466,7 +466,7 @@ fn native_muse_full_trial_keeps_distinct_axes_and_exact_token_arithmetic() -> Re
             .iter()
             .find(|metric| metric.id == id)
             .ok_or(id)?;
-        assert_eq!(metric.target, 0.0);
+        assert_eq!(metric.target.to_bits(), 0.0_f64.to_bits());
         assert_eq!(metric.direction, "higher_is_better");
         assert!(metric.review_on_change);
         assert_eq!(metric.source, "ingest:muse-plugin");
@@ -508,13 +508,13 @@ fn native_muse_schema_rejects_pin_shape_and_numeric_drift() -> Result<(), String
         .as_object_mut()
         .ok_or("subject")?
         .remove("muse_version");
-    assert!(to_input(&missing).is_err());
+    to_input(&missing).err().ok_or("missing version accepted")?;
     let mut unknown = base.clone();
     unknown["success"] = json!(true);
-    assert!(to_input(&unknown).is_err());
+    to_input(&unknown).err().ok_or("outer field accepted")?;
     let mut nested = base;
     nested["observations"]["usage"]["unreported_cost"] = json!(0);
-    assert!(to_input(&nested).is_err());
+    to_input(&nested).err().ok_or("usage field accepted")?;
     Ok(())
 }
 
@@ -556,7 +556,9 @@ fn native_muse_accepts_integral_decimal_and_exponent_spellings() -> Result<(), S
         ("\"exit_code\":0.0", "\"exit_code\":0.00000000000000001"),
     ] {
         assert!(encoded.contains(from), "fixture lacks {from}");
-        assert!(parse_ingest_text(&encoded.replace(from, to)).is_err());
+        parse_ingest_text(&encoded.replace(from, to))
+            .err()
+            .ok_or("accepted fractional measurement")?;
     }
     Ok(())
 }
