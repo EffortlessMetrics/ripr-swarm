@@ -1,0 +1,17 @@
+{
+  "producer_version": "ripr 0.11.0 (0402cb776a96d21324b53792dc41356915e3aa31)",
+  "diff": "unwrap-real-git-diff.patch",
+  "exit": 0,
+  "findings": [
+    {
+      "family": "error_path",
+      "line": 9,
+      "classification": "exposed"
+    },
+    {
+      "family": "return_value",
+      "line": 9,
+      "classification": "exposed"
+    }
+  ]
+}

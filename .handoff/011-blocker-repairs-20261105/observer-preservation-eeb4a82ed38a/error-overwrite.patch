@@ -1,0 +1,6 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,1 +4,1 @@
+- if x<0 { return Err(CalcError::TooLarge); }
++ if x<0 { return Err(CalcError::Negative); }

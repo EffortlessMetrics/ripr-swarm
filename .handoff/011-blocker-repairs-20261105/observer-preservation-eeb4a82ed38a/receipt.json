@@ -1,0 +1,207 @@
+{
+  "version": "ripr 0.11.0 (0402cb776a96d21324b53792dc41356915e3aa31)",
+  "binary_sha256": "3dca3a4a8b8e2f4de6bd5699cbddd2878e736b4aa4bff7369a59f414854f850d",
+  "rows": [
+    {
+      "case": "error-direct",
+      "expected_exposed": true,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "error_path",
+          "classification": "exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "error-bound",
+      "expected_exposed": true,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "error_path",
+          "classification": "exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "error-expect",
+      "expected_exposed": true,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "error_path",
+          "classification": "exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "error-discard",
+      "expected_exposed": false,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "error_path",
+          "classification": "weakly_exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "error-overwrite",
+      "expected_exposed": false,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "error_path",
+          "classification": "weakly_exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "scalar-literal",
+      "expected_exposed": true,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "scalar-guard",
+      "expected_exposed": true,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "scalar-reversed",
+      "expected_exposed": true,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "scalar-wrong_literal",
+      "expected_exposed": false,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "scalar-wrong_guard",
+      "expected_exposed": false,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "scalar-overwrite",
+      "expected_exposed": false,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "scalar-discard",
+      "expected_exposed": false,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "scalar-block_discard",
+      "expected_exposed": false,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "scalar-other_guard",
+      "expected_exposed": false,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "case": "scalar-or_guard",
+      "expected_exposed": false,
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "passed": true
+    }
+  ],
+  "passed": true
+}

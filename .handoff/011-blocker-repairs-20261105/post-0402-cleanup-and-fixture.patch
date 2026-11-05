@@ -1,0 +1,36 @@
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 318235605..e1d50b627 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -9192,16 +9192,6 @@ fn local_variant_path(path: &str) -> Option<(String, String)> {
+         .then(|| (qualifier.to_string(), variant.to_string()))
+ }
+ 
+-/// #7063: the enum and variant of a changed `[return ]Err(Type::Variant(..))`
+-/// or `Err(Type::Variant { .. })` whose variant carries a payload.
+-fn payload_variant_construction(expression: &str) -> Option<(String, String)> {
+-    let text = expression.trim().trim_end_matches(';').trim_end();
+-    let text = text.strip_prefix("return ").map_or(text, str::trim);
+-    let key = error_variant_key(text)?;
+-    let argument = text.strip_prefix("Err(")?.strip_suffix(')')?;
+-    argument.trim_end().ends_with([')', '}']).then_some(key)
+-}
+-
+ /// #7063: a changed early `return Err(Type::Variant ..);` beside other
+ /// `return Err(..)` exits. A pin expecting `Err(Type::Variant ..)` observes
+ /// the changed return when no other exit can build that variant: every other
+diff --git a/fixtures/unwrap_err_variant_positive/diff.patch b/fixtures/unwrap_err_variant_positive/diff.patch
+index 2f31fa2bd..d18ca46aa 100644
+--- a/fixtures/unwrap_err_variant_positive/diff.patch
++++ b/fixtures/unwrap_err_variant_positive/diff.patch
+@@ -1,8 +1,8 @@
+ diff --git a/src/lib.rs b/src/lib.rs
+-index 0000000..1111111 100644
+ --- a/src/lib.rs
+ +++ b/src/lib.rs
+-@@ -6,6 +6,6 @@ pub enum CalcError {
++@@ -6,7 +6,7 @@ pub enum CalcError {
++ 
+  pub fn compute(x: i32) -> Result<i32, CalcError> {
+      if x < 0 {
+ -        return Err(CalcError::TooLarge);

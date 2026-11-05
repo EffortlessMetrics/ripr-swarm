@@ -1,0 +1,260 @@
+{
+  "producer_version": "ripr 0.11.0 (0402cb776a96d21324b53792dc41356915e3aa31)",
+  "producer_sha256": "3dca3a4a8b8e2f4de6bd5699cbddd2878e736b4aa4bff7369a59f414854f850d",
+  "rows": [
+    {
+      "fixture": "boundary_pairing_sibling_element",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"
+        }
+      ]
+    },
+    {
+      "fixture": "boundary_pairing_sibling_owner",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"
+        }
+      ]
+    },
+    {
+      "fixture": "error_return_unresolved_guard",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "error_path",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        },
+        {
+          "family": "field_construction",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        }
+      ]
+    },
+    {
+      "fixture": "error_variant_boxed_wrapper_downcast_witness",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "error_path",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        },
+        {
+          "family": "error_path",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        },
+        {
+          "family": "error_path",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        {
+          "family": "error_path",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        {
+          "family": "error_path",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        {
+          "family": "error_path",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        {
+          "family": "error_path",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        },
+        {
+          "family": "error_path",
+          "classification": "reachable_unrevealed",
+          "discriminate": "No assertion found on related tests"
+        },
+        {
+          "family": "return_value",
+          "classification": "reachable_unrevealed",
+          "discriminate": "No assertion found on related tests"
+        }
+      ]
+    },
+    {
+      "fixture": "module_reach_control_qualified",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "exposed",
+          "discriminate": "Strong oracle found: exact value or pattern assertion"
+        },
+        {
+          "family": "return_value",
+          "classification": "exposed",
+          "discriminate": "Strong oracle found: exact value or pattern assertion"
+        }
+      ]
+    },
+    {
+      "fixture": "observation_verified_call_deletion",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "call_deletion",
+          "classification": "exposed",
+          "discriminate": "Strong oracle found: exact value or pattern assertion"
+        },
+        {
+          "family": "side_effect",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        }
+      ]
+    },
+    {
+      "fixture": "owner_name_collision_helper_keeps_credit",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"
+        }
+      ]
+    },
+    {
+      "fixture": "rust_same_method_owner_type_positive",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        }
+      ]
+    },
+    {
+      "fixture": "unwrap_err_variant_positive",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "error_path",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed",
+          "discriminate": "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        }
+      ]
+    },
+    {
+      "fixture": "wildcard_oracle_exact_original",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "exposed",
+          "discriminate": "Strong oracle found: exact value or pattern assertion"
+        }
+      ]
+    },
+    {
+      "fixture": "wildcard_oracle_exact_wrong",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "exposed",
+          "discriminate": "Strong oracle found: exact value or pattern assertion"
+        }
+      ]
+    },
+    {
+      "fixture": "wildcard_oracle_guarded_original",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "exposed",
+          "discriminate": "Strong oracle found: exact value or pattern assertion"
+        }
+      ]
+    },
+    {
+      "fixture": "wildcard_oracle_guarded_wrong",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "return_value",
+          "classification": "exposed",
+          "discriminate": "Strong oracle found: exact value or pattern assertion"
+        }
+      ]
+    }
+  ],
+  "limitation": "Classification replay of13 prior drift subjects; not complete golden comparison."
+}

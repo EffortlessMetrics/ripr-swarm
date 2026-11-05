@@ -1,0 +1,13 @@
+{
+  "runtime_candidate": "0402cb776a96d21324b53792dc41356915e3aa31",
+  "production_tests": 14,
+  "native_path_tests": 4,
+  "cli_preservation_rows": 15,
+  "cli_all_passed": true,
+  "current_source": "fcc5786045c36c8109050e663bdc51e783ca33d0",
+  "cleanup_patch_bytes": 1744,
+  "cleanup_patch_sha256": "d5f200598cc28413ad1092547e3a020de294fb135d796e31734d029e295e88c6",
+  "cleanup_scope": "remove unused private helper; regenerate unwrap fixture diff from actual before/after source; metadata correction exposes both error-path and return-value at correct line9 in0402 CLI",
+  "performance": "64 admitted private field writes in192-seam workspace; bounded full result1, complete compact prefill192 across3 shards;3.616s total,2.577s prefill,82,186,240byte peakprocessRSS; synthetic bounded observation only",
+  "remaining": "receiver/tuple/format-effect/typed multi-return error observer regressions;25 artifact regen;field parity/current policy/hosted/installed proof;promotion selection hold"
+}

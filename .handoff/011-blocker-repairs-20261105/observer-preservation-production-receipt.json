@@ -1,0 +1,384 @@
+{
+  "stage": "observer-preservation-production",
+  "candidate": "0402cb776a96d21324b53792dc41356915e3aa31",
+  "tree": "3c68e7f7851120dc67bf56e0ee77b84e29951af9",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "return_diagnostic_confirmation",
+    "--test",
+    "native_path_roots",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 341.31,
+  "counts": {
+    "passed": 14,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 0
+  },
+  "log_sha256": "ed103ffbd51dd728ba18691634a7e091c9864d671dd5582cb5d70bc3a83563b4",
+  "peak_cgroup_memory_bytes": 8076083200,
+  "samples": [
+    {
+      "utc": "2026-11-05T19:29:58.530394+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 2284314624,
+      "workspace_free_bytes": 20956266496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:30:08.530958+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3303337984,
+      "workspace_free_bytes": 21424066560,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:30:18.531736+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 20.0,
+      "cgroup_memory_bytes": 3839946752,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:30:28.534122+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 30.01,
+      "cgroup_memory_bytes": 3863511040,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:30:38.740641+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 40.21,
+      "cgroup_memory_bytes": 3450855424,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:30:48.817993+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 50.29,
+      "cgroup_memory_bytes": 3764969472,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:30:58.823296+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 60.29,
+      "cgroup_memory_bytes": 4002287616,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:31:08.824559+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 70.3,
+      "cgroup_memory_bytes": 4246847488,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:31:18.825580+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 80.3,
+      "cgroup_memory_bytes": 4551798784,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:31:28.826256+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 90.3,
+      "cgroup_memory_bytes": 4901183488,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:31:38.826959+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 100.3,
+      "cgroup_memory_bytes": 5276221440,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:31:48.923204+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 110.39,
+      "cgroup_memory_bytes": 5363089408,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:31:58.993905+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 120.47,
+      "cgroup_memory_bytes": 5489291264,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:32:08.994638+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 130.47,
+      "cgroup_memory_bytes": 5892132864,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:32:18.995473+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 140.47,
+      "cgroup_memory_bytes": 6253559808,
+      "workspace_free_bytes": 21423382528,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:32:28.997094+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 150.47,
+      "cgroup_memory_bytes": 6637010944,
+      "workspace_free_bytes": 21354586112,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:32:38.998025+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 160.47,
+      "cgroup_memory_bytes": 6936109056,
+      "workspace_free_bytes": 21354586112,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:32:48.999543+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 170.47,
+      "cgroup_memory_bytes": 7189745664,
+      "workspace_free_bytes": 21354586112,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:32:59.578243+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 181.05,
+      "cgroup_memory_bytes": 7271710720,
+      "workspace_free_bytes": 21354586112,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:33:09.672636+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 191.14,
+      "cgroup_memory_bytes": 7386267648,
+      "workspace_free_bytes": 21354586112,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:33:19.677907+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 201.15,
+      "cgroup_memory_bytes": 7526006784,
+      "workspace_free_bytes": 21353492480,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:33:29.679922+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 211.15,
+      "cgroup_memory_bytes": 7697444864,
+      "workspace_free_bytes": 21422219264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:33:39.680533+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 221.15,
+      "cgroup_memory_bytes": 7678349312,
+      "workspace_free_bytes": 21377064960,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:33:49.681815+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 231.15,
+      "cgroup_memory_bytes": 7895298048,
+      "workspace_free_bytes": 21348786176,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:33:59.780049+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 241.25,
+      "cgroup_memory_bytes": 7716737024,
+      "workspace_free_bytes": 21307326464,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:34:09.781604+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 251.25,
+      "cgroup_memory_bytes": 7879032832,
+      "workspace_free_bytes": 21307326464,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:34:19.782967+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 261.25,
+      "cgroup_memory_bytes": 7846486016,
+      "workspace_free_bytes": 21260627968,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:34:29.784610+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 271.26,
+      "cgroup_memory_bytes": 8076083200,
+      "workspace_free_bytes": 21243297792,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:34:39.787610+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 281.26,
+      "cgroup_memory_bytes": 7997915136,
+      "workspace_free_bytes": 21197242368,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:34:49.790045+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 291.26,
+      "cgroup_memory_bytes": 7929307136,
+      "workspace_free_bytes": 21152784384,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:34:59.803292+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 301.27,
+      "cgroup_memory_bytes": 7810555904,
+      "workspace_free_bytes": 21118500864,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:35:09.806540+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 311.28,
+      "cgroup_memory_bytes": 7879290880,
+      "workspace_free_bytes": 21096505344,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:35:19.808681+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 321.28,
+      "cgroup_memory_bytes": 3045171200,
+      "workspace_free_bytes": 21137960960,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:35:29.810286+00:00",
+      "stage": "observer-preservation-production",
+      "head": "0402cb776a96d21324b53792dc41356915e3aa31",
+      "pid": 1083515,
+      "elapsed": 331.28,
+      "cgroup_memory_bytes": 3195719680,
+      "workspace_free_bytes": 20953305088,
+      "temp_free_bytes": 9434247168
+    }
+  ]
+}

@@ -1,0 +1,348 @@
+{
+  "producer_version": "ripr 0.11.0 (0402cb776a96d21324b53792dc41356915e3aa31)",
+  "binary_sha256": "3dca3a4a8b8e2f4de6bd5699cbddd2878e736b4aa4bff7369a59f414854f850d",
+  "result": {
+    "modules": 64,
+    "label": "trace-cold-bounded",
+    "cap": 1,
+    "exit": 0,
+    "guard_stop": null,
+    "seconds": 3.616,
+    "peak_process_rss_bytes": 82186240,
+    "top_level_keys": [
+      "schema_version",
+      "artifact",
+      "source_subject",
+      "analysis_inputs",
+      "scope",
+      "run_status",
+      "limitations",
+      "metrics",
+      "seams"
+    ],
+    "summary": null,
+    "cache": null,
+    "limitations": [
+      {
+        "category": "repo_seam_limit_applied",
+        "seams_analyzed": 1,
+        "seams_total": 192,
+        "limit_source": "configured",
+        "control": "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+        "repair_route": "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+      }
+    ],
+    "seam_rows": 1,
+    "private_write_rows": 0
+  },
+  "cache_files": [
+    {
+      "path": "target/ripr/cache/repo-compact-classified-seams-sharded/0.168/0.168/0053a0ff6f179d4c.lock",
+      "bytes": 0
+    },
+    {
+      "path": "target/ripr/cache/repo-compact-classified-seams-sharded/0.168/0.168/0053a0ff6f179d4c/manifest.json",
+      "bytes": 1132
+    },
+    {
+      "path": "target/ripr/cache/repo-compact-classified-seams-sharded/0.168/0.168/0053a0ff6f179d4c/g1087088-1793907591173573346-0/shard-00002.json",
+      "bytes": 130087
+    },
+    {
+      "path": "target/ripr/cache/repo-compact-classified-seams-sharded/0.168/0.168/0053a0ff6f179d4c/g1087088-1793907591173573346-0/shard-00001.json",
+      "bytes": 129875
+    },
+    {
+      "path": "target/ripr/cache/repo-compact-classified-seams-sharded/0.168/0.168/0053a0ff6f179d4c/g1087088-1793907591173573346-0/shard-00000.json",
+      "bytes": 129875
+    },
+    {
+      "path": "target/ripr/cache/repo-seam-facts/1.166/0053a0ff6f179d4c.json",
+      "bytes": 52334
+    },
+    {
+      "path": "target/ripr/cache/repo-seam-facts-sharded/1.166/0.168/0053a0ff6f179d4c.lock",
+      "bytes": 0
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/3ff5382622b64664.json",
+      "bytes": 7644
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/4eb6c5a2d013764a.json",
+      "bytes": 7644
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/dc7d7331bd1c4f5b.json",
+      "bytes": 7644
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/f3191273c6f371e8.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/213c01629c8b1e58.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/82aa00406c47e794.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/3cd2873693e20509.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/5e6738256c64dd96.json",
+      "bytes": 7644
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/59a20c5745b63398.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/44a2e7f4c7f96c82.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/1c1fcd63c2c3a0ed.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/cedd91642cd095be.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/f365e244445e6e6c.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/d834129d7fe545d2.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/309e337fb097a228.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/7168783238f1fcac.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/6f2a76ed3b51d9a3.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/37260daf2b633bd6.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/d33fbf2c63390d4e.json",
+      "bytes": 7644
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/a3d9971bdc1ee82b.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/b89d7036c44cc681.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/3a970cd854d13994.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/ef278d300d43830e.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/484cda61e418bbfc.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/66895800e4e52c4c.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/756c8240d854efa2.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/9087cf0d573f2c79.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/ac23b7554951ff76.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/8b70ea05a22aa4ee.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/c9b0248123ba60de.json",
+      "bytes": 7644
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/553a49280b0442f0.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/50b292e49b3cd399.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/fe97c0fae786954a.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/bec1ee2ffe33db5b.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/ccc35463c89a7fcb.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/62d9170190ce1707.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/c51dfb3ce77c610b.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/713d0ad3dbb2e574.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/61a7e96a881a70f4.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/2354b77deb6dc52d.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/5c279ddd1b0b2f59.json",
+      "bytes": 7644
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/09fe9c2e67fc79bd.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/e60b5d851c9e19bd.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/59f2427e3e0c30d0.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/6425bb68230fa16d.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/9404865521cbb195.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/aec3ef0227d72f4d.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/6ebb7a39f85abc9a.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/454ca80ad08b0deb.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/d49bd6979a898191.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/1a461b437135f293.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/98e80347044bbc53.json",
+      "bytes": 7644
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/adb9e79e5cb860ed.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/12c9977e19ebd6e9.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/b347f2a144c9937f.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/bae30e301a48e83d.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/2a091fa1cac8713b.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/77053e9021f0226e.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/239dd50b31bb71c0.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/a4b098a7a6ed42f4.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/2e42da1a0ce0d5d5.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/68261750b0edf7bf.json",
+      "bytes": 7679
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/9945d455c83c4343.json",
+      "bytes": 7644
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/07d39fcc6a2657fc.json",
+      "bytes": 7644
+    },
+    {
+      "path": "target/ripr/cache/repo-file-facts/1.57/1a47f70f974e1f91.json",
+      "bytes": 12986
+    },
+    {
+      "path": "target/ripr/cache/repo-corpus-fingerprint/0.4/5e5ab4bb7875ee83.json",
+      "bytes": 268
+    }
+  ],
+  "cache_trace": [
+    "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.",
+    "ripr_repo_exposure_latency phase=cache_load status=start_files_65 duration_ms=0",
+    "ripr_repo_exposure_latency phase=cache_load status=miss duration_ms=4",
+    "ripr: no usable cache entry for this workspace state; running the full classified walk",
+    "ripr_repo_exposure_latency phase=file_fact_cache status=start_files_65_production_65 duration_ms=0",
+    "ripr_repo_exposure_latency phase=index_cached_parse status=start duration_ms=0",
+    "ripr_repo_exposure_latency phase=index_cached_parse status=finished duration_ms=116",
+    "ripr_repo_exposure_latency phase=file_fact_cache status=hits_0_misses_65_corrupt_0_store_errors_0 duration_ms=124",
+    "ripr_file_fact_cache_receipt {\"corrupt_ignored\":0,\"hits\":0,\"invalidated\":0,\"misses\":65,\"schema_version\":\"0.1\",\"store_errors\":0,\"store_failures\":[],\"store_failures_dropped\":0,\"stores\":65}",
+    "ripr_repo_exposure_latency phase=cache_store status=start_classified_1_limit_20000 duration_ms=0",
+    "ripr_repo_exposure_latency phase=cache_store status=ok duration_ms=18",
+    "ripr_repo_exposure_latency phase=compact_cache_prefill status=sharded_ok_seams_192_shards_3_limit_64 duration_ms=2577",
+    "ripr_cache_family_store_receipt {\"schema_version\":\"0.1\",\"store_errors\":0,\"store_failures\":[],\"store_failures_dropped\":0,\"subject\":{\"cache_key\":\"600157fbe26b4320\",\"declined_rust_files\":\"09612b07b5ecb5a5\",\"diff_bound_corpus\":false,\"naming_only_skips\":\"09612b07b5ecb5a5\",\"skipped_generated\":\"09612b07b5ecb5a5\"}}"
+  ],
+  "claim": "Bounded64-file workload measurement with trace; no broad performance or compact-hit claim."
+}
