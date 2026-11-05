@@ -1230,6 +1230,7 @@ fn evidence_promotion_corpus_summary_reports_pinned_external_setup_failure() -> 
         }
 
         let corpus_json = serde_json::json!({
+            "report_digest_required": [],
             "cases": [
                 {
                     "id": "py_non_promoted",
@@ -1285,6 +1286,7 @@ fn evidence_promotion_corpus_summary_reports_pinned_external_setup_failure() -> 
             &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
         );
 
+        seed_honesty_git_base()?;
         let err = super::check_evidence_promotion_honesty(&["--pinned-external".to_string()])
             .expect_err("malformed pinned_external case should fail");
         assert!(
