@@ -748,7 +748,7 @@ jobs:
               response=$(read_exit=0; timeout --kill-after=1s 15s gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --method GET --include 2>/dev/null || read_exit=$?; printf '.'; exit "$read_exit") || native=$?
               response=${response%.}
               # gh writes an LF status line, CRLF headers, then a CRLF blank line.
-              # Only that frame classifies a retry; stderr and body text do not.
+              # Keep provider body/stderr out of logs; classify retries only from the frame.
               status_line=${response%%$'\n'*}
               if [[ "$response" != *$'\n'* ]] || ! [[ "$status_line" =~ ^HTTP/[0-9]+\.[0-9]+\ ([0-9]{3})\ [[:print:]]+$ ]]; then
                 echo "::error::PR read has an invalid HTTP frame (native exit $native)"
