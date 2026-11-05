@@ -100,7 +100,21 @@
       "items": { "$ref": "#/$defs/test_harness" }
     },
     "source_subject": { "$ref": "#/$defs/source_subject" },
-    "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" }
+    "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" },
+    "rendering": {
+      "description": "Rendering profile of the document. Only `terse` is defined: emitted exclusively by `ripr check --format json-terse`, which codes repeated evidence prose against `evidence_legend` and omits same-value alias fields (listed in `dropped_aliases`). Absent from `json` and `json-compact` output, whose parsed values are the full document.",
+      "const": "terse"
+    },
+    "evidence_legend": {
+      "description": "json-terse only: code -> full prose template, emitted once at the document head in first-appearance order. Codes (E0001, ...) substitute for strings of 24+ bytes in finding `evidence_path`, `evidence`, `missing` and `assertion_texts` values; expanding every code through this legend reconstructs the exact original document strings.",
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 24 }
+    },
+    "dropped_aliases": {
+      "description": "json-terse only: finding field names omitted because their string value was byte-identical to an earlier field in the same finding object. The value survives in the earlier field; identity and verdict fields (id, classification, severity, confidence, probe, ripr, language) are exempt and never listed here.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
   },
   "$defs": {
     "nullable_string": { "type": ["string", "null"] },
@@ -220,7 +234,8 @@
           }
         },
         "suppressed_by_policy": { "type": "integer", "minimum": 0 },
-        "conflicting_expressions": { "type": "integer", "minimum": 1 }
+        "conflicting_expressions": { "type": "integer", "minimum": 1 },
+        "proof_harness_only": { "type": "integer", "minimum": 1 }
       }
     },
     "analysis_outcome_projection": {

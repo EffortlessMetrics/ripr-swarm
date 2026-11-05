@@ -11,6 +11,9 @@ use super::measure::{
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
 
+mod consumer_checkout;
+mod partial;
+
 /// The committed config, resolved from the crate root so a test that moves
 /// the working directory cannot break the lookup.
 fn committed_config() -> PathBuf {
@@ -349,7 +352,7 @@ fn a_ceilinged_row_fails_the_gate_above_its_ceiling_whatever_the_baseline() -> R
     );
     assert_eq!(
         under["gate"]["status"].as_str(),
-        Some("pass"),
+        Some("pass_with_gaps"),
         "{}",
         under["gate"]
     );
@@ -511,6 +514,176 @@ fn gate_fails_on_a_broken_instrument_even_without_baseline() -> Result<(), Strin
     )];
     let report = build_report(&config, &all_boards(), &clean, &context("r"), None, true);
     assert_eq!(report["gate"]["status"].as_str(), Some("no_baseline"));
+    Ok(())
+}
+
+#[test]
+fn gate_fails_when_no_selected_metric_is_comparable() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    let boards = vec!["first_run".to_string()];
+    let baseline = build_report(
+        &config,
+        &boards,
+        &[sample(
+            "first_run.friction_events",
+            None,
+            SampleOutcome::Value(0.0),
+        )],
+        &context("r"),
+        None,
+        false,
+    );
+    // No ingest receipt this run: the only selected metric is not measured,
+    // so the gate has zero comparable evidence and must not pass.
+    let report = build_report(&config, &boards, &[], &context("r"), Some(&baseline), true);
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    assert_eq!(report["gate"]["zero_evidence_boards"], json!(["first_run"]));
+    assert!(gate_failure_message(&report).contains("first_run"));
+    // A comparable selected metric keeps the gate passing as before.
+    let measured = build_report(
+        &config,
+        &boards,
+        &[sample(
+            "first_run.friction_events",
+            None,
+            SampleOutcome::Value(0.0),
+        )],
+        &context("r"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(measured["gate"]["status"].as_str(), Some("pass"));
+    // A mixed run passes when another selected board was measured, and the
+    // zero-evidence field stays empty: it names only boards the gate
+    // failed for, never a board beside a passing gate.
+    let mixed_boards = vec!["first_run".to_string(), "ci".to_string()];
+    let mixed_baseline = build_report(
+        &config,
+        &mixed_boards,
+        &[sample(
+            "ci.workflow_lines",
+            None,
+            SampleOutcome::Value(100.0),
+        )],
+        &context("r"),
+        None,
+        false,
+    );
+    let mixed = build_report(
+        &config,
+        &mixed_boards,
+        &[sample(
+            "ci.workflow_lines",
+            None,
+            SampleOutcome::Value(100.0),
+        )],
+        &context("r"),
+        Some(&mixed_baseline),
+        true,
+    );
+    assert_eq!(mixed["gate"]["status"].as_str(), Some("pass"));
+    assert_eq!(mixed["gate"]["zero_evidence_boards"], json!([]));
+    // An ungated run never names zero-evidence boards either: the field is
+    // the gate's failure record, so `not_run` keeps it empty.
+    let ungated = build_report(&config, &boards, &[], &context("r"), Some(&baseline), false);
+    assert_eq!(ungated["gate"]["status"].as_str(), Some("not_run"));
+    assert_eq!(ungated["gate"]["zero_evidence_boards"], json!([]));
+    Ok(())
+}
+
+#[test]
+fn gate_pass_with_gaps_when_missing_evidence_exceeds_half() -> Result<(), String> {
+    // Threshold boundary: at or below half stays a plain pass.
+    assert_eq!(gate_pass_status(66, 20, 13), "pass");
+    assert_eq!(gate_pass_status(66, 37, 17), "pass_with_gaps");
+    assert_eq!(gate_pass_status(0, 0, 0), "pass");
+
+    let config = parse_config(MINIMAL)?;
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &[
+            sample(
+                "speed.warm_check_ms",
+                Some("a"),
+                SampleOutcome::Value(1000.0),
+            ),
+            sample("ci.workflow_lines", None, SampleOutcome::Value(100.0)),
+            sample("first_run.friction_events", None, SampleOutcome::Value(0.0)),
+        ],
+        &context("runner-a"),
+        None,
+        false,
+    );
+    // Only one of three metrics is measured this run: the other two are
+    // not_measured and, holding baseline values, also uncompared, so the
+    // regression gate passes only with gaps named in the headline.
+    let report = build_report(
+        &config,
+        &all_boards(),
+        &[sample(
+            "ci.workflow_lines",
+            None,
+            SampleOutcome::Value(100.0),
+        )],
+        &context("runner-a"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(
+        report["gate"]["status"].as_str(),
+        Some("pass_with_gaps"),
+        "{}",
+        report["gate"]
+    );
+    assert_eq!(
+        report["gate"]["counts"],
+        json!({
+            "meets_target": 1,
+            "below_target": 0,
+            "not_measured": 2,
+            "failed": 0,
+            "uncompared": 2,
+            "total": 3,
+        })
+    );
+    let markdown = render_markdown(&report);
+    assert!(
+        markdown.contains("1 meet target")
+            && markdown.contains("0 below target")
+            && markdown.contains("2 not measured")
+            && markdown.contains("0 failed")
+            && markdown.contains("2 not compared")
+            && markdown.contains("Gate: `pass_with_gaps`"),
+        "{markdown}"
+    );
+    Ok(())
+}
+
+#[test]
+fn committed_baseline_rollup_would_not_read_as_plain_pass() -> Result<(), String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("metrics/dx-scoreboard/baseline.json");
+    let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let baseline: Value = serde_json::from_str(&text).map_err(|err| err.to_string())?;
+    // The committed baseline is the dishonest headline this fixes: it says
+    // `pass` while most of its metrics carry no measured comparison.
+    assert_eq!(baseline["gate"]["status"].as_str(), Some("pass"));
+    let total = baseline["metrics"].as_array().map_or(0, Vec::len) as u64;
+    let not_measured = baseline["metrics"].as_array().map_or(0, |rows| {
+        rows.iter()
+            .filter(|row| row["status"].as_str() == Some("not_measured"))
+            .count()
+    }) as u64;
+    let uncompared = baseline["gate"]["uncompared"]
+        .as_array()
+        .map_or(0, Vec::len) as u64;
+    assert_eq!(
+        gate_pass_status(total, not_measured, uncompared),
+        "pass_with_gaps",
+        "committed baseline: {total} metrics, {not_measured} not_measured, {uncompared} uncompared"
+    );
     Ok(())
 }
 
@@ -1375,7 +1548,7 @@ fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<()
     // A different runner class is never compared for a wall-time metric.
     assert_eq!(
         gate(outside, "runner-b")?["gate"]["status"].as_str(),
-        Some("pass")
+        Some("pass_with_gaps")
     );
     Ok(())
 }
@@ -1531,7 +1704,7 @@ fn the_nightly_row_receipt_gates_a_slower_install() -> Result<(), String> {
     // A different runner class is never compared for a wall-time metric.
     assert_eq!(
         gate(outside, "runner-b")?["gate"]["status"].as_str(),
-        Some("pass")
+        Some("pass_with_gaps")
     );
     Ok(())
 }
@@ -1854,7 +2027,7 @@ source = "ingest:first-run"
     assert_eq!(row["baseline"]["comparable"].as_bool(), Some(false));
     let reason = row["baseline"]["reason"].as_str().unwrap_or_default();
     assert!(reason.contains("step-occurrences-v1"), "{reason}");
-    assert_eq!(report["gate"]["status"].as_str(), Some("pass"));
+    assert_eq!(report["gate"]["status"].as_str(), Some("pass_with_gaps"));
     assert!(
         report["gate"]["uncompared"]
             .as_array()
@@ -2012,7 +2185,7 @@ fn a_repo_new_to_the_corpus_is_listed_not_gated_unless_it_stops_short() -> Resul
     };
     // A heavier new repository is slower than the old worst but regressed nothing.
     let slower = run(SampleOutcome::Value(9000.0));
-    assert_eq!(slower["gate"]["status"].as_str(), Some("pass"));
+    assert_eq!(slower["gate"]["status"].as_str(), Some("pass_with_gaps"));
     let row = slower["metrics"]
         .as_array()
         .and_then(|rows| rows.iter().find(|r| r["id"] == "speed.warm_check_ms"))
@@ -2052,7 +2225,7 @@ fn gate_lists_baseline_metrics_it_could_not_compare() -> Result<(), String> {
         Some(&baseline),
         true,
     );
-    assert_eq!(report["gate"]["status"].as_str(), Some("pass"));
+    assert_eq!(report["gate"]["status"].as_str(), Some("pass_with_gaps"));
     let uncompared = report["gate"]["uncompared"]
         .as_array()
         .ok_or("uncompared list missing")?;
@@ -2077,6 +2250,8 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         language: None,
         ceilings: BTreeMap::new(),
         expected_partial: None,
+        size_tier: None,
+        memory_ratchet: None,
     };
     let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
     assert_eq!(validate_corpus(&[entry("a", full)]), Ok(()));
@@ -2656,7 +2831,7 @@ fn a_review_only_count_that_moves_with_unchanged_evidence_is_listed() -> Result<
     );
     assert_eq!(
         report["gate"]["status"].as_str(),
-        Some("pass"),
+        Some("pass_with_gaps"),
         "{}",
         report["gate"]
     );
@@ -3370,6 +3545,365 @@ fn the_runner_class_cpu_model_is_the_first_model_name_as_a_slug() {
 }
 
 #[test]
+fn measured_checkout_uses_the_pin_not_cached_worktree_inputs() -> Result<(), String> {
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture = Fixture(crate::tests::temp_dir("dx-isolated-checkout"));
+    let root = &fixture.0;
+    let corpus = root.join("corpus");
+    let source = corpus.join("fixture");
+    fs::create_dir_all(&source).map_err(|err| err.to_string())?;
+    let git = |args: &[&str]| super::measure::git(Some(&source), args);
+    git(&["init", "--quiet"])?;
+    fs::write(source.join(".gitignore"), "ripr.toml\ntarget/\n").map_err(|err| err.to_string())?;
+    fs::write(source.join("subject.rs"), "pinned\n").map_err(|err| err.to_string())?;
+    git(&["add", "."])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "base",
+    ])?;
+    let base = git(&["rev-parse", "HEAD"])?;
+    fs::write(source.join("subject.rs"), "pin\n").map_err(|err| err.to_string())?;
+    fs::write(
+        source.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\"]\n",
+    )
+    .map_err(|err| err.to_string())?;
+    git(&["add", "."])?;
+    git(&["add", "-f", "ripr.toml"])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "pin",
+    ])?;
+    let pin = git(&["rev-parse", "HEAD"])?;
+    git(&["rm", "--quiet", "ripr.toml"])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "later",
+    ])?;
+    let before = git(&["rev-parse", "HEAD"])?;
+    fs::write(source.join("ripr.toml"), "[languages\n").map_err(|err| err.to_string())?;
+    fs::write(source.join("extra.rs"), "untracked\n").map_err(|err| err.to_string())?;
+    fs::create_dir_all(source.join("target/ripr")).map_err(|err| err.to_string())?;
+    fs::write(source.join("target/ripr/keep"), "keep").map_err(|err| err.to_string())?;
+    let options = parse_options(&["--corpus-dir".to_string(), corpus.display().to_string()])?;
+    let entry = CorpusEntry {
+        id: "fixture".to_string(),
+        url: String::new(),
+        sha: pin.trim().to_string(),
+        base_sha: None,
+        note: String::new(),
+        heavy: false,
+        language: None,
+        ceilings: BTreeMap::new(),
+        expected_partial: None,
+        size_tier: None,
+        memory_ratchet: None,
+    };
+    let checkout =
+        super::measure::prepare_measured_checkout(&entry, &options, &root.join("run-one"))
+            .map_err(|(_, reason)| reason)?;
+    assert_eq!(
+        fs::read_to_string(checkout.join("subject.rs")).map_err(|err| err.to_string())?,
+        "pin\n"
+    );
+    assert_eq!(
+        fs::read_to_string(checkout.join("ripr.toml")).map_err(|err| err.to_string())?,
+        "[languages]\nenabled = [\"rust\"]\n"
+    );
+    assert!(!checkout.join("extra.rs").exists());
+    assert!(!checkout.join("target/ripr/keep").exists());
+    assert_eq!(
+        super::measure::git(Some(&checkout), &["rev-parse", "HEAD~1"])?,
+        base
+    );
+    assert_eq!(git(&["rev-parse", "HEAD"])?, before);
+    assert!(source.join("target/ripr/keep").exists());
+    assert_eq!(
+        fs::read_to_string(source.join("ripr.toml")).map_err(|err| err.to_string())?,
+        "[languages\n"
+    );
+    assert_eq!(
+        fs::read_to_string(source.join("extra.rs")).map_err(|err| err.to_string())?,
+        "untracked\n"
+    );
+    let second = super::measure::prepare_measured_checkout(&entry, &options, &root.join("run-two"))
+        .map_err(|(_, reason)| reason)?;
+    assert_ne!(checkout, second);
+    let mut explicit = entry.clone();
+    explicit.base_sha = Some(base.trim().to_string());
+    let explicit_checkout =
+        super::measure::prepare_measured_checkout(&explicit, &options, &root.join("explicit"))
+            .map_err(|(_, reason)| reason)?;
+    assert_eq!(
+        super::measure::git(Some(&explicit_checkout), &["rev-parse", "HEAD~1"])?,
+        base
+    );
+    let mut missing_base = entry.clone();
+    missing_base.base_sha = Some("0000000000000000000000000000000000000000".to_string());
+    let scratch = root.join("failed-run");
+    fs::create_dir_all(&scratch).map_err(|err| err.to_string())?;
+    let mut samples = Vec::new();
+    let result = super::measure::measure_corpus_entry(
+        &missing_base,
+        &options,
+        &root.join("unused-binary"),
+        &scratch,
+        0,
+        std::time::Duration::from_secs(5),
+        &mut samples,
+    );
+    assert_eq!(result["status"], "failed");
+    assert!(
+        result["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("cannot resolve base"))
+    );
+    assert_eq!(samples.len(), 11);
+    assert!(
+        samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::Failed))
+    );
+    let mut missing_pin = entry.clone();
+    missing_pin.sha = "0000000000000000000000000000000000000000".to_string();
+    let mut missing_samples = Vec::new();
+    let missing_result = super::measure::measure_corpus_entry(
+        &missing_pin,
+        &options,
+        &root.join("unused-binary"),
+        &scratch,
+        1,
+        std::time::Duration::from_secs(5),
+        &mut missing_samples,
+    );
+    assert_eq!(missing_result["status"], "failed");
+    assert!(
+        missing_result["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("lacks pin"))
+    );
+    assert_eq!(missing_samples.len(), 11);
+    assert!(
+        missing_samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::Failed))
+    );
+    let mut absent = entry.clone();
+    absent.id = "absent".to_string();
+    let mut absent_samples = Vec::new();
+    let absent_result = super::measure::measure_corpus_entry(
+        &absent,
+        &options,
+        &root.join("unused-binary"),
+        &scratch,
+        2,
+        std::time::Duration::from_secs(5),
+        &mut absent_samples,
+    );
+    assert_eq!(absent_result["status"], "not_measured");
+    assert_eq!(absent_samples.len(), 11);
+    assert!(
+        absent_samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::NotMeasured))
+    );
+    fs::create_dir_all(corpus.join("absent/target")).map_err(|err| err.to_string())?;
+    let mut interrupted_samples = Vec::new();
+    let interrupted_result = super::measure::measure_corpus_entry(
+        &absent,
+        &options,
+        &root.join("unused-binary"),
+        &scratch,
+        3,
+        std::time::Duration::from_secs(5),
+        &mut interrupted_samples,
+    );
+    assert_eq!(interrupted_result["status"], "failed");
+    assert_eq!(interrupted_samples.len(), 11);
+    assert!(
+        interrupted_samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::Failed))
+    );
+    fs::write(source.join("subject.rs"), "dirty\n").map_err(|err| err.to_string())?;
+    let (_, reason) =
+        super::measure::prepare_measured_checkout(&entry, &options, &root.join("dirty"))
+            .err()
+            .ok_or("dirty checkout should be rejected")?;
+    assert!(reason.contains("local changes"), "{reason}");
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn partial_corpus_requires_clone_authorization_to_hydrate_pin() -> Result<(), String> {
+    struct Fixture(PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture = Fixture(crate::tests::temp_dir("dx-partial-checkout"));
+    let root = &fixture.0;
+    let source = root.join("source");
+    fs::create_dir_all(&source).map_err(|err| err.to_string())?;
+    let git = |args: &[&str]| super::measure::git(Some(&source), args);
+    git(&["init", "--quiet"])?;
+    fs::write(source.join("subject.rs"), "parent\n").map_err(|err| err.to_string())?;
+    git(&["add", "."])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "parent",
+    ])?;
+    fs::write(source.join("subject.rs"), "pin\n").map_err(|err| err.to_string())?;
+    git(&["add", "."])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "pin",
+    ])?;
+    let pin = git(&["rev-parse", "HEAD"])?;
+    fs::write(source.join("subject.rs"), "tip\n").map_err(|err| err.to_string())?;
+    git(&["add", "."])?;
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--quiet",
+        "-m",
+        "tip",
+    ])?;
+    let remote = root.join("remote.git");
+    super::measure::git(
+        None,
+        &[
+            "clone",
+            "--quiet",
+            "--bare",
+            &source.display().to_string(),
+            &remote.display().to_string(),
+        ],
+    )?;
+    super::measure::git(Some(&remote), &["config", "uploadpack.allowFilter", "true"])?;
+    let corpus = root.join("corpus");
+    fs::create_dir_all(&corpus).map_err(|err| err.to_string())?;
+    let url = format!("file://{}", remote.display());
+    super::measure::git(
+        None,
+        &[
+            "clone",
+            "--quiet",
+            "--filter=blob:none",
+            &url,
+            &corpus.join("fixture").display().to_string(),
+        ],
+    )?;
+    let entry = CorpusEntry {
+        id: "fixture".to_string(),
+        url,
+        sha: pin.trim().to_string(),
+        base_sha: None,
+        note: String::new(),
+        heavy: false,
+        language: None,
+        ceilings: BTreeMap::new(),
+        expected_partial: None,
+        size_tier: None,
+        memory_ratchet: None,
+    };
+    let args = ["--corpus-dir".to_string(), corpus.display().to_string()];
+    let offline = parse_options(&args)?;
+    let cache = corpus.join("fixture");
+    let cache_head = super::measure::git(Some(&cache), &["rev-parse", "HEAD"])?;
+    let scratch = root.join("scratch");
+    fs::create_dir_all(&scratch).map_err(|err| err.to_string())?;
+    let mut samples = Vec::new();
+    let failed = super::measure::measure_corpus_entry(
+        &entry,
+        &offline,
+        &root.join("unused-binary"),
+        &scratch,
+        0,
+        std::time::Duration::from_secs(5),
+        &mut samples,
+    );
+    assert_eq!(failed["status"], "failed");
+    assert!(
+        failed["reason"]
+            .as_str()
+            .is_some_and(|s| s.contains("missing objects"))
+    );
+    assert_eq!(samples.len(), 11);
+    assert!(
+        samples
+            .iter()
+            .all(|sample| matches!(sample.outcome, SampleOutcome::Failed))
+    );
+    let (_, still_missing) =
+        super::measure::prepare_measured_checkout(&entry, &offline, &scratch.join("offline"))
+            .err()
+            .ok_or("offline preparation unexpectedly hydrated the pin")?;
+    assert!(still_missing.contains("missing objects"), "{still_missing}");
+    let online = parse_options(&[
+        "--corpus-dir".to_string(),
+        corpus.display().to_string(),
+        "--clone".to_string(),
+    ])?;
+    let checkout =
+        super::measure::prepare_measured_checkout(&entry, &online, &scratch.join("hydrated"))
+            .map_err(|(_, reason)| reason)?;
+    assert_eq!(
+        fs::read_to_string(checkout.join("subject.rs")).map_err(|err| err.to_string())?,
+        "pin\n"
+    );
+    assert_eq!(
+        super::measure::git(Some(&cache), &["rev-parse", "HEAD"])?,
+        cache_head
+    );
+    assert_eq!(
+        fs::read_to_string(cache.join("subject.rs")).map_err(|err| err.to_string())?,
+        "tip\n"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_parent_repo()
 -> Result<(), String> {
     // An empty `.git` makes git fall through to the enclosing repository,
@@ -3418,6 +3952,8 @@ fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_par
         language: None,
         ceilings: BTreeMap::new(),
         expected_partial: None,
+        size_tier: None,
+        memory_ratchet: None,
     };
 
     let refused = super::measure::prepare_checkout(&entry, &options);
@@ -3718,7 +4254,7 @@ type WarmRecord = (Vec<Sample>, Option<(usize, Vec<String>)>, Vec<&'static str>)
 
 fn record_pair(
     warmup: Result<MeasuredOutput, String>,
-    measured: Result<Option<MeasuredOutput>, String>,
+    measured: Result<Vec<MeasuredOutput>, String>,
 ) -> WarmRecord {
     let mut samples = Vec::new();
     let mut contradictions = None;
@@ -3878,7 +4414,7 @@ fn a_measured_capture_error_fails_both_warm_check_metrics_and_the_gate() -> Resu
 #[test]
 fn timeout_and_unmeasured_second_run_stay_incomplete() -> Result<(), String> {
     let timed_out = measured(true, Some(64 * 1024 * 1024));
-    let (timeout_samples, _, _) = record_pair(Ok(timed_out), Ok(None));
+    let (timeout_samples, _, _) = record_pair(Ok(timed_out), Ok(vec![]));
     let (timeout_ms, timeout_rss) = warm_check_pair(&timeout_samples)?;
     assert!(
         both_incomplete(timeout_ms, timeout_rss),
@@ -3893,7 +4429,7 @@ fn timeout_and_unmeasured_second_run_stay_incomplete() -> Result<(), String> {
     );
 
     let warmup = measured(false, Some(64 * 1024 * 1024));
-    let (skipped_samples, _, _) = record_pair(Ok(warmup), Ok(None));
+    let (skipped_samples, _, _) = record_pair(Ok(warmup), Ok(vec![]));
     let (skipped_ms, skipped_rss) = warm_check_pair(&skipped_samples)?;
     assert!(
         both_incomplete(skipped_ms, skipped_rss),
@@ -3948,7 +4484,7 @@ fn an_injected_empty_json_child_cannot_beat_a_valid_warm_baseline() -> Result<()
         "the old predicate must still accept the injected child so the discriminator is live"
     );
     let (samples, contradictions, missing) =
-        record_pair(Ok(empty), Ok(Some(capture_stub_stdout("{}")?)));
+        record_pair(Ok(empty), Ok(vec![capture_stub_stdout("{}")?]));
     let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
     assert!(
         matches!(warm.outcome, SampleOutcome::Incomplete(_)),
@@ -4005,10 +4541,13 @@ fn an_injected_empty_json_child_cannot_beat_a_valid_warm_baseline() -> Result<()
         Some(&baseline),
         true,
     );
-    assert_eq!(
-        permissive["gate"]["status"].as_str(),
-        Some("pass"),
-        "the old Value(5) admission would beat the baseline; the new predicate must not"
+    assert!(
+        matches!(
+            permissive["gate"]["status"].as_str(),
+            Some("pass" | "pass_with_gaps")
+        ),
+        "the old Value(5) admission would beat the baseline; the new predicate must not: {}",
+        permissive["gate"]["status"]
     );
     Ok(())
 }
@@ -4019,7 +4558,7 @@ fn a_valid_complete_child_is_admitted_as_warm_success() -> Result<(), String> {
     let stdout = complete_check_json(1).to_string();
     let (samples, contradictions, missing) = record_pair(
         Ok(capture_stub_stdout(&stdout)?),
-        Ok(Some(capture_stub_stdout(&stdout)?)),
+        Ok(vec![capture_stub_stdout(&stdout)?]),
     );
     let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
     assert!(
@@ -4038,7 +4577,7 @@ fn a_valid_complete_child_is_admitted_as_warm_success() -> Result<(), String> {
 fn a_failed_warmup_does_not_establish_a_warm_population() -> Result<(), String> {
     let empty = capture_stub_stdout("{}")?;
     let valid = capture_stub_stdout(&complete_check_json(1).to_string())?;
-    let (samples, _, _) = record_pair(Ok(empty), Ok(Some(valid)));
+    let (samples, _, _) = record_pair(Ok(empty), Ok(vec![valid]));
     let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
     assert!(
         matches!(warm.outcome, SampleOutcome::Incomplete(_)),
@@ -4060,7 +4599,7 @@ fn a_complete_empty_workload_is_admitted() -> Result<(), String> {
     let stdout = complete_check_json(0).to_string();
     let (samples, _, missing) = record_pair(
         Ok(capture_stub_stdout(&stdout)?),
-        Ok(Some(capture_stub_stdout(&stdout)?)),
+        Ok(vec![capture_stub_stdout(&stdout)?]),
     );
     let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
     assert!(
@@ -4082,7 +4621,7 @@ fn an_incomplete_check_document_cannot_clean_trust() -> Result<(), String> {
     incomplete["analysis_outcome"]["outcome"]["kind"] = json!("partial_with_limitations");
     let (samples, contradictions, missing) = record_pair(
         Ok(capture_stub_stdout(&warmup)?),
-        Ok(Some(capture_stub_stdout(&incomplete.to_string())?)),
+        Ok(vec![capture_stub_stdout(&incomplete.to_string())?]),
     );
     let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
     assert!(
@@ -4254,7 +4793,7 @@ fn produced_check_json(measured: &MeasuredOutput) -> Result<Value, String> {
 fn record_with_subject(
     subject: &CheckSubject,
     warmup: Result<MeasuredOutput, String>,
-    measured: Result<Option<MeasuredOutput>, String>,
+    measured: Result<Vec<MeasuredOutput>, String>,
 ) -> WarmRecord {
     let mut samples = Vec::new();
     let mut contradictions = None;
@@ -4354,7 +4893,7 @@ fn a_non_draft_checkout_config_still_produces_a_draft_warm_check_sample() -> Res
     let (samples, _, _) = record_with_subject(
         &fast_subject,
         Ok(fast_with_flag),
-        Ok(Some(run_measured_check(&production_args, &fast_cache)?)),
+        Ok(vec![run_measured_check(&production_args, &fast_cache)?]),
     );
     let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
     match &warm.outcome {
@@ -4614,7 +5153,12 @@ fn committed_agent_receipt() -> Result<Value, String> {
 /// uncompared.
 fn agent_receipt_check(receipt: &Value) -> Result<(), String> {
     let report = agent_gate_report(receipt)?;
-    if report["gate"]["status"].as_str() != Some("pass") {
+    // Both passing statuses are passes for this check; `pass_with_gaps`
+    // names missing evidence in the headline without failing the gate.
+    if !matches!(
+        report["gate"]["status"].as_str(),
+        Some("pass" | "pass_with_gaps")
+    ) {
         return Err(gate_failure_message(&report));
     }
     let gaps = agent_coverage_gaps(&report, &agent_baseline()?);
@@ -4816,10 +5360,15 @@ fn agent_coverage_check_names_dropped_metrics_and_samples() -> Result<(), String
 /// The nightly `first-run-main` job gates the committed
 /// `first-run-main-baseline.json` against the rows `cargo xtask first-run`
 /// writes. This runs the same comparison on rows built here, so a baseline
-/// refresh or a converter change cannot silently stop failing the lane on a
-/// crate that stops ending decisive (#9276).
+/// refresh or a converter change cannot silently stop failing the lane (#9276).
+///
+/// The baseline records the honest state (#11519): all three pinned crates end
+/// `static_unknown`. The earlier "3 of 3 exposed" was `verdict_of` reading the
+/// `exposed/weak` legend prose, and the semver and bytesize abstentions are
+/// spec-defined (RIPR-SPEC-0158 example 12). The lane therefore fails a walk
+/// whose `check` output outgrows the read budget.
 #[test]
-fn first_run_main_gate_fails_a_crate_that_ends_unknown() -> Result<(), String> {
+fn first_run_main_gate_fails_a_walk_that_outgrows_its_budget() -> Result<(), String> {
     let config = load_config(&committed_config())?;
     let baseline = check_baseline(
         serde_json::from_str(include_str!(
@@ -4828,21 +5377,18 @@ fn first_run_main_gate_fails_a_crate_that_ends_unknown() -> Result<(), String> {
         .map_err(|err| err.to_string())?,
     )?;
     let boards = vec!["first_run".to_string()];
-    let gate = |third: (&str, &str)| -> Result<Value, String> {
+    let gate = |check_lines: u32| -> Result<Value, String> {
         let mut lines = Vec::new();
-        for (case, verdict, reading) in [
-            ("semver-1.0.23", "exposed", "agrees with the tests"),
-            ("fastrand-2.3.0", "exposed", "agrees with the tests"),
-            ("bytesize-1.3.0", third.0, third.1),
-        ] {
+        for case in ["semver-1.0.23", "fastrand-2.3.0", "bytesize-1.3.0"] {
             lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"secs","value":3.0,"budget":60,"better":"lower"}}"#));
             lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}}"#));
-            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict","value":"{verdict}","budget":null,"better":"review_on_change"}}"#));
-            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict_reading","value":"{reading}","budget":null,"better":"review_on_change"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"stdout_lines","value":{check_lines},"budget":60,"better":"lower"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict","value":"static_unknown","budget":null,"better":"review_on_change"}}"#));
+            lines.push(format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"{case}","step":"check","metric":"verdict_reading","value":"unresolved","budget":null,"better":"review_on_change"}}"#));
         }
         let samples = parse_ingest(&parse_ingest_text(&lines.join("\n"))?, &config)?;
         // A runner class the baseline was not recorded on, as on a hosted
-        // runner: only the verdict rows are compared.
+        // runner: only the verdict and count rows are compared.
         Ok(build_report(
             &config,
             &boards,
@@ -4852,28 +5398,21 @@ fn first_run_main_gate_fails_a_crate_that_ends_unknown() -> Result<(), String> {
             true,
         ))
     };
-    let healthy = gate(("exposed", "agrees with the tests"))?;
+    let healthy = gate(60)?;
     assert_eq!(
         healthy["gate"]["status"].as_str(),
         Some("pass"),
         "{}",
         gate_failure_message(&healthy)
     );
-    let regressed = gate(("infection_unknown", "unresolved"))?;
-    assert_eq!(regressed["gate"]["status"].as_str(), Some("fail"));
-    let message = gate_failure_message(&regressed);
-    // The decisive count is what fails the gate; the changed verdict list
-    // is listed for review on the unknown-verdict row.
+    // Discriminating negative: the same verdicts with one `check` step one line
+    // past the 60-line budget is the regression the nightly turned red on.
+    let over_budget = gate(61)?;
+    assert_eq!(over_budget["gate"]["status"].as_str(), Some("fail"));
+    let message = gate_failure_message(&over_budget);
     assert!(
-        message.contains("first_run.decisive_verdicts"),
-        "decisive_verdicts not named in: {message}"
-    );
-    assert!(
-        regressed["gate"]["review"]
-            .to_string()
-            .contains("first_run.unknown_verdicts"),
-        "unknown_verdicts not listed for review: {}",
-        regressed["gate"]["review"]
+        message.contains("first_run.over_budget_steps"),
+        "over_budget_steps not named in: {message}"
     );
     Ok(())
 }
@@ -5229,7 +5768,7 @@ fn an_expected_partial_warm_check_is_a_value_that_trust_does_not_scan() -> Resul
     subject.expected_partial = Some(limit.to_string());
 
     let (samples, contradictions, missing) =
-        record_with_subject(&subject, Ok(run()), Ok(Some(run())));
+        record_with_subject(&subject, Ok(run()), Ok(vec![run()]));
     let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
     if !matches!(warm.outcome, SampleOutcome::Value(_)) {
         return Err(format!("expected a measured value, got {:?}", warm.outcome));
@@ -5243,7 +5782,7 @@ fn an_expected_partial_warm_check_is_a_value_that_trust_does_not_scan() -> Resul
         ));
     }
     // The same document on a row that did not declare it stays incomplete.
-    let (samples, _, _) = record_with_subject(&admission_subject(), Ok(run()), Ok(Some(run())));
+    let (samples, _, _) = record_with_subject(&admission_subject(), Ok(run()), Ok(vec![run()]));
     let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
     if !matches!(warm.outcome, SampleOutcome::Incomplete(_)) {
         return Err(format!("expected incomplete, got {:?}", warm.outcome));
@@ -5256,4 +5795,221 @@ fn warm_check_renders_the_full_findings_set_for_the_contradiction_scan() {
     let envs = warm_check_envs("/cache");
     assert!(envs.contains(&("RIPR_CACHE_DIR", "/cache")));
     assert!(envs.contains(&("RIPR_CHECK_FINDINGS_BYTES", "0")));
+}
+
+#[test]
+fn nearest_rank_percentiles_are_honest_for_small_series() {
+    use super::measure::nearest_rank;
+    assert_eq!(nearest_rank(&[], 50), None);
+    assert_eq!(nearest_rank(&[7.0], 50), Some(7.0));
+    assert_eq!(nearest_rank(&[7.0], 95), Some(7.0));
+    let three = [100.0, 300.0, 900.0];
+    assert_eq!(nearest_rank(&three, 50), Some(300.0));
+    // Below 20 samples the 95th-percentile rank is the last one.
+    assert_eq!(nearest_rank(&three, 95), Some(900.0));
+    let nineteen: Vec<f64> = (1..=19).map(f64::from).collect();
+    assert_eq!(nearest_rank(&nineteen, 95), Some(19.0));
+    // At 20 samples p95 is the 19th value, no longer the maximum.
+    let twenty: Vec<f64> = (1..=20).map(f64::from).collect();
+    assert_eq!(nearest_rank(&twenty, 95), Some(19.0));
+    assert_eq!(nearest_rank(&twenty, 50), Some(10.0));
+}
+
+#[test]
+fn samples_option_defaults_to_three_and_rejects_nonsense() {
+    assert_eq!(
+        parse_options(&[]).map(|options| options.samples),
+        Ok(DEFAULT_WARM_SAMPLES)
+    );
+    assert_eq!(
+        parse_options(&["--samples".to_string(), "5".to_string()]).map(|options| options.samples),
+        Ok(5)
+    );
+    for bad in ["0", "-1", "x", "51", ""] {
+        assert!(
+            parse_options(&["--samples".to_string(), bad.to_string()])
+                .is_err_and(|err| err.contains("--samples")),
+            "`{bad}` must be rejected"
+        );
+    }
+}
+
+#[cfg(unix)]
+fn timed_complete_run(ms: u64, rss_mb: u64, stdout: &str) -> MeasuredOutput {
+    use std::os::unix::process::ExitStatusExt;
+    let mut run = measured(false, Some(rss_mb * 1024 * 1024));
+    run.output.status = Some(std::process::ExitStatus::from_raw(0));
+    run.output.stdout = stdout.to_string();
+    run.output.duration = std::time::Duration::from_millis(ms);
+    run
+}
+
+#[cfg(unix)]
+fn sample_of<'a>(samples: &'a [Sample], metric: &str) -> Option<&'a Sample> {
+    samples.iter().find(|sample| sample.metric == metric)
+}
+
+/// The series reports the median, the maximum as p95 below 20 samples, and
+/// the worst run's memory, under the explicit ids and the legacy id.
+#[cfg(unix)]
+#[test]
+fn a_warm_series_reports_p50_p95_and_the_peak_over_every_sample() -> Result<(), String> {
+    let stdout = complete_check_json(1).to_string();
+    let runs = vec![
+        timed_complete_run(900, 40, &stdout),
+        timed_complete_run(100, 90, &stdout),
+        timed_complete_run(300, 60, &stdout),
+    ];
+    let (samples, _, _) = record_with_subject(
+        &admission_subject(),
+        Ok(timed_complete_run(5000, 10, &stdout)),
+        Ok(runs),
+    );
+    let value = |metric: &str| match sample_of(&samples, metric).map(|s| &s.outcome) {
+        Some(SampleOutcome::Value(v)) => Ok(*v),
+        other => Err(format!("{metric}: expected a value, got {other:?}")),
+    };
+    if (value("speed.warm_check_p50_ms")? - 300.0).abs() > 1e-6
+        || (value("speed.warm_check_ms")? - 300.0).abs() > 1e-6
+        || (value("speed.warm_check_p95_ms")? - 900.0).abs() > 1e-6
+    {
+        return Err(format!("unexpected latency summary: {samples:?}"));
+    }
+    // The warm-up (5000 ms, 10 MB) is not a sample; the peak is the worst run.
+    if (value("speed.warm_check_peak_rss_mb")? - 90.0).abs() > 1e-6 {
+        return Err(format!(
+            "peak must be the maximum over samples: {samples:?}"
+        ));
+    }
+    let detail = &sample_of(&samples, "speed.warm_check_p95_ms")
+        .ok_or("p95 sample missing")?
+        .detail;
+    if !detail.contains("3 warm sample(s)") || !detail.contains("p95 is the maximum") {
+        return Err(format!("detail must state N and the p95 rule: {detail}"));
+    }
+    Ok(())
+}
+
+/// One bad run makes the whole series incomplete: a fast median cannot hide a
+/// run that did not analyze the intended subject.
+#[cfg(unix)]
+#[test]
+fn one_unadmitted_sample_makes_the_whole_series_incomplete() -> Result<(), String> {
+    let stdout = complete_check_json(1).to_string();
+    let runs = vec![
+        timed_complete_run(100, 40, &stdout),
+        timed_complete_run(120, 40, "{}"),
+    ];
+    let (samples, _, _) = record_with_subject(
+        &admission_subject(),
+        Ok(timed_complete_run(100, 40, &stdout)),
+        Ok(runs),
+    );
+    for metric in [
+        "speed.warm_check_ms",
+        "speed.warm_check_p50_ms",
+        "speed.warm_check_p95_ms",
+        "speed.warm_check_peak_rss_mb",
+    ] {
+        match sample_of(&samples, metric).map(|s| &s.outcome) {
+            Some(SampleOutcome::Incomplete(_)) => {}
+            other => return Err(format!("{metric}: expected incomplete, got {other:?}")),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn every_corpus_entry_names_a_size_tier_and_gets_its_memory_bar() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let bar = |tier: &str| {
+        config
+            .size_tier
+            .iter()
+            .find(|t| t.id == tier)
+            .map(|t| t.peak_rss_mb)
+    };
+    // The ladder bars from docs/METRICS.md R1.
+    assert_eq!(bar("small"), Some(150.0));
+    assert_eq!(bar("python_ts"), Some(512.0));
+    assert_eq!(bar("medium"), Some(1024.0));
+    assert_eq!(bar("large"), Some(1024.0));
+    for entry in &config.corpus {
+        let tier = entry
+            .size_tier
+            .as_deref()
+            .ok_or_else(|| format!("{} names no size_tier", entry.id))?;
+        let ceiling = entry
+            .ceilings
+            .get(TIER_RSS_METRIC)
+            .ok_or_else(|| format!("{} has no resolved memory ceiling", entry.id))?;
+        let tier_bar = bar(tier).ok_or_else(|| format!("{} names unknown tier", entry.id))?;
+        // Looser than the bar only as a documented ratchet.
+        if *ceiling > tier_bar && entry.memory_ratchet.is_none() {
+            return Err(format!(
+                "{} exceeds its bar without a ratchet note",
+                entry.id
+            ));
+        }
+    }
+    let ceiling_of = |id: &str| {
+        config
+            .corpus
+            .iter()
+            .find(|e| e.id == id)
+            .and_then(|e| e.ceilings.get(TIER_RSS_METRIC).copied())
+    };
+    assert_eq!(ceiling_of("serde"), Some(150.0));
+    assert_eq!(ceiling_of("click-python"), Some(512.0));
+    assert_eq!(ceiling_of("ripr-swarm-2026-10"), Some(1536.0));
+    Ok(())
+}
+
+#[test]
+fn a_memory_ceiling_looser_than_the_tier_bar_needs_a_dated_ratchet_note() -> Result<(), String> {
+    let base = format!(
+        "{}\n[[size_tier]]\nid = \"small\"\ndescription = \"d\"\npeak_rss_mb = 150\nbar_source = \"ladder\"\n",
+        MINIMAL.replace(
+            "sha = \"dd18663450ec3ee38e35e3a4ee141932614e662c\"",
+            "sha = \"dd18663450ec3ee38e35e3a4ee141932614e662c\"\nsize_tier = \"small\""
+        )
+    );
+    // The row is a per-repo measured metric in MINIMAL only if declared; the
+    // tier logic runs before ceiling validation, so assert on its message.
+    let loose = base.replace(
+        "size_tier = \"small\"",
+        "size_tier = \"small\"\nceilings = { \"speed.warm_check_peak_rss_mb\" = 720 }",
+    );
+    let err = parse_config(&loose).err().ok_or("loose ceiling accepted")?;
+    if !err.contains("memory_ratchet") {
+        return Err(format!("unexpected error: {err}"));
+    }
+    let noted = loose.replace(
+        "size_tier = \"small\"\nceilings",
+        "size_tier = \"small\"\nmemory_ratchet = \"2026-11-04: ceiling 720 MB, ladder bar 150 MB\"\nceilings",
+    );
+    let err = parse_config(&noted).err().unwrap_or_default();
+    if err.contains("memory_ratchet") || err.contains("size_tier") {
+        return Err(format!(
+            "a dated ratchet note must pass the tier check: {err}"
+        ));
+    }
+    let stale = base.replace(
+        "size_tier = \"small\"",
+        "size_tier = \"small\"\nmemory_ratchet = \"2026-11-04: ceiling 100 MB\"\nceilings = { \"speed.warm_check_peak_rss_mb\" = 100 }",
+    );
+    let err = parse_config(&stale).err().ok_or("stale ratchet accepted")?;
+    if !err.contains("stale") {
+        return Err(format!("unexpected error: {err}"));
+    }
+    let unknown = base.replace("size_tier = \"small\"\n", "size_tier = \"huge\"\n");
+    let err = parse_config(&unknown)
+        .err()
+        .ok_or("unknown tier accepted")?;
+    if !err.contains("unknown size_tier") {
+        return Err(format!("unexpected error: {err}"));
+    }
+    Ok(())
 }

@@ -1104,7 +1104,7 @@ pub(super) fn import_path_configured<'a>(
 /// whitespace-separated words after the key's `=` through its continuation
 /// lines, which, as in iniconfig, run on across blank and `#`/`;` comment
 /// lines.
-fn sets_unread_import_path(toml_file: bool, text: &str) -> bool {
+pub(super) fn sets_unread_import_path(toml_file: bool, text: &str) -> bool {
     let lowered = text.to_ascii_lowercase();
     if lowered.contains("addopts") {
         return true;
@@ -3269,6 +3269,11 @@ fn collect_names(expr: &Expr, out: &mut Vec<String>) {
             collect_names(&op.right, out);
         }
         Expr::UnaryOp(op) => collect_names(&op.operand, out),
+        Expr::JoinedStr(joined) => joined
+            .values
+            .iter()
+            .for_each(|value| collect_names(value, out)),
+        Expr::FormattedValue(formatted) => collect_names(&formatted.value, out),
         Expr::IfExp(op) => {
             collect_names(&op.test, out);
             collect_names(&op.body, out);
@@ -3476,6 +3481,34 @@ pub(super) fn straight_line_assertion(test: &PythonTest, assertion: &PythonAsser
 
 pub(super) fn evaluate(expr: &Expr, scope: &Scope<'_>) -> Option<Value> {
     match expr {
+        // Plain string interpolation only: no user formatting protocol,
+        // conversion, format specification or implicit non-string coercion.
+        Expr::JoinedStr(joined) => {
+            let mut out = String::new();
+            for part in &joined.values {
+                let value = match part {
+                    Expr::Constant(constant) => match &constant.value {
+                        ast::Constant::Str(value) => value.clone(),
+                        _ => return None,
+                    },
+                    Expr::FormattedValue(formatted)
+                        if formatted.conversion == ast::ConversionFlag::None
+                            && formatted.format_spec.is_none() =>
+                    {
+                        let Value::Str(value) = evaluate(&formatted.value, scope)? else {
+                            return None;
+                        };
+                        value
+                    }
+                    _ => return None,
+                };
+                if out.len().checked_add(value.len())? > 64 * 1024 {
+                    return None;
+                }
+                out.push_str(&value);
+            }
+            Some(Value::Str(out))
+        }
         Expr::Constant(constant) => match &constant.value {
             ast::Constant::Int(value) => value.to_string().parse().ok().map(Value::Int),
             ast::Constant::Bool(value) => Some(Value::Bool(*value)),

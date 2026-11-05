@@ -741,6 +741,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "convergence"
                     | "cross-language-oracle-graph-corpus"
                     | "cross-language-edge-registry-corpus"
+                    | "cross-language-edge-registry-currentness-corpus"
                     | "dotnet-evidence-contract-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
@@ -783,6 +784,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "source_promotion"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
+                    | "verification-plan-corpus"
                     | "work_portfolio"
                     | "work_selection_identity"
                     | "work_result_identity"
@@ -794,6 +796,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "work_intake_identity"
                     | "work_plan_identity"
                     | "work_adapter_identity"
+                    | "repository_orientation"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
@@ -1168,6 +1171,8 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
 #[derive(Clone, Copy)]
 pub(crate) enum FixtureCheckFormat {
     Json,
+    JsonCompact,
+    Sarif,
     Human,
     HumanFull,
 }
@@ -1439,6 +1444,14 @@ pub(crate) fn run_fixture_check(
     ];
     match format {
         FixtureCheckFormat::Json => args.push("--json".to_string()),
+        FixtureCheckFormat::JsonCompact => {
+            args.push("--format".to_string());
+            args.push("json-compact".to_string());
+        }
+        FixtureCheckFormat::Sarif => {
+            args.push("--format".to_string());
+            args.push("sarif".to_string());
+        }
         // Goldens are one deterministic projection: pin the Evidence legend
         // that the CLI collapses after the first run in a build tree.
         FixtureCheckFormat::Human => args.push("--legend".to_string()),
@@ -3267,7 +3280,7 @@ mod tests {
         let paths = |items: &[&str]| items.iter().map(|p| p.to_string()).collect::<Vec<_>>();
         for path in [
             "crates/ripr/src/output/human/triage.rs",
-            "crates/ripr/src/domain/classification.rs",
+            "crates/ripr-contract/src/domain/classification.rs",
             "fixtures/rust_map_overwrite_count/expected/human.txt",
             "docs/OUTPUT_SCHEMA.md",
             "policy/output_contracts.txt",

@@ -1,6 +1,6 @@
 //! Contract tests for `ripr check --format agent` (#11580).
 
-use super::agent::{MAX_GAP_LINES, render, render_finding};
+use super::agent::{MAX_GAP_LINES, MIN_GAP_LINES, gap_line_budget, render, render_finding};
 use crate::app::{CheckDiffProvenance, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
@@ -119,6 +119,162 @@ fn rendered(output: &CheckOutput) -> String {
         None,
         CheckDiffProvenance::CommittedHistory,
     )
+}
+
+fn agent_dispatch(output: &CheckOutput, config: &RiprConfig) -> Result<String, String> {
+    crate::output::render::render_check_with_config(
+        output,
+        &crate::app::OutputFormat::Agent,
+        config,
+    )
+}
+
+fn outcome_output(
+    kind: crate::analysis_outcome::AnalysisOutcomeKind,
+    findings: Vec<Finding>,
+) -> Result<CheckOutput, String> {
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+    };
+    let count = u64::try_from(findings.len()).map_err(|err| err.to_string())?;
+    let mut output = output(findings);
+    let limitations = if kind.is_complete() {
+        Vec::new()
+    } else {
+        vec![AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "retry the selected input")?,
+        )]
+    };
+    output.analysis_outcome = Some(AnalysisOutcome::new(
+        kind,
+        AnalysisIdentity::default(),
+        AnalysisOutcomeCounts {
+            changed_file_count: 1,
+            changed_line_count: 1,
+            candidate_line_count: 1,
+            probe_count: count,
+            finding_count: count,
+        },
+        limitations,
+    )?);
+    Ok(output)
+}
+
+#[test]
+fn agent_dispatch_never_completes_incomplete_empty_or_exposed_reports() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{
+        AnalysisFailed, PartialWithLimitations, UnsupportedInput,
+    };
+    for (kind, token) in [
+        (PartialWithLimitations, "partial_with_limitations"),
+        (UnsupportedInput, "unsupported_input"),
+        (AnalysisFailed, "analysis_failed"),
+    ] {
+        for findings in [
+            Vec::new(),
+            vec![finding("probe:ok", ExposureClass::Exposed, 4)],
+        ] {
+            let output = outcome_output(kind, findings)?;
+            let text = agent_dispatch(&output, &RiprConfig::default())?;
+            assert!(
+                text.contains(&format!("analysis=incomplete|outcome={token}\n")),
+                "{text}"
+            );
+            assert!(text.contains("\nstop=analysis incomplete;"), "{text}");
+            assert!(
+                text.contains("|recovery=retry the selected input\n"),
+                "{text}"
+            );
+            assert!(!text.contains("\ndone="), "{text}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn agent_dispatch_keeps_partial_gaps_and_complete_controls() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{
+        CompleteNoFindings, CompleteWithFindings, PartialWithLimitations,
+    };
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let config = RiprConfig::default();
+    let partial = outcome_output(PartialWithLimitations, vec![weak_gap("probe:gap", 2)])?;
+    let text = agent_dispatch(&partial, &config)?;
+    assert!(
+        text.contains("analysis=incomplete|outcome=partial_with_limitations\n"),
+        "{text}"
+    );
+    assert!(text.contains("|id=probe:gap\n"), "{text}");
+    assert!(text.contains("next=ripr explain probe:gap\n"), "{text}");
+    assert!(
+        !text.contains("\ndone=") && !text.contains("\nstop="),
+        "{text}"
+    );
+
+    for (kind, findings) in [
+        (CompleteNoFindings, Vec::new()),
+        (
+            CompleteWithFindings,
+            vec![finding("probe:ok", ExposureClass::Exposed, 4)],
+        ),
+    ] {
+        let text = agent_dispatch(&outcome_output(kind, findings)?, &config)?;
+        assert!(text.contains("\ndone="), "{text}");
+        assert!(
+            !text.contains("analysis=incomplete") && !text.contains("\nstop="),
+            "{text}"
+        );
+    }
+    let text = agent_dispatch(
+        &outcome_output(CompleteWithFindings, vec![weak_gap("probe:gap", 2)])?,
+        &config,
+    )?;
+    assert!(text.contains("next=ripr explain probe:gap\n"), "{text}");
+    assert!(
+        !text.contains("analysis=incomplete") && !text.contains("\ndone="),
+        "{text}"
+    );
+    // A producer-declared advisory limitation does not make a complete run
+    // incomplete. Testing limitations.len() instead of the closed kind is wrong.
+    let advisory_limit = AnalysisLimitation::new(
+        AnalysisLimitationKind::EolOnlyChurn,
+        AnalysisStage::DiffParse,
+        AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "review the line-ending change")?,
+    );
+    let mut advisory = outcome_output(CompleteNoFindings, Vec::new())?;
+    advisory
+        .analysis_outcome
+        .as_mut()
+        .ok_or("missing complete control outcome")?
+        .limitations
+        .push(advisory_limit.clone());
+    let text = agent_dispatch(&advisory, &config)?;
+    assert!(text.contains("\ndone="), "{text}");
+    assert!(!text.contains("analysis=incomplete"), "{text}");
+    // An advisory row before the limiting cause must not displace the actual
+    // failure's recovery. The omission count includes all undisplayed rows.
+    let mut mixed = outcome_output(PartialWithLimitations, Vec::new())?;
+    mixed
+        .analysis_outcome
+        .as_mut()
+        .ok_or("missing partial control outcome")?
+        .limitations
+        .insert(0, advisory_limit);
+    let text = agent_dispatch(&mixed, &config)?;
+    assert!(text.contains("limitation=producer_failure|"), "{text}");
+    assert!(
+        text.contains("|recovery=retry the selected input\n"),
+        "{text}"
+    );
+    assert!(text.contains("+1 more analysis limitations;"), "{text}");
+    assert!(!text.contains("limitation=eol_only_churn|"), "{text}");
+    Ok(())
 }
 
 #[test]
@@ -265,7 +421,7 @@ fn reach_limit_with_weak_assertion_row_does_not_stop() {
 /// exact omitted count; `reachable_unrevealed` opens the same way.
 #[test]
 fn open_limited_findings_over_the_cap_report_the_omitted_count() {
-    let total = MAX_GAP_LINES + 2;
+    let total = MIN_GAP_LINES + 2;
     let mut findings = Vec::new();
     for index in 0..total {
         let mut open = reach_limited_weak(&format!("probe:open{index}"), 10 + index);
@@ -278,7 +434,7 @@ fn open_limited_findings_over_the_cap_report_the_omitted_count() {
     assert!(text.contains("\nopen="), "{text}");
     assert!(!text.contains("stop="), "{text}");
     assert!(
-        text.matches("|test=t1|id=probe:open").count() <= MAX_GAP_LINES,
+        text.matches("|test=t1|id=probe:open").count() <= MIN_GAP_LINES,
         "{text}"
     );
     assert!(
@@ -406,7 +562,7 @@ fn gap_lines_are_bounded_and_the_rest_is_counted_explicitly() {
     let text = rendered(&output(findings));
     assert_eq!(
         text.matches("\nweakly_exposed|").count(),
-        MAX_GAP_LINES,
+        MIN_GAP_LINES,
         "{text}"
     );
     assert!(text.contains(" gaps=7 "), "{text}");
@@ -545,6 +701,76 @@ fn explain_agent_reach_limit_with_weak_row_is_open_without_a_missing_value() {
     assert!(text.contains("|missing=-|test=t1|"), "{text}");
 }
 
+/// #13277: a preview-language finding with a producer-recorded missing
+/// discriminator and a weak related test must not be told "nothing more is
+/// fixable"; the discriminator and test stay visible, advisory only.
+fn preview_weak_gap(id: &str, line: usize) -> Finding {
+    let mut f = weak_gap(id, line);
+    f.language_status = Some(crate::domain::LanguageStatus::Preview);
+    f
+}
+
+#[test]
+fn explain_agent_preview_weak_gap_keeps_the_discriminator_and_test_open() {
+    let text = explained(&preview_weak_gap("probe:a", 2));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[1],
+        "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50|test=t1|id=probe:a"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("open=preview-language evidence is advisory")),
+        "{text}"
+    );
+    assert!(!text.contains("nothing more is fixable"), "{text}");
+    assert!(!text.contains("\nstop="), "{text}");
+    assert!(
+        text.contains("static advisory, not runtime proof"),
+        "{text}"
+    );
+    assert_eq!(
+        lines.last().copied(),
+        Some("next=ripr context --root repo --at probe:a")
+    );
+}
+
+#[test]
+fn explain_agent_preview_controls_stay_closed_without_established_evidence() {
+    // No producer-recorded discriminator: still the honest stop.
+    let mut bare = preview_weak_gap("probe:a", 2);
+    bare.activation.missing_discriminators.clear();
+    let text = explained(&bare);
+    assert!(text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    // No weak related test: nothing to point at.
+    let mut no_test = preview_weak_gap("probe:a", 2);
+    no_test.related_tests.clear();
+    let text = explained(&no_test);
+    assert!(text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    // Exposed preview finding is not a gap.
+    let mut exposed = preview_weak_gap("probe:a", 2);
+    exposed.class = ExposureClass::Exposed;
+    assert!(!explained(&exposed).contains("open="));
+    // Static limit and non-current source keep their stops.
+    let mut limited = preview_weak_gap("probe:a", 2);
+    limited.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    assert!(!explained(&limited).contains("open="));
+    let mut moved = preview_weak_gap("probe:a", 2);
+    moved.source_currentness = SourceCurrentness::MovedOrRenamed;
+    assert!(!explained(&moved).contains("open="));
+    // Suppressed stays suppressed.
+    let suppressed = render_finding(
+        &preview_weak_gap("probe:a", 2),
+        std::path::Path::new("repo"),
+        "ripr context --at probe:a",
+        true,
+    );
+    assert!(!suppressed.contains("open="), "{suppressed}");
+}
+
 #[test]
 fn explain_agent_agrees_with_check_agent_on_gap_membership() {
     // One predicate decides "gap" for both surfaces: for every class, explain
@@ -616,4 +842,63 @@ fn explain_agent_suppressed_gap_is_not_open_but_unsuppressed_is() {
         "{suppressed}"
     );
     assert!(suppressed.contains("|test=-|"), "{suppressed}");
+}
+
+#[test]
+fn the_gap_budget_grows_with_the_gap_count_and_stops_at_the_ceiling() {
+    assert_eq!(gap_line_budget(0), MIN_GAP_LINES);
+    assert_eq!(gap_line_budget(7), MIN_GAP_LINES);
+    assert_eq!(gap_line_budget(8), MIN_GAP_LINES + 1);
+    assert_eq!(gap_line_budget(39), 9);
+    assert_eq!(gap_line_budget(40), MAX_GAP_LINES);
+    assert_eq!(gap_line_budget(116), MAX_GAP_LINES);
+    assert_eq!(gap_line_budget(100_000), MAX_GAP_LINES);
+}
+
+#[test]
+fn a_larger_diff_prints_more_gap_lines_and_counts_the_rest() {
+    let findings: Vec<Finding> = (0..40)
+        .map(|index| weak_gap(&format!("probe:g{index}"), index + 1))
+        .collect();
+    let text = rendered(&output(findings));
+    let budget = gap_line_budget(40);
+    assert_eq!(budget, MAX_GAP_LINES);
+    assert_eq!(text.matches("\nweakly_exposed|").count(), budget, "{text}");
+    assert!(text.contains(" gaps=40 "), "{text}");
+    assert!(text.contains("\n+30 more gaps not shown;"), "{text}");
+}
+
+#[test]
+fn the_maximum_report_with_long_ids_fits_the_pr_comment_ceiling() {
+    let findings: Vec<Finding> = (0..200)
+        .map(|index| {
+            // Long ids stand in for real `probe:<path>:<line>:<kind>` ids.
+            weak_gap(&format!("probe:{}:g{index}", "p".repeat(110)), index + 1)
+        })
+        .collect();
+    let text = rendered(&output(findings));
+    assert_eq!(
+        text.matches("\nweakly_exposed|").count(),
+        MAX_GAP_LINES,
+        "{text}"
+    );
+    assert!(text.len() < 6000, "{} bytes", text.len());
+}
+
+#[test]
+fn the_open_path_stays_at_the_floor_however_many_findings() {
+    let findings: Vec<Finding> = (0..12)
+        .map(|index| reach_limited_weak(&format!("probe:open{index}"), 10 + index))
+        .collect();
+    let text = rendered(&output(findings));
+    assert!(text.contains("\nopen="), "{text}");
+    assert_eq!(
+        text.matches("|id=probe:open").count(),
+        MIN_GAP_LINES,
+        "{text}"
+    );
+    assert!(
+        text.contains("\n+7 more open findings not shown;"),
+        "{text}"
+    );
 }

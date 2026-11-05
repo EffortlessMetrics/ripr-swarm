@@ -175,7 +175,9 @@ public static class RiprProbeJob {
                 start.Arguments = arguments;
             }
             string exitNonce = Environment.GetEnvironmentVariable("RIPR_PROBE_EXIT_NONCE") ?? "";
+            bool drainOutput = Environment.GetEnvironmentVariable("RIPR_PROBE_DRAIN_OUTPUT") == "1";
             start.EnvironmentVariables.Remove("RIPR_PROBE_EXIT_NONCE");
+            start.EnvironmentVariables.Remove("RIPR_PROBE_DRAIN_OUTPUT");
             Process process = null;
             try {
                 process = new Process { StartInfo = start };
@@ -198,6 +200,13 @@ public static class RiprProbeJob {
                 var error = StartPump(process.StandardError.BaseStream, Console.OpenStandardError(), false);
                 process.WaitForExit();
                 int exitCode = process.ExitCode;
+                if (drainOutput) {
+                    // Closing this Job Object also terminates its wrapper.
+                    // The caller's deadline stays armed until wrapper close,
+                    // including descendants that keep either pipe open.
+                    output.Join();
+                    error.Join();
+                }
                 Console.Error.WriteLine("__RIPR_PROBE_EXIT_CODE__" + exitNonce + "=" + exitCode);
                 Console.Error.Flush();
                 Close(job);
@@ -627,10 +636,23 @@ export function terminateProbeProcessTree(child: cp.ChildProcess): void {
   child.kill('SIGKILL');
 }
 
+// ProcessStartInfo.Arguments uses native Windows argv quoting when no shell
+// participates. Preserve every token, including empty strings and a trailing
+// backslash before the closing quote. Shell command strings keep their
+// separate existing path and are never encoded with this rule.
+export function windowsNativeArguments(args: readonly string[]): string {
+  return args.map(argument => '"' + argument.replace(/(\\*)"/g, '$1$1\\"')
+    .replace(/(\\+)$/, '$1$1') + '"').join(' ');
+}
+
 export function spawnProbeProcess(
   command: string,
   args: readonly string[],
-  useShell: boolean
+  useShell: boolean,
+  context: Pick<cp.SpawnOptionsWithoutStdio, 'cwd' | 'env'> & {
+    // A caller requesting full output must retain its deadline until close.
+    drainOutput?: boolean;
+  } = {}
 ): cp.ChildProcessWithoutNullStreams {
   if (process.platform === 'win32') {
     const encodedWrapper = Buffer.from(WINDOWS_PROBE_JOB_WRAPPER, 'utf16le').toString('base64');
@@ -650,14 +672,16 @@ export function spawnProbeProcess(
         encodedWrapper
       ],
       {
+        cwd: context.cwd,
         shell: false,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
-          ...process.env,
+          ...(context.env ?? process.env),
           RIPR_PROBE_COMMAND: command,
-          RIPR_PROBE_ARGUMENTS: args.join(' '),
+          RIPR_PROBE_ARGUMENTS: useShell ? args.join(' ') : windowsNativeArguments(args),
           RIPR_PROBE_EXIT_NONCE: exitNonce,
+          RIPR_PROBE_DRAIN_OUTPUT: context.drainOutput ? '1' : '0',
           RIPR_PROBE_USE_SHELL: useShell ? '1' : '0'
         }
       }
@@ -680,6 +704,8 @@ export function spawnProbeProcess(
     return child;
   }
   return cp.spawn(command, args, {
+    cwd: context.cwd,
+    env: context.env,
     shell: useShell,
     detached: true,
     stdio: ['pipe', 'pipe', 'pipe']
@@ -712,4 +738,127 @@ export function probeProcessStartFailure(child: cp.ChildProcess): string | undef
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// Shared bounded command owner. Fixture entrypoints retain their existing aliases.
+const MAX_PRODUCER_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+export interface FixtureProducerOptions {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  onProgress?: (message: string) => void;
+  maxOutputBytes?: number;
+  progressIntervalMs?: number;
+}
+
+export class FixtureProducerError extends Error {
+  readonly kind: string;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly status: number | null;
+  readonly signal: NodeJS.Signals | null;
+
+  constructor(kind: string, message: string, stdout = '', stderr = '',
+    status: number | null = null, signal: NodeJS.Signals | null = null) {
+    super(message);
+    this.name = 'FixtureProducerError';
+    this.kind = kind;
+    this.stdout = stdout;
+    this.stderr = stderr;
+    this.status = status;
+    this.signal = signal;
+  }
+}
+
+// Keep the deadline active until pipes close: an exited primary can leave a
+// descendant holding stdout. The existing process owner contains both platforms.
+export async function runFixtureProducer(
+  command: string, args: readonly string[], options: FixtureProducerOptions
+): Promise<string> {
+  const maxBytes = options.maxOutputBytes ?? MAX_PRODUCER_OUTPUT_BYTES;
+  const progressMs = options.progressIntervalMs ?? 15_000;
+  for (const [name, value] of [['timeoutMs', options.timeoutMs], ['maxOutputBytes', maxBytes],
+    ['progressIntervalMs', progressMs]] as const) {
+    if (!Number.isSafeInteger(value) || value <= 0 || value > 2_147_483_647) {
+      throw new Error(`fixture producer ${name} must be a positive bounded integer`);
+    }
+  }
+  if (options.signal?.aborted) {
+    throw new FixtureProducerError('cancelled', `fixture producer cancelled: ${String(options.signal.reason)}`);
+  }
+  return new Promise<string>((resolve, reject) => {
+    const started = Date.now();
+    const stdout: Buffer[] = [], stderr: Buffer[] = [];
+    let retainedBytes = 0;
+    let failure: { kind: string; message: string } | undefined;
+    let child: ReturnType<typeof spawnProbeProcess>;
+    try {
+      child = spawnProbeProcess(command, args, false, {
+        cwd: options.cwd, env: options.env, drainOutput: true
+      });
+    } catch (error) {
+      reject(new FixtureProducerError('spawn_failure', `fixture producer could not start: ${String(error)}`));
+      return;
+    }
+    const stop = (kind: string, message: string): void => {
+      if (!failure) {
+        failure = { kind, message };
+        terminateProbeProcessTree(child);
+      }
+    };
+    const onAbort = (): void => stop('cancelled', `fixture producer cancelled: ${String(options.signal?.reason)}`);
+    const progress = (): void => {
+      try {
+        options.onProgress?.(`fixture producer running (${Math.floor((Date.now() - started) / 1000)}s; deadline ${options.timeoutMs}ms)`);
+      } catch (error) {
+        stop('progress_failure', `fixture producer progress failed: ${String(error)}`);
+      }
+    };
+    const timer = setTimeout(() => stop('timeout', `fixture producer timed out after ${options.timeoutMs}ms`), options.timeoutMs);
+    const heartbeat = setInterval(progress, progressMs);
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    const collect = (destination: Buffer[], chunk: Buffer): void => {
+      const available = maxBytes - retainedBytes;
+      const count = Math.min(available, chunk.length);
+      if (count > 0) {
+        destination.push(chunk.subarray(0, count));
+        retainedBytes += count;
+      }
+      if (count < chunk.length) {
+        stop('output_limit', `fixture producer output exceeded ${maxBytes} bytes`);
+      }
+    };
+    child.stdout.on('data', (chunk: Buffer) => collect(stdout, chunk));
+    child.stderr.on('data', (chunk: Buffer) => collect(stderr, chunk));
+    child.once('error', error => stop('spawn_failure', `fixture producer could not start: ${error.message}`));
+    child.stdin.on('error', error => stop('process_failure', `fixture producer stdin failed: ${error.message}`));
+    child.once('close', (wrapperCode, signal) => {
+      clearTimeout(timer);
+      clearInterval(heartbeat);
+      options.signal?.removeEventListener('abort', onAbort);
+      const code = probeProcessExitCode(child, wrapperCode);
+      const startFailure = probeProcessStartFailure(child);
+      if (!failure && startFailure) {
+        failure = { kind: 'spawn_failure', message: `fixture producer could not start: ${startFailure}` };
+      }
+      if (!failure && process.platform === 'win32' && probeWrapperReportedExitCode(child) === undefined) {
+        failure = { kind: 'process_failure', message: 'fixture producer wrapper did not report the native exit code' };
+      }
+      if (!failure && code !== 0) {
+        failure = { kind: 'process_failure', message: `fixture producer exited with status=${code}; signal=${signal}` };
+      }
+      terminateProbeProcessTree(child);
+      const out = Buffer.concat(stdout).toString('utf8');
+      if (failure) {
+        reject(new FixtureProducerError(failure.kind, failure.message, out,
+          Buffer.concat(stderr).toString('utf8'), code, signal));
+      } else {
+        resolve(out);
+      }
+    });
+    child.stdin.end();
+    progress();
+  });
 }

@@ -1081,6 +1081,10 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
         .get("description")
         .and_then(Value::as_str)
         .ok_or_else(|| "ripr_refresh omitted its description".to_string())?;
+    let source_description = refresh
+        .pointer("/inputSchema/properties/source/description")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "ripr_refresh source omitted its description".to_string())?;
     if refresh
         .pointer("/inputSchema/properties")
         .and_then(Value::as_object)
@@ -1166,6 +1170,46 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
     }
     if description.contains("the same analysis `ripr check`") {
         failures.push("tools/list ripr_refresh promises identical CLI input".to_string());
+    }
+    // #13194: discovery must agree with the real saved-worktree card journey
+    // and the source/test-oracle/HEAD-movement custody refusal controls. Input
+    // mode alone establishes neither refusal nor readiness. Card admission
+    // requires custody, but an admitted card may still report not ready.
+    for (surface, text) in [
+        ("initialize", instructions),
+        ("server/discover", discover_instructions),
+        ("mcp --help", help.as_str()),
+        ("tools/list ripr_refresh", description.as_str()),
+        ("source schema", source_description),
+    ] {
+        let text = normalized(text).to_ascii_lowercase();
+        for required in [
+            "cards require established producer custody",
+            "otherwise withheld with the cause",
+            "readiness depends on per-item gates",
+        ] {
+            if !text.contains(required) {
+                failures.push(format!(
+                    "{surface} omitted conditional custody: {required:?}"
+                ));
+            }
+        }
+        for forbidden in [
+            "worktree repair cards/readiness are withheld",
+            "with no repair cards",
+            "repair cards and readiness are withheld",
+            "worktree snapshots withhold repair cards and readiness",
+            "cards and readiness require",
+            "always available",
+            "always ready",
+            "always established",
+        ] {
+            if text.contains(forbidden) {
+                failures.push(format!(
+                    "{surface} overclaims worktree custody: {forbidden:?}"
+                ));
+            }
+        }
     }
     if !failures.is_empty() {
         return Err(failures.join("\n"));
@@ -4043,6 +4087,253 @@ fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
     Ok(())
 }
 
+/// #13154: an unknown key can fit the input cap while its diagnostic would
+/// exceed the output cap. Both lifecycles must retain typed recovery, then
+/// answer a valid call without having started analysis.
+#[test]
+fn unknown_argument_names_stay_typed_bounded_and_recover() -> Result<(), String> {
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = workspace_root()?;
+    for legacy in [false, true] {
+        let mut session = SequentialStdio::spawn(&root)?;
+        if legacy {
+            let initialized = session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": "setup", "method": "initialize",
+                    "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                        "clientInfo": {"name": "argument-name-control", "version": "1"}}
+                }))?,
+                REPLY_TIMEOUT,
+            )?;
+            if initialized.pointer("/result/protocolVersion") != Some(&json!("2025-11-25")) {
+                return Err(format!("legacy initialization failed: {initialized}"));
+            }
+            session.send_raw(&line(json!({
+                "jsonrpc": "2.0", "method": "notifications/initialized"
+            }))?)?;
+        }
+        // The modern connection deliberately starts with tools/call plus
+        // inline metadata, without initialize or server/discover.
+        for (label, name, preview) in [
+            ("ascii", "x".repeat(150_000), "x".repeat(128)),
+            (
+                "escaped",
+                "\u{1}\"\\".repeat(22_000),
+                format!("{}\u{1}\"", "\u{1}\"\\".repeat(42)),
+            ),
+            ("unicode", "😀".repeat(40_000), "😀".repeat(128)),
+        ] {
+            let name_bytes = name.len();
+            let encoded_name = serde_json::to_vec(&name).map_err(|error| error.to_string())?;
+            if encoded_name.len() <= 128 * 1024 {
+                return Err(format!("{label} control does not exceed the output cap"));
+            }
+            let id = json!(format!("unknown-key-\"\\\n雪-{label}"));
+            let mut params = json!({
+                "name": "ripr_refresh", "arguments": { name: true }
+            });
+            if !legacy {
+                params["_meta"] = current_meta();
+            }
+            let request = line(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params
+            }))?;
+            if request.len() > 256 * 1024 {
+                return Err(format!("{label} control exceeds the input cap"));
+            }
+            let reply = session.raw_exchange(&request, REPLY_TIMEOUT)?;
+            require_invalid_argument(&reply, label)?;
+            let bytes = serde_json::to_vec(&reply)
+                .map_err(|error| error.to_string())?
+                .len();
+            let data = reply
+                .pointer("/result/structuredContent/failure/data")
+                .ok_or("typed failure omitted data")?;
+            if reply.get("id") != Some(&id)
+                || bytes > 8 * 1024
+                || data["argument_truncated"] != json!(true)
+                || data["argument_bytes"] != json!(name_bytes)
+                || data["argument"] != json!(preview)
+                || data["allowed"] != json!(["base", "source"])
+            {
+                return Err(format!(
+                    "{label} legacy={legacy} lost bounded correlated recovery (bytes={bytes}): {reply}"
+                ));
+            }
+            let recovery_id = json!(format!("recovered-{label}"));
+            let mut params = json!({"name": "ripr_workspace_status", "arguments": {}});
+            if !legacy {
+                params["_meta"] = current_meta();
+            }
+            let recovered = session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": recovery_id, "method": "tools/call", "params": params
+                }))?,
+                REPLY_TIMEOUT,
+            )?;
+            let document = structured_tool_success(&recovered, "status after unknown key")?;
+            if recovered.get("id") != Some(&recovery_id)
+                || document.pointer("/session/attempt_state") != Some(&json!("no_snapshot"))
+            {
+                return Err(format!(
+                    "unknown argument must not start analysis: {recovered}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// #13220: an admitted unknown method must keep its protocol category even
+/// when echoing the complete name would exceed the response cap.
+#[test]
+fn unknown_method_names_stay_bounded_and_recover() -> Result<(), String> {
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = workspace_root()?;
+    for legacy in [false, true] {
+        let mut session = SequentialStdio::spawn(&root)?;
+        if legacy {
+            let initialized = session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": "setup", "method": "initialize",
+                    "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                        "clientInfo": {"name": "method-name-control", "version": "1"}}
+                }))?,
+                REPLY_TIMEOUT,
+            )?;
+            if initialized.pointer("/result/protocolVersion") != Some(&json!("2025-11-25")) {
+                return Err(format!("legacy initialization failed: {initialized}"));
+            }
+            session.send_raw(&line(json!({
+                "jsonrpc": "2.0", "method": "notifications/initialized"
+            }))?)?;
+        }
+        // The modern session starts with an unknown method plus valid inline
+        // metadata, without initialize or server/discover.
+        for (label, method, preview) in [
+            ("ascii", "x".repeat(150_000), "x".repeat(128)),
+            (
+                "escaped",
+                "\u{1}\"\\".repeat(22_000),
+                format!("{}\u{1}\"", "\u{1}\"\\".repeat(42)),
+            ),
+            ("unicode", "😀".repeat(40_000), "😀".repeat(128)),
+            (
+                "known-prefix",
+                format!("tools/list{}", "x".repeat(150_000)),
+                format!("tools/list{}", "x".repeat(118)),
+            ),
+        ] {
+            let method_bytes = method.len();
+            let encoded_method = serde_json::to_vec(&method).map_err(|error| error.to_string())?;
+            if encoded_method.len() <= 128 * 1024 {
+                return Err(format!("{label} control does not exceed the output cap"));
+            }
+            let id = json!(format!("unknown-method-\"\\\n雪-{label}"));
+            let params = if legacy {
+                json!({})
+            } else {
+                json!({"_meta": current_meta()})
+            };
+            let request = line(json!({
+                "jsonrpc": "2.0", "id": id, "method": method, "params": params
+            }))?;
+            if request.len() > 256 * 1024 {
+                return Err(format!("{label} control exceeds the input cap"));
+            }
+            let reply = session.raw_exchange(&request, REPLY_TIMEOUT)?;
+            let bytes = serde_json::to_vec(&reply)
+                .map_err(|error| error.to_string())?
+                .len();
+            if reply.get("id") != Some(&id)
+                || reply.get("result").is_some()
+                || reply.pointer("/error/code") != Some(&json!(-32601))
+                || reply.pointer("/error/message")
+                    != Some(&json!(format!(
+                        "Method not found: {preview} (name truncated)"
+                    )))
+                || reply.pointer("/error/data")
+                    != Some(&json!({
+                        "method": preview,
+                        "method_truncated": true,
+                        "method_bytes": method_bytes,
+                    }))
+                || bytes > 8 * 1024
+            {
+                return Err(format!(
+                    "{label} legacy={legacy} lost bounded Method Not Found (bytes={bytes}): {reply}"
+                ));
+            }
+            let recovery_id = json!(format!("recovered-{label}"));
+            let mut params = json!({"name": "ripr_workspace_status", "arguments": {}});
+            if !legacy {
+                params["_meta"] = current_meta();
+            }
+            let recovered = session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": recovery_id, "method": "tools/call", "params": params
+                }))?,
+                REPLY_TIMEOUT,
+            )?;
+            let document = structured_tool_success(&recovered, "status after unknown method")?;
+            if recovered.get("id") != Some(&recovery_id)
+                || document.pointer("/session/attempt_state") != Some(&json!("no_snapshot"))
+            {
+                return Err(format!(
+                    "unknown method must not start analysis: {recovered}"
+                ));
+            }
+        }
+        if !legacy {
+            let mut unsupported = current_meta();
+            unsupported["io.modelcontextprotocol/protocolVersion"] = json!("2099-01-01");
+            for (label, params, expected_code) in [
+                ("missing-meta", json!({}), json!(-32602)),
+                (
+                    "unsupported-version",
+                    json!({"_meta": unsupported}),
+                    serde_json::to_value(rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION)
+                        .map_err(|error| error.to_string())?,
+                ),
+            ] {
+                let reply = session.raw_exchange(
+                    &line(json!({
+                        "jsonrpc": "2.0", "id": label, "method": "x".repeat(150_000),
+                        "params": params
+                    }))?,
+                    REPLY_TIMEOUT,
+                )?;
+                if reply.get("id") != Some(&json!(label))
+                    || reply.get("result").is_some()
+                    || reply.pointer("/error/code") != Some(&expected_code)
+                    || reply.pointer("/error/data/method_truncated").is_some()
+                {
+                    return Err(format!("method diagnostics bypassed {label}: {reply}"));
+                }
+                let recovered = session.raw_exchange(
+                    &line(json!({
+                        "jsonrpc": "2.0", "id": "metadata-recovered", "method": "tools/list",
+                        "params": {"_meta": current_meta()}
+                    }))?,
+                    REPLY_TIMEOUT,
+                )?;
+                if recovered.get("id") != Some(&json!("metadata-recovered"))
+                    || recovered.get("error").is_some()
+                    || recovered
+                        .pointer("/result/tools")
+                        .and_then(Value::as_array)
+                        .is_none_or(|tools| tools.len() != 10)
+                {
+                    return Err(format!(
+                        "session did not recover after {label}: {recovered}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Send one `tools/call` whose `arguments` object is raw JSON text, so number
 /// literals such as `18446744073709551616` and `1e30` reach the server exactly
 /// as a client could write them. A `serde_json::Value` cannot hold
@@ -4430,6 +4721,154 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
     {
         return Err(format!(
             "snapshot resource lost the typed outcome: {snapshot}"
+        ));
+    }
+
+    // #13229: simple expansion of the advertised snapshot template encodes
+    // its colons. Read the actual producer id through both URI spellings,
+    // with independent parsed-document equality and original-URI checks.
+    if !snapshot_id.starts_with("snapshot:sha256:") {
+        return Err(format!(
+            "fixture lost the canonical snapshot id: {snapshot_id}"
+        ));
+    }
+    let encoded_snapshot_id = snapshot_id.replace(':', "%3A");
+    for uri in [
+        format!("ripr://snapshot/{snapshot_id}"),
+        format!("ripr://snapshot/{encoded_snapshot_id}"),
+        format!(
+            "ripr://snapshot/{}",
+            encoded_snapshot_id.replace("%3A", "%3a")
+        ),
+        format!("ripr://snapshot/{encoded_snapshot_id}/"),
+    ] {
+        let reply = session.call(
+            "snapshot-spelling",
+            "resources/read",
+            json!({ "uri": uri }),
+            REPLY_TIMEOUT,
+        )?;
+        if reply
+            .pointer("/result/contents/0/uri")
+            .and_then(Value::as_str)
+            != Some(uri.as_str())
+        {
+            return Err(format!(
+                "snapshot response lost the original URI {uri}: {reply}"
+            ));
+        }
+        let text = reply
+            .pointer("/result/contents/0/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("snapshot resource omitted JSON text: {reply}"))?;
+        let document: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+        if document != snapshot {
+            return Err(format!(
+                "snapshot spelling {uri} changed the document: {document} != {snapshot}"
+            ));
+        }
+    }
+
+    // Decode exactly once. Invalid encodings and unknown identities retain
+    // the snapshot route's typed refusal and the canonical recovery id.
+    let stale_snapshot_id = format!("snapshot:sha256:{}", "0".repeat(64));
+    if stale_snapshot_id == snapshot_id {
+        return Err("the stale-id control must differ from the current snapshot".to_string());
+    }
+    for invalid in [
+        snapshot_id.replace(':', "%253A"),
+        format!("{encoded_snapshot_id}%"),
+        format!("{encoded_snapshot_id}%3"),
+        format!("{encoded_snapshot_id}%GG"),
+        format!("{encoded_snapshot_id}%FF"),
+        format!("{encoded_snapshot_id}%2F"),
+        stale_snapshot_id.replace(':', "%3A"),
+    ] {
+        let reply = session.call(
+            "snapshot-invalid-id",
+            "resources/read",
+            json!({ "uri": format!("ripr://snapshot/{invalid}") }),
+            REPLY_TIMEOUT,
+        )?;
+        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32603)
+            || reply.pointer("/error/data/code").and_then(Value::as_str) != Some("stale_snapshot")
+            || reply
+                .pointer("/error/data/current_snapshot_id")
+                .and_then(Value::as_str)
+                != Some(snapshot_id.as_str())
+            || reply
+                .pointer("/error/data/recovery")
+                .and_then(Value::as_str)
+                != Some(
+                    "re-read ripr_workspace_status for the current snapshot identity, then retry",
+                )
+        {
+            return Err(format!(
+                "invalid snapshot id {invalid} lost typed recovery: {reply}"
+            ));
+        }
+    }
+    for uri in [
+        format!("ripr://%73napshot/{encoded_snapshot_id}"),
+        format!("ripr:%2F%2Fsnapshot/{encoded_snapshot_id}"),
+        format!("ripr://snapshot/{encoded_snapshot_id}//"),
+    ] {
+        let reply = session.call(
+            "snapshot-invalid-route",
+            "resources/read",
+            json!({ "uri": uri }),
+            REPLY_TIMEOUT,
+        )?;
+        if reply.get("result").is_some()
+            || reply
+                .pointer("/error/data/resource_templates")
+                .and_then(Value::as_array)
+                .is_none_or(|templates| {
+                    !templates.contains(&json!("ripr://snapshot/{snapshot_id}"))
+                })
+        {
+            return Err(format!(
+                "an encoded namespace must not become a route: {reply}"
+            ));
+        }
+    }
+
+    // Tool arguments are canonical JSON ids, not URI segments. A valid
+    // pinned read after the refusals also checks the session is still usable.
+    let encoded_tool = session.call_tool(
+        "snapshot-encoded-tool-id",
+        "ripr_list_gaps",
+        json!({ "snapshot_id": encoded_snapshot_id }),
+        REPLY_TIMEOUT,
+    )?;
+    if encoded_tool
+        .pointer("/result/isError")
+        .and_then(Value::as_bool)
+        != Some(true)
+        || encoded_tool
+            .pointer("/result/structuredContent/failure/code")
+            .and_then(Value::as_str)
+            != Some("stale_snapshot")
+        || encoded_tool
+            .pointer("/result/structuredContent/failure/data/current_snapshot_id")
+            .and_then(Value::as_str)
+            != Some(snapshot_id.as_str())
+    {
+        return Err(format!(
+            "encoded tool snapshot id must remain stale: {encoded_tool}"
+        ));
+    }
+    let pinned_list = session.call_tool(
+        "snapshot-raw-tool-id",
+        "ripr_list_gaps",
+        json!({ "snapshot_id": snapshot_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let mut expected_pinned_list = list.clone();
+    expected_pinned_list["requested_snapshot_id"] = json!(snapshot_id);
+    if structured_tool_success(&pinned_list, "ripr_list_gaps")? != expected_pinned_list {
+        return Err(format!(
+            "raw snapshot pin changed the gap listing: {pinned_list}"
         ));
     }
 

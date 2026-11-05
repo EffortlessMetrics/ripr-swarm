@@ -71,6 +71,7 @@ mod call_removal_tests;
 #[cfg(test)]
 mod capability_disposition_tests;
 mod catch_arm_guard;
+mod changed_return;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
@@ -90,6 +91,7 @@ mod fact_store;
 mod fast_check;
 #[cfg(test)]
 mod fast_check_tests;
+mod push_argument_guard;
 pub(crate) use fact_store::TypeScriptFileFactStore;
 mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
@@ -1815,6 +1817,20 @@ impl TypeScriptAdapter {
                 );
             }
         }
+        if !read_limits.is_empty() {
+            // #11985: discovered files refused by the byte caps are absent
+            // from the test/import index even when the walk completed.
+            for finding in &mut findings {
+                if crate::analysis::classify::withhold_read_limited_workspace_gap(
+                    finding,
+                    read_limits.len(),
+                    file_read_limit,
+                    workspace_read_budget,
+                ) {
+                    refresh_static_limit_actionability(finding);
+                }
+            }
+        }
         dedup_typescript_probe_ids(&mut findings, &minted_owners);
         Ok(LanguageDiffResult {
             value_origins: Default::default(),
@@ -1861,7 +1877,8 @@ pub(in crate::analysis::language::typescript) fn typescript_adapter_excludes_pat
 ) -> bool {
     is_detectable_generated_typescript_path(path)
         || crate::config::path_matches_preview_excluded_patterns(excluded_file_patterns, path)
-        || (is_detectable_excluded_typescript_path(path)
+        || ((is_detectable_excluded_typescript_path(path)
+            || crate::config::is_typescript_docs_site_path(path))
             && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
 }
 

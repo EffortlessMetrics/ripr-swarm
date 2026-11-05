@@ -856,6 +856,22 @@ general combinator, callback or mutation adequacy.
    or `return Ok(..);`. An early `return None;` keeps its earlier rule: it
    does not read the binding scan, so an owner file's opaque glob does not
    withdraw a pin it already earned.
+   A changed whole decimal scalar literal exit — an early
+   `return <lit>;` or a scalar tail — beside early returns that each build a
+   different whole decimal scalar literal is the owner's only source of
+   `<lit>` (#13037 Defect A): every other exit would return its own
+   distinct literal and fail an exact pin at `<lit>`, so a passing pin on an
+   owner call proves the changed exit ran. This early-scalar gate reads both
+   directions (the changed early return and the changed tail) and stays fail
+   closed: a second exit producing the same literal (a duplicated `return
+   0; .. 0`), a parameter or computed exit (which may alias `<lit>` for an
+   input the gate does not read), a `?`, a `return` inside a nested closure,
+   an unbounded macro, or a conditionally-evaluated changed value refuses
+   the pin. A pin whose expected value is a sibling exit's literal does not
+   confirm the changed exit's probe: only the pin at `<lit>` observes it.
+   A zero-fee `return 0;` beside a parameter or computed tail keeps the
+   existing under-credit, since a passing pin at `0` there never proves the
+   changed exit ran (boundary-input evaluation remains a later authority).
    A bare `None` (or `Ok`, `Err`, `Some`) in a `match` arm or `if let`
    pattern names the variant, since a pattern may not shadow it (E0530), so
    it is not such a binding unless the file carries a
@@ -2324,27 +2340,37 @@ that hands it any call-making closure, and one such call withholds the helper
 from the whole test (a missed advisory, fail-closed). Likewise a closure an
 iterator or `Option` adapter runs eagerly inside the argument
 (`xs.iter().map(|v| gate(*v)).count()`, `.any(..)`, `.unwrap_or_else(|| ..)`)
-is withheld although the base credited it: a deliberate missed advisory. A closure bound to a name first is withheld too
-(`let f = || ..; run(f)`): an argument that is exactly a single-segment name
-(also `&f`, `(f)`), with an earlier `let f = <call-making closure literal>` (the
-literal bare, `&`-borrowed or parenthesized, a plain identifier pattern) in a
-block that encloses the helper call. Rebinding, `mut` and shadowing do not
-exempt it, so `let f = || ..; let f = 5; run(f)` is a deliberate missed
-advisory instead of a guess about which binding the name reaches; a binding in a
-block that does not enclose the call, one after the call, a closure with no
-call, a non-closure initializer and a destructuring pattern do not withhold.
-This reuses the same scan, with no second pass. Not recognized, so they keep
-the plain-helper credit (known residual): a function item passed by name
-(`run(make)` with `fn make() { gate(11) }`; resolving it needs a file-level
-lookup this text-only scan does not have, and it is not decided fail-closed
-here), a boxed named closure (`let f = Box::new(|| ..)`), and a closure with no
-call. Other indirections also keep credit as residuals: an alias (`let h = f;
-run(h)`), a deferred assignment (`let f; f = || ..;`), a conditional
-initializer, and a wrapping expression (`f.clone()`, `f as fn()`, a struct field
-or tuple holding the closure). The scan does not model shadowing, so a closure
-parameter `|f| run(1, f)` beside an outer call-making `let f` is withheld (a
-missed advisory). The tracing forwarding shape is a limitation, not a credit, until the
-receiving call is itself resolved.
+is withheld although the base credited it: a deliberate missed advisory.
+A closure bound to a name first is withheld too (`let f = || ..; run(f)`):
+the argument retains a single-segment name through parentheses, borrows or
+zero-argument, nongeneric `.clone()` calls (#13219), and an earlier `let`
+binds that name in a block enclosing the helper call. The initializer may be
+a call-making closure literal (bare, borrowed or parenthesized), a
+`Box`/`Rc`/`Arc::new` of one, or a name retained through those same wrappers.
+Thus `let cloned = f.clone(); run(cloned)` and mixed alias/clone chains use
+the existing binding walk. The walk follows at most four alias edges and
+withholds beyond that limit, including when the terminal value is ordinary.
+Each alias resolves only bindings before its own initializer; a later
+call-making closure does not change an earlier clone's source.
+
+Rebinding, `mut` and shadowing do not exempt an earlier call-making binding,
+so `let f = || ..; let f = 5; run(f.clone())` is a deliberate missed advisory
+instead of a guess about which binding the name reaches. A binding in a
+sibling block or after the relevant use does not withhold. An established
+ordinary value (`let value = gate(10); run(value.clone())`), an ordinary
+computed receiver (`run(gate(10).clone())`) and a call-less closure retain
+plain-helper credit. Recognizing the `.clone()` spelling only withholds:
+it establishes neither `Clone` dispatch nor execution of the callback, and
+does not expand the eager literal callback admission above.
+
+The same scan still leaves these residuals: function items passed by name
+(`run(make)` with `fn make() { gate(11) }`), deferred assignment, conditional
+initializers, destructuring bindings, other wrapping calls or methods,
+casts, and a struct field or tuple holding the closure. A qualified or
+computed receiver is not a local callback binding. The scan does not model
+shadowing, so a closure parameter `|f| run(1, f)` beside an outer call-making
+`let f` is withheld (a missed advisory). The tracing forwarding shape is a
+limitation, not a credit, until the receiving call is itself resolved.
 
 ## Required Evidence
 
@@ -2946,6 +2972,26 @@ assertions. This repair shares the existing callback without that larger migrati
   `format!("hi {}", "bob")` operand positive) pin
   observation-fact admission, not a changed-sink or owner-return claim.
 
+- Cloned unused callbacks (#13219):
+  `closure_callbacks::tests::cloned_callback_names_keep_the_plain_helper_withhold`
+  and `cloned_callback_binding_chains_keep_the_existing_depth_limit` cover the
+  syntax boundary, scope/order, alias depth and other-method refusals.
+  `facts/test_helpers/tests/cloned_callbacks.rs` exercises the real producer
+  and flat/per-file fact agreement, with ordinary-value and call-less positives.
+  `crates/ripr/tests/assertion_helper_credit.rs` tests
+  `cloned_unused_callbacks_have_no_public_observation_or_oracle` and
+  `invoked_literal_and_ordinary_value_clones_keep_public_oracles` require the
+  two intended findings and related test before checking observation and oracle
+  fields. The false credit is `weakly_exposed` with a strong unrelated oracle;
+  checking only that the finding is not `exposed` cannot detect it.
+  The regenerable honesty cases `rust_cloned_unused_callback` and
+  `rust_bound_cloned_unused_callback` also refuse the repo-wide audit's false
+  `strongly_gripped` promotion, pinning both grip and the related test's oracle.
+  The literal-unused control and eager-literal/ordinary-value-clone positives
+  keep that check sensitive to a blanket refusal. Full, sharded and compact
+  classified-seam cache generations invalidate the derived credit; raw file
+  facts keep their format and recompute helper credit after loading.
+
 - `crates/ripr/tests/owner_pin_execution/function_pointer.rs`:
   `function_pointer_pins_only_the_observed_owner_value` and
   `function_pointer_runtime_controls_observe_the_same_value` (#9478) compare
@@ -3181,17 +3227,16 @@ assertions. This repair shares the existing callback without that larger migrati
 ### Bounded `.map(owner)` iterator chains (#9478 slice A)
 
 An `assert_eq!` whose one operand is a bounded iterator chain and whose other
-operand is a literal `Vec` is admitted as a call of the owner on the chain's
-first input when all of these hold: the chain's input is a literal integer
+operand is a literal `Vec` is admitted as a call of the owner on the first
+literal input at which the changed behavior is visible when all of these hold: the chain's input is a literal integer
 sequence read through `.into_iter()`, `.iter()` or `.iter_mut()`; its adapter is
 one `.map(owner)` with a simple owner path, followed by `.collect::<Vec<_>>()`;
 the path resolves to the owner by the same owner-identity gates as a direct
 call (a qualified path must resolve through the shared call identity); the
 owner body folds each input to exactly the expected literal elements; and the
-changed behavior is visible at the first input (the representative call), so a
-change that is invisible there is refused even when a later input would show it
-(#12841). Unresolved,
-shadowed, foreign same-name, non-literal, closure, generic-adapter and
+changed behavior is visible at some input: the first input where it is visible
+is the representative call, and a change invisible at every input is refused
+(#12841). Unresolved, shadowed, foreign same-name, non-literal, closure, generic-adapter and
 non-matching chains are refused. The owner pin credits before the function-value
 limit (RIPR-SPEC-0240) is consulted, so the limit needs no bounded-chain
 exception. A refused chain that still names the owner as a value keeps that
