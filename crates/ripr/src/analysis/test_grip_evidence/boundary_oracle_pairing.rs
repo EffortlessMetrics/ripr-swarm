@@ -44,7 +44,7 @@ pub(super) fn missing(
         None,
     );
     // An unresolved aggregate may contain a different call's failure.
-    // Direct pairing remains withheld; a separately proven wrapper can only
+    // Direct pairing remains withheld; a separately established wrapper can only
     // pair through its own resolved activation below.
     let unresolved = activation.unresolved_boundary.is_some();
     let direct_activation = if unresolved {
@@ -93,7 +93,7 @@ pub(super) fn missing(
             return Default::default();
         }
         // A direct call elsewhere in this test must not suppress the
-        // independently proven wrapper row. Keep the original test for
+        // independently established wrapper row. Keep the original test for
         // assertion admission and identity; only the activation input's
         // call facts are narrowed to the wrapper entry.
         let mut entry_only = (*test).clone();

@@ -1122,7 +1122,7 @@ pub(crate) fn resolve_repo_boundary_chain(callee_name: &str, index: &RustIndex) 
     ) {
         return refused();
     }
-    // Bind only this parser-proven edge. Do not ask the global resolver to
+    // Bind only this parser-established edge. Do not ask the global resolver to
     // infer uniqueness or higher callers from a partial workspace.
     let Some(sites) = call_sites(caller, callee_name, index) else {
         return refused();
