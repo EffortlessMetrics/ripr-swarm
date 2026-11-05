@@ -1,0 +1,356 @@
+{
+  "schema": 1,
+  "candidate_tree": "1b5f9252f7e2ee212ea5e39c1cbd7efaa1e3688d",
+  "original_tree": "3ae02947cca2e2e9aaa8fec47936463dcc63dc4a",
+  "candidate_patch_sha256": "cd88ce82499c5172f374d5ba3a4fa30191ee90ac47f8cbfc112835cfc2ffaaa3",
+  "binary": {
+    "sha256": "e0ebc1d943e5addb41713239b5f5d93ddbb0660c3d072bda05d1a0989e359ca3",
+    "bytes": 368091744,
+    "build_tree": "1b5f9252f7e2ee212ea5e39c1cbd7efaa1e3688d",
+    "compiler_artifact": "final-compiler-artifact.json",
+    "receipt": "final_framed.result.json",
+    "features": [
+      "default",
+      "lang-python",
+      "lang-rust",
+      "lang-typescript"
+    ],
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": true
+    }
+  },
+  "guard_limits": {
+    "memory_stop_bytes": 16000000000,
+    "disk_reserve_bytes": 5368709120
+  },
+  "build_environment": {
+    "CARGO_BUILD_JOBS": "1",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "rustc": "1.95.0",
+    "features": "unchanged default Rust/Python/TypeScript"
+  },
+  "focused_subjects_passed": 48,
+  "results": [
+    {
+      "label": "final_framed",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "--message-format=json-render-diagnostics",
+        "lsp::tests::framed_lsp_protocol_smoke_logs_successful_refresh_completion",
+        "--",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17969
+      },
+      "duration_seconds": 1054.7554519176483,
+      "start_utc": "2026-11-05T00:38:17.062351+00:00",
+      "end_utc": "2026-11-05T00:55:51.817803+00:00",
+      "peak_cgroup_memory_bytes": 15239733248,
+      "min_free_disk_bytes": 23896584192,
+      "log_sha256": "50a5c41c8989ac2f78b36d5244f71dc9157150fa1df7306866251746dcd2977f"
+    },
+    {
+      "label": "final_boundary_comparison",
+      "command": [
+        "final-repair-lib-test",
+        "lsp::tests::boundary_gap_lsp_diagnostics_match_fixture_expectation",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17969
+      },
+      "duration_seconds": 0.6310598850250244,
+      "start_utc": "2026-11-05T00:55:55.127682+00:00",
+      "end_utc": "2026-11-05T00:55:55.758742+00:00",
+      "peak_cgroup_memory_bytes": 2470375424,
+      "min_free_disk_bytes": 24283410432,
+      "log_sha256": "7ec007515de0005122aad3198c560f3a294508d40d09e324153d57fe2349f090"
+    },
+    {
+      "label": "final_editor_comparison",
+      "command": [
+        "final-repair-lib-test",
+        "lsp::tests::editor_lsp_workflow_lsp_goldens_match_production",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17969
+      },
+      "duration_seconds": 0.4029829502105713,
+      "start_utc": "2026-11-05T00:55:56.557503+00:00",
+      "end_utc": "2026-11-05T00:55:56.960485+00:00",
+      "peak_cgroup_memory_bytes": 2471145472,
+      "min_free_disk_bytes": 24283353088,
+      "log_sha256": "3df8802a8ff35e276fdbdc9462533a65c8aafde134bafd4bc75a6e6919f65b46"
+    },
+    {
+      "label": "final_reload",
+      "command": [
+        "final-repair-lib-test",
+        "lsp::tests::external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17969
+      },
+      "duration_seconds": 1.0499334335327148,
+      "start_utc": "2026-11-05T00:55:57.523703+00:00",
+      "end_utc": "2026-11-05T00:55:58.573637+00:00",
+      "peak_cgroup_memory_bytes": 2465509376,
+      "min_free_disk_bytes": 24282972160,
+      "log_sha256": "f83d0b0514e13b7c0c2abda404e07fa8139008f5039a3f67d11931c50c04969a"
+    },
+    {
+      "label": "final_reload_retry",
+      "command": [
+        "final-repair-lib-test",
+        "lsp::tests::did_change_retries_reloaded_content_after_a_failed_refresh_over_the_wire",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17969
+      },
+      "duration_seconds": 1.0053067207336426,
+      "start_utc": "2026-11-05T00:55:59.322637+00:00",
+      "end_utc": "2026-11-05T00:56:00.327944+00:00",
+      "peak_cgroup_memory_bytes": 2465239040,
+      "min_free_disk_bytes": 24283000832,
+      "log_sha256": "6f2b5f71931f0814d1a41b26e89ba6c0d39ad0dca8aa0f6ee5360e10587842ea"
+    },
+    {
+      "label": "final_prepared_fixture",
+      "command": [
+        "final-repair-lib-test",
+        "analysis::seam_inventory::tests::fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17969
+      },
+      "duration_seconds": 2.06815505027771,
+      "start_utc": "2026-11-05T00:56:01.163434+00:00",
+      "end_utc": "2026-11-05T00:56:03.231589+00:00",
+      "peak_cgroup_memory_bytes": 2467430400,
+      "min_free_disk_bytes": 24283148288,
+      "log_sha256": "727702844ab3ed2901fd34ea986182928deb4edf8c3e8042285f7eeee5289e52"
+    },
+    {
+      "label": "final_hover",
+      "command": [
+        "final-repair-lib-test",
+        "lsp::tests::unanalyzed_file_hover_names_only_the_observed_cause",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17969
+      },
+      "duration_seconds": 2.870391607284546,
+      "start_utc": "2026-11-05T00:56:04.326744+00:00",
+      "end_utc": "2026-11-05T00:56:07.197136+00:00",
+      "peak_cgroup_memory_bytes": 2464681984,
+      "min_free_disk_bytes": 24283258880,
+      "log_sha256": "f0ee5ba9478949ca35fb5069a0744d829927181e2bd6979d0a95d05cf254cc9c"
+    },
+    {
+      "label": "final_cache_commands",
+      "command": [
+        "final-repair-lib-test",
+        "cli::commands::cache_command::tests::",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 30,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17940
+      },
+      "duration_seconds": 0.8127241134643555,
+      "start_utc": "2026-11-05T00:56:07.865556+00:00",
+      "end_utc": "2026-11-05T00:56:08.678280+00:00",
+      "peak_cgroup_memory_bytes": 2469900288,
+      "min_free_disk_bytes": 24282808320,
+      "log_sha256": "198e7248dd5a1543e7777b8da873b0f7efee4bda0f661903e4110775c563e6a8"
+    },
+    {
+      "label": "final_export_controls",
+      "command": [
+        "final-repair-lib-test",
+        "analysis::seam_cache::export::tests::",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17962
+      },
+      "duration_seconds": 0.6070184707641602,
+      "start_utc": "2026-11-05T00:56:09.511147+00:00",
+      "end_utc": "2026-11-05T00:56:10.118166+00:00",
+      "peak_cgroup_memory_bytes": 2469474304,
+      "min_free_disk_bytes": 24283029504,
+      "log_sha256": "07d06237db1db94c1e97b08c9a56bd28556cd31afcf469fca13476cee8e1af92"
+    },
+    {
+      "label": "final_failed_retry_wire",
+      "command": [
+        "final-repair-lib-test",
+        "lsp::tests::did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17969
+      },
+      "duration_seconds": 0.8170895576477051,
+      "start_utc": "2026-11-05T00:56:10.701436+00:00",
+      "end_utc": "2026-11-05T00:56:11.518525+00:00",
+      "peak_cgroup_memory_bytes": 2464153600,
+      "min_free_disk_bytes": 24283201536,
+      "log_sha256": "459c91d6749c1224b0ea12f9372190f8a12eae639ebc29e88abd517e03be2a1c"
+    },
+    {
+      "label": "final_uncovered_retry_wire",
+      "command": [
+        "final-repair-lib-test",
+        "lsp::tests::failed_refresh_invalidates_only_uncovered_save_digests_over_the_wire",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17969
+      },
+      "duration_seconds": 1.626880168914795,
+      "start_utc": "2026-11-05T00:56:12.577048+00:00",
+      "end_utc": "2026-11-05T00:56:14.203928+00:00",
+      "peak_cgroup_memory_bytes": 2466316288,
+      "min_free_disk_bytes": 24282902528,
+      "log_sha256": "3cb4f6cfea597f5bb7855700cc84544e6fc45af706c4ed54fc34b19ab8c83d81"
+    },
+    {
+      "label": "final_cancel_retry_control",
+      "command": [
+        "final-repair-lib-test",
+        "lsp::backend::work_done_progress_guard_tests::dropped_refresh_guard_invalidates_only_uncovered_save_digests",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "test_counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17969
+      },
+      "duration_seconds": 0.804462194442749,
+      "start_utc": "2026-11-05T00:56:15.024400+00:00",
+      "end_utc": "2026-11-05T00:56:15.828862+00:00",
+      "peak_cgroup_memory_bytes": 2471194624,
+      "min_free_disk_bytes": 24283168768,
+      "log_sha256": "483953033cac97b610c24262fdbf217cffb18326bab3e23c648cd0fd81f2b25e"
+    }
+  ],
+  "full_harness_status": "Running 17970 tests since 2026-11-05T00:56:16Z; full result pending, no skips. Actual Cargo executable SHA256 matches frozen witness. Seven marker-free ancestry cases remain environment-blocked; not passed.",
+  "golden_review": {
+    "only_semantic_change": "diagnostics[0].data.evidence.discriminate yes to weak",
+    "paths": [
+      "fixtures/boundary_gap/expected/lsp-diagnostics.json",
+      "fixtures/editor_lsp_workflow/expected/lsp-diagnostics.json"
+    ],
+    "unchanged_code_actions_restored_after_equal_JSON_check": true
+  }
+}
+
