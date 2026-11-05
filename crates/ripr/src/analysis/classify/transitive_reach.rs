@@ -23,7 +23,9 @@
 use crate::analysis::classify::call_identity::{
     production_text_calls_owner, shared_owner_call_identity,
 };
-use crate::analysis::facts::{CallFact, FunctionContainer, FunctionSummary, RustIndex, TestFact};
+use crate::analysis::facts::{
+    CallFact, FunctionContainer, FunctionSummary, OracleFact, RustIndex, TestFact,
+};
 use crate::domain::StaticLimitKind;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -1034,6 +1036,7 @@ const IMPLICIT_DISPATCH_METHODS: &[&str] = &[
 /// The reverse name walk from one owner, for asking whether a test may run
 /// it ([`TransitiveReachIndex::owner_reach`]).
 pub(in crate::analysis) struct OwnerReach<'g, 'a> {
+    index: &'a RustIndex,
     graph: &'g ReachGraph<'a>,
     owner_name: String,
     reaching: HashSet<&'a str>,
@@ -1144,6 +1147,8 @@ impl OwnerReach<'_, '_> {
     pub(in crate::analysis) fn assertion_pins_other_function(
         &self,
         owner: &FunctionSummary,
+        test: &TestFact,
+        assertion: &OracleFact,
         assertion_text: &str,
     ) -> bool {
         if self.implicit_dispatch {
@@ -1152,18 +1157,11 @@ impl OwnerReach<'_, '_> {
         let closure = self
             .unbounded_reaching
             .get_or_init(|| self.graph.names_reaching_unbounded(&self.owner_name));
-        let passes_owner_path = |text: &str| {
-            super::call_identity::function_value_names(text)
-                .iter()
-                .any(|name| name == &self.owner_name || closure.contains(name.as_str()))
-        };
         let mut other_indexed = false;
         for name in super::reveal::called_names(assertion_text) {
             let name = name.as_str();
             if name == self.owner_name {
-                if super::call_identity::text_may_call_function_kind(assertion_text, owner)
-                    || passes_owner_path(assertion_text)
-                {
+                if super::call_identity::text_may_call_function_kind(assertion_text, owner) {
                     return false;
                 }
                 // A receiver call cannot name a free owner, nor a bare call a
@@ -1186,7 +1184,8 @@ impl OwnerReach<'_, '_> {
                 };
                 if candidates.next().is_some()
                     || candidate.id == owner.id
-                    || self.opposite_kind_wrapper_may_run_owner(candidate, closure)
+                    || !self.assertion_names_candidate(test, assertion, candidate)
+                    || self.opposite_kind_function_may_run_owner(candidate)
                 {
                     // Ambiguous dispatch, implicit/unknown code and a real
                     // outgoing owner path retain the existing uncertainty.
@@ -1211,59 +1210,93 @@ impl OwnerReach<'_, '_> {
         other_indexed
     }
 
-    /// Refusing the same-named call must not erase a genuine wrapper path.
-    /// Follow indexed calls and function values iteratively; the reverse
-    /// call closure cannot see an owner passed as a value inside a helper.
-    /// Unknown code or an exhausted budget retains the prior uncertainty.
-    fn opposite_kind_wrapper_may_run_owner(
+    /// Shape only selects a candidate. The existing binding authority must
+    /// establish the actual call in this assertion before it can refuse credit.
+    fn assertion_names_candidate(
         &self,
-        entry: &FunctionSummary,
-        owner_closure: &HashSet<&str>,
+        test: &TestFact,
+        assertion: &OracleFact,
+        candidate: &FunctionSummary,
     ) -> bool {
-        const MAX_WRAPPER_FUNCTIONS: usize = 64;
-        let mut pending = vec![entry];
-        let mut seen = HashSet::new();
-        while let Some(function) = pending.pop() {
-            if !seen.insert(&function.id) {
-                continue;
+        match candidate.item.container {
+            FunctionContainer::Free => {
+                super::owner_pin::targeted_free_call_reaches_owner(
+                    test,
+                    candidate,
+                    None,
+                    self.index,
+                    &self.index.call_identity_memos.receiver_pin_syntax,
+                ) && super::related_tests::assertion_free_owner_calls_resolve(
+                    test, assertion, candidate, self.index,
+                )
             }
-            if seen.len() > MAX_WRAPPER_FUNCTIONS
-                || function.item.container == FunctionContainer::Unknown
-            {
-                return true;
+            FunctionContainer::Inherent { .. } => {
+                super::related_tests::assertion_inherent_owner_calls_resolve(
+                    test, assertion, candidate, self.index,
+                )
             }
-            for call in calls_of(function) {
-                let name = call.name.as_str();
-                if is_macro_call(name)
-                    || name == self.owner_name
-                    || owner_closure.contains(name)
-                {
-                    return true;
-                }
-                if let Some(targets) = self.graph.by_name.get(name) {
-                    if targets.len() != 1 {
-                        return true;
-                    }
-                    pending.extend(targets.iter().copied());
-                } else if name.starts_with(|ch: char| ch.is_lowercase() || ch == '_') {
-                    // The same uncertainty as `test_may_reach`: an external
-                    // call may enter trait or callback code the index lacks.
-                    return true;
-                }
-            }
-            for name in super::call_identity::function_value_names(&function.body) {
-                if name == self.owner_name || owner_closure.contains(name.as_str()) {
-                    return true;
-                }
-                if let Some(targets) = self.graph.by_name.get(name.as_str()) {
-                    if targets.len() != 1 {
-                        return true;
-                    }
-                    pending.extend(targets.iter().copied());
-                }
-            }
+            _ => false,
         }
-        false
+    }
+
+    /// Only actual parsed enum constructors may be ignored as non-calling
+    /// values. An uppercase local callable is as uncertain as a lowercase one.
+    fn constructor_call_names(&self, function: &FunctionSummary) -> HashSet<String> {
+        use ra_ap_syntax::{AstNode, ast, ast::HasName};
+        let Some(parse) = self.index.source_syntax.parse_fragment(&function.body) else {
+            return HashSet::new();
+        };
+        let syntax = parse.tree().syntax().clone();
+        let type_parameters: HashSet<String> = syntax
+            .descendants()
+            .filter_map(ast::TypeParam::cast)
+            .filter_map(|parameter| parameter.name().map(|name| name.text().to_string()))
+            .collect();
+        let mut names: HashMap<String, bool> = HashMap::new();
+        for call in syntax.descendants().filter_map(ast::CallExpr::cast) {
+            let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                continue;
+            };
+            let Some(path) = callee.path() else {
+                continue;
+            };
+            let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
+                continue;
+            };
+            let path_text = path.syntax().text().to_string();
+            let constructor = !path.syntax().descendants().any(|node| {
+                ast::NameRef::cast(node)
+                    .is_some_and(|name| type_parameters.contains(&*name.text()))
+            }) && super::owner_pin::owner_builds_declared_error_variant(
+                &path_text,
+                function,
+                self.index,
+            );
+            names
+                .entry(name.text().to_string())
+                .and_modify(|all| *all &= constructor)
+                .or_insert(constructor);
+        }
+        names
+            .into_iter()
+            .filter_map(|(name, all)| all.then_some(name))
+            .collect()
+    }
+
+    /// A callable beyond this established target can reach the owner through
+    /// bindings or dispatch the name graph cannot settle. Keep that uncertainty,
+    /// including indexed helpers and both lower- and uppercase callable values.
+    /// Only parser-established enum constructors have no function body to run.
+    fn opposite_kind_function_may_run_owner(&self, function: &FunctionSummary) -> bool {
+        if function.item.container == FunctionContainer::Unknown {
+            return true;
+        }
+        let constructors = std::cell::OnceCell::new();
+        calls_of(function).any(|call| {
+            !constructors
+                .get_or_init(|| self.constructor_call_names(function))
+                .contains(call.name.as_str())
+        })
     }
 
     /// Whether `test` may run the owner, by name only (#6297). It may when
@@ -1776,6 +1809,7 @@ impl<'a> TransitiveReachIndex<'a> {
             || reaching.iter().any(|name| graph.macro_may_mention(name))
             || graph.walk_past_bound(owner_name, |_| Some(())).is_some();
         OwnerReach {
+            index: self.index,
             graph,
             owner_name: owner_name.to_string(),
             reaching,
@@ -5332,6 +5366,25 @@ mod tests {
         false
     }
 
+    // The older name-only controls have no same-named container candidate;
+    // only the new kind distinction requires a parsed assertion source scope.
+    fn pins_other_without_container_candidate(
+        reach: &OwnerReach<'_, '_>,
+        owner: &FunctionSummary,
+        text: &str,
+    ) -> bool {
+        let test = make_test("contract", Vec::new());
+        let assertion = OracleFact {
+            line: 1,
+            text: text.to_string(),
+            kind: crate::domain::OracleKind::ExactValue,
+            strength: crate::domain::OracleStrength::Strong,
+            observed_tokens: Vec::new(),
+            ok_value_observed: None,
+        };
+        reach.assertion_pins_other_function(owner, &test, &assertion, text)
+    }
+
     #[test]
     fn an_assertion_on_another_indexed_function_pins_that_function_not_the_owner() {
         // #11552: `reduce` is indexed and has no path to `consume`, so an
@@ -5349,23 +5402,23 @@ mod tests {
         let reach_index = TransitiveReachIndex::new(&index);
         let reach = reach_index.owner_reach("consume");
         let owner = make_fn("consume", Vec::new());
-        assert!(reach.assertion_pins_other_function(
+        assert!(pins_other_without_container_candidate(&reach,
             &owner,
             "assert_eq!(reduce(2500), Reduction::Over(Duration::from_millis(15)))"
         ));
-        assert!(!reach.assertion_pins_other_function(&owner, "assert_eq!(consume(1), true)"));
-        assert!(!reach.assertion_pins_other_function(&owner, "assert!(consume_bridge(1))"));
+        assert!(!pins_other_without_container_candidate(&reach, &owner, "assert_eq!(consume(1), true)"));
+        assert!(!pins_other_without_container_candidate(&reach, &owner, "assert!(consume_bridge(1))"));
         assert!(
-            !reach.assertion_pins_other_function(
+            !pins_other_without_container_candidate(&reach,
                 &owner,
                 "assert_eq!(reduce(1), consume_bridge(1).into())"
             )
         );
         assert!(
-            !reach.assertion_pins_other_function(&owner, "assert!(matches!(x, Reduction::Over(1)))")
+            !pins_other_without_container_candidate(&reach, &owner, "assert!(matches!(x, Reduction::Over(1)))")
         );
         assert!(
-            !reach.assertion_pins_other_function(&owner, "assert_eq!(Duration::from_millis(5), x)")
+            !pins_other_without_container_candidate(&reach, &owner, "assert_eq!(Duration::from_millis(5), x)")
         );
     }
 
@@ -5388,9 +5441,9 @@ mod tests {
         let reach_index = TransitiveReachIndex::new(&index);
         let reach = reach_index.owner_reach("consume");
         let owner = make_fn("consume", Vec::new());
-        assert!(!reach.assertion_pins_other_function(&owner, "assert_eq!(outer(), 1)"));
-        assert!(!reach.assertion_pins_other_function(&owner, "assert_eq!(outer_of_opaque(), 1)"));
-        assert!(reach.assertion_pins_other_function(&owner, "assert_eq!(leaf(), 1)"));
+        assert!(!pins_other_without_container_candidate(&reach, &owner, "assert_eq!(outer(), 1)"));
+        assert!(!pins_other_without_container_candidate(&reach, &owner, "assert_eq!(outer_of_opaque(), 1)"));
+        assert!(pins_other_without_container_candidate(&reach, &owner, "assert_eq!(leaf(), 1)"));
     }
 
     #[test]

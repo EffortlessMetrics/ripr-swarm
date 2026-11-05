@@ -549,34 +549,40 @@ The assertion refusal distinguishes a bare call from a receiver call even
 when their leaf names are equal (#12234). `widget.consume()` does not by
 itself pin free `consume`, and bare `consume()` does not pin an inherent
 method of that name. The actual owner definition supplies the container
-kind. A unique indexed opposite-kind definition with no outgoing owner or
-reverse-closure edge lends no oracle; its declaration is not an outgoing
-call. The wrapper walk follows indexed calls and function values iteratively,
-including an owner passed as a value in another helper; revisited definitions
-do not loop. Its 64-definition budget retains uncertainty when exhausted.
-Function-value names are read in one masked scan with the shared owner-call
-exclusions, including non-ASCII names and Rust's lexical whitespace. Generic
-function items retain uncertainty, and raw/plain name alternatives are both
-checked against the graph's declaration spelling. A real opposite-kind wrapper, an
-owner-path function passed as a value, a macro call, an unknown container,
-an unindexed receiver or lowercase external call, or ambiguous same-name
-dispatch retains uncertainty.
-Qualified and unread call paths retain their previous behavior, including
-UFCS. This bounded refusal does not resolve receiver types or broaden the
-seam kinds to which the per-assertion guard applies.
+kind. A unique indexed opposite-kind definition is only a candidate: the
+existing free-call binding or inherent receiver authority must establish
+the actual target in the selected source assertion. Every matching call
+in that assertion must agree. Another call elsewhere in the test cannot
+supply this authority; local callable bindings and unindexed receivers
+remain uncertain.
+
+The refusal keeps uncertainty whenever the established candidate makes an
+outgoing call, including calls to indexed helpers or uppercase callable
+parameters. Only actual parsed enum constructors, established by the
+existing enum-declaration authority, are treated as non-calling. This
+intentionally leaves unrelated wrapper chains conservative rather than
+using name-only reach to prove absence. Returned-function invocation,
+opaque or unsupported assertion syntax, ambiguous dispatch and implicit
+owner paths also retain uncertainty. Generic, raw and Unicode function
+values inside genuine wrappers retain their previous evidence without a
+new function-value name resolver. Qualified and unread call paths retain
+their previous behavior, including UFCS. This bounded refusal reuses
+existing binding readers and does not broaden the seam kinds to which
+the per-assertion guard applies.
 
 The full and compact repo views and their published related-test oracle
 read the same refusal. Proof: `assertion_call_kind_separates_same_named_free_and_receiver_owners`,
 `same_named_opposite_kind_wrappers_keep_owner_uncertainty`,
 `opposite_kind_indirect_function_values_keep_owner_uncertainty`,
-`opposite_kind_wrapper_walk_keeps_unrelated_chains_and_cycles_separate`,
-`opposite_kind_wrapper_budget_retains_uncertainty`,
+`opposite_kind_unrelated_wrappers_keep_call_uncertainty`,
 `opposite_kind_unicode_function_values_keep_owner_uncertainty`,
 `opposite_kind_returned_function_items_keep_owner_uncertainty`,
 `opposite_kind_callback_values_keep_owner_uncertainty`,
 `assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain`,
-`same_named_call_kinds_refuse_only_wrong_owner_repo_oracles`, and
-`same_named_call_kinds_keep_diff_owner_observation_scoped`. The independent
+`assertion_target_identity_is_local_to_each_oracle`,
+`same_named_call_kinds_refuse_only_wrong_owner_repo_oracles`,
+`same_named_call_kinds_keep_diff_owner_observation_scoped`, and
+`same_named_call_kinds_preserve_real_wrapper_and_binding_paths`. The independent
 honesty case `rust_repo_exposure_same_named_call_kinds_not_promoted` pins
 both wrong-owner published oracles to `none` beside genuine direct-call
 controls. Classified caches use the next allocated generation; the report

@@ -658,11 +658,15 @@ fn credited_related_tests<'a>(
                 && test
                     .assertions
                     .iter()
-                    .any(|oracle| owner_reach.assertion_pins_other_function(owner, &oracle.text))
+                    .any(|oracle| {
+                        owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                    })
             {
                 view.to_mut()
                     .assertions
-                    .retain(|oracle| !owner_reach.assertion_pins_other_function(owner, &oracle.text));
+                    .retain(|oracle| {
+                        !owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                    });
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.

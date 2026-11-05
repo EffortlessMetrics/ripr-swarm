@@ -11,6 +11,28 @@ fn parsed_index(source: &str) -> Result<RustIndex, String> {
     Ok(index)
 }
 
+fn pins_other_in_test(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    assertion: &str,
+) -> Result<bool, String> {
+    let source = &index.files().get(&owner.file)
+        .ok_or_else(|| "missing owner source".to_string())?.source;
+    let source = format!(
+        "{source}\n#[cfg(test)] mod contract_tests {{\n\
+         use super::*;\n#[test] fn assertion_contract() {{\n\
+         let widget = Widget;\n{assertion};\n}}\n}}",
+    );
+    let index = parsed_index(&source)?;
+    let test = index.tests().iter().find(|test| test.name == "assertion_contract")
+        .ok_or_else(|| "missing parsed contract test".to_string())?;
+    let [oracle] = test.assertions.as_slice() else {
+        return Err(format!("expected one parsed assertion, got {}", test.assertions.len()));
+    };
+    Ok(TransitiveReachIndex::new(&index).owner_reach(&owner.name)
+        .assertion_pins_other_function(owner, test, oracle, &oracle.text))
+}
+
 fn source(free_body: &str, method_body: &str, extra: &str) -> String {
     format!(
         "pub fn consume(value: u32) -> u32 {{ {free_body} }}\n\
@@ -42,8 +64,6 @@ fn owner(index: &RustIndex, free: bool) -> Result<&FunctionSummary, String> {
 #[test]
 fn assertion_call_kind_separates_same_named_free_and_receiver_owners() -> Result<(), String> {
     let index = parsed_index(&source("value + 1", "value + 2", ""))?;
-    let reach_index = TransitiveReachIndex::new(&index);
-    let reach = reach_index.owner_reach("consume");
     for (free, assertion, other) in [
         (true, "assert_eq!(widget.consume(1), 3)", true),
         (false, "assert_eq!(consume(1), 2)", true),
@@ -60,7 +80,7 @@ fn assertion_call_kind_separates_same_named_free_and_receiver_owners() -> Result
         (true, "assert_eq!(widget.consume(1), 3); // consume(1)", true),
     ] {
         assert_eq!(
-            reach.assertion_pins_other_function(owner(&index, free)?, assertion),
+            pins_other_in_test(&index, owner(&index, free)?, assertion)?,
             other,
             "free owner {free}: {assertion}"
         );
@@ -115,10 +135,8 @@ fn same_named_opposite_kind_wrappers_keep_owner_uncertainty() -> Result<(), Stri
         ),
     ] {
         let index = parsed_index(&source(free_body, method_body, ""))?;
-        let reach_index = TransitiveReachIndex::new(&index);
-        let reach = reach_index.owner_reach("consume");
         assert!(
-            !reach.assertion_pins_other_function(owner(&index, free)?, assertion),
+            !pins_other_in_test(&index, owner(&index, free)?, assertion)?,
             "wrapper must retain uncertainty: {free_body} / {method_body}"
         );
     }
@@ -135,12 +153,11 @@ fn opposite_kind_indirect_function_values_keep_owner_uncertainty() -> Result<(),
         "pub fn forward(value: u32) -> u32 { external(value) }",
     ] {
         let index = parsed_index(&source("value + 1", "forward(value)", helper))?;
-        let reach_index = TransitiveReachIndex::new(&index);
         assert!(
-            !reach_index.owner_reach("consume").assertion_pins_other_function(
+            !pins_other_in_test(&index,
                 owner(&index, true)?,
                 "assert_eq!(widget.consume(1), 2)"
-            ),
+            )?,
             "indirect wrapper must retain uncertainty: {helper}"
         );
     }
@@ -148,7 +165,7 @@ fn opposite_kind_indirect_function_values_keep_owner_uncertainty() -> Result<(),
 }
 
 #[test]
-fn opposite_kind_wrapper_walk_keeps_unrelated_chains_and_cycles_separate() -> Result<(), String> {
+fn opposite_kind_unrelated_wrappers_keep_call_uncertainty() -> Result<(), String> {
     for helper in [
         "pub fn forward(value: u32) -> u32 { value + 2 }",
         "pub fn forward(value: u32) -> u32 { unrelated(value) }\n\
@@ -157,37 +174,14 @@ fn opposite_kind_wrapper_walk_keeps_unrelated_chains_and_cycles_separate() -> Re
          fn nested(value: u32) -> u32 { forward(value) }",
     ] {
         let index = parsed_index(&source("value + 1", "forward(value)", helper))?;
-        let reach_index = TransitiveReachIndex::new(&index);
         assert!(
-            reach_index.owner_reach("consume").assertion_pins_other_function(
+            !pins_other_in_test(&index,
                 owner(&index, true)?,
                 "assert_eq!(widget.consume(1), 3)"
-            ),
-            "indexed unrelated wrapper must not pin the owner: {helper}"
+            )?,
+            "outgoing helper calls keep their binding uncertainty: {helper}"
         );
     }
-    Ok(())
-}
-
-#[test]
-fn opposite_kind_wrapper_budget_retains_uncertainty() -> Result<(), String> {
-    let mut helpers = String::new();
-    for position in 0..65 {
-        helpers.push_str(&format!(
-            "pub fn link{position}(value: u32) -> u32 {{ link{}(value) }}\n",
-            position + 1
-        ));
-    }
-    helpers.push_str("pub fn link65(value: u32) -> u32 { value + 2 }\n");
-    let index = parsed_index(&source("value + 1", "link0(value)", &helpers))?;
-    let reach_index = TransitiveReachIndex::new(&index);
-    assert!(
-        !reach_index.owner_reach("consume").assertion_pins_other_function(
-            owner(&index, true)?,
-            "assert_eq!(widget.consume(1), 3)"
-        ),
-        "a bounded walk cannot claim the unexplored functions are unrelated"
-    );
     Ok(())
 }
 
@@ -207,12 +201,11 @@ fn opposite_kind_unicode_function_values_keep_owner_uncertainty() -> Result<(), 
             function.name == "consumé" && function.item.container == FunctionContainer::Free
         })
         .ok_or_else(|| "missing Unicode free owner".to_string())?;
-    let reach_index = TransitiveReachIndex::new(&index);
     assert!(
-        !reach_index.owner_reach("consumé").assertion_pins_other_function(
+        !pins_other_in_test(&index,
             owner,
             "assert_eq!(widget.consumé()(1), 2)"
-        )
+        )?
     );
     Ok(())
 }
@@ -261,12 +254,11 @@ fn opposite_kind_returned_function_items_keep_owner_uncertainty() -> Result<(), 
             calls_of(forward).next().is_none(),
             "the control must reach the value scan, not an unknown call: {returned:?}"
         );
-        let reach_index = TransitiveReachIndex::new(&index);
         assert!(
-            !reach_index.owner_reach("consume").assertion_pins_other_function(
+            !pins_other_in_test(&index,
                 owner(&index, true)?,
                 "assert_eq!(widget.consume(1), 2)"
-            ),
+            )?,
             "returned owner path must retain uncertainty: {returned:?} / {helper}"
         );
     }
@@ -283,14 +275,12 @@ fn opposite_kind_callback_values_keep_owner_uncertainty() -> Result<(), String> 
              pub fn consume(&self, run: fn(u32) -> u32) -> u32 { run(1) }\n\
          }",
     )?;
-    let reach_index = TransitiveReachIndex::new(&index);
-    let reach = reach_index.owner_reach("consume");
     for assertion in [
         "assert_eq!(widget.consume(consume), 2)",
         "assert_eq!(widget.consume(bridge), 2)",
     ] {
         assert!(
-            !reach.assertion_pins_other_function(owner(&index, true)?, assertion),
+            !pins_other_in_test(&index, owner(&index, true)?, assertion)?,
             "function value may reach owner: {assertion}"
         );
     }
@@ -300,12 +290,11 @@ fn opposite_kind_callback_values_keep_owner_uncertainty() -> Result<(), String> 
 #[test]
 fn assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain() -> Result<(), String> {
     let unindexed = parsed_index("pub fn consume(value: u32) -> u32 { value + 1 }")?;
-    let reach_index = TransitiveReachIndex::new(&unindexed);
     assert!(
-        !reach_index.owner_reach("consume").assertion_pins_other_function(
+        !pins_other_in_test(&unindexed,
             owner(&unindexed, true)?,
             "assert_eq!(external.consume(1), 2)"
-        )
+        )?
     );
 
     let ambiguous = parsed_index(&source(
@@ -313,23 +302,21 @@ fn assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain() -> Resul
         "value + 2",
         "struct Other; impl Other { fn consume(&self, value: u32) -> u32 { value + 3 } }",
     ))?;
-    let reach_index = TransitiveReachIndex::new(&ambiguous);
     assert!(
-        !reach_index.owner_reach("consume").assertion_pins_other_function(
+        !pins_other_in_test(&ambiguous,
             owner(&ambiguous, true)?,
             "assert_eq!(receiver.consume(1), 3)"
-        )
+        )?
     );
 
     let known = parsed_index(&source("value + 1", "value + 2", ""))?;
     let mut unknown = owner(&known, true)?.clone();
     unknown.item.container = FunctionContainer::Unknown;
-    let reach_index = TransitiveReachIndex::new(&known);
     assert!(
-        !reach_index.owner_reach("consume").assertion_pins_other_function(
+        !pins_other_in_test(&known,
             &unknown,
             "assert_eq!(widget.consume(1), 3)"
-        )
+        )?
     );
 
     let implicit = parsed_index(&source(
@@ -342,12 +329,67 @@ fn assertion_call_kind_keeps_unresolved_and_implicit_inputs_uncertain() -> Resul
              }\n\
          }",
     ))?;
-    let reach_index = TransitiveReachIndex::new(&implicit);
     assert!(
-        !reach_index.owner_reach("consume").assertion_pins_other_function(
+        !pins_other_in_test(&implicit,
             owner(&implicit, true)?,
             "assert_eq!(widget.consume(1), 3)"
-        )
+        )?
     );
+    Ok(())
+}
+
+#[test]
+fn assertion_target_identity_is_local_to_each_oracle() -> Result<(), String> {
+    for (setup, assertions, expected) in [
+        (
+            "let _ = next();",
+            "assert_eq!(widget.next(), Reduction::Over(15));",
+            vec![true],
+        ),
+        (
+            "let _ = widget.next(); let mut external = std::iter::once_with(next);",
+            "assert_eq!(external.next(), Some(Reduction::Over(16)));",
+            vec![false],
+        ),
+        (
+            "let mut external = std::iter::once_with(next);",
+            "assert_eq!(widget.next(), Reduction::Over(15));\n\
+             assert_eq!(external.next(), Some(Reduction::Over(16)));",
+            vec![true, false],
+        ),
+        (
+            "let mut external = std::iter::once_with(next);",
+            "assert_eq!((widget.next(), external.next()),\n\
+             (Reduction::Over(15), Some(Reduction::Over(16))));",
+            vec![false],
+        ),
+    ] {
+        let source = format!(
+            "#[derive(Debug, PartialEq)]\n\
+             pub enum Reduction {{ Over(u32), Empty }}\n\
+             pub fn next() -> Reduction {{ Reduction::Over(16) }}\n\
+             pub struct Widget;\n\
+             impl Widget {{ pub fn next(&mut self) -> Reduction {{ Reduction::Over(15) }} }}\n\
+             #[cfg(test)] mod tests {{\nuse super::*;\n\
+             #[test] fn contract() {{\nlet mut widget = Widget;\n\
+             {setup}\n{assertions}\n}}\n}}",
+        );
+        let index = parsed_index(&source)?;
+        let owner = index.functions().iter().find(|function| {
+            function.name == "next" && function.item.container == FunctionContainer::Free
+        }).ok_or_else(|| "missing free next owner".to_string())?;
+        let test = index.tests().iter().find(|test| test.name == "contract")
+            .ok_or_else(|| "missing parsed contract".to_string())?;
+        assert_eq!(test.assertions.len(), expected.len(), "nonempty exact oracle stimulus");
+        let reach_index = TransitiveReachIndex::new(&index);
+        let reach = reach_index.owner_reach(&owner.name);
+        for (assertion, expected) in test.assertions.iter().zip(expected) {
+            assert_eq!(
+                reach.assertion_pins_other_function(owner, test, assertion, &assertion.text),
+                expected,
+                "{setup} / {}", assertion.text
+            );
+        }
+    }
     Ok(())
 }

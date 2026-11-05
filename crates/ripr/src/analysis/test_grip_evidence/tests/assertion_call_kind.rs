@@ -203,3 +203,248 @@ fn same_named_call_kinds_keep_diff_owner_observation_scoped() -> Result<(), Stri
     }
     Ok(())
 }
+
+#[test]
+fn same_named_call_kinds_preserve_real_wrapper_and_binding_paths() -> Result<(), String> {
+    for (case, owner, source) in [
+        ("plain", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn consume(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+type Operation = fn(u32) -> Reduction;
+pub fn forward() -> Operation { consume }
+pub struct Widget;
+impl Widget {
+    pub fn consume(&self, value: u32) -> Reduction { forward()(value) }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        assert_eq!(widget.consume(1), Reduction::Over(16));
+    }
+}
+"##),
+        ("generic", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn consume<T>(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+type Operation = fn(u32) -> Reduction;
+pub fn forward() -> Operation { consume::<u32> }
+pub struct Widget;
+impl Widget {
+    pub fn consume(&self, value: u32) -> Reduction { forward()(value) }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        assert_eq!(widget.consume(1), Reduction::Over(16));
+    }
+}
+"##),
+        ("unicode_lrm", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn consume(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+type Operation = fn(u32) -> Reduction;
+pub fn forward() -> Operation { ‎consume‎ }
+pub struct Widget;
+impl Widget {
+    pub fn consume(&self, value: u32) -> Reduction { forward()(value) }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        assert_eq!(widget.consume(1), Reduction::Over(16));
+    }
+}
+"##),
+        ("unicode_line_separator", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn consume(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+type Operation = fn(u32) -> Reduction;
+pub fn forward() -> Operation {
+consume
+ }
+pub struct Widget;
+impl Widget {
+    pub fn consume(&self, value: u32) -> Reduction { forward()(value) }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        assert_eq!(widget.consume(1), Reduction::Over(16));
+    }
+}
+"##),
+        ("raw_helper", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn consume(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+type Operation = fn(u32) -> Reduction;
+pub fn r#bridge(value: u32) -> Reduction { consume(value) }
+pub fn forward() -> Operation { r#bridge }
+pub struct Widget;
+impl Widget {
+    pub fn consume(&self, value: u32) -> Reduction { forward()(value) }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        assert_eq!(widget.consume(1), Reduction::Over(16));
+    }
+}
+"##),
+        ("unicode_nfc_helper", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn consume(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+type Operation = fn(u32) -> Reduction;
+pub fn café(value: u32) -> Reduction { consume(value) }
+pub fn forward() -> Operation { café }
+pub struct Widget;
+impl Widget {
+    pub fn consume(&self, value: u32) -> Reduction { forward()(value) }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        assert_eq!(widget.consume(1), Reduction::Over(16));
+    }
+}
+"##),
+        ("unindexed_std_receiver", "src/lib.rs::next", r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn next() -> Reduction {
+    match 1 {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+pub struct Widget;
+impl Widget {
+    pub fn next(&mut self) -> Option<Reduction> { Some(Reduction::Over(15)) }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let mut external = std::iter::once_with(next);
+        assert_eq!(external.next(), Some(Reduction::Over(16)));
+    }
+}
+"##),
+        ("uppercase_callable", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn consume(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+type Operation = fn(u32) -> Reduction;
+pub struct Widget;
+impl Widget {
+    #[allow(non_snake_case)]
+    pub fn consume(&self, Run: Operation) -> Reduction { Run(1) }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        let run = consume;
+        assert_eq!(widget.consume(run), Reduction::Over(16));
+    }
+}
+"##),
+        ("shadowed_free_callable", "src/lib.rs::impl Widget::consume", r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn consume(value: u32) -> Reduction { Reduction::Over(15 + value) }
+pub struct Widget;
+impl Widget {
+    pub fn consume(&self, value: u32) -> Reduction {
+        match value {
+            0 => Reduction::Empty,
+            _ => Reduction::Over(16),
+        }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        let consume = |v| widget.consume(v);
+        assert_eq!(consume(1), Reduction::Over(16));
+    }
+}
+"##),
+    ] {
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let selected: Vec<_> = seams.iter().filter(|seam| {
+            seam.kind() == SeamKind::MatchArm
+                && seam.owner() == owner
+                && seam.expression() == "_ =>"
+        }).collect();
+        let [arm] = selected.as_slice() else {
+            return Err(format!("{case}: expected one selected arm, got {}", selected.len()));
+        };
+        let full = evidence_for_seam(arm, &index);
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(arm, &context);
+        assert_eq!(full.related_tests.len(), 1, "{case}: nonempty test stimulus");
+        assert_eq!(full.observe.state, StageState::Yes, "{case}: full observe");
+        assert_eq!(full.discriminate.state, StageState::Yes, "{case}: full discriminate");
+        assert_eq!(full.related_tests[0].oracle_strength, OracleStrength::Strong, "{case}: oracle");
+        assert_eq!(compact.observe.state, StageState::Yes, "{case}: compact observe");
+        assert_eq!(compact.discriminate.state, StageState::Yes, "{case}: compact discriminate");
+    }
+    Ok(())
+}
