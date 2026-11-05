@@ -152,15 +152,37 @@ registered `harness = false` target), and
 `RegisteredTestAttribute` (promoted through a repository-
 governed `[analysis.test_harnesses]` registration, #3532), and
 `ParameterizedExpansion` (expansion of a parameterized-test macro
-registration; registers executable tests).
+registration; registers executable tests), and `TestInputGenerator`
+(manifest- and namespace-verified QuickCheck stimulus; registers no
+executable `TestFact`, #11545).
 Direct function gates use the same `cfg_predicates` authority as module
 gates and survive parser/lexical fact normalization without registering
 helper `TestFact`s. A test conjunct requires evidence role;
 `cfg(any(test, feature = "slow"))`, `cfg(not(test))`, and `cfg(tests)` do
 not establish test-only role.
 
-Attribute-driven membership is authoritative; filenames, imports,
-and macro suffixes never classify.
+Attribute-driven executable-test membership is authoritative; filenames,
+imports, and macro suffixes never establish that membership.
+
+`TestInputGenerator` uses verified dependency and trait identity instead of
+executable-test membership. Candidate-side changed lines strictly inside an
+unambiguous QuickCheck `Arbitrary` method remain visible as `static_unknown`
+(class and probe family), with an explicit test-stimulus explanation. All
+RIPR stages remain unknown; no executable test, reach, oracle, or canonical
+product-test gap is credited. Guidance asks the user to review input
+distribution and shrinking rather than asserting a missing product test.
+
+This bounded route admits conventional single-package `src/lib.rs` and
+`src/main.rs` roots in editions 2018, 2021, or 2024, a sole mandatory verified
+registry QuickCheck dependency, and an unambiguous qualified
+`quickcheck::Arbitrary` trait identity. Unsupported targets, dependencies,
+shadowing, opaque expansions, and compiler/configuration overrides retain
+ordinary analysis. This is not general Rust name resolution: a trait or
+function merely named `Arbitrary` or `arbitrary` establishes no generator role.
+Removed-only subjects, method boundary lines, shared production lines, and
+nested production helpers retain ordinary analysis. Repo-wide analysis omits
+unambiguous generator evidence from the production subject inventory; adjacent
+production subjects remain eligible.
 
 For the existing workspace wrapper-macro alias rule, a direct automatic
 `src/bin/<name>.rs` target uses its own root alias for `#[crate::test]`
@@ -295,7 +317,8 @@ A helper `fn` declared inside an evidence-role (`#[test]`) function is indexed
 with a production role of its own. It is still part of the test: a strictly
 enclosing evidence-role function makes its lines test evidence, so a diff that
 only adds such a helper yields no probe (#9177). A same-start-line sibling is
-not enclosing.
+not enclosing. `TestInputGenerator` is excluded from that enclosing-helper
+rule: a nested helper retains its own production role and probe eligibility.
 
 ### Index normalization ownership
 
@@ -326,6 +349,10 @@ Complete corpus/source facts still scale with input size; this ownership contrac
 is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage claim.
 
 ## Required Evidence
+
+- A verified generator edit retains a visible finding with `static_unknown`,
+  a stimulus explanation, no canonical gap, and no executable-test credit;
+  lookalikes and ambiguous ownership retain ordinary production analysis.
 
 - A changed Cargo bench seeds no production probes but stays in
   changed-file accounting: pinned by the `benches_harness_evidence`
@@ -448,6 +475,14 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
 
 ## Test Mapping
 
+`analysis/facts/quickcheck_generator_tests.rs` pins stimulus and shrinking,
+provider/target/configuration identity refusal, lookalikes, nested helpers,
+and shared/boundary-line ownership (#11545).
+`tests/quickcheck_generator_rendered.rs` exercises the public analysis
+pipeline and JSON/human rendering for a verified generator, a local trait
+lookalike, and an ordinary function named `arbitrary`. The Rust adapter repo-mode
+control pins generator omission and the adjacent production gap.
+
 `analysis/workspace/source_role.rs` unit tests pin the layout rules,
 Cargo-autodiscovery shapes, override priority, windows normalization,
 the seeding/evidence partition, and the cargo-fuzz harness test-evidence
@@ -508,6 +543,13 @@ verbatim scan instead of a second lexical authority.
   classification without a real producer remains deferred.
 
 ## Implementation Mapping
+
+- `analysis/facts/quickcheck_generator.rs` and `test_styles.rs` — bounded
+  provider identity and the generator item role (#11545).
+- `analysis/probes/diff.rs` and `analysis/classifier/test_input_generator.rs`
+  — retained generator subjects and explicit stimulus uncertainty.
+- `analysis/language/rust/mod.rs` — preserves the generator canonical-gap
+  refusal after public-pipeline classification.
 
 - `analysis/workspace/source_role.rs` — the typed file-role model.
 - `analysis/facts/` — item-role producers: the facts builders, the

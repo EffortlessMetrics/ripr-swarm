@@ -134,7 +134,7 @@ version.
 
 ## Implementation Mapping
 
-- `crates/ripr/src/domain/probe.rs` owns `SourceCurrentness`,
+- `crates/ripr-contract/src/domain/probe.rs` owns `SourceCurrentness`,
   `SOURCE_CURRENTNESS_VALUES`, the serde contract, and the
   backward-compatible `Finding` field.
 - `crates/ripr/src/analysis/probes/diff.rs` resolves the disposition from

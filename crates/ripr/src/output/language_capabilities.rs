@@ -6,7 +6,7 @@
 //! cell does not imply the adapter is compiled or enabled.
 
 use crate::domain::LanguageId;
-use crate::domain::language_capability::{
+use ripr_contract::domain::language_capability::{
     CAPABILITY_CELLS, COMMON_NON_CLAIMS, CapabilityCell, LANGUAGE_CAPABILITIES_SCHEMA_VERSION,
     SupportState, cell_id, render_registry_block, semantic_digest,
 };
