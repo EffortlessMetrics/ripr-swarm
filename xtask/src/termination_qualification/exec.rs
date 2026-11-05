@@ -12,23 +12,15 @@ use super::assess::{self, Assessment, Observed};
 use super::corpus::Case;
 use super::model::{InputDigest, Observation, Row, RowResult, Subjects};
 use crate::blind_journey::sha256_hex;
+#[cfg(unix)]
+use crate::exact_candidate_harness::cleanup_with as harness_cleanup_with;
+use crate::exact_candidate_harness::{
+    child_env_for_root, cleanup as harness_cleanup,
+    environment_boundary as harness_environment_boundary, removed_env as harness_removed_env,
+};
 use crate::run;
 
-#[cfg(unix)]
-pub(crate) const CHILD_PATH: &str = "/usr/bin:/bin";
-#[cfg(not(unix))]
-pub(crate) const CHILD_PATH: &str = "";
-
-/// Variables that point Git at a repository other than the one found from the
-/// working directory; a caller's values must not reach the child.
-const GIT_REDIRECT_ENV: [&str; 3] = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"];
-
-/// Per-stream cap on one case's retained output. The largest real case writes
-/// a few kilobytes; a binary that emits more is failing, not being verbose.
-pub(crate) const CHILD_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
-
-/// Placeholder for the owned case root in every retained string.
-pub(crate) const ROOT_TOKEN: &str = "<case-root>";
+pub(crate) use crate::exact_candidate_harness::{CHILD_OUTPUT_BYTES, CHILD_PATH, ROOT_TOKEN};
 
 pub(crate) struct Binary {
     pub(crate) path: PathBuf,
@@ -38,28 +30,12 @@ pub(crate) struct Binary {
 /// what the corpus does not set itself; `RIPR_*` is removed so ambient
 /// configuration cannot change a row, and so is every variable that points Git
 /// at a repository other than the one found from the working directory.
-pub(crate) fn removed_env() -> Vec<String> {
-    let mut names: Vec<String> = std::env::vars()
-        .map(|(name, _)| name)
-        .filter(|name| name.starts_with("RIPR_"))
-        .collect();
-    names.sort();
-    names.extend(GIT_REDIRECT_ENV.iter().map(|name| (*name).to_string()));
-    names
+pub(crate) fn environment_boundary() -> Vec<String> {
+    harness_environment_boundary()
 }
 
-pub(crate) fn environment_boundary() -> Vec<String> {
-    vec![
-        format!("child PATH is exactly `{CHILD_PATH}`; the binary is launched by absolute path"),
-        "HOME, TMPDIR and XDG_{CACHE,CONFIG,DATA}_HOME point inside the owned case root"
-            .to_string(),
-        "NO_COLOR=1 and RUST_BACKTRACE=0".to_string(),
-        "every RIPR_* variable present in the parent environment is removed from the child"
-            .to_string(),
-        "GIT_CEILING_DIRECTORIES is the case root's parent, and GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE are removed, so no repository above the case root is discovered"
-            .to_string(),
-        "other inherited variables are not scrubbed".to_string(),
-    ]
+pub(crate) fn removed_env() -> Vec<String> {
+    harness_removed_env()
 }
 
 pub(crate) fn write_case_files(root: &Path, case: &Case) -> Result<Vec<InputDigest>, String> {
@@ -242,37 +218,8 @@ fn launch(
     case: &Case,
     deadline: Duration,
 ) -> Result<Launched, String> {
-    let home = root.join(".termination-home");
-    let tmp = home.join("tmp");
-    fs::create_dir_all(&tmp)
-        .map_err(|error| format!("failed to create {}: {error}", tmp.display()))?;
-    let home_text = home.to_string_lossy().to_string();
-    let tmp_text = tmp.to_string_lossy().to_string();
-    let cache = home.join("cache").to_string_lossy().to_string();
-    let config = home.join("config").to_string_lossy().to_string();
-    let data = home.join("data").to_string_lossy().to_string();
-    // Repository discovery stops at the case root's parent, so a repository
-    // above the owned root (the checkout this run lives in) is not found.
-    let ceiling = root
-        .canonicalize()
-        .ok()
-        .and_then(|owned| {
-            owned
-                .parent()
-                .map(|parent| parent.to_string_lossy().to_string())
-        })
-        .ok_or_else(|| format!("failed to resolve the parent of {}", root.display()))?;
-    let envs: Vec<(&str, &str)> = vec![
-        ("PATH", CHILD_PATH),
-        ("HOME", &home_text),
-        ("TMPDIR", &tmp_text),
-        ("XDG_CACHE_HOME", &cache),
-        ("XDG_CONFIG_HOME", &config),
-        ("XDG_DATA_HOME", &data),
-        ("GIT_CEILING_DIRECTORIES", &ceiling),
-        ("NO_COLOR", "1"),
-        ("RUST_BACKTRACE", "0"),
-    ];
+    let envs = child_env_for_root(root)?;
+    let env_refs: Vec<(&str, &str)> = envs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     let removed = removed_env();
     let removed_refs: Vec<&str> = removed.iter().map(String::as_str).collect();
     // A binary that floods a stream is a failed row, not a reason to hold the
@@ -281,7 +228,7 @@ fn launch(
         &binary.path,
         &case.args,
         root,
-        (&envs, &removed_refs),
+        (&env_refs, &removed_refs),
         run::ByteCaptureBudget {
             timeout: deadline,
             stdout_bytes: CHILD_OUTPUT_BYTES,
@@ -330,16 +277,10 @@ fn signal_description(_status: &std::process::ExitStatus) -> String {
 }
 
 pub(crate) fn cleanup(root: &Path) -> String {
-    cleanup_with(root, &|path| fs::remove_dir_all(path))
+    harness_cleanup(root)
 }
 
+#[cfg(unix)]
 pub(crate) fn cleanup_with(root: &Path, remove: &dyn Fn(&Path) -> std::io::Result<()>) -> String {
-    match remove(root) {
-        Ok(()) if !root.exists() => "removed".to_string(),
-        Ok(()) => "retained_after_remove".to_string(),
-        Err(error) if !root.exists() && error.kind() == std::io::ErrorKind::NotFound => {
-            "removed".to_string()
-        }
-        Err(error) => format!("retained ({error})"),
-    }
+    harness_cleanup_with(root, remove)
 }

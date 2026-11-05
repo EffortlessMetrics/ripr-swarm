@@ -180,3 +180,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (14)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (15)
+
+Reason:
+RIPR-SPEC-0083: #13037 default missing-check line says no assertion was tied to the changed value when the next step says an exact assertion exists
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

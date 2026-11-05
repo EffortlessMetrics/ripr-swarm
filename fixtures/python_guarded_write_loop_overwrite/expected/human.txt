@@ -17,13 +17,14 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:shapes/noter.py:Recorder.note:field_value:field_construction:self.last=fault
   Changed behavior: self.last = "fault"
   Missing check (1 of 2): A strong Python oracle reaches `note`, but its assertion does not observe
     the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_noter.py:3 test_note (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_noter.py:3 test_note
   Suggested test file: tests/test_noter.py
   Suggested test: test_note
   Test node: tests/test_noter.py::test_note
@@ -45,6 +46,7 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_guarded_write_loop_overwrite/input --diff <cwd>/fixtures/python_guarded_write_loop_overwrite/diff.patch --mode fast probe:shapes_noter.py:python_preview:a00e0fc8
   ripr context --root <cwd>/fixtures/python_guarded_write_loop_overwrite/input --diff <cwd>/fixtures/python_guarded_write_loop_overwrite/diff.patch --mode fast --at probe:shapes_noter.py:python_preview:a00e0fc8
   no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `shapes/noter.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command

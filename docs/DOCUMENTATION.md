@@ -129,6 +129,9 @@ Current how-to docs:
 - [0.11.0 Windows packaged dispatch checklist](releases/0.11.0-windows-packaged-dispatch.md) -
   read-only inputs and expected shape of the candidate Windows packaged run
   (#9274)
+- [0.11.0 release-candidate tracking anchor](releases/0.11.0-rc-tracking.md) -
+  durable pointer to the post-campaign cycle's one watch surface (tracking
+  issue #12830)
 - [Live-history release transaction runbook](RELEASE_TRANSACTION.md) - exact
   two-repository release lifecycle, J/K transport, receipts, and stop rules
 - [0.11 RC authority reconciliation](release/0.11.0/rc-authority-reconciliation.md) -

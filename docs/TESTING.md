@@ -21,8 +21,9 @@ Prepare the pinned fallible owner-return fixture before offline analyzer tests
 or fixture/golden checks. Its anyhow 1.0.100 dependency is separate from the
 workspace dependency graph; a workspace build does not fetch it. Cargo performs
 this locked fetch explicitly; production analyzer metadata stays offline.
-`cargo xtask goldens prepare` runs it for this fixture, and the tests that need
-it name that command when it is missing.
+`cargo xtask goldens prepare` fetches both locked manifests above (fallible
+literal and literal-JSON owner-return), and the tests that need them name that
+command when preparation is missing.
 
 ```bash
 cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
@@ -437,6 +438,13 @@ cargo test --workspace --doc
 
 The JUnit output path is configured in `.config/nextest.toml` at
 `target/nextest/ci/junit.xml`.
+
+After a `ci`-profile run, `cargo xtask slow-test-report` lists the 50 slowest
+tests from that file and judges each against the per-test budget in
+`policy/test-time-budget.toml` (advisory; the baseline allowlist names tests
+already over budget so the budget can be enforced later; a baselined test that
+slows past `regression_factor` times its recorded time is reported as regressed). The JUnit file is also
+the `rust-junit` artifact of the Test Analytics workflow.
 
 ## Unused suppression-policy disclosure
 

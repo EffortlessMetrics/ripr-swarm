@@ -6,8 +6,9 @@
 
 use crate::output::review_comments_receipt::{
     CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM, REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION,
-    REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY, ReviewCommentsPhaseEvidence,
-    ReviewCommentsReceiptLimitation, ReviewCommentsRunReceipt,
+    REVIEW_GUIDANCE_INDEX_RECOMPUTE_LIMITATION_CATEGORY, REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM,
+    REVIEW_GUIDANCE_INDEX_RECOMPUTE_REPAIR_ROUTE, REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY,
+    ReviewCommentsPhaseEvidence, ReviewCommentsReceiptLimitation, ReviewCommentsRunReceipt,
 };
 use crate::review_input::canonical_root_identity;
 use sha2::{Digest, Sha256};
@@ -201,6 +202,27 @@ impl ReviewCommentsReceiptRun {
     /// The named limitation lets a consumer classify incomplete guidance. Status stays `failed` (the receipt
     /// vocabulary has no third terminal failure kind), and the limitation
     /// category carries the classification.
+    /// Records that guidance took the compatibility recompute route because no
+    /// valid prepared workspace handoff was available (#4692).
+    pub fn index_recompute_compatibility(&mut self, reason: &'static str) {
+        self.receipt
+            .limitations
+            .push(ReviewCommentsReceiptLimitation {
+                category: REVIEW_GUIDANCE_INDEX_RECOMPUTE_LIMITATION_CATEGORY.to_string(),
+                repair_route: format!("{REVIEW_GUIDANCE_INDEX_RECOMPUTE_REPAIR_ROUTE}: {reason}"),
+            });
+        if !self
+            .receipt
+            .non_claims
+            .iter()
+            .any(|claim| claim == REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM)
+        {
+            self.receipt
+                .non_claims
+                .push(REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM.to_string());
+        }
+    }
+
     pub fn oversized(&mut self, active_phase: &str, error: &str) {
         self.receipt.status = "failed";
         self.receipt.active_phase = Some(active_phase.to_string());
@@ -886,6 +908,29 @@ mod tests {
             "receipt file should exist after write_atomic"
         );
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn index_recompute_compatibility_records_named_limitation() -> Result<(), String> {
+        let mut receipt = sample_receipt();
+        receipt.index_recompute_compatibility("test_reason");
+        assert!(
+            receipt
+                .limitations
+                .iter()
+                .any(|entry| entry.category == REVIEW_GUIDANCE_INDEX_RECOMPUTE_LIMITATION_CATEGORY),
+            "{:?}",
+            receipt.limitations
+        );
+        assert!(
+            receipt
+                .non_claims
+                .iter()
+                .any(|claim| claim == REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM),
+            "{:?}",
+            receipt.non_claims
+        );
         Ok(())
     }
 }

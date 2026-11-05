@@ -494,3 +494,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (41)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (42)
+
+Reason:
+RIPR-SPEC-0083: #13037 default missing-check line says no assertion was tied to the changed value when the next step says an exact assertion exists
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

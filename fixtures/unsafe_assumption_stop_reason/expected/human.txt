@@ -15,7 +15,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:first:return_value:return_value:unsafe_pick_values_0
   Changed behavior: unsafe { pick(values, 0) }
-  Missing check: No strong assertion was detected
+  Missing check: No assertion was tied to the changed value
   Related test: tests/pick_tests.rs:4 first_reads_the_head (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `first_reads_the_head` already has an exact assertion; this does not
     establish observation of the returned value. Check whether the change can affect the returned
@@ -37,6 +37,7 @@ Start here:
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/unsafe_assumption_stop_reason/input --diff <cwd>/fixtures/unsafe_assumption_stop_reason/diff.patch --mode fast probe:src_lib.rs:return_value:d03efa4f
   ripr context --root <cwd>/fixtures/unsafe_assumption_stop_reason/input --diff <cwd>/fixtures/unsafe_assumption_stop_reason/diff.patch --mode fast --at probe:src_lib.rs:return_value:d03efa4f
   no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above

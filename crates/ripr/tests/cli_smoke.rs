@@ -109,6 +109,9 @@ mod partial_preview_disclosure;
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
 mod pilot_timeout_retry;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/pilot_wall_budget.rs"]
+mod pilot_wall_budget;
 #[cfg(all(feature = "lang-rust", feature = "lang-python"))]
 #[path = "cli_smoke/portable_diff_paths.rs"]
 mod portable_diff_paths;
@@ -3856,6 +3859,104 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
         stderr.contains("diff_scope_oversized"),
         "stderr should still report failed analysis: {stderr}"
     );
+    Ok(())
+}
+
+/// One-file Python diff with six added lines (same shape as the #11832 LSP
+/// control). The language-neutral parser budget counts every added/removed
+/// payload, so a lowered `RIPR_MAX_DIFF_CHANGED_LINES=5` must refuse before
+/// analysis; the same diff under 1000 must not trip this ceiling.
+const CLI_OVERSIZED_PYTHON_DIFF: &str = "\
+diff --git a/pkg/app.py b/pkg/app.py
+--- a/pkg/app.py
++++ b/pkg/app.py
+@@ -1,2 +1,8 @@
+ def score():
+     return 0
++def extra_a():
++    return 1
++def extra_b():
++    return 2
++def extra_c():
++    return 3
+";
+
+fn oversized_python_diff_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
+    let dir = unique_temp_workspace(label);
+    std::fs::create_dir_all(dir.join("pkg")).map_err(|err| format!("mkdir pkg: {err}"))?;
+    std::fs::write(
+        dir.join("pkg/app.py"),
+        "def score():\n    return 0\ndef extra_a():\n    return 1\ndef extra_b():\n    return 2\ndef extra_c():\n    return 3\n",
+    )
+    .map_err(|err| format!("write app.py: {err}"))?;
+    let diff_path = dir.join("oversized-python.diff");
+    std::fs::write(&diff_path, CLI_OVERSIZED_PYTHON_DIFF)
+        .map_err(|err| format!("write diff: {err}"))?;
+    Ok((dir, diff_path))
+}
+
+fn assert_check_json_names_changed_line_budget(stdout: &str) -> Result<(), String> {
+    if !stdout.contains("RIPR_MAX_DIFF_CHANGED_LINES") {
+        return Err(format!(
+            "limited JSON must name the RIPR_MAX_DIFF_CHANGED_LINES budget: {stdout}"
+        ));
+    }
+    Ok(())
+}
+
+/// #11832: CLI JSON control for the language-neutral changed-line budget on a
+/// one-file non-Rust diff (complements `lsp_lifecycle -- oversized`).
+#[test]
+fn check_json_oversized_non_rust_diff_over_changed_line_budget_is_typed_limited()
+-> Result<(), String> {
+    let (root, diff) = oversized_python_diff_fixture("cli-oversized-changed-line")?;
+    let root_s = root.display().to_string();
+    let diff_s = diff.display().to_string();
+
+    let limited = run_ripr_with_env(
+        &["check", "--root", &root_s, "--diff", &diff_s, "--json"],
+        &[("RIPR_MAX_DIFF_CHANGED_LINES", "5")],
+    );
+    assert_failure(&limited);
+    let limited_stdout = String::from_utf8_lossy(&limited.stdout);
+    let limited_value: serde_json::Value = serde_json::from_str(&limited_stdout)
+        .map_err(|err| format!("limited stdout should parse as JSON: {err}\n{limited_stdout}"))?;
+    assert_eq!(
+        limited_value["analysis_scope"]["run_status"],
+        "diff_scope_oversized"
+    );
+    assert_eq!(
+        limited_value["analysis_scope"]["downstream_consumable"],
+        false
+    );
+    assert_eq!(
+        limited_value["run_limitations"][0]["category"],
+        "diff_scope_oversized"
+    );
+    assert_eq!(limited_value["findings"].as_array().map(Vec::len), Some(0));
+    assert_check_json_names_changed_line_budget(&limited_stdout)?;
+
+    let control = run_ripr_with_env(
+        &["check", "--root", &root_s, "--diff", &diff_s, "--json"],
+        &[("RIPR_MAX_DIFF_CHANGED_LINES", "1000")],
+    );
+    let control_stdout = String::from_utf8_lossy(&control.stdout);
+    if control_stdout.contains("RIPR_MAX_DIFF_CHANGED_LINES") {
+        return Err(format!(
+            "control diff under RIPR_MAX_DIFF_CHANGED_LINES=1000 must not name that budget: {control_stdout}"
+        ));
+    }
+    if control.status.success() {
+        let control_value: serde_json::Value = serde_json::from_str(&control_stdout)
+            .map_err(|err| format!("control stdout should parse as JSON: {err}"))?;
+        if control_value["analysis_scope"]["run_status"] == "diff_scope_oversized" {
+            return Err(format!(
+                "control must not refuse with diff_scope_oversized from the changed-line budget: {control_stdout}"
+            ));
+        }
+    }
+
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture root: {err}"))?;
     Ok(())
 }
 
@@ -11496,6 +11597,47 @@ fn agent_verify_rejects_plausible_uncommitted_json() -> Result<(), Box<dyn std::
     assert!(diagnostic.contains(env!("CARGO_PKG_VERSION")));
     assert!(diagnostic.contains("recovered.repo-exposure.json"));
     assert!(diagnostic.contains("Replace this input"));
+    assert!(diagnostic.contains("artifact produced by legacy/unknown RIPR (schema 0.3)"));
+    assert!(diagnostic.contains("different ripr binary likely won PATH resolution"));
+    assert!(diagnostic.contains("`ripr --version`"));
+    assert!(!diagnostic.contains("missing field"));
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn agent_verify_refuses_older_producer_stamp_before_schema_error()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("agent-verify-older-producer");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    let before = root.join("before.repo-exposure.json");
+    let after = root.join("after.repo-exposure.json");
+    let older = r#"{"schema_version":"0.3","scope":"repo","seams":[],"artifact":{"producer":{"tool":"ripr","version":"0.10.0"}}}"#;
+    std::fs::write(&before, older)?;
+    std::fs::write(&after, older)?;
+
+    let before_path = before.display().to_string();
+    let after_path = after.display().to_string();
+    let output = run_ripr(&[
+        "agent",
+        "verify",
+        "--root",
+        &root.display().to_string(),
+        "--before",
+        &before_path,
+        "--after",
+        &after_path,
+        "--json",
+    ]);
+    assert_failure(&output);
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostic.contains("produced by RIPR 0.10.0"));
+    assert!(diagnostic.contains("artifact produced by ripr 0.10.0 (schema 0.3)"));
+    assert!(diagnostic.contains(env!("CARGO_PKG_VERSION")));
+    assert!(diagnostic.contains("expects schema 0.5"));
+    assert!(diagnostic.contains("different ripr binary likely won PATH resolution"));
+    assert!(diagnostic.contains("`ripr --version`"));
     assert!(!diagnostic.contains("missing field"));
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -15657,6 +15799,72 @@ fn doctor_reports_ripr_facts_capable_exporter_as_compatible() -> Result<(), Stri
     Ok(())
 }
 
+#[test]
+#[cfg(unix)]
+fn doctor_reports_ripr_facts_exporter_without_version_flag_as_compatible() -> Result<(), String> {
+    // #12937: the canonical exporter exits 1 on `--version` but accepts
+    // `ripr-facts`, which is how `ripr check` runs it. It must not read as
+    // "NOT found".
+    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
+        "doctor-perl-no-version-exporter",
+        "#!/bin/sh\ncase \"$1\" in\n  ripr-facts) echo 'usage: perllsp ripr-facts [--schema S] [--root R]' ;;\n  *) echo 'unexpected subcommand' >&2; exit 1 ;;\nesac\n",
+    )?;
+    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let exporter_line = stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("exporter:"))
+        .unwrap_or("");
+    assert!(
+        exporter_line.contains("exporter: compatible") && exporter_line.contains("version unknown"),
+        "versionless ripr-facts exporter must be reported compatible: {exporter_line}\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("exporter: NOT found"),
+        "present exporter must not read as not found:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn doctor_keeps_non_exporter_and_silent_version_binaries_distinct() -> Result<(), String> {
+    // #12937 controls: a binary that answers neither `--version` nor
+    // `ripr-facts` stays not found; one whose `--version` succeeds silently
+    // but rejects `ripr-facts` stays incompatible.
+    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
+        "doctor-perl-neither-answers",
+        "#!/bin/sh\nexit 1\n",
+    )?;
+    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("exporter: NOT found") && !stdout.contains("exporter: compatible"),
+        "a binary answering nothing must stay not found:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+
+    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
+        "doctor-perl-silent-version",
+        "#!/bin/sh\ncase \"$1\" in\n  --version) exit 0 ;;\n  *) exit 2 ;;\nesac\n",
+    )?;
+    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("not a compatible exporter"),
+        "a silent --version binary rejecting ripr-facts must stay incompatible:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    Ok(())
+}
+
 /// #5349: a marker-writing `perllsp` exporter. Every invocation creates
 /// `marker`, so a test can prove doctor did (or did not) execute it.
 fn write_marker_perl_exporter(dir: &Path, marker: &Path) -> Result<(), String> {
@@ -18251,11 +18459,13 @@ fn pilot_withholds_static_limitations_and_keeps_a_true_gap()
 
     let md = std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.md"))?;
     assert!(
-        md.contains("- Withheld: 1 seam (static evidence is unknown or opaque"),
+        md.contains("- Withheld: 1 spot (ripr cannot tell from the code whether a test would notice a change there"),
         "{md}"
     );
+    assert!(!md.contains("static limitations, not gaps"), "{md}");
+    assert!(!md.contains("- Withheld: 1 seam"), "{md}");
     let stdout = String::from_utf8_lossy(&pilot.stdout);
-    assert!(stdout.contains("  withheld: 1 seam ("), "{stdout}");
+    assert!(stdout.contains("  withheld: 1 spot ("), "{stdout}");
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
@@ -21516,7 +21726,7 @@ fn pilot_names_python_check_route_when_repo_has_no_rust_seams() -> Result<(), St
     // Pilot analyzed Python (the preview block above), so it must not also
     // list Python as "Not scanned" (#11215).
     assert!(
-        stdout.contains("Python preview:\n  status: ready"),
+        stdout.contains("Python preview:\n  result: a Python repair is ready"),
         "{stdout}"
     );
     assert!(!stdout.contains("Not scanned by pilot"), "{stdout}");
@@ -21798,7 +22008,7 @@ fn pilot_says_it_withholds_the_seam_on_the_current_change() -> Result<(), String
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. Pilot withholds the analyzed seam on a line changed since origin/main: its static evidence is unknown or opaque"
+            "current change: this gap is not on a line you changed. Pilot withholds the checked spot on a line changed since origin/main: ripr cannot tell from the code whether a test would notice a change there"
         ),
         "{stdout}"
     );
@@ -21991,7 +22201,7 @@ fn pilot_names_a_changed_build_script_its_ranking_leaves_out() -> Result<(), Str
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. This recommendation is elsewhere in the repo"
+            "current change: this gap is not on a line you changed. Pilot checked no spot on a line changed since origin/main: every changed Rust line is in build.rs, a Cargo build script, which pilot's repo-wide ranking leaves out. For the change itself, run"
         ),
         "{stdout}"
     );
@@ -22098,24 +22308,46 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                         assert_eq!(related[0]["file"], "tests/partial.rs", "{seam}");
                     }
                 }
-                assert_eq!(
-                    summary["top_actionable_seams"][0]["line"], expected_line,
-                    "{summary}"
-                );
-                assert_eq!(
-                    summary["top_actionable_seams"][0]["kind"], "match_arm",
-                    "{summary}"
-                );
-                assert_eq!(
-                    summary["current_change"]["actionable_seams_in_change"], 1,
-                    "{summary}"
-                );
-                assert_eq!(
-                    summary["current_change"]["top_recommendation_in_change"], true,
-                    "{summary}"
-                );
-                assert!(stdout.contains("current change: part of it"), "{stdout}");
-                assert!(md.contains("- Current change: part of it"), "{md}");
+                if partial {
+                    assert_eq!(summary["withheld_static_limitations_total"], 3, "{summary}");
+                    let top = summary["top_actionable_seams"]
+                        .as_array()
+                        .ok_or("missing top_actionable_seams")?;
+                    assert!(
+                        top.iter()
+                            .all(|seam| seam["kind"].as_str() != Some("match_arm")),
+                        "match_arm seams are static limitations with partial tests: {summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["actionable_seams_in_change"], 0,
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["top_recommendation_in_change"], false,
+                        "{summary}"
+                    );
+                    assert!(stdout.contains("withheld: 3 spots"), "{stdout}");
+                    assert!(md.contains("Withheld: 3 spots"), "{md}");
+                } else {
+                    assert_eq!(
+                        summary["top_actionable_seams"][0]["line"], expected_line,
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["top_actionable_seams"][0]["kind"], "match_arm",
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["actionable_seams_in_change"], 1,
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["top_recommendation_in_change"], true,
+                        "{summary}"
+                    );
+                    assert!(stdout.contains("current change: part of it"), "{stdout}");
+                    assert!(md.contains("- Current change: part of it"), "{md}");
+                }
             }
             let warm = run_ripr_with_env(
                 &[
@@ -22163,15 +22395,26 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                 Some(1),
                 "{summary}"
             );
-            assert_eq!(
-                summary["top_actionable_seams"][0]["line"], expected_line,
-                "{summary}"
-            );
-            assert_eq!(
-                summary["current_change"]["top_recommendation_in_change"], true,
-                "{summary}"
-            );
-            assert!(md.contains("ranked 1 of 5 seams"), "{md}");
+            if partial {
+                assert_ne!(
+                    summary["top_actionable_seams"][0]["kind"], "match_arm",
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["top_recommendation_in_change"], false,
+                    "{summary}"
+                );
+            } else {
+                assert_eq!(
+                    summary["top_actionable_seams"][0]["line"], expected_line,
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["top_recommendation_in_change"], true,
+                    "{summary}"
+                );
+            }
+            assert!(md.contains("ranked 1 of "), "{md}");
         }
         ignore_remove_dir_all(&root);
         ignore_remove_dir_all(&out);
@@ -22214,10 +22457,13 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
     );
     assert!(
         stdout.contains(
-            "current change: not part of it. No seam pilot analyzed is on a line changed since origin/main. This recommendation is elsewhere in the repo"
+            "current change: this gap is not on a line you changed. Pilot checked no spot on a line changed since origin/main. For the change itself, run"
         ),
         "{stdout}"
     );
+    assert!(!stdout.contains("not part of it. "), "{stdout}");
+    assert!(!stdout.contains("elsewhere in the repo"), "{stdout}");
+    assert!(!stdout.contains("static limitations, not gaps"), "{stdout}");
     assert!(stdout.contains("run: ripr check --root "), "{stdout}");
     // A committed change is what plain `ripr check` reads.
     assert!(!stdout.contains("--worktree"), "{stdout}");
@@ -22227,7 +22473,10 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         ),
         "{stdout}"
     );
-    assert!(md.contains("- Current change: not part of it."), "{md}");
+    assert!(
+        md.contains("- Current change: this gap is not on a line you changed."),
+        "{md}"
+    );
 
     // An uncommitted edit to `is_digit` is the current change: its seam now
     // outranks the better-classed `discounted` seam and is labeled part of it.
@@ -22253,6 +22502,8 @@ fn pilot_ranks_and_labels_seams_in_the_current_change() -> Result<(), String> {
         "{stdout}"
     );
     assert!(md.contains("- Current change: part of it"), "{md}");
+    assert!(!md.contains("Status: `no_"), "{md}");
+    assert!(!md.contains("this seam is on"), "{md}");
 
     // A seam budget of one would cut the changed `is_digit` seam, which comes
     // after `discounted` in inventory order; pilot keeps it past the cut.

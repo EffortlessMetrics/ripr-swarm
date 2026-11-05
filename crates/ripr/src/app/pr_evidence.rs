@@ -29,6 +29,8 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::subcommand::{NonEmptyPlaceholder, invocation_repo_root, non_empty_arg};
+
 const DEFAULT_ROOT: &str = ".";
 const DEFAULT_BASE: &str = "origin/main";
 const DEFAULT_HEAD: &str = "HEAD";
@@ -79,7 +81,7 @@ pub(crate) fn run_pr_evidence(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let mut options = parse_options(args)?;
-    let repo = repo_root()?;
+    let repo = invocation_repo_root()?;
     ensure_root_inside_invocation_repo(&repo, &options.root)?;
     if !options.base_explicit {
         // #3952 / RIPR-SPEC-0084: resolve the repository's default branch
@@ -104,16 +106,22 @@ fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = non_empty_arg(args, i, "--root")?.to_string();
+                options.root =
+                    non_empty_arg("pr-evidence", args, i, "--root", NonEmptyPlaceholder::Value)?
+                        .to_string();
             }
             "--base" => {
                 i += 1;
-                options.base = non_empty_arg(args, i, "--base")?.to_string();
+                options.base =
+                    non_empty_arg("pr-evidence", args, i, "--base", NonEmptyPlaceholder::Value)?
+                        .to_string();
                 options.base_explicit = true;
             }
             "--head" => {
                 i += 1;
-                options.head = non_empty_arg(args, i, "--head")?.to_string();
+                options.head =
+                    non_empty_arg("pr-evidence", args, i, "--head", NonEmptyPlaceholder::Value)?
+                        .to_string();
             }
             "--check" => options.check = true,
             other => return Err(unknown_argument("pr-evidence", other)),
@@ -121,18 +129,6 @@ fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
         i += 1;
     }
     Ok(options)
-}
-
-fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
-    let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}; pass a value after it"));
-    };
-    if value.trim().is_empty() {
-        return Err(format!(
-            "pr-evidence {flag} requires a non-empty value; pass `{flag} <value>`"
-        ));
-    }
-    Ok(value)
 }
 
 fn print_help() {
@@ -1515,14 +1511,6 @@ fn bool_field(summary: Option<&Map<String, Value>>, key: &str) -> bool {
 
 fn string_field<'a>(packet: &'a Value, key: &str, fallback: &'a str) -> &'a str {
     packet.get(key).and_then(Value::as_str).unwrap_or(fallback)
-}
-
-/// Resolve the repo root. In the ripr binary, this is the current working
-/// directory (the user runs `ripr pr-evidence` from the repo root). The xtask
-/// used `CARGO_MANIFEST_DIR` but the binary should not assume a build-system
-/// location.
-fn repo_root() -> Result<PathBuf, String> {
-    std::env::current_dir().map_err(|err| format!("failed to determine working directory: {err}"))
 }
 
 fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> Result<(), String> {

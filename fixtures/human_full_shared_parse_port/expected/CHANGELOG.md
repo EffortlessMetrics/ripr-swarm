@@ -295,3 +295,29 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — human_full_shared_parse_port (23)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (24)
+
+Reason:
+RIPR-SPEC-0083: #13037 default missing-check line says no assertion was tied to the changed value when the next step says an exact assertion exists
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -61,6 +61,7 @@ mod release_scope;
 pub(crate) mod release_server;
 pub(crate) mod release_vsix;
 mod repair_card_usability;
+mod repair_funnel;
 mod repo;
 #[cfg(test)]
 mod reverse_authorization;
@@ -70,6 +71,7 @@ mod rust_repair_trust;
 mod sarif;
 mod scale_cliff;
 mod seam_inventory_scaling;
+mod slow_tests;
 mod source_promotion;
 mod source_promotion_acceptance;
 mod source_promotion_admission_fixture;
@@ -86,6 +88,7 @@ mod test_oracles;
 mod verdict_corpus;
 mod verdict_corpus_perl_edit_replay;
 mod verdict_corpus_relabel;
+mod verification_plan_corpus;
 
 pub(crate) use agentic_bench::agentic_bench;
 pub(crate) use annotations::ripr_annotations;
@@ -191,6 +194,9 @@ pub(crate) use release_ledger::release_ledger;
 pub(crate) use release_negative::release_negative_corpus;
 pub(crate) use release_scope::release_scope;
 pub(crate) use repair_card_usability::repair_card_usability_report;
+pub(crate) use repair_funnel::{
+    REPORT_SCHEMA_VERSION, repair_funnel_report, repair_funnel_report_value, repair_funnel_to_input,
+};
 pub(crate) use repo::{
     actionable_gap_outcomes_report, agent_seam_packets_report, evidence_health_report,
     evidence_quality_scorecard_report, evidence_quality_trend_report, lane1_evidence_audit_report,
@@ -209,6 +215,7 @@ pub(crate) use sarif::{
 };
 pub(crate) use scale_cliff::scale_cliff_benchmark;
 pub(crate) use seam_inventory_scaling::seam_inventory_scaling_benchmark;
+pub(crate) use slow_tests::slow_test_report;
 pub(crate) use source_promotion::source_promotion;
 pub(crate) use source_promotion_admission_workflow::{
     source_promotion_admission_workflow, source_promotion_admission_workflow_handles,
@@ -239,6 +246,7 @@ pub(crate) use verdict_corpus::{
     expected_report as verdict_corpus_expected_report,
     render_report_json as render_verdict_corpus_report, verdict_corpus,
 };
+pub(crate) use verification_plan_corpus::verification_plan_corpus_command;
 
 fn ensure_parent_dir(path: &std::path::Path, label: &str) -> Result<(), String> {
     let Some(parent) = path.parent() else {

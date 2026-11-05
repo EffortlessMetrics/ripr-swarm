@@ -103,9 +103,21 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
 pub(crate) struct CreditFacts<'a> {
     pub(crate) mock_facts: &'a MockCallFacts,
     pub(crate) pin_facts: &'a PinFacts,
+    pub(crate) push_facts: &'a super::push_argument_guard::PushArgumentFacts,
     /// The one field of a single-line returned object literal whose value
     /// changed, when the old line is known (RIPR-SPEC-0243 rule 17).
     pub(crate) changed_field: Option<&'a TypeScriptChangedField>,
+}
+
+/// Shared inputs for row-local and aggregate changed-sink observation (#5528).
+#[derive(Clone, Copy)]
+pub(crate) struct TsChangedSinkObservationInput<'a> {
+    pub(crate) probe_shape: &'a TypeScriptProbeShape,
+    pub(crate) line_text: &'a str,
+    pub(crate) owner: &'a TypeScriptOwner,
+    pub(crate) alias_map: Option<&'a TsAliasMap>,
+    pub(crate) workspace_root: Option<&'a Path>,
+    pub(crate) credits: CreditFacts<'a>,
 }
 
 /// Returns `true` when there is static evidence that a strong assertion in one
@@ -198,18 +210,23 @@ pub(crate) struct CreditFacts<'a> {
 /// free-function import locals, including mixed direct/aliased calls. It stays
 /// a substring test (Decision 4): there a miss grants credit, so tightening it
 /// would add credit.
-pub(crate) fn ts_changed_value_is_observed(
-    probe_shape: &TypeScriptProbeShape,
-    line_text: &str,
-    owner: &TypeScriptOwner,
-    candidates: &[TypeScriptRelatedCandidate<'_>],
-    alias_map: Option<&TsAliasMap>,
-    workspace_root: Option<&Path>,
-    credits: CreditFacts<'_>,
-) -> bool {
+pub(crate) fn ts_candidate_changed_sink_observation(
+    input: TsChangedSinkObservationInput<'_>,
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    focus_assertion: Option<&TypeScriptAssertion>,
+) -> TypeScriptChangedSinkObservation {
+    let TsChangedSinkObservationInput {
+        probe_shape,
+        line_text,
+        owner,
+        alias_map,
+        workspace_root,
+        credits,
+    } = input;
     let CreditFacts {
         mock_facts,
         pin_facts,
+        push_facts,
         changed_field,
     } = credits;
     let owner_name = owner.name.as_str();
@@ -226,7 +243,7 @@ pub(crate) fn ts_changed_value_is_observed(
             ProbeFamily::SideEffect | ProbeFamily::CallDeletion
         )
     {
-        return true;
+        return TypeScriptChangedSinkObservation::NotApplicable;
     }
 
     // Collect changed identifier tokens from the discriminator value.
@@ -254,184 +271,203 @@ pub(crate) fn ts_changed_value_is_observed(
     // the case where no `observed_expression` metadata is available at all (the
     // former fail-OPEN `return true` fallback is deliberately gone: absence of
     // proof is not proof of observation).
-    for candidate in candidates {
-        if !candidate.relation.uses_oracle() {
+    if !candidate.relation.uses_oracle() {
+        return TypeScriptChangedSinkObservation::Unresolved;
+    }
+    let mut merged = TypeScriptChangedSinkObservation::Unresolved;
+    for assertion in candidate
+        .test
+        .assertions
+        .iter()
+        .filter(|a| focus_assertion.is_none_or(|focus| std::ptr::eq(*a, focus)))
+    {
+        if push_facts.withhold(candidate.test, assertion) {
             continue;
         }
-        for assertion in &candidate.test.assertions {
-            // RIPR-SPEC-0247 rule 1: a credited literal mock-call payload is
-            // the strong effect observer `strongest_family_matching_oracle`
-            // read; the effect branch below confirms it by kind.
-            let credited_mock = !value_family
-                && matches!(assertion.oracle_kind, OracleKind::MockExpectation)
-                && assertion
-                    .mock_payload
-                    .as_ref()
-                    .is_some_and(|payload| mock_facts.credits_in_test(payload, candidate.test));
-            // RIPR-SPEC-0250: a credited `toMatchObject` pin lists the changed
-            // field and observes the whole owner result, so it sees the sink.
-            if value_family && pin_facts.credits(&candidate.test.file, assertion) {
-                return true;
-            }
-            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() && !credited_mock {
+        // RIPR-SPEC-0247 rule 1: a credited literal mock-call payload is
+        // the strong effect observer `strongest_family_matching_oracle`
+        // read; the effect branch below confirms it by kind.
+        let credited_mock = !value_family
+            && matches!(assertion.oracle_kind, OracleKind::MockExpectation)
+            && assertion
+                .mock_payload
+                .as_ref()
+                .is_some_and(|payload| mock_facts.credits_in_test(payload, candidate.test));
+        // RIPR-SPEC-0250: a credited `toMatchObject` pin lists the changed
+        // field and observes the whole owner result, so it sees the sink.
+        if value_family && pin_facts.credits(&candidate.test.file, assertion) {
+            return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
+        }
+        if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() && !credited_mock {
+            continue;
+        }
+        if value_family {
+            // Value families (ReturnValue / FieldConstruction): the strong
+            // assertion must MATCH the seam family (the same filter applied
+            // to `strongest_strength`) and its observed_expression must
+            // reference the owner (owner name or its call) or contain a
+            // changed token from the changed sub-expression. An assertion
+            // on an unrelated expression does not observe the changed
+            // sink; absence of observed_expression fails closed too.
+            if !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &probe_shape.family) {
                 continue;
             }
-            if value_family {
-                // Value families (ReturnValue / FieldConstruction): the strong
-                // assertion must MATCH the seam family (the same filter applied
-                // to `strongest_strength`) and its observed_expression must
-                // reference the owner (owner name or its call) or contain a
-                // changed token from the changed sub-expression. An assertion
-                // on an unrelated expression does not observe the changed
-                // sink; absence of observed_expression fails closed too.
-                if !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &probe_shape.family) {
-                    continue;
+            let Some(ref observed) = assertion.observed_expression else {
+                merged = merged.merge(TypeScriptChangedSinkObservation::Unresolved);
+                continue;
+            };
+            // Rule 7: the owner's names for this test are the owner name
+            // plus the alias-rename locals behind an
+            // `ImportAliasOwnerCall` relation.
+            let decorated_reach = candidate.relation == TypeScriptRelationKind::DecoratedMethodCall;
+            let mut owner_names: Vec<&str> = if decorated_reach {
+                // RIPR-SPEC-0243 rule 21: the test calls the decorated
+                // method, whose result is the decorator's return value.
+                owner
+                    .module_entries
+                    .iter()
+                    .filter(|entry| entry.decorated.is_some())
+                    .map(|entry| entry.name.as_str())
+                    .collect()
+            } else {
+                vec![owner_name]
+            };
+            if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
+                owner_names.extend(import_alias_owner_locals(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                ));
+            }
+            // RIPR-SPEC-0251: a default import of the owner's own
+            // default export calls the owner under its local name.
+            if candidate.relation == TypeScriptRelationKind::ImportedOwnerCall {
+                owner_names.extend(default_import_owner_locals(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                ));
+            }
+            // Rule 6: whole-identifier occurrences only. Owner names are
+            // identifiers, so a string literal or comment that spells one
+            // (`expect('p').toBe('p')`) is not a reference.
+            // #7507: for bare-call owners (functions, not methods) a
+            // member segment (`helper.cost(150)`) is not a reference to
+            // the owner value — it reads another receiver's member, so it
+            // cannot witness the changed sink. Only a BARE occurrence
+            // (not preceded by `.`/`?.`/`!.`) confirms, plus a call
+            // through a namespace receiver bound to the owner's own
+            // module (`ns.price(150)` via `import * as ns`). Method
+            // owners keep the legacy member-segment reading: their honest
+            // needle IS `receiver.method(...)`.
+            let observed_code = ts_mask_literals_and_comments(observed);
+            // RIPR-SPEC-0243 rule 21: the credited assertion must call
+            // the decorated method on a receiver of the decorated class;
+            // an assertion on another class's same-named method sees
+            // nothing of the decorator.
+            if decorated_reach {
+                if owner
+                    .module_entries
+                    .iter()
+                    .filter_map(|entry| entry.decorated.as_ref().map(|d| (entry, d)))
+                    .any(|(entry, _)| {
+                        // The names this test constructs the class under:
+                        // its own name, a named-import alias, or a default
+                        // import's local name, minus any rebinding.
+                        let constructors = constructor_names_for_method_owner(
+                            candidate.test,
+                            &module_entry_owner(owner, entry),
+                            alias_map,
+                            workspace_root,
+                        );
+                        ts_observes_decorated_method_call(
+                            &observed_code,
+                            &candidate.test.body_text,
+                            &constructors,
+                            &entry.name,
+                        )
+                    })
+                {
+                    return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
                 }
-                let Some(ref observed) = assertion.observed_expression else {
-                    continue;
-                };
-                // Rule 7: the owner's names for this test are the owner name
-                // plus the alias-rename locals behind an
-                // `ImportAliasOwnerCall` relation.
-                let decorated_reach =
-                    candidate.relation == TypeScriptRelationKind::DecoratedMethodCall;
-                let mut owner_names: Vec<&str> = if decorated_reach {
-                    // RIPR-SPEC-0243 rule 21: the test calls the decorated
-                    // method, whose result is the decorator's return value.
-                    owner
-                        .module_entries
-                        .iter()
-                        .filter(|entry| entry.decorated.is_some())
-                        .map(|entry| entry.name.as_str())
-                        .collect()
-                } else {
-                    vec![owner_name]
-                };
-                if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
-                    owner_names.extend(import_alias_owner_locals(
-                        candidate.test,
-                        owner,
-                        alias_map,
-                        workspace_root,
-                    ));
-                }
-                // RIPR-SPEC-0251: a default import of the owner's own
-                // default export calls the owner under its local name.
-                if candidate.relation == TypeScriptRelationKind::ImportedOwnerCall {
-                    owner_names.extend(default_import_owner_locals(
-                        candidate.test,
-                        owner,
-                        alias_map,
-                        workspace_root,
-                    ));
-                }
-                // Rule 6: whole-identifier occurrences only. Owner names are
-                // identifiers, so a string literal or comment that spells one
-                // (`expect('p').toBe('p')`) is not a reference.
-                // #7507: for bare-call owners (functions, not methods) a
-                // member segment (`helper.cost(150)`) is not a reference to
-                // the owner value — it reads another receiver's member, so it
-                // cannot witness the changed sink. Only a BARE occurrence
-                // (not preceded by `.`/`?.`/`!.`) confirms, plus a call
-                // through a namespace receiver bound to the owner's own
-                // module (`ns.price(150)` via `import * as ns`). Method
-                // owners keep the legacy member-segment reading: their honest
-                // needle IS `receiver.method(...)`.
-                let observed_code = ts_mask_literals_and_comments(observed);
-                // RIPR-SPEC-0243 rule 21: the credited assertion must call
-                // the decorated method on a receiver of the decorated class;
-                // an assertion on another class's same-named method sees
-                // nothing of the decorator.
-                if decorated_reach {
-                    if owner
-                        .module_entries
-                        .iter()
-                        .filter_map(|entry| entry.decorated.as_ref().map(|d| (entry, d)))
-                        .any(|(entry, _)| {
-                            // The names this test constructs the class under:
-                            // its own name, a named-import alias, or a default
-                            // import's local name, minus any rebinding.
-                            let constructors = constructor_names_for_method_owner(
-                                candidate.test,
-                                &module_entry_owner(owner, entry),
-                                alias_map,
-                                workspace_root,
-                            );
-                            ts_observes_decorated_method_call(
-                                &observed_code,
-                                &candidate.test.body_text,
-                                &constructors,
-                                &entry.name,
-                            )
-                        })
-                    {
-                        return true;
-                    }
-                    continue;
-                }
-                // #7507/#7815: `typeof cost` observes the type string, not
-                // the changed value. [`ts_masked_observes_owner`] excludes
-                // only those consumed occurrences, so a mixed assertion
-                // (`typeof price === 'function' ? price(150) : 0`) can
-                // still witness the later value check.
-                let owner_is_method = decorated_reach
-                    || matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
-                // Method owners keep the legacy member-segment reading: their
-                // honest needle IS `receiver.method(...)`.
-                let namespace_receivers = if owner_is_method {
-                    Vec::new()
-                } else {
-                    unshadowed_owner_namespace_receivers(
-                        candidate.test,
-                        owner,
-                        alias_map,
-                        workspace_root,
-                    )
-                };
-                if ts_masked_observes_owner(
-                    &observed_code,
+                continue;
+            }
+            // #7507/#7815: `typeof cost` observes the type string, not
+            // the changed value. [`ts_masked_observes_owner`] excludes
+            // only those consumed occurrences, so a mixed assertion
+            // (`typeof price === 'function' ? price(150) : 0`) can
+            // still witness the later value check.
+            let owner_is_method = decorated_reach
+                || matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
+            // Method owners keep the legacy member-segment reading: their
+            // honest needle IS `receiver.method(...)`.
+            let namespace_receivers = if owner_is_method {
+                Vec::new()
+            } else {
+                unshadowed_owner_namespace_receivers(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                )
+            };
+            if ts_masked_observes_owner(
+                &observed_code,
+                &owner_names,
+                owner_is_method,
+                &namespace_receivers,
+            ) {
+                return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
+            }
+            // RIPR-SPEC-0243 rule 17: `<owner call or alias of one>.<key>`
+            // reads the changed field of the returned literal.
+            if let Some(field) = changed_field
+                && let Some(base) = observed
+                    .trim()
+                    .strip_suffix(field.key.as_str())
+                    .and_then(|rest| rest.trim_end().strip_suffix('.'))
+                && (ts_masked_observes_owner(
+                    &ts_mask_literals_and_comments(base),
                     &owner_names,
                     owner_is_method,
                     &namespace_receivers,
-                ) {
-                    return true;
-                }
-                // RIPR-SPEC-0243 rule 17: `<owner call or alias of one>.<key>`
-                // reads the changed field of the returned literal.
-                if let Some(field) = changed_field
-                    && let Some(base) = observed
-                        .trim()
-                        .strip_suffix(field.key.as_str())
-                        .and_then(|rest| rest.trim_end().strip_suffix('.'))
-                    && (ts_masked_observes_owner(
-                        &ts_mask_literals_and_comments(base),
-                        &owner_names,
-                        owner_is_method,
-                        &namespace_receivers,
-                    ) || ts_observed_local_aliases_owner(
-                        base,
-                        &owner_names,
-                        &changed_tokens,
-                        candidate.test,
-                        owner_is_method,
-                        &namespace_receivers,
-                    ))
-                {
-                    return true;
-                }
-                if changed_tokens
-                    .iter()
-                    .any(|tok| ts_references_identifier(observed, tok))
-                {
-                    return true;
-                }
-                // One-hop local aliasing (RIPR-SPEC-0108 must_stay_exposed
-                // controls): `const result = add(1, 2)` asserted via
-                // `t.is(result, 3)` still observes the changed sink — the
-                // local is initialized from the owner call. Without this
-                // credit the guard falsely downgrades the canonical
-                // assert-the-return-value pattern.
-                if ts_observed_local_aliases_owner(
+                ) || ts_observed_local_aliases_owner(
+                    base,
+                    &owner_names,
+                    &changed_tokens,
+                    candidate.test,
+                    owner_is_method,
+                    &namespace_receivers,
+                ))
+            {
+                return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
+            }
+            if changed_tokens
+                .iter()
+                .any(|tok| ts_references_identifier(observed, tok))
+            {
+                return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
+            }
+            // One-hop local aliasing (RIPR-SPEC-0108 must_stay_exposed
+            // controls): `const result = add(1, 2)` asserted via
+            // `t.is(result, 3)` still observes the changed sink — the
+            // local is initialized from the owner call. Without this
+            // credit the guard falsely downgrades the canonical
+            // assert-the-return-value pattern.
+            if ts_observed_local_aliases_owner(
+                observed,
+                &owner_names,
+                &changed_tokens,
+                candidate.test,
+                owner_is_method,
+                &namespace_receivers,
+            ) {
+                return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
+            }
+            merged = merged.merge(
+                if ts_value_assertion_affirmatively_other_sink(
                     observed,
                     &owner_names,
                     &changed_tokens,
@@ -439,89 +475,420 @@ pub(crate) fn ts_changed_value_is_observed(
                     owner_is_method,
                     &namespace_receivers,
                 ) {
-                    return true;
+                    TypeScriptChangedSinkObservation::AffirmativelyOtherSink
+                } else {
+                    TypeScriptChangedSinkObservation::Unresolved
+                },
+            );
+            continue;
+        }
+        // RIPR-SPEC-0258 rule 3: a snapshot serializes only the value it names,
+        // so on an effect seam it confirms only when it names the owner
+        // call's result (or a local bound once to it). A snapshot of an
+        // unrelated value, or of an expression the allowlist does not
+        // read, neither confirms here nor falls through to the
+        // side-channel reading below.
+        if assertion.oracle_kind == OracleKind::Snapshot {
+            if ts_snapshot_subject_is_owner_result(
+                candidate,
+                assertion,
+                owner,
+                alias_map,
+                workspace_root,
+            ) {
+                return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
+            }
+            continue;
+        }
+        // (1) Effect-shape oracle kinds confirm unconditionally: these ARE
+        // effect observers (mock call expectation, snapshot, whole-object
+        // equality capturing persisted state). This decision keys ONLY on
+        // `oracle_kind`, which the live extractor always populates.
+        if matches!(
+            assertion.oracle_kind,
+            OracleKind::MockExpectation | OracleKind::Snapshot | OracleKind::WholeObjectEquality
+        ) {
+            return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
+        }
+        // (2) Optional `observed_expression` checks — only when the live
+        // extractor retained the `expect(<expr>)` argument text. These can
+        // only ADD confirmations; their absence never re-promotes.
+        if let Some(ref observed) = assertion.observed_expression {
+            // Token match: tokenize the observed expression with the SAME
+            // `identifier_tokens` rules and require EXACT token equality.
+            // A raw substring `observed.contains(tok)` false-confirms on
+            // synthesized template words (e.g. a `.includes(...)` call in
+            // the test) and on tokens merely embedded in a larger
+            // identifier.
+            if !changed_tokens.is_empty() {
+                let observed_tokens = identifier_tokens(observed);
+                if changed_tokens
+                    .iter()
+                    .any(|tok| observed_tokens.contains(tok))
+                {
+                    return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
                 }
-                // This family-matching strong assertion observes an unrelated
-                // expression: it does NOT witness the changed sink. Keep
-                // scanning for a qualifying assertion.
+            }
+            // Side-channel: the observed expression does NOT name the owner,
+            // so it is asserting something other than the owner return value
+            // (a closure-local side-effect variable, a captured mock result,
+            // or any side-channel) — conservatively treat it as observing
+            // the effect.
+            if observed.contains(owner_name) {
+                merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
                 continue;
             }
-            // (1) Effect-shape oracle kinds confirm unconditionally: these ARE
-            // effect observers (mock call expectation, snapshot, whole-object
-            // equality capturing persisted state). This decision keys ONLY on
-            // `oracle_kind`, which the live extractor always populates.
+            // #7514: a renamed free-function owner still returns the
+            // owner's value. Resolve both named and default locals even
+            // when another call wins relation ranking. Method relations
+            // must not borrow a same-named free export's identity.
+            let mut effect_owner_names: Vec<&str> = vec![owner_name];
             if matches!(
-                assertion.oracle_kind,
-                OracleKind::MockExpectation
-                    | OracleKind::Snapshot
-                    | OracleKind::WholeObjectEquality
+                candidate.relation,
+                TypeScriptRelationKind::DirectOwnerCall
+                    | TypeScriptRelationKind::ImportAliasOwnerCall
+                    | TypeScriptRelationKind::ImportedOwnerCall
             ) {
-                return true;
-            }
-            // (2) Optional `observed_expression` checks — only when the live
-            // extractor retained the `expect(<expr>)` argument text. These can
-            // only ADD confirmations; their absence never re-promotes.
-            if let Some(ref observed) = assertion.observed_expression {
-                // Token match: tokenize the observed expression with the SAME
-                // `identifier_tokens` rules and require EXACT token equality.
-                // A raw substring `observed.contains(tok)` false-confirms on
-                // synthesized template words (e.g. a `.includes(...)` call in
-                // the test) and on tokens merely embedded in a larger
-                // identifier.
-                if !changed_tokens.is_empty() {
-                    let observed_tokens = identifier_tokens(observed);
-                    if changed_tokens
-                        .iter()
-                        .any(|tok| observed_tokens.contains(tok))
-                    {
-                        return true;
-                    }
-                }
-                // Side-channel: the observed expression does NOT name the owner,
-                // so it is asserting something other than the owner return value
-                // (a closure-local side-effect variable, a captured mock result,
-                // or any side-channel) — conservatively treat it as observing
-                // the effect.
-                if observed.contains(owner_name) {
-                    continue;
-                }
-                // #7514: a renamed free-function owner still returns the
-                // owner's value. Resolve both named and default locals even
-                // when another call wins relation ranking. Method relations
-                // must not borrow a same-named free export's identity.
-                let observes_owner_alias = matches!(
-                    candidate.relation,
-                    TypeScriptRelationKind::DirectOwnerCall
-                        | TypeScriptRelationKind::ImportAliasOwnerCall
-                        | TypeScriptRelationKind::ImportedOwnerCall
-                ) && (import_alias_owner_locals(
+                effect_owner_names.extend(import_alias_owner_locals(
                     candidate.test,
                     owner,
                     alias_map,
                     workspace_root,
-                )
-                .into_iter()
-                .any(|name| observed.contains(name))
-                    || default_import_owner_locals(
-                        candidate.test,
-                        owner,
-                        alias_map,
-                        workspace_root,
-                    )
-                    .into_iter()
-                    .any(|name| observed.contains(name)));
-                if !observes_owner_alias {
-                    return true;
-                }
+                ));
+                effect_owner_names.extend(default_import_owner_locals(
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                ));
             }
-            // Otherwise this strong assertion is value-shaped (ExactValue /
-            // ExactErrorVariant) observing the owner return value, or carries no
-            // observed_expression to prove a side-channel: it does NOT witness
-            // the call effect. Keep scanning for a qualifying assertion.
+            let observes_owner_alias = effect_owner_names[1..]
+                .iter()
+                .any(|name| observed.contains(name));
+            if !observes_owner_alias {
+                // #11244 staged-(b): the side-channel theory above over-claims
+                // when the expression affirmatively observes a DIFFERENT sink:
+                // a call to a non-owner/non-alias callee the test never binds
+                // (`expect(formatDate(now)).toBe(...)`), or a bare local whose
+                // single-declaration initializer is such a call. Downgrade
+                // those fail-closed via `AffirmativelyOtherSink`. Bare locals
+                // (and any other shape) with no resolvable foreign linkage —
+                // the `sideEffectLog` channel-candidate shape — keep
+                // confirming; absence of linkage is never foreign evidence.
+                if ts_effect_observed_is_affirmatively_foreign(
+                    observed,
+                    &effect_owner_names,
+                    &changed_tokens,
+                    candidate.test,
+                ) {
+                    merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+                    continue;
+                }
+                return TypeScriptChangedSinkObservation::ConfirmedChangedSink;
+            }
+        }
+        if !value_family && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank() {
+            merged = merged.merge(if assertion.observed_expression.is_none() {
+                TypeScriptChangedSinkObservation::Unresolved
+            } else {
+                TypeScriptChangedSinkObservation::AffirmativelyOtherSink
+            });
         }
     }
 
-    // No strong assertion witnessed the changed sink: fail closed → downgrade.
+    merged
+}
+
+pub(crate) fn ts_changed_value_is_observed(
+    probe_shape: &TypeScriptProbeShape,
+    line_text: &str,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+    credits: CreditFacts<'_>,
+) -> bool {
+    let value_family = matches!(
+        probe_shape.family,
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    );
+    if !value_family
+        && !matches!(
+            probe_shape.family,
+            ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+        )
+    {
+        return true;
+    }
+    let input = TsChangedSinkObservationInput {
+        probe_shape,
+        line_text,
+        owner,
+        alias_map,
+        workspace_root,
+        credits,
+    };
+    candidates.iter().any(|candidate| {
+        candidate.relation.uses_oracle()
+            && ts_candidate_changed_sink_observation(input, candidate, None).confirms()
+    })
+}
+
+/// Row-local changed-sink observation over the family-relevant assertion (#5528).
+pub(crate) fn ts_row_changed_sink_observation(
+    input: TsChangedSinkObservationInput<'_>,
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    focus_assertion: &TypeScriptAssertion,
+) -> TypeScriptChangedSinkObservation {
+    ts_candidate_changed_sink_observation(input, candidate, Some(focus_assertion))
+}
+
+/// Whether a value-family assertion that failed to confirm still has positive
+/// evidence it observes a different sink (#5528). Derived members or calls on
+/// a local initialized from the owner stay unresolved.
+fn ts_value_assertion_affirmatively_other_sink(
+    observed: &str,
+    owner_names: &[&str],
+    changed_tokens: &[String],
+    test: &TypeScriptTest,
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+    let observed = observed.trim();
+    let root = observed
+        .as_bytes()
+        .iter()
+        .position(|b| !is_ident_byte(*b))
+        .map(|idx| &observed[..idx])
+        .filter(|root| {
+            !root.is_empty()
+                && root
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        })
+        .unwrap_or(observed);
+    if ts_observed_local_aliases_owner_with_mutation(
+        root,
+        owner_names,
+        changed_tokens,
+        test,
+        owner_is_method,
+        namespace_receivers,
+        false,
+    ) {
+        return false;
+    }
+    let observed_code = ts_mask_literals_and_comments(observed);
+    !owner_names
+        .iter()
+        .any(|name| ts_references_identifier(&observed_code, name))
+}
+
+/// Affirmative foreignness for the effect-branch side-channel check (#11244,
+/// staged-(b) first slice).
+///
+/// The effect branch confirms when a strong assertion's observed expression
+/// names neither the owner, a changed token, nor an admitted alias — on the
+/// theory that it observes the effect through a side channel (a closure-local
+/// variable, a captured mock result). That theory over-claims when the
+/// expression affirmatively observes a DIFFERENT sink: a call to a
+/// non-owner/non-alias callee the test never binds (`formatDate(now)`), or a
+/// bare local whose single-declaration initializer is such a call
+/// (`const other = formatDate(now); expect(other)...`).
+///
+/// Negative-evidence gating: only POSITIVE foreign evidence downgrades. A bare
+/// local with no resolvable declaration (the `sideEffectLog` channel-candidate
+/// shape), a call to a test-bound callee, an ambiguous (multi-declaration or
+/// mutated) local, and any non-call member access keep confirming. In
+/// particular, mere absence of linkage is never foreign evidence
+/// (`scope_bindings` is empty in unit tests, so absence must not downgrade).
+fn ts_effect_observed_is_affirmatively_foreign(
+    observed: &str,
+    owner_names: &[&str],
+    changed_tokens: &[String],
+    test: &TypeScriptTest,
+) -> bool {
+    // A bare local observes through its single-declaration initializer: only
+    // a foreign-call initializer is affirmative evidence. An owner-call (or
+    // unresolvable) initializer keeps the channel-candidate confirmation.
+    if ts_effect_is_bare_identifier(observed)
+        && let Some(initializer) = ts_effect_single_declaration_initializer(test, observed.trim())
+        && ts_effect_call_callee_is_foreign(&initializer, owner_names, changed_tokens, test)
+    {
+        return true;
+    }
+    ts_effect_call_callee_is_foreign(observed, owner_names, changed_tokens, test)
+}
+
+/// `true` when `text` is a bare identifier reference (no member access, call,
+/// or other expression shape), mirroring the bare-identifier gate in
+/// [`ts_observed_local_aliases_owner_with_mutation`].
+fn ts_effect_is_bare_identifier(text: &str) -> bool {
+    fn is_ident_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+    let ident = text.trim();
+    let ident_bytes = ident.as_bytes();
+    !ident_bytes.is_empty()
+        && (ident_bytes[0].is_ascii_alphabetic()
+            || ident_bytes[0] == b'_'
+            || ident_bytes[0] == b'$')
+        && ident_bytes.iter().all(|&b| is_ident_byte(b))
+}
+
+/// The initializer of `ident`'s declaration when the test body declares it
+/// EXACTLY once (via [`single_local_initializer`]), or `None` when the name
+/// is undeclared, declared repeatedly, or rewritten/escaped
+/// ([`ts_test_local_is_mutated`]). None of those is affirmative evidence the
+/// local holds a foreign call's result.
+fn ts_effect_single_declaration_initializer(test: &TypeScriptTest, ident: &str) -> Option<String> {
+    let declaration = single_local_initializer(&test.body_text, ident)?;
+    if ts_test_local_is_mutated(test, ident) {
+        return None;
+    }
+    Some(declaration.initializer)
+}
+
+/// `true` when `expr` is shaped as a call to a BARE callee (`callee(...)`)
+/// that is affirmatively foreign: the callee names neither the owner, an
+/// admitted alias, nor a changed token (whole-identifier,
+/// [`ts_references_identifier`]), and the test never binds it — no body-local
+/// declaration ([`local_identifier_declared_in_test_body`]), no
+/// enclosing-scope binding (`scope_bindings`), and no import of that name
+/// (`imports_in_file`).
+///
+/// An import binds the callee in the test file, so it is never affirmative
+/// foreign evidence: a renamed same-named import from another module is the
+/// classic effect-channel shape (`support.emitReceipt as discount` reading
+/// the captured log), and static reading cannot see through it
+/// (`unrelated_or_shadowed_imports_remain_real_effect_observers`).
+///
+/// Narrow by construction: member calls (`logger.format(...)`), bare
+/// identifiers, and calls whose callee the test binds keep confirming.
+fn ts_effect_call_callee_is_foreign(
+    expr: &str,
+    owner_names: &[&str],
+    changed_tokens: &[String],
+    test: &TypeScriptTest,
+) -> bool {
+    let Some(callee) = ts_effect_bare_call_callee(expr) else {
+        return false;
+    };
+    if owner_names
+        .iter()
+        .any(|name| ts_references_identifier(callee, name))
+        || changed_tokens
+            .iter()
+            .any(|tok| ts_references_identifier(callee, tok))
+    {
+        return false;
+    }
+    if test
+        .imports_in_file
+        .iter()
+        .any(|import| import.local == callee)
+    {
+        return false;
+    }
+    !local_identifier_declared_in_test_body(&test.body_text, callee)
+        && !test
+            .scope_bindings
+            .iter()
+            .any(|binding| binding.name == callee)
+}
+
+/// The callee of `expr` when it is a single bare-callee call spanning the
+/// whole expression (`name(...)`, with optional whitespace before the paren
+/// and after the call). Member calls (`recv.name(`), bare identifiers, and
+/// any call with trailing expression text (`formatDate(now) &&
+/// sideEffectLog`, which also reads the channel) resolve to `None` — those
+/// keep the side-channel confirmation.
+fn ts_effect_bare_call_callee(expr: &str) -> Option<&str> {
+    let trimmed = expr.trim();
+    let open = trimmed.find('(')?;
+    // The call must span the whole expression: trailing operators or
+    // operands mean the assertion reads past the call, so the expression
+    // is not a foreign-call observation.
+    if !ts_effect_call_spans_expression(open, trimmed) {
+        return None;
+    }
+    let callee = trimmed[..open].trim_end();
+    // A member segment (`recv.name`) is not a bare identifier, so member
+    // calls (including `?.` / `!.` chains, whose punctuation survives the
+    // trim) are excluded here, not by the caller.
+    ts_effect_is_bare_identifier(callee).then_some(callee)
+}
+
+/// `true` when the `(` at byte offset `open` in `text` closes (depth returns
+/// to zero) with only whitespace after the match. String literals, template
+/// spans, and comments are skipped so a paren inside one cannot close (or
+/// unbalance) the scan; an unterminated construct fails closed by returning
+/// `false`, keeping the side-channel confirmation.
+fn ts_effect_call_spans_expression(open: usize, text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' | b'`' => {
+                let quote = bytes[i];
+                i += 1;
+                let mut closed = false;
+                while i < bytes.len() {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                    } else if bytes[i] == quote {
+                        closed = true;
+                        i += 1;
+                        break;
+                    } else {
+                        i += 1;
+                    }
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                i += 2;
+                let mut closed = false;
+                while i + 1 < bytes.len() {
+                    if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        closed = true;
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+                if !closed {
+                    return false;
+                }
+            }
+            b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' => {
+                depth = depth.saturating_sub(1);
+                i += 1;
+                if depth == 0 {
+                    return text[i..].trim().is_empty();
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
     false
 }
 
@@ -558,6 +925,26 @@ fn ts_observed_local_aliases_owner(
     test: &TypeScriptTest,
     owner_is_method: bool,
     namespace_receivers: &[String],
+) -> bool {
+    ts_observed_local_aliases_owner_with_mutation(
+        observed,
+        owner_names,
+        changed_tokens,
+        test,
+        owner_is_method,
+        namespace_receivers,
+        true,
+    )
+}
+
+fn ts_observed_local_aliases_owner_with_mutation(
+    observed: &str,
+    owner_names: &[&str],
+    changed_tokens: &[String],
+    test: &TypeScriptTest,
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+    reject_mutated_local: bool,
 ) -> bool {
     fn is_ident_byte(b: u8) -> bool {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
@@ -618,7 +1005,7 @@ fn ts_observed_local_aliases_owner(
                     // owner-initialized assignment matched — so a bare
                     // observed identifier with no such assignment never
                     // pays the mutation-scan cost.
-                    return !ts_test_local_is_mutated(test, ident);
+                    return !reject_mutated_local || !ts_test_local_is_mutated(test, ident);
                 }
             }
         }
@@ -1252,9 +1639,6 @@ pub(crate) fn plain_changed_return<'t>(
     owner: &TypeScriptOwner,
     workspace_root: Option<&Path>,
 ) -> Option<(&'t str, &'t str)> {
-    if owner.arity.is_none() || owner.params.is_empty() {
-        return None;
-    }
     let (Some(old_line_text), Some(_)) = (old_line_text, workspace_root) else {
         return None;
     };
@@ -1264,6 +1648,22 @@ pub(crate) fn plain_changed_return<'t>(
     ) else {
         return None;
     };
+    evaluable_return_lines(line, owner, workspace_root)?;
+    Some((old_expression, new_expression))
+}
+
+/// The owner's source lines and the 0-based index of the changed `line` when
+/// a returned expression there can be evaluated on the call arguments: the
+/// owner declares parameters, never reassigns one, and opens no nested
+/// function before the changed line.
+fn evaluable_return_lines(
+    line: usize,
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> Option<(Vec<String>, usize)> {
+    if owner.arity.is_none() || owner.params.is_empty() {
+        return None;
+    }
     // An earlier statement may rebind a parameter, so the call arguments
     // would not be the values the returned expression reads.
     let lines = owner_source_lines(owner, workspace_root)?;
@@ -1301,7 +1701,36 @@ pub(crate) fn plain_changed_return<'t>(
     {
         return None;
     }
-    Some((old_expression, new_expression))
+    Some((lines, changed))
+}
+
+/// The old and new returned expression of the changed line for the
+/// unexercised-change check: a complete one-line `return <expression>;`, or
+/// the statement-level expression of a multi-line `return` (or the one
+/// property value of a returned object literal) that holds the changed line
+/// (#12380). Only withdraws credit; never used to grant it.
+fn changed_return_expressions(
+    line: usize,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &TypeScriptOwner,
+    workspace_root: Option<&Path>,
+) -> Option<(String, String)> {
+    if let Some((old, new)) =
+        plain_changed_return(line, line_text, old_line_text, owner, workspace_root)
+    {
+        return Some((old.to_string(), new.to_string()));
+    }
+    let (Some(old_line_text), Some(_)) = (old_line_text, workspace_root) else {
+        return None;
+    };
+    let (lines, changed) = evaluable_return_lines(line, owner, workspace_root)?;
+    changed_return::changed_multiline_return_expressions(
+        &owner.file,
+        &lines,
+        changed,
+        old_line_text,
+    )
 }
 
 /// Whether the test file names `name` anywhere outside its test bodies (a
@@ -1482,14 +1911,29 @@ pub(crate) fn ts_returned_expression_unexercised(
     // amount` to `+= amount * 2`) is judged on its operand. The state
     // accumulates across calls, so every owner call in a test must be one of
     // the evaluated assertions' calls.
-    let plain = plain_changed_return(line, line_text, old_line_text, owner, workspace_root);
+    let plain = changed_return_expressions(line, line_text, old_line_text, owner, workspace_root);
     let state_operands = match plain {
         Some(_) => None,
         None => returned_state_operands(line_text, old_line_text, owner),
     };
-    let Some((old_expression, new_expression)) = plain.or(state_operands) else {
+    let Some((old_expression, new_expression)) =
+        plain.or_else(|| state_operands.map(|(old, new)| (old.to_string(), new.to_string())))
+    else {
         return false;
     };
+    // #12296: `String(...)` / `JSON.stringify(...)` fold as the built-in
+    // globals only; a rebinding anywhere in the owner's file refuses.
+    let mentions_conversion = |text: &str| {
+        text.split(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$')))
+            .any(|token| token == "String" || token == "JSON")
+    };
+    if (mentions_conversion(&old_expression) || mentions_conversion(&new_expression))
+        && !workspace_root
+            .and_then(|root| std::fs::read_to_string(root.join(&owner.file)).ok())
+            .is_some_and(|source| literal_eval::conversion_globals_unshadowed(&source))
+    {
+        return false;
+    }
     let mut evaluated = false;
     for candidate in candidates {
         if !candidate.relation.uses_oracle() {
@@ -1575,8 +2019,8 @@ pub(crate) fn ts_returned_expression_unexercised(
             for arguments in argument_lists {
                 match literal_eval::return_expressions_agree(
                     &owner.file,
-                    old_expression,
-                    new_expression,
+                    &old_expression,
+                    &new_expression,
                     &owner.params,
                     &arguments,
                 ) {
@@ -3219,7 +3663,7 @@ pub(crate) fn is_constant_shaped_operand(operand: &str) -> bool {
 /// declaration of the name at all, the owner's file is read once through the
 /// workspace root (fail-closed on any read error, and only ever for a
 /// constant-shaped operand of a changed boundary).
-fn ts_owner_module_constant_value(
+pub(crate) fn ts_owner_module_constant_value(
     name: &str,
     owner: &TypeScriptOwner,
     workspace_root: Option<&Path>,
@@ -6068,86 +6512,27 @@ fn mask_comments_and_strings(body: &str) -> String {
 }
 
 /// Returns `true` when `oracle_kind` can observe the seam identified by
-/// `probe_family`.
-///
-/// This is the single source of truth for the TS-adapter assertion-level
-/// family↔kind filter. It mirrors `oracle_kind_matches_seam_kind` from
-/// `test_grip_evidence.rs` (which operates on Rust `SeamKind`), adapted for
-/// the TypeScript `ProbeFamily` vocabulary.
-///
-/// ### Mapping table (RIPR-SPEC-0104 §3)
-///
-/// | ProbeFamily | Excluded OracleKinds (Strong-rank only — the honesty fix) |
-/// |---|---|
-/// | `ErrorPath` | `ExactValue`, `RelationalCheck`, `MockExpectation` |
-/// | `ReturnValue`, `Predicate`, `FieldConstruction`, `MatchArm` | `ExactErrorVariant`, `BroadError`, `MockExpectation` |
-/// | `SideEffect`, `CallDeletion` | *(handled by RIPR-SPEC-0098 observation guard — no additional exclusion here)* |
-/// | `StaticUnknown` | *(fail-open — all oracles admitted)* |
-///
-/// ### Design: fail-closed only at the cross-domain seam boundary
-///
-/// The HONESTY BUG addressed by this function is specifically the case where a
-/// **Strong wrong-domain** oracle is credited to a seam whose family it cannot
-/// observe:
-///
-/// - An `ExactErrorVariant` oracle (`.toThrow(DiscountError)`) is an error-path
-///   discriminator. It MUST NOT count as a strong match for a `ReturnValue` or
-///   `Predicate` seam — these seams emit a value, not an error.
-/// - An `ExactValue` oracle (`.toBe(90)`) is a value discriminator. It MUST NOT
-///   count as a strong match for an `ErrorPath` seam — the seam throws, not returns.
-///
-/// ### Composing with RIPR-SPEC-0098 (SideEffect observation guard)
-///
-/// For `SideEffect` and `CallDeletion` families, RIPR-SPEC-0098 already provides
-/// a dedicated observation guard (`ts_changed_value_is_observed`) that correctly
-/// handles the case where a value-shaped `ExactValue` assertion observes the owner
-/// RETURN value (not the call effect). That guard fires in the
-/// `else if strongest_strength >= Strong.rank()` arm of the classifier.
-/// To preserve that path, `ExactValue` is NOT excluded from `SideEffect` /
-/// `CallDeletion` by this function — SPEC-0098 handles those seams independently.
-/// The two specs compose: SPEC-0104 handles cross-domain value↔error exclusion;
-/// SPEC-0098 handles the same-domain but wrong-target SideEffect case.
-///
-/// ### Weak oracle kinds are always admitted
-///
-/// `SmokeOnly`, `Unknown`, `BroadError` (for non-error families),
-/// `RelationalCheck` (for non-error families) are admitted for all concrete
-/// families because they are weak/absent and do NOT contradict any family.
-/// Their rank (Smoke / Unknown / Weak) prevents them from triggering
-/// `Exposed` promotion regardless. Admitting them preserves accurate
-/// per-kind messaging in `weak_oracle_missing_summary`.
-pub(crate) fn ts_oracle_kind_matches_seam(
-    oracle_kind: &OracleKind,
-    probe_family: &ProbeFamily,
+/// `probe_family` (RIPR-SPEC-0104). The mapping table lives in
+/// [`crate::domain::ts_oracle_kind_matches_seam`].
+pub(crate) use crate::domain::ts_oracle_kind_matches_seam;
+
+/// A raw exact assertion is still present when the bounded push witness
+/// withdraws its change-specific credit. Only an eligible owner path may
+/// supply that fact to the confidence explanation.
+pub(crate) fn ts_push_raw_eligible(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    push_facts: &super::push_argument_guard::PushArgumentFacts,
+    family: &ProbeFamily,
 ) -> bool {
-    match probe_family {
-        // ErrorPath seams: exclude STRONG VALUE oracles (ExactValue, RelationalCheck)
-        // and MockExpectation.  BroadError, ExactErrorVariant, Snapshot all observe
-        // an error-path change.  SmokeOnly/Unknown are weak and admitted.
-        ProbeFamily::ErrorPath => !matches!(
-            oracle_kind,
-            OracleKind::ExactValue | OracleKind::RelationalCheck | OracleKind::MockExpectation
-        ),
-        // Value-family seams: exclude STRONG ERROR oracle (ExactErrorVariant)
-        // and BroadError, MockExpectation.  ExactValue, WholeObjectEquality,
-        // Snapshot, RelationalCheck, SmokeOnly, Unknown all admitted.
-        // THIS IS THE PRIMARY FIX: ExactErrorVariant must not credit a ReturnValue seam.
-        ProbeFamily::ReturnValue
-        | ProbeFamily::Predicate
-        | ProbeFamily::FieldConstruction
-        | ProbeFamily::MatchArm => !matches!(
-            oracle_kind,
-            OracleKind::ExactErrorVariant | OracleKind::BroadError | OracleKind::MockExpectation
-        ),
-        // SideEffect / CallDeletion: defer to RIPR-SPEC-0098 observation guard.
-        // All oracle kinds admitted here so that `strongest_strength` reflects
-        // the actual oracle rank, letting the observation guard run in the
-        // `else if strongest_strength >= Strong.rank()` arm.
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => true,
-        // Fail-open for genuinely-unknown family: we cannot determine the
-        // match — do not over-correct by blocking a potentially valid oracle.
-        ProbeFamily::StaticUnknown => true,
-    }
+    candidates.iter().any(|candidate| {
+        candidate.relation.uses_oracle()
+            && candidate_observes_owner_call(candidate)
+            && candidate.test.assertions.iter().any(|assertion| {
+                push_facts.withhold(candidate.test, assertion)
+                    && assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                    && ts_oracle_kind_matches_seam(&assertion.oracle_kind, family)
+            })
+    })
 }
 
 /// Compute the strongest oracle kind and strength that MATCHES the changed
@@ -6182,6 +6567,7 @@ pub(crate) fn strongest_family_matching_oracle(
     error_facts: &ErrorChangeFacts,
     mock_facts: &MockCallFacts,
     pin_facts: &PinFacts,
+    push_facts: &super::push_argument_guard::PushArgumentFacts,
 ) -> (u8, OracleKind) {
     let mut best_rank: u8 = 0;
     let mut best_kind = OracleKind::Unknown;
@@ -6204,6 +6590,9 @@ pub(crate) fn strongest_family_matching_oracle(
             };
         for (assertion_index, assertion) in candidate.test.assertions.iter().enumerate() {
             let (kind, strength) = match (&assertion.error_payload, &assertion.mock_payload) {
+                _ if push_facts.withhold(candidate.test, assertion) => {
+                    (OracleKind::ExactValue, OracleStrength::Weak)
+                }
                 (Some(payload), _)
                     if matches!(assertion.oracle_kind, OracleKind::ExactErrorVariant)
                         && !error_payload_credits(payload, error_facts) =>
@@ -6534,14 +6923,7 @@ pub(crate) fn owner_line_context<'a>(
         alias_map,
         relation_index,
     );
-    let mock_paths = collect_related_mock_paths(
-        owner,
-        all_tests,
-        workspace_root,
-        reexport_index,
-        alias_map,
-        relation_index,
-    );
+    let mock_paths = mock_paths_from_candidates(&related_candidates);
     let named_limitations_from_ownership: Vec<TypeScriptNamedLimitation> =
         if let Some(root) = workspace_root {
             named_limitations_for_unresolved_ownership(
@@ -6934,6 +7316,23 @@ pub(crate) fn classify_resolved_owner(
             !ts_field_has_accessor(&change, owner, owners)
                 && ts_field_update_witnessed(&change, owner, related_candidates)
         });
+    // #12463: an unwitnessed update of a field whose new value reads none of
+    // the owner's parameters has no input to flip, so the strong-check advice
+    // "exercise the changed branch with an input that flips it" would mislead
+    // (the test overwrites the field, never calls the method, or reads an
+    // accessor-backed field). Those keep the generic next step.
+    let input_free_field_update = !probe_shape.specific
+        && lookup_change.is_none()
+        && !returns_changed_state
+        && !field_update_witnessed
+        && ts_field_update_change(owner, line_text, old_line_text).is_some()
+        && {
+            let masked_line = ts_mask_literals_and_comments(line_text);
+            owner
+                .params
+                .iter()
+                .all(|param| identifier_offsets(&masked_line, param).is_empty())
+        };
     let probe_shape = if lookup_change.is_some()
         || returns_changed_state
         || arm_change_witnessed
@@ -6967,6 +7366,12 @@ pub(crate) fn classify_resolved_owner(
                 })
             },
         );
+    // #12463: a deleted call has no branch and no input that flips it, so the
+    // strong-check "flip the changed branch" advice never applies, whether or
+    // not the removal was counted above (fail closed).
+    let removed_call_change =
+        super::call_removal_guard::removed_method_call(line_text, old_line_text).is_some()
+            || super::call_removal_guard::replaced_call_with_discard(line_text, old_line_text);
     let probe_shape = if counted_removal {
         TypeScriptProbeShape::new(ProbeFamily::CallDeletion, DeltaKind::Effect)
     } else {
@@ -7175,12 +7580,24 @@ pub(crate) fn classify_resolved_owner(
     if !pin_facts.is_empty() {
         project_credited_pin_rows(&mut related, related_candidates, &pin_facts);
     }
+    let push_facts = if matches!(probe_shape.family, ProbeFamily::SideEffect) {
+        super::push_argument_guard::PushArgumentFacts::read(
+            old_line_text,
+            owner,
+            related_candidates,
+        )
+    } else {
+        super::push_argument_guard::PushArgumentFacts::default()
+    };
+    let push_raw_eligible =
+        ts_push_raw_eligible(related_candidates, &push_facts, &probe_shape.family);
     let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
         &probe_shape.family,
         related_candidates,
         &error_facts,
         &mock_facts,
         &pin_facts,
+        &push_facts,
     );
     let mock_payload_oracle = related_mock_payload_oracle(&related);
 
@@ -7311,6 +7728,7 @@ pub(crate) fn classify_resolved_owner(
                 CreditFacts {
                     mock_facts: &mock_facts,
                     pin_facts: &pin_facts,
+                    push_facts: &push_facts,
                     changed_field: changed_field.as_ref(),
                 },
             ));
@@ -7504,12 +7922,16 @@ pub(crate) fn classify_resolved_owner(
             StageState::Yes,
             StageState::Weak,
             StageState::Weak,
-            vec![weak_oracle_missing_summary(
-                &owner.name,
-                &strongest_kind,
-                &probe_shape.family,
-                mock_payload_oracle.as_deref(),
-            )],
+            vec![if push_raw_eligible {
+                "The available evidence does not establish discrimination of the changed appended value; use an input changed by the edit and assert the appended element.".to_string()
+            } else {
+                weak_oracle_missing_summary(
+                    &owner.name,
+                    &strongest_kind,
+                    &probe_shape.family,
+                    mock_payload_oracle.as_deref(),
+                )
+            }],
         )
     };
     // Post-ladder rules re-read the ladder verdict and may rewrite it; a
@@ -7547,6 +7969,7 @@ pub(crate) fn classify_resolved_owner(
             error_facts: &error_facts,
             mock_facts: &mock_facts,
             pin_facts: &pin_facts,
+            push_facts: &push_facts,
             changed_field: changed_field.as_ref(),
         },
         mock_paths: &context.mock_paths,
@@ -7763,6 +8186,7 @@ pub(crate) fn classify_resolved_owner(
             credits: CreditFacts {
                 mock_facts: &mock_facts,
                 pin_facts: &pin_facts,
+                push_facts: &push_facts,
                 changed_field: changed_field.as_ref(),
             },
             boundary_fact: missing_discriminators.first(),
@@ -7793,11 +8217,17 @@ pub(crate) fn classify_resolved_owner(
         Confidence::Low,
         "TypeScript preview adapter does not yet model propagation.",
     );
-    let observe_summary = format!(
-        "Strongest extracted oracle kind: `{}` (rank {})",
-        strongest_kind.as_str(),
-        strongest_strength
-    );
+    let observe_summary = if push_raw_eligible && strongest_strength < OracleStrength::Strong.rank()
+    {
+        "An exact assertion was extracted, but this evidence does not establish discrimination of the changed appended value."
+            .to_string()
+    } else {
+        format!(
+            "Strongest extracted oracle kind: `{}` (rank {})",
+            strongest_kind.as_str(),
+            strongest_strength
+        )
+    };
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
     let discriminate_summary = if let Some(verdict) = &infection {
         format!(
@@ -7864,6 +8294,8 @@ pub(crate) fn classify_resolved_owner(
     } else if strongest_strength >= OracleStrength::Strong.rank() {
         // RIPR-SPEC-0098: strong oracle exists but observation guard failed.
         "TypeScript preview adapter: strong oracle found but no assertion's observed_expression flows from the changed sub-expression; observation_unverified — discriminate unknown.".to_string()
+    } else if push_raw_eligible && strongest_strength < OracleStrength::Strong.rank() {
+        "TypeScript preview: this evidence does not establish discrimination of the changed appended value; use an input changed by the edit and assert the appended element.".to_string()
     } else if let Some(discriminator) = missing_discriminators.first() {
         format!(
             "TypeScript preview adapter found no strong discriminator; missing proof: `{}`.",
@@ -7914,6 +8346,9 @@ pub(crate) fn classify_resolved_owner(
             Some(gap) => gap.no_static_path_recommendation(),
             None => no_static_path_recommendation(owner),
         },
+        _ if push_raw_eligible && strongest_strength < OracleStrength::Strong.rank() => {
+            "TypeScript preview advisory: use an input changed by the edit and assert the appended element; no actionable repair packet is emitted.".to_string()
+        }
         // Owner-call evidence with a named missing discriminator takes
         // precedence over the relation note: the oracle classification is
         // independent of relation credit, so the next step names the proof
@@ -7935,6 +8370,12 @@ pub(crate) fn classify_resolved_owner(
                 owner.name
             )
         }
+        _ if strongest_strength >= OracleStrength::Strong.rank()
+            && !input_free_field_update
+            && !removed_call_change =>
+        {
+            crate::domain::STRONG_CHECK_UNTIED_NEXT_STEP.to_string()
+        }
         _ => {
             "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.".to_string()
         }
@@ -7952,7 +8393,11 @@ pub(crate) fn classify_resolved_owner(
         &class,
         &crate::domain::ConfidenceBasisInputs {
             has_related_test: has_oracle_eligible_relation,
-            strong_oracle_present: strongest_strength >= OracleStrength::Strong.rank(),
+            // The push witness starts from a raw exact assertion. Its
+            // change-specific credit is weak because observation is not
+            // established, not because the test has no exact assertion.
+            strong_oracle_present: strongest_strength >= OracleStrength::Strong.rank()
+                || push_raw_eligible,
             boundary_input_matched: boundary_witnessed,
         },
     );
@@ -8905,7 +9350,9 @@ pub(crate) fn ts_dropped_term_witness(
                         bindings.push((name.clone(), value));
                     }
                 }
-                match fold_numeric_expression(term, &bindings) {
+                match fold_numeric_expression(term, &bindings).or_else(|| {
+                    ts_fold_same_module_call_term(term, owner, &bindings, workspace_root)
+                }) {
                     // A double sum absorbs an addend below 2^-52 of its
                     // magnitude (`6499 + 1e-13 === 6499`). A term of at least
                     // 1e-6 changes every sum below about 4.5e9.
@@ -8921,6 +9368,266 @@ pub(crate) fn ts_dropped_term_witness(
     } else {
         DroppedTermWitness::Unknown
     }
+}
+
+/// RIPR-SPEC-0258 rule 3: `true` only when the snapshot's asserted subject is
+/// the whole result of one owner call, or a local bound once to it. Allowlist:
+/// anything else (an unrelated value, a member or call on the result, a spy's
+/// recorded calls) is not read and earns no snapshot credit.
+///
+/// A free-function owner is called as `owner(..)` (or through a namespace
+/// receiver or rename local). A method owner is called as `<receiver>.m(..)`
+/// where the receiver is a local the test constructs from the owner's class
+/// and uses only as `<receiver>.<member>(..)`. A bound local must be read only
+/// by its declaration and by `expect(<local>)`, so a destructuring or loop
+/// binding that rewrites it, or any escape, refuses.
+fn ts_snapshot_subject_is_owner_result(
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    assertion: &TypeScriptAssertion,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let test = candidate.test;
+    let Some(observed) = assertion.observed_expression.as_deref() else {
+        return false;
+    };
+    let observed = observed.trim();
+    let owned_names: Vec<String>;
+    let receivers: Vec<String>;
+    let names: Vec<&str>;
+    if matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod) {
+        let constructors =
+            constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
+        let constructed = receiver_names_for_constructor_calls(&test.body_text, &constructors);
+        // The class is only constructed (`new Class(..)`), never patched
+        // through its prototype or passed on, so the method is the owner's.
+        let class_untouched = ts_identifier_is_absent(&test.body_text, "prototype")
+            && constructors
+                .iter()
+                .filter(|name| !name.contains('.'))
+                .all(|name| {
+                    ts_identifier_is_absent(&test.body_text, name)
+                        || ts_identifier_uses_all(&test.body_text, name, |before, after| {
+                            before.trim_end().ends_with("new")
+                                && after.trim_start().starts_with('(')
+                        })
+                });
+        // Each receiver has exactly one declaration (no inner redeclaration,
+        // parameter, catch or loop binding of the name) and is read only as
+        // `<receiver>.<member>(..)`, so nothing rebinds it or replaces the
+        // method.
+        owned_names = constructed
+            .iter()
+            .filter(|receiver| {
+                class_untouched
+                    && ts_receiver_is_constructed_once(&test.body_text, receiver, &constructors)
+            })
+            .map(|receiver| format!("{receiver}.{}", owner.name))
+            .collect();
+        receivers = Vec::new();
+        names = owned_names.iter().map(String::as_str).collect();
+    } else {
+        if local_identifier_declared_in_test_body(&test.body_text, &owner.name) {
+            return false;
+        }
+        receivers = unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
+        // The owner's bare name counts only when no import binds it to
+        // something else (`import { enqueue as real } from owner` beside
+        // `import { enqueue } from other` leaves `enqueue(..)` unrelated),
+        // and no name the test redeclares locally counts.
+        let bare_is_unrelated =
+            owner_name_shadowed_by_unrelated_import(test, owner, alias_map, workspace_root);
+        names = ts_owner_call_names(candidate, owner, alias_map, workspace_root)
+            .into_iter()
+            .filter(|name| !(bare_is_unrelated && *name == owner.name.as_str()))
+            .filter(|name| !local_identifier_declared_in_test_body(&test.body_text, name))
+            .collect();
+    }
+    if names.is_empty() {
+        return false;
+    }
+    if ts_whole_owner_call_arguments(observed, &names, owner, &receivers).is_some() {
+        return true;
+    }
+    ts_single_declaration_uses(&test.body_text, observed, |before, after| {
+        ts_use_is_expect_argument(before, after)
+    }) && names.iter().any(|name| {
+        ts_observed_local_owner_call_arguments(test, assertion, name, &receivers).is_some()
+    })
+}
+
+/// `true` when every whole-word occurrence of `ident` in `body`'s code (not in
+/// a string or comment, and not a member segment `x.ident`) satisfies
+/// `allowed(text before, text after)`, and there is at least one. A spread
+/// `...ident` is refused, since `({ ...ident } = ..)` binds it.
+fn ts_identifier_uses_all(body: &str, ident: &str, allowed: impl Fn(&str, &str) -> bool) -> bool {
+    let is_ident_char = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    if ident.is_empty() || !ident.chars().all(is_ident_char) {
+        return false;
+    }
+    let masked = ts_mask_literals_and_comments(body);
+    let mut seen = false;
+    for (at, _) in masked.match_indices(ident) {
+        let (Some(before), Some(after)) = (masked.get(..at), masked.get(at + ident.len()..)) else {
+            return false;
+        };
+        if before.chars().next_back().is_some_and(is_ident_char)
+            || after.chars().next().is_some_and(is_ident_char)
+        {
+            continue;
+        }
+        let before_trimmed = before.trim_end();
+        if before_trimmed.ends_with("..") {
+            return false;
+        }
+        if before_trimmed.ends_with('.') {
+            continue;
+        }
+        if !allowed(before, after) {
+            return false;
+        }
+        seen = true;
+    }
+    seen
+}
+
+/// `true` when `ident` has exactly one declaration (`const|let|var ident =`) in
+/// the body's code and every other use satisfies `other_use`. A second
+/// declaration of the name in any scope, a parameter, a `catch` or loop binding,
+/// a destructuring or any assignment makes it refuse.
+fn ts_single_declaration_uses(
+    body: &str,
+    ident: &str,
+    other_use: impl Fn(&str, &str) -> bool,
+) -> bool {
+    let declarations = std::cell::Cell::new(0usize);
+    ts_identifier_uses_all(body, ident, |before, after| {
+        if ts_use_is_declaration(before, after) {
+            declarations.set(declarations.get() + 1);
+            true
+        } else {
+            other_use(before, after)
+        }
+    }) && declarations.get() == 1
+}
+
+/// `true` when `receiver` has exactly one declaration, whose initializer is
+/// exactly `new <Class>(..)` for one of the owner's `constructors` (not a
+/// conditional, logical, call-chain or other expression that merely contains
+/// it), and every other use is `receiver.member(..)`.
+fn ts_receiver_is_constructed_once(body: &str, receiver: &str, constructors: &[String]) -> bool {
+    let declarations = std::cell::Cell::new(0usize);
+    ts_identifier_uses_all(body, receiver, |before, after| {
+        if ts_use_is_declaration(before, after) {
+            declarations.set(declarations.get() + 1);
+            ts_initializer_is_new_of(after, constructors)
+        } else {
+            ts_use_is_member_call(after)
+        }
+    }) && declarations.get() == 1
+}
+
+/// `after` is `= new <Class>(..)` for one of `constructors`, ended by `;`, the
+/// end of the text, or a line break not continued by an operator.
+fn ts_initializer_is_new_of(after: &str, constructors: &[String]) -> bool {
+    let Some(rest) = after.trim_start().strip_prefix('=') else {
+        return false;
+    };
+    let Some(rest) = rest.trim_start().strip_prefix("new") else {
+        return false;
+    };
+    if !rest.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let rest = rest.trim_start();
+    let Some(open) = rest.find('(') else {
+        return false;
+    };
+    let class = rest[..open].trim();
+    if !constructors.iter().any(|name| name == class) {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut end = None;
+    for (index, c) in rest[open..].char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end = Some(open + index + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(end) = end else {
+        return false;
+    };
+    let trimmed = rest[end..].trim_start_matches([' ', '\t']);
+    if trimmed.is_empty() || trimmed.starts_with(';') {
+        return true;
+    }
+    if !trimmed.starts_with(['\n', '\r']) {
+        return false;
+    }
+    trimmed
+        .trim_start()
+        .chars()
+        .next()
+        .is_none_or(|c| !".([`+-*/%<>=?&|,:!".contains(c))
+}
+
+/// `true` when `ident` occurs nowhere in the body's code as a whole word,
+/// member segments (`x.ident`) included.
+fn ts_identifier_is_absent(body: &str, ident: &str) -> bool {
+    let is_ident_char = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let masked = ts_mask_literals_and_comments(body);
+    !masked.match_indices(ident).any(|(at, _)| {
+        let before_ok = masked
+            .get(..at)
+            .and_then(|before| before.chars().next_back())
+            .is_none_or(|c| !is_ident_char(c));
+        let after_ok = masked
+            .get(at + ident.len()..)
+            .and_then(|after| after.chars().next())
+            .is_none_or(|c| !is_ident_char(c));
+        before_ok && after_ok
+    })
+}
+
+/// `const|let|var <ident> = ` (a single `=`).
+fn ts_use_is_declaration(before: &str, after: &str) -> bool {
+    let before = before.trim_end();
+    let keyword = ["const", "let", "var"].iter().any(|keyword| {
+        before.strip_suffix(keyword).is_some_and(|rest| {
+            !rest
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        })
+    });
+    let after = after.trim_start();
+    keyword && after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+}
+
+/// `expect(<ident>)`.
+fn ts_use_is_expect_argument(before: &str, after: &str) -> bool {
+    before
+        .trim_end()
+        .strip_suffix('(')
+        .is_some_and(|rest| rest.trim_end().ends_with("expect"))
+        && after.trim_start().starts_with(')')
+}
+
+/// `.member(` straight after the identifier.
+fn ts_use_is_member_call(after: &str) -> bool {
+    after.strip_prefix('.').is_some_and(|rest| {
+        let tail = rest.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '$');
+        tail.len() < rest.len() && tail.trim_start().starts_with('(')
+    })
 }
 
 /// The value assertions of a related test that see the owner's returned
@@ -9516,6 +10223,7 @@ struct Rule8LadderFacts<'a> {
     error_facts: &'a ErrorChangeFacts,
     mock_facts: &'a MockCallFacts,
     pin_facts: &'a PinFacts,
+    push_facts: &'a super::push_argument_guard::PushArgumentFacts,
     changed_field: Option<&'a TypeScriptChangedField>,
 }
 
@@ -9543,6 +10251,7 @@ fn ts_rule8_mocked_changed_callee(
         error_facts,
         mock_facts,
         pin_facts,
+        push_facts,
         changed_field,
     } = ladder;
     let mut files: Vec<&Path> = Vec::new();
@@ -9583,6 +10292,7 @@ fn ts_rule8_mocked_changed_callee(
             error_facts,
             mock_facts,
             pin_facts,
+            push_facts,
         );
         if !only_module_entry
             && strength >= OracleStrength::Strong.rank()
@@ -9597,6 +10307,7 @@ fn ts_rule8_mocked_changed_callee(
                 CreditFacts {
                     mock_facts,
                     pin_facts,
+                    push_facts,
                     changed_field,
                 },
             )

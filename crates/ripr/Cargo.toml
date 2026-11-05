@@ -20,6 +20,7 @@ categories = ["development-tools", "development-tools::testing"]
 # uncommitted-files check.
 include = [
   "src/**",
+  "vendor/**",
   "tests/**",
   "examples/*/example.diff",
   "examples/*/src/**",
@@ -60,6 +61,10 @@ name = "ripr"
 path = "src/main.rs"
 
 [dependencies]
+# ADR 0027 (#8382/#12726): internal contract crate, published in lockstep with
+# `ripr` (same workspace version, exact requirement). It owns the domain DTOs
+# re-exported at `ripr::domain`; it is not a separate public API.
+ripr-contract = { path = "../ripr-contract", version = "=0.11.0", default-features = false }
 # #5287: OS advisory file locks serialize concurrent after-phase manifest
 # commits. Only fs2's safe API is used (`FileExt::try_lock_exclusive` /
 # `unlock`); no `unsafe fn` surface reaches first-party code, keeping the
@@ -70,7 +75,7 @@ fs2 = "0.4"
 home = "=0.5.12"
 # Block-aware code ranges let comment prose preserve Markdown formatting while
 # neutralizing HTML/mentions outside actual code. No HTML renderer or CLI needed.
-pulldown-cmark = { version = "0.13.5", default-features = false }
+pulldown-cmark = { version = "0.13.6", default-features = false }
 oxc_allocator = { version = "0.130", optional = true }
 oxc_ast = { version = "0.130", optional = true }
 oxc_ast_visit = { version = "=0.130.0", optional = true }
@@ -88,6 +93,12 @@ rustpython-parser = { version = "0.4", optional = true, default-features = false
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 sha2 = "0.10"
+# SCIP index admission (#8115): decode user-supplied indexes only; no indexer
+# or network is invoked at runtime. Deliberately unconditional: the admission
+# tests must run in the default suite, and the module is not yet reachable from
+# the CLI. Revisit a feature gate when the CLI slice wires it in.
+prost = "0.13"
+bytes = "1"
 toml = "1"
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.2"
@@ -159,12 +170,16 @@ win32job = "2.0.3"
 
 [features]
 default = ["lang-rust", "lang-typescript", "lang-python"]
-lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident", "dep:unicode-properties"]
-lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span"]
-lang-python = ["dep:rustpython-parser", "dep:unicode-ident"]
-lang-perl = []
+lang-rust = ["dep:ra_ap_syntax", "dep:unicode-ident", "dep:unicode-properties", "ripr-contract/lang-rust"]
+lang-typescript = ["dep:oxc_allocator", "dep:oxc_ast", "dep:oxc_ast_visit", "dep:oxc_parser", "dep:oxc_span", "ripr-contract/lang-typescript"]
+lang-python = ["dep:rustpython-parser", "dep:unicode-ident", "ripr-contract/lang-python"]
+lang-perl = ["ripr-contract/lang-perl"]
 
 [dev-dependencies]
+# ADR 0027: facade tests import shared fixtures from the contract crate.
+# `default-features = false` is load-bearing: language enablement is forwarded
+# from this crate's own features, and the contract's defaults would unify on.
+ripr-contract = { version = "=0.11.0", path = "../ripr-contract", default-features = false, features = ["test-fixtures"] }
 proptest = "1"
 rmcp = { version = "=3.7.0", default-features = false, features = ["client", "transport-async-rw"] }
 serial_test = "4"

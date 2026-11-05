@@ -30,6 +30,9 @@
 # cargo xtask repair-card-usability-report, cargo xtask check-public-api.
 
 pub const ripr::app::repair_card_usability::REPAIR_CARD_USABILITY_SCHEMA_VERSION
+pub const ripr::domain::guarded_edit::EXACT_TEST_EDIT_PRECONDITION_SCHEMA_VERSION
+pub const ripr::domain::guarded_edit::GUARDED_EDIT_CLAIM_BOUNDARY
+pub const ripr::domain::guarded_edit::GUARDED_EDIT_NON_CLAIMS
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_INLINE_DETAIL_BYTES
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_DOCUMENT
 pub const ripr::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE
@@ -61,7 +64,6 @@ pub const ripr::output::start_here_state::START_HERE_UNSAFE_PATH
 pub const ripr::output::start_here_state::START_HERE_UNSUPPORTED_SCHEMA
 pub const ripr::output::start_here_state::START_HERE_WRONG_ROOT
 pub enum ripr::analysis::AnalysisMode
-pub enum ripr::analysis::LanguageRunStatus
 pub enum ripr::app::Mode
 pub enum ripr::domain::language_availability::AutoDetectionPolicy
 pub enum ripr::domain::language_availability::AvailabilityState
@@ -77,6 +79,9 @@ pub enum ripr::lsp::diagnostic_budget::OmittedDiagnosticReason
 # docs/EXIT_CODES.md; covered_by: cargo test -p ripr --lib cli,
 # cargo xtask check-public-api.
 pub enum ripr::cli::CommandError
+pub enum ripr::domain::guarded_edit::EditInstructionIdParseError
+pub enum ripr::domain::guarded_edit::GuardedEditUnavailableReason
+pub enum ripr::domain::guarded_edit::GuardedEditValidationStatus
 pub fn ripr::analysis::run_analysis
 pub fn ripr::analysis::run_repo_analysis
 pub fn ripr::app::pr_evidence::reject_pr_evidence_error_packet
@@ -86,6 +91,12 @@ pub fn ripr::app::render_check
 pub fn ripr::cli::run
 # Explicit once-per-process standalone signal ownership (#7618); ordinary run preserves caller policy.
 pub fn ripr::cli::run_with_interrupt_handling
+pub fn ripr::domain::guarded_edit::client_supports_guarded_edit
+pub fn ripr::domain::guarded_edit::is_recognized_rust_test_source_file
+pub fn ripr::domain::guarded_edit::sha256_digest
+pub fn ripr::domain::guarded_edit::try_build_exact_test_edit_precondition
+pub fn ripr::domain::guarded_edit::verify_document_version
+pub fn ripr::domain::guarded_edit::verify_source_text
 # Global verbose stripping owner (#5009): owner cli; reason: the binary
 # startup route strips the global flag before MCP routing and must call the
 # same single-pass extraction as `ripr::cli::run`, so the owner is
@@ -140,6 +151,7 @@ pub mod ripr::cli
 pub mod ripr::config
 pub mod ripr::domain
 pub mod ripr::domain::context_packet
+pub mod ripr::domain::guarded_edit
 pub mod ripr::domain::language_availability
 pub mod ripr::lsp
 pub mod ripr::lsp::diagnostic_budget
@@ -159,13 +171,19 @@ pub mod ripr::output::start_here_state
 pub mod ripr::provider_contract
 pub struct ripr::analysis::AnalysisOptions
 pub struct ripr::analysis::AnalysisResult
-pub struct ripr::analysis::LanguageRun
 pub struct ripr::analysis::PreviewLanguageAdvisory
 pub struct ripr::app::CheckInput
 pub struct ripr::app::CheckOutput
 pub struct ripr::domain::context_packet::ContextPacket
 pub struct ripr::domain::context_packet::ContextPacketProbe
 pub struct ripr::domain::context_packet::ContextPacketRipr
+pub struct ripr::domain::guarded_edit::EditInstructionId
+pub struct ripr::domain::guarded_edit::ExactTestEditPrecondition
+pub struct ripr::domain::guarded_edit::GuardedEditBuildInput
+pub struct ripr::domain::guarded_edit::GuardedEditIdentity
+pub struct ripr::domain::guarded_edit::GuardedEditUnavailable
+pub struct ripr::domain::guarded_edit::NegotiatedSourceRange
+pub struct ripr::domain::guarded_edit::RequiredClientCapability
 pub struct ripr::domain::language_availability::LanguageAvailabilityInput
 pub struct ripr::domain::language_availability::LanguageAvailabilityReport
 pub struct ripr::lsp::diagnostic_budget::DiagnosticBudget
@@ -224,8 +242,15 @@ pub use ripr::RiprRepositorySnapshotV1
 pub use ripr::RiprSourceViewV1
 pub use ripr::provider_contract::BoundaryFamilyV1
 pub use ripr::provider_contract::CrossLanguageEdgeDirectionV1
+pub use ripr::provider_contract::CrossLanguageEdgeEffectiveRecordV1
+pub use ripr::provider_contract::CrossLanguageEdgeMovementKindV1
+pub use ripr::provider_contract::CrossLanguageEdgeMovementRecordV1
+pub use ripr::provider_contract::CrossLanguageEdgeRegistryAnomalyKindV1
+pub use ripr::provider_contract::CrossLanguageEdgeRegistryAnomalyV1
+pub use ripr::provider_contract::CrossLanguageEdgeRegistryCurrentnessReportV1
 pub use ripr::provider_contract::CrossLanguageEdgeRegistryErrorCodeV1
 pub use ripr::provider_contract::CrossLanguageEdgeRegistryErrorV1
+pub use ripr::provider_contract::CrossLanguageEdgeRegistryMovementReportV1
 pub use ripr::provider_contract::CrossLanguageEdgeRegistryV1
 pub use ripr::provider_contract::CrossLanguageEdgeV1
 pub use ripr::provider_contract::CrossLanguageGeneratedArtifactV1
@@ -239,7 +264,15 @@ pub use ripr::provider_contract::EdgeNonClaimV1
 pub use ripr::provider_contract::EdgeObligationV1
 pub use ripr::provider_contract::EdgeProducerBasisV1
 pub use ripr::provider_contract::EdgeStrengthV1
+pub use ripr::provider_contract::LoadedCrossLanguageEdgeRegistryV1
+pub use ripr::provider_contract::analyze_cross_language_edge_registry_currentness
+pub use ripr::provider_contract::compare_cross_language_edge_registries
+pub use ripr::provider_contract::cross_language_edge_content_digest
 pub use ripr::provider_contract::cross_language_edge_registry_semantic_digest
+pub use ripr::provider_contract::cross_language_edge_semantic_key
+pub use ripr::provider_contract::edge_connects_subjects
+pub use ripr::provider_contract::load_cross_language_edge_registry_from_json
+pub use ripr::provider_contract::subjects_related_by_effective_registered_edge
 pub use ripr::provider_contract::subjects_related_by_registered_edge
 pub use ripr::SourceCurrentness
 pub use ripr::Summary
@@ -247,6 +280,8 @@ pub use ripr::SuppressedCheckFinding
 pub use ripr::TestEvidenceEntry
 pub use ripr::TestEvidenceSummary
 pub use ripr::analysis::DiffScopeFilter
+pub use ripr::analysis::LanguageRun
+pub use ripr::analysis::LanguageRunStatus
 pub use ripr::analysis::PARTIAL_DIFF_LANGUAGE_TIER_VERSION
 pub use ripr::analysis::PARTIAL_DIFF_SELECTION_VERSION
 pub use ripr::analysis::PartialDiffScope
@@ -440,6 +475,9 @@ pub use ripr::domain::StdinPolicy
 pub use ripr::domain::StopReason
 pub use ripr::domain::Summary
 pub use ripr::domain::SymbolId
+pub use ripr::domain::TestCandidateNextRoute
+pub use ripr::domain::TestCandidateRow
+pub use ripr::domain::TestCandidateSet
 pub use ripr::domain::TestEvidenceEntry
 pub use ripr::domain::TestEvidenceSummary
 pub use ripr::domain::VERIFICATION_EXECUTION_RESULT_SCHEMA_VERSION

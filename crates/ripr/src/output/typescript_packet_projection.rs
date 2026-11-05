@@ -14,12 +14,12 @@
 //! - No parallel TypeScript-specific completeness validator is introduced.
 //!   The only flip gate is `validate_agent_gap_record_packet(..) == Ok(())`.
 
-use crate::domain::language_capability::{
-    CapabilityFamily, cell_state, state_establishes_capability,
-};
 use crate::domain::{Finding, OracleStrength, ProbeFamily, StageState};
 use crate::output::gap_decision_ledger::{
     GapAnchor, GapRecord, GapRepairRoute, ProjectionEligibility, preview_receipt_write_command,
+};
+use ripr_contract::domain::language_capability::{
+    CapabilityFamily, cell_state, state_establishes_capability,
 };
 use std::collections::BTreeMap;
 
@@ -1282,7 +1282,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     // is a different category and is excluded above). Verify also that there is
     // actually a related test with an oracle-eligible file we can use.
     let related_test =
-        crate::output::related_test_miss::strongest_related_test(&finding.related_tests)?;
+        crate::output::related_test_miss::typescript_script_preview_related_test(finding)?;
     let test_file = related_test.file.display().to_string().replace('\\', "/");
     if test_file.is_empty() {
         return None;
@@ -1390,6 +1390,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
             None
         },
         inspection_command: None,
+        proposed_target: None,
         stop_conditions,
     };
 
@@ -1467,6 +1468,8 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         receipt: None,
         safe_gate_predicate: None,
         authority_boundary: TS_AUTHORITY_BOUNDARY.to_string(),
+        typescript_package_root: evidence_value(finding, "typescript_package_root: ")
+            .map(ToString::to_string),
     };
     // Receipt command (RIPR-SPEC-0079 `canonical_receipt_command` field rule):
     // the canonical `ripr receipt write …` form built by the shared receipt-write
@@ -1795,7 +1798,7 @@ pub(crate) mod tests {
     /// whose typed scope is `Diff` (contradictory) fails closed too.
     #[test]
     fn typed_scope_is_authority_and_contradiction_fails_closed() {
-        use crate::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
+        use ripr_contract::domain::language_capability::REPO_SCOPE_EVIDENCE_LINE;
         let mut typed_only = complete_finding();
         typed_only.analysis_scope = crate::domain::AnalysisScope::Repo;
         assert!(

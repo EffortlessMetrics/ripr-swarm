@@ -237,7 +237,7 @@ arguments (`!x`, `a != b`) do not change this grade.
 ## Required Evidence
 
 - `StaticLimitKind::RustMacroWrappedAssertionUnresolved` in
-  `crates/ripr/src/domain/language.rs`.
+  `crates/ripr-contract/src/domain/language.rs`.
 - Rust adapter post-classification selection in
   `crates/ripr/src/analysis/language/rust/oracles.rs`.
 - Unit guards for custom assertion macros and known assertion macro
@@ -260,7 +260,8 @@ arguments (`!x`, `a != b`) do not change this grade.
   | Family | Forms | Oracle read | Limitation named |
   |---|---|---|---|
   | Presence or variant only | `claims::assert_some!`, `assert_ok!`, `assert_err!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
-  | Direct payload equality | `claims::assert_some_eq!`, `assert_ok_eq!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
+  | Direct payload equality, boundary (`predicate`) probe | `claims::assert_some_eq!`, `assert_ok_eq!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
+  | Direct payload equality, changed `Ok(..)` / `Some(..)` tail (`return_value` probe) | `assert_ok_eq!(owner(..), 3)`, `assert_some_eq!(owner(..), 5)`, each under its own `use claims::..` import | exact value / strong | none (manifest-verified claims import and a literal expected operand, RIPR-SPEC-0197, #12304) |
   | Payload extraction, then a std assertion | `let v = assert_ok!(..); assert_eq!(v, ..)` | exact value / strong | none (the manifest-verified claims import path, #9619) |
   | Payload extraction, payload discarded | `let v = assert_ok!(..); let _ = v;` | relational / weak | none |
   | Tolerance equality | `approx::assert_relative_eq!`, `assert_abs_diff_eq!`, `assert_ulps_eq!`, `float_cmp::assert_approx_eq!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
@@ -269,10 +270,15 @@ arguments (`!x`, `a != b`) do not change this grade.
   | Debug-only, pin the twin would not credit | `debug_assert_eq!` off the changed boundary | unknown / none | none named; the gap stays by design |
   | Local macro with a provider's name | `macro_rules! assert_some` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
 
-  No provider macro other than the payload-extraction chain earns credit. The
-  direct payload equality forms are exact by the provider's contract, so they
-  are the first credit candidate; the tolerance forms are not, until the
-  tolerance and the size of the change are both readable.
+  Only the payload-extraction chain and the direct payload equality forms on a
+  changed `Ok(..)` / `Some(..)` tail earn credit; the equality forms are exact
+  by the provider's contract, but a verified import and a literal expected
+  operand are not enough alone: the invocation must also pass the owner-pin
+  admission gates (RIPR-SPEC-0197), including being an unqualified
+  invocation that starts its line, whose closing line holds nothing but the
+  `;` and a comment, with the owner call as its first operand. The
+  invocation may span lines (#12394). The tolerance forms do not earn credit,
+  until the tolerance and the size of the change are both readable.
 - Honesty corpus case expecting
   `rust_macro_wrapped_assertion_unresolved`, limitation detail,
   non-promotion, no verify command, no receipt command, and no repair packet.
@@ -290,8 +296,8 @@ arguments (`!x`, `a != b`) do not change this grade.
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_direct_test_with_a_recognized_oracle_keeps_the_gap`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::an_owner_call_quoted_by_stringify_keeps_the_gap`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_trait_default_method_owner_keeps_the_gap`
-- `crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
-- `crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
+- `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
+- `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
 - `crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_macro_wrapped_assertion_static_limit_kind`
 - `fixtures/rust_macro_wrapped_assertion_limitation/expected/check.json`
 - `fixtures/rust_tolerance_assertion_macro_limitation/expected/check.json`
@@ -309,7 +315,7 @@ arguments (`!x`, `a != b`) do not change this grade.
 
 | Component | Location |
 |---|---|
-| Static limit enum and text | `crates/ripr/src/domain/language.rs` |
+| Static limit enum and text | `crates/ripr-contract/src/domain/language.rs` |
 | Rust post-classification selection | `crates/ripr/src/analysis/language/rust/oracles.rs` |
 | LSP gap-artifact known-kind validation | `crates/ripr/src/lsp/gap_artifacts.rs` |
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |

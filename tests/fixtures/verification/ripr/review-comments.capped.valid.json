@@ -94,7 +94,8 @@
         "assertion_kind": "unit",
         "recommended_file": "src/lib.rs",
         "recommended_name": "accepts_inclusive_upper_edge",
-        "near_test": null
+        "near_test": null,
+        "proposed_target": null
       },
       "llm_guidance": {
         "prompt": "Add one focused discriminator test for the inclusive edge.",
@@ -141,7 +142,8 @@
         "assertion_kind": "unit",
         "recommended_file": "src/config.rs",
         "recommended_name": "default_policy_is_conservative",
-        "near_test": null
+        "near_test": null,
+        "proposed_target": null
       },
       "llm_guidance": {
         "prompt": "Add a focused default-policy assertion.",

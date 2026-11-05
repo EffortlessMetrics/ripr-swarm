@@ -68,6 +68,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::Metrics => super::reports::metrics_report(),
         XtaskCommand::RustRepairTrustReport => super::reports::rust_repair_trust_report(),
         XtaskCommand::RepairCardUsabilityReport => super::reports::repair_card_usability_report(),
+        XtaskCommand::RepairFunnelReport => super::reports::repair_funnel_report(),
         XtaskCommand::BlindJourneyContract => super::reports::blind_journey_contract_report(),
         XtaskCommand::BlindJourneyExecute => super::reports::blind_journey_execute_report(),
         XtaskCommand::OrchestrationScorecard(args) => {
@@ -94,8 +95,12 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckPythonJudgedPanel => super::check_python_judged_panel(),
         XtaskCommand::PythonRepairTrust(args) => super::reports::python_repair_trust(&args),
         XtaskCommand::VerdictCorpus(args) => super::reports::verdict_corpus(&args),
+        XtaskCommand::VerificationPlanCorpus(args) => {
+            super::reports::verification_plan_corpus_command(&args)
+        }
         XtaskCommand::TestOracleReport => super::reports::test_oracle_report(),
         XtaskCommand::TestEfficiencyReport => super::reports::test_efficiency_report(),
+        XtaskCommand::SlowTestReport(args) => super::reports::slow_test_report(&args),
         XtaskCommand::BadgeArtifacts => super::reports::badge_artifacts(),
         XtaskCommand::RepoBadgeArtifacts(args) => super::reports::repo_badge_artifacts(&args),
         XtaskCommand::BadgeBasis(args) => super::reports::badge_basis(&args),
@@ -120,6 +125,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RustCorpus(args) => super::reports::rust_corpus(&args),
         XtaskCommand::BenchAgentSurfaces(args) => super::reports::bench_agent_surfaces(&args),
         XtaskCommand::RepoContractReport => super::repo_contract_report(),
+        XtaskCommand::CurrentState(args) => super::current_state::current_state_command(&args),
         XtaskCommand::EvidenceHealth => super::reports::evidence_health_report(),
         XtaskCommand::Lane1EvidenceAudit => super::reports::lane1_evidence_audit_report(),
         XtaskCommand::EvidenceQualityScorecard => {
@@ -139,6 +145,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::LspCockpitReport => super::reports::lsp_cockpit_report(),
         XtaskCommand::OperatorCockpitReport => super::reports::operator_cockpit_report(),
         XtaskCommand::ReleaseReadiness(args) => super::reports::release_readiness(&args),
+        XtaskCommand::ReadinessSnapshot(args) => super::readiness_snapshot::run(&args),
         XtaskCommand::ReleaseNegativeCorpus(args) => super::reports::release_negative_corpus(&args),
         XtaskCommand::ReleaseManifestProposal(args) => {
             super::reports::release_manifest_proposal(&args)
@@ -197,6 +204,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::ReleaseUploadAssets(args) => release_server_invocation::upload(&args),
         XtaskCommand::TargetedTestOutcome(args) => super::reports::targeted_test_outcome(&args),
+        XtaskCommand::NativeLibtest(args) => super::native_libtest::run(&args),
         XtaskCommand::MutationCalibration(args) => super::reports::mutation_calibration(&args),
         XtaskCommand::BunUbCalibration(args) => super::reports::bun_ub_calibration(&args),
         XtaskCommand::BunUbPreviewSummary(args) => super::reports::bun_ub_preview_summary(&args),
@@ -229,12 +237,14 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::Receipts(args) => super::reports::receipts(&args),
         XtaskCommand::Worktree(args) => super::worktree(&args),
         XtaskCommand::Specs(args) => super::specs(&args),
+        XtaskCommand::Generations(args) => super::generations(&args),
         XtaskCommand::GoldenDrift => super::reports::golden_drift(),
         XtaskCommand::CiFast => super::ci_fast(),
         XtaskCommand::CiFull => super::ci_full(),
         XtaskCommand::CheckPolicyAll => super::policy::check_policy_all(),
         XtaskCommand::CheckStaticLanguage => super::check_static_language(),
         XtaskCommand::CheckAgentSkills => super::agent_skills::check(),
+        XtaskCommand::CheckAdmissionIncidentRoute => super::admission_incident_route::check(),
         XtaskCommand::CheckNoPanicFamily(args) => {
             super::no_panic::check_no_panic_family_with_args(&args)
         }
@@ -250,6 +260,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckDroidReviewConfig => super::check_droid_review_config(),
         XtaskCommand::CheckSpecFormat => super::check_spec_format(),
         XtaskCommand::CheckSpecNumbering => super::check_spec_numbering(),
+        XtaskCommand::CheckGenerationPins => super::check_generation_pins(),
         XtaskCommand::CheckFixtureContracts => super::check_fixture_contracts(),
         XtaskCommand::CheckEvidencePromotionHonesty(args) => {
             super::check_evidence_promotion_honesty(&args)
@@ -262,6 +273,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckPublicApi => super::check_public_api(),
         XtaskCommand::CheckOutputContracts => super::check_output_contracts(),
         XtaskCommand::CheckIdentityRegistry => super::identity_registry::check_identity_registry(),
+        XtaskCommand::CheckToolCapabilities(args) => super::tool_capabilities::run(&args),
         XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
         XtaskCommand::CheckSupportTiers => super::check_support_tiers(),
         XtaskCommand::CheckCapabilityProducers(args) => {
@@ -296,12 +308,14 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
                 super::schema_producer_sweep::contract_subjects_owned_by_corpus_gate,
             )
         }
+        XtaskCommand::CheckRiprAgentDisposition => super::ripr_agent_disposition::check(),
         XtaskCommand::SchemaProducerSweep(args) => {
             super::schema_producer_sweep::schema_producer_sweep(&args)
         }
         XtaskCommand::CheckDependencies => super::check_dependencies(),
         XtaskCommand::CheckSupplyChain => super::check_supply_chain(),
         XtaskCommand::CheckProcessPolicy => super::check_process_policy(),
+        XtaskCommand::CheckCliExitContract => super::check_cli_exit_contract(),
         XtaskCommand::CheckNetworkPolicy => super::check_network_policy(),
         XtaskCommand::CheckLintPolicy => super::check_lint_policy(),
         XtaskCommand::CheckCiLaneWhitelist => super::check_ci_lane_whitelist(),

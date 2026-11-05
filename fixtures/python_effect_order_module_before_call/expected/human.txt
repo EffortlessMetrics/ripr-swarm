@@ -17,13 +17,14 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:shop/route.py:checkout:field_value:field_construction:response.status_code=400
   Changed behavior: response.status_code = 400
   Missing check (1 of 2): A strong Python oracle reaches `checkout`, but its assertion does not
     observe the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_route.py:4 test_checkout (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_route.py:4 test_checkout
   Suggested test file: tests/test_route.py
   Suggested test: test_checkout
   Test node: tests/test_route.py::test_checkout
@@ -45,6 +46,7 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_effect_order_module_before_call/input --diff <cwd>/fixtures/python_effect_order_module_before_call/diff.patch --mode fast probe:shop_route.py:python_preview:6a58f374
   ripr context --root <cwd>/fixtures/python_effect_order_module_before_call/input --diff <cwd>/fixtures/python_effect_order_module_before_call/diff.patch --mode fast --at probe:shop_route.py:python_preview:6a58f374
   no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `shop/route.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command

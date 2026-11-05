@@ -13,6 +13,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::human::{plain_observation_wording, plain_stop_condition};
+use crate::output::placeholder_assertion::fill_in_note_line;
 use crate::output::preview_actionability::{PreviewActionability, preview_actionability_for};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use serde_json::Value;
@@ -53,6 +54,16 @@ pub(super) enum NoEvidenceState {
     /// A snapshot committed and its producer outcome is `no_changed_lines`:
     /// the diff against the base has no changed lines.
     AnalyzedNoChanges { base: Option<String> },
+    /// A snapshot committed and its producer outcome is `no_scope` or
+    /// `no_behavioral_candidates`: the last analysis analyzed nothing at all,
+    /// which is not an all-clear for the change an agent believes it made
+    /// (#12416). Carries the outcome kind (the default-base cause sentence
+    /// differs per kind) and the requested base (`None` = the loader's
+    /// default resolution).
+    AnalyzedNoScope {
+        kind: crate::analysis_outcome::AnalysisOutcomeKind,
+        requested_base: Option<String>,
+    },
     /// A snapshot committed; this position simply has no evidence.
     Analyzed,
 }
@@ -147,6 +158,23 @@ pub(super) fn hover_response_without_evidence(
             );
             format!(
                 "**ripr** found no changed lines against {base_text} at its last analysis, so there is nothing to grade. ripr estimates static RIPR exposure for changed {language_text} behavior; findings appear here after a change against the base is saved and analyzed."
+            )
+        }
+        // #12416: the shared not-all-clear fact plus the editor set-a-base
+        // recovery. The cause sentence is the same bytes MCP's
+        // `empty_scope_hint` carries; only the surface wrapper differs, so a
+        // no-scope session never dead-ends in the generic analyzed advice.
+        NoEvidenceState::AnalyzedNoScope {
+            kind,
+            requested_base,
+        } => {
+            let cause = kind.empty_scope_cause_sentence(
+                requested_base.as_deref(),
+                crate::analysis_outcome::EmptyScopeDiffAuthority::SavedWorktree,
+            );
+            format!(
+                "**ripr** {cause}. {}",
+                super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE
             )
         }
         NoEvidenceState::Analyzing => format!(
@@ -851,6 +879,9 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     }
     if let Some(assertion) = &witness.suggested_assertion {
         lines.push(format!("- suggested assertion: `{assertion}`"));
+        if let Some(note) = fill_in_note_line("  ", assertion) {
+            lines.push(note);
+        }
     }
     lines.push(format!("- explain: `{}`", witness.explain_command));
     if let Some(value) = witness.confidence.value {
@@ -1012,7 +1043,7 @@ const SOURCE_TEXT_AFTER_COLON_PREFIXES: &[&str] = &[
     "Propagation witness is incomplete for ",
     "Related tests appear to reach ",
     "No test is seen calling ",
-    "Related tests exercise the wrapper seam's converted callee",
+    "Related tests exercise the wrapper seam's converted callee", // user-text-exempt: matches producer text
     "Detected test input literal matching changed boundary",
 ];
 
@@ -1045,10 +1076,14 @@ fn plain_hover_summary(text: &str) -> String {
     let flush = |word: &mut String, out: &mut String, verbatim: bool| {
         match word.as_str() {
             _ if verbatim => out.push_str(word),
-            "discriminator" => out.push_str("check"),
-            "Discriminator" => out.push_str("Check"),
-            "discriminators" => out.push_str("checks"),
-            "Discriminators" => out.push_str("Checks"),
+            "discriminator" => out.push_str("check"), // user-text-exempt: rewrites the producer word
+            "Discriminator" => out.push_str("Check"), // user-text-exempt: rewrites the producer word
+            "discriminators" => out.push_str("checks"), // user-text-exempt: rewrites the producer word
+            "Discriminators" => out.push_str("Checks"), // user-text-exempt: rewrites the producer word
+            "seam" => out.push_str("spot"), // user-text-exempt: rewrites the producer word
+            "Seam" => out.push_str("Spot"), // user-text-exempt: rewrites the producer word
+            "seams" => out.push_str("spots"), // user-text-exempt: rewrites the producer word
+            "Seams" => out.push_str("Spots"), // user-text-exempt: rewrites the producer word
             _ => out.push_str(word),
         }
         word.clear();
@@ -1092,7 +1127,7 @@ fn plain_hover_summary(text: &str) -> String {
 fn discriminator_stage_line(finding: &Finding) -> String {
     let stage = &finding.ripr.reveal.discriminate;
     if finding.class == ExposureClass::Exposed || stage.state != StageState::Yes {
-        return stage_line("discriminator", stage);
+        return stage_line("discriminator", stage); // user-text-exempt: glossed stage label kept by design
     }
     let missing = finding
         .activation
@@ -1252,8 +1287,20 @@ fn push_test_shape(lines: &mut Vec<String>, entry: &ClassifiedSeam) {
         lines.push(format!("- candidate value: `{candidate}`"));
     }
     lines.push(format!("- assertion shape: {}", outline.assertion_shape));
-    if let Some(assertion) = suggested_assertion_for_classified_seam(entry) {
-        lines.push(format!("- assertion template: `{assertion}`"));
+    if let Some(note) = fill_in_note_line("  ", &outline.assertion_shape) {
+        lines.push(note);
+    }
+    // #9244 item 3: do not print a second "assertion template" line. That
+    // label reads as unfilled template text; the outline already carries the
+    // shape, and a distinct suggested assertion is still a shape, not a
+    // paste-ready template.
+    if let Some(assertion) = suggested_assertion_for_classified_seam(entry)
+        && assertion != outline.assertion_shape
+    {
+        lines.push(format!("- assertion shape: `{assertion}`"));
+        if let Some(note) = fill_in_note_line("  ", &assertion) {
+            lines.push(note);
+        }
     }
 }
 
@@ -1642,7 +1689,14 @@ fn seam_next_step_for(entry: &ClassifiedSeam) -> String {
             "Assert on the specific field or use whole-object equality.".to_string()
         }
         SeamKind::SideEffect => {
-            "Add a mock expectation, event observer, or persistence assertion.".to_string()
+            if crate::analysis::repair_route::seam_needs_collection_contents_guidance(
+                &entry.seam,
+                &entry.evidence,
+            ) {
+                crate::analysis::repair_route::COLLECTION_CONTENTS_CHECK_NEXT_STEP.to_string()
+            } else {
+                "Add a mock expectation, event observer, or persistence assertion.".to_string()
+            }
         }
         SeamKind::MatchArm => {
             "Drive an input that selects this arm and assert the result.".to_string()
@@ -1778,6 +1832,61 @@ mod seam_hover_tests {
         );
     }
 
+    #[test]
+    fn localized_collection_push_side_effect_hover_names_contents_check_not_mock() {
+        use crate::analysis::repair_route::COLLECTION_CONTENTS_CHECK_NEXT_STEP;
+
+        let seam = RepoSeam::new(
+            "src/lib.rs",
+            "log_line",
+            SeamKind::SideEffect,
+            5,
+            6,
+            "buf.push(msg.to_string())",
+            RequiredDiscriminator::Effect {
+                sink: "buf.push(msg.to_string())".to_string(),
+            },
+            ExpectedSink::SideEffect,
+        );
+        let evidence = TestGripEvidence {
+            seam_id: seam.id().clone(),
+            related_tests: Vec::new(),
+            reach: stage(StageState::Yes, "test reaches owner"),
+            activate: stage(StageState::Yes, "test activates change"),
+            propagate: stage(
+                StageState::Yes,
+                &format!(
+                    "Static propagation to `side_effect` sink is yes; {}",
+                    crate::analysis::test_grip_evidence::PUSHED_COLLECTION_COUNT_PINNED
+                ),
+            ),
+            observe: stage(StageState::Yes, "count read observes"),
+            discriminate: stage(StageState::Weak, "count read is weak"),
+            observed_values: Vec::new(),
+            missing_discriminators: Vec::new(),
+            new_test_target: None,
+            statically_contradicted_related_tests: 0,
+        };
+        let entry = ClassifiedSeam {
+            seam,
+            evidence,
+            class: SeamGripClass::WeaklyGripped,
+        };
+        let step = seam_next_step_for(&entry);
+        assert_eq!(step, COLLECTION_CONTENTS_CHECK_NEXT_STEP);
+        assert!(!step.contains("mock"), "{step}");
+
+        // Stage states and the push shape alone are not the repair route's
+        // precondition (#12456): without the count-pinned marker (aliased,
+        // conditional or unfollowed receiver) the mock wording stays.
+        let mut unmarked = entry;
+        unmarked.evidence.propagate = stage(StageState::Yes, "push follows to local");
+        assert_eq!(
+            seam_next_step_for(&unmarked),
+            "Add a mock expectation, event observer, or persistence assertion."
+        );
+    }
+
     fn sample_diagnostic() -> Diagnostic {
         Diagnostic {
             range: Range {
@@ -1881,7 +1990,7 @@ mod seam_hover_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri: BTreeMap::new(),
+            diagnostics_by_uri: BTreeMap::new().into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
@@ -2377,11 +2486,16 @@ mod seam_hover_tests {
             "- name: `discounted_total_boundary_discriminator`",
             "- candidate value: `discount_threshold (equality boundary)`",
             "- assertion shape: assert_eq!(discounted_total",
-            "- assertion template: `assert_eq!(discounted_total",
+            "  (replace each /* ... */ comment with a real value from your test before using it)",
         ] {
             if !md.contains(needle) {
                 return Err(format!("missing {needle:?} in:\n{md}"));
             }
+        }
+        if md.contains("assertion template") {
+            return Err(format!(
+                "placeholder assertion must not be labelled a template:\n{md}"
+            ));
         }
         Ok(())
     }
@@ -2951,7 +3065,7 @@ mod plain_hover_summary_tests {
     #[test]
     fn rewrites_producer_prose_but_not_user_source_text() {
         assert_eq!(
-            plain_hover_summary("the equality-boundary discriminator is missing"),
+            plain_hover_summary("the equality-boundary check is missing"),
             "the equality-boundary check is missing"
         );
         // Known forms that append source text: the tail stays verbatim.
@@ -2974,6 +3088,20 @@ mod plain_hover_summary_tests {
         assert_eq!(
             plain_hover_summary("no strong discriminator for `x"),
             "no strong discriminator for `x"
+        );
+    }
+
+    #[test]
+    fn says_spot_where_the_producer_says_seam() {
+        assert_eq!(
+            plain_hover_summary(
+                "Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): seam_helper, seam"
+            ),
+            "Related tests exercise the wrapper spot's converted callee (the changed owner is not invoked by them): seam_helper, seam"
+        );
+        assert_eq!(
+            plain_hover_summary("no test reaches this seam; other seams are fine"),
+            "no test reaches this spot; other spots are fine"
         );
     }
 
@@ -3003,7 +3131,7 @@ mod plain_hover_summary_tests {
             include_str!("../analysis/classify/flow.rs"),
             include_str!("../analysis/classify/reach.rs"),
             include_str!("../analysis/classify/infection.rs"),
-            include_str!("../domain/classification.rs"),
+            include_str!("../../../ripr-contract/src/domain/classification.rs"),
         ]
         .map(|source| {
             // Cut at the real test module: producers carry earlier item-level

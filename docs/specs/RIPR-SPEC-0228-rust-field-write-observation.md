@@ -293,12 +293,28 @@ rejected alternative. Any can be reversed later without touching the rest.
    can close and the pilot ranking would recommend a well-observed setter
    (bytesize's `format` setters displaced confirmed picks). A builder's tail `self` hands the
    value to the caller; it is not a later write, for the diff probe and the
-   seam alike. A field write offers no repair start (no new start policy):
-   `ripr check` and `ripr repair` both refuse with "a test assertion that
-   checks the changed field value" instead of "touch no code". Rejected:
-   crediting a seam by the field name alone, which any binding or sibling
-   read would satisfy; and starting a repair from a weak read of the written
-   field, which needs its own start policy and proof.
+   seam alike. A field write starts a repair from a weak read only
+   (#11870); otherwise `ripr check` and `ripr repair` both refuse with "a
+   test assertion that checks the changed field value" instead of "touch no
+   code". The one start policy is `assigned_field_weak_read_start`, asked by
+   the finding's class (a weak read keeps `weakly_exposed` instead of
+   abstaining to `static_unknown`) and by the seam's `FieldValue` missing
+   discriminator, so the two commands start the same gap. It holds only when
+   the owner borrows its receiver; no related test is `#[ignore]`d or
+   `#[should_panic]`; no assertion confirms the write; a test that calls the
+   owner directly reads `<binding>.<field>` as one whole side of a relational
+   check (`>`, `<`, `>=`, `<=`, `!=`) or `assert_ne!`, against a side that
+   does not name the binding, from the binding it ran the owner on, under the
+   confirming read's binding guards; and nothing else in a related test body can be
+   the exact check these rules do not place: no other statement, assertion or
+   not, names the field or uses the binding except as the owner call or its
+   `let` (an alias, a helper call, a destructure, a move, an `if`/`panic!`
+   check withholds); the owner's `Self` type is also not a non-plain `Drop`
+   type. A strong read stays "nothing to do"; no read, a
+   sibling field, another binding, a later write, a by-value owner, an
+   equality, a bare boolean, a getter and a private field start nothing.
+   Rejected: crediting a seam by the field name alone, which any binding or
+   sibling read would satisfy.
 
 `ripr agent stub` refuses a field-write seam with its own reason
 (`field_written_in_method`): the value to check is the receiver after the
@@ -442,6 +458,11 @@ changes `self.count += 2` to `self.count += 1`.
   each naming its example in its reasoning and labeled with runtime mutant
   truth. Examples 10 and 11 are dead writes: every mutant of the write is
   equivalent, so they have no runtime-labeled case.
+- Weak-read start (#11870): `test_grip_evidence/tests.rs`
+  `a_weak_read_of_a_written_field_is_the_missing_discriminator_only_when_placed`
+  (including the non-assertion checks above) and the real-binary `repair_check_recommended_start.rs`
+  `a_weak_read_of_a_written_field_starts_the_repair_check_recommends`
+  (positive start, the strong read as "nothing to do", and the negatives).
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.
 - Probe boundary (#6676, #6675): `lexical.rs`
   `let_binding_type_annotations_are_not_field_construction` and

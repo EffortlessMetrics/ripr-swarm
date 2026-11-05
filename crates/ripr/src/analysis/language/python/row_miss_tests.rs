@@ -1189,11 +1189,9 @@ fn strong_assertion_that_this_row_does_not_credit_is_observation_unconfirmed() -
         "from src.subject import other\n\ndef test_score():\n    score(0)\n    assert other(1) == 2\n",
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    // Never an affirmative mismatch: Python alignment is credit-only.
-    assert_eq!(
-        miss_of(&finding, "test_score"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    // #5574: a row that affirmatively observes another sink is not
+    // `observation_unconfirmed`; #5491 will assign `assertion_not_observing`.
+    assert_eq!(miss_of(&finding, "test_score"), None);
     Ok(())
 }
 
@@ -1205,14 +1203,8 @@ fn several_strong_rows_are_aligned_independently() -> Result<(), String> {
         "from src.subject import other\n\ndef test_b():\n    score(0)\n    assert other(1) == 2\n\ndef test_c():\n    score(0)\n    assert other(2) == 3\n\ndef test_d():\n    assert score(1)\n",
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(
-        miss_of(&finding, "test_b"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
-    assert_eq!(
-        miss_of(&finding, "test_c"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    assert_eq!(miss_of(&finding, "test_b"), None);
+    assert_eq!(miss_of(&finding, "test_c"), None);
     assert_eq!(
         miss_of(&finding, "test_d"),
         Some(RelatedTestMiss::WeakAssertion)
@@ -1770,6 +1762,7 @@ mod direct {
                 literal_pair: None,
                 focus: &focus,
                 boundary_fact: None,
+                exact_discriminator_fact: None,
             },
             &AlignmentPrep::new(&case.owner, &case.tests),
         );
@@ -2511,6 +2504,7 @@ mod direct {
                 guard_entered: false,
                 literal_pair: None,
                 boundary_fact: Some(&fact),
+                exact_discriminator_fact: None,
             },
             &AlignmentPrep::new(&case.owner, &case.tests),
         );
@@ -2565,6 +2559,7 @@ mod direct {
                     literal_pair: None,
                     focus: &focus,
                     boundary_fact: None,
+                    exact_discriminator_fact: None,
                 },
                 &AlignmentPrep::new(&case.owner, &case.tests),
             );
@@ -2618,6 +2613,7 @@ mod direct {
                 literal_pair: None,
                 focus: &focus,
                 boundary_fact: None,
+                exact_discriminator_fact: None,
             },
             &AlignmentPrep::new(&case.owner, &case.tests),
         );
@@ -2733,10 +2729,7 @@ fn multiline_sibling_only_row_is_observation_unconfirmed() -> Result<(), String>
     )
     .ok_or("changed literal element should classify")?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(
-        miss_of(&finding, "test_name"),
-        Some(RelatedTestMiss::ObservationUnconfirmed)
-    );
+    assert_eq!(miss_of(&finding, "test_name"), None);
     Ok(())
 }
 

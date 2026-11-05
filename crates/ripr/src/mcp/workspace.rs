@@ -219,6 +219,8 @@ struct GapListScope<'a> {
     requested: Option<&'a str>,
     filter: &'a GapListFilter,
     filtered: usize,
+    /// Filtered items reached only by an unevaluated proof harness (#12921).
+    proof_harness_only: usize,
 }
 
 /// The disclosed page window inside a gap-list document: what the caller
@@ -614,7 +616,9 @@ impl Snapshot {
         let snapshot_id = snapshot_identity(&outcome, &items, &scope, source, custody.commitment())
             .map_err(|error| {
                 AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
-            })?;
+            })?
+            .as_str()
+            .to_string();
         let profile_identity = format!(
             "mcp:{}:profile:diff:draft",
             root_identity.unwrap_or("root:unavailable")
@@ -692,7 +696,7 @@ fn snapshot_identity(
     scope: &ScopeFacts,
     source: RefreshSource,
     custody_commitment: Option<&str>,
-) -> Result<String, String> {
+) -> Result<crate::domain::CompletedAnalysisSnapshotId, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
         .iter()
@@ -728,7 +732,8 @@ fn snapshot_identity(
     }
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
-    Ok(format!("snapshot:sha256:{}", sha256_hex(&bytes)))
+    let wire = format!("snapshot:sha256:{}", sha256_hex(&bytes));
+    crate::domain::CompletedAnalysisSnapshotId::parse(&wire).map_err(|error| error.to_string())
 }
 
 fn evidence_identity(items: &[GapItem]) -> Result<String, String> {
@@ -873,6 +878,10 @@ impl WorkspaceSession {
         // `selected` count stays the full stored selection so the document
         // never lies about what filtering removed.
         let filtered = selected_items.len();
+        let proof_harness_only = selected_items
+            .iter()
+            .filter(|item| item.is_proof_harness_only())
+            .count();
 
         // The document shell carries every disclosure except the page of
         // item summaries; its measured size sets the page budget. The
@@ -888,6 +897,7 @@ impl WorkspaceSession {
                 requested,
                 filter,
                 filtered,
+                proof_harness_only,
             };
             self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
@@ -904,6 +914,7 @@ impl WorkspaceSession {
                 requested,
                 filter: &GapListFilter::default(),
                 filtered,
+                proof_harness_only,
             };
             self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
@@ -992,6 +1003,7 @@ impl WorkspaceSession {
                 requested,
                 filter,
                 filtered,
+                proof_harness_only,
             };
             let probe = self.gap_list_document(
                 snapshot,
@@ -1051,6 +1063,7 @@ impl WorkspaceSession {
             requested,
             filter,
             filtered,
+            proof_harness_only,
         };
         let document = self.gap_list_document(snapshot, &scope, items, &page)?;
         // A listing whose non-pageable shell (for example an omission
@@ -1152,7 +1165,7 @@ impl WorkspaceSession {
                 "arguments": arguments,
             });
         }
-        Ok(json!({
+        let mut document = json!({
             "schema_version": GAP_LIST_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
             "requested_snapshot_id": scope.requested,
@@ -1209,7 +1222,14 @@ impl WorkspaceSession {
                 "summaries carry identity, location, and the commit-time repair-readiness projection only; read one item with ripr_get_gap or ripr://gap/{canonical_id} for complete evidence",
                 "the list is deterministic for its snapshot identity; a refresh replaces the snapshot and its identities",
             ],
-        }))
+        });
+        // Additive (#12921): the filtered items reached only by a proof harness
+        // ripr does not evaluate. A subset of the `no_static_path` items and
+        // never test coverage; absent when zero.
+        if scope.proof_harness_only > 0 {
+            document["proof_harness_only"] = json!(scope.proof_harness_only);
+        }
+        Ok(document)
     }
 
     /// One canonical item's complete bounded evidence.
@@ -1506,6 +1526,9 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         return Some(worktree_scope_disclosure(snapshot));
     }
     let mut disclosure = tracked_scope_disclosure(snapshot);
+    if disclosure.is_none() {
+        disclosure = explicit_base_scope_disclosure(snapshot);
+    }
     let scope = &snapshot.scope;
     if scope.ignored.is_empty() {
         return disclosure;
@@ -1638,6 +1661,18 @@ fn analyzed_label(snapshot: &Snapshot) -> String {
     }
 }
 
+/// #9190: a clean committed snapshot still names the explicit base it analyzed
+/// so refresh `scope` is not null when the client passed `base`.
+fn explicit_base_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    let base = snapshot.base.as_ref()?;
+    Some(json!({
+        "analyzed": analyzed_label(snapshot),
+        "analyzed_base": base,
+        "uncommitted_edits": "outside this analysis",
+        "note": "this snapshot analyzed the committed diff against the named base; no tracked edits were outside that analysis",
+    }))
+}
+
 fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
     let facts = tracked_scope_facts_disclosure(snapshot);
     let SourceCustody::CommittedOverUncommitted { reason } = &snapshot.custody else {
@@ -1734,28 +1769,22 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
 /// diff holds no analyzable change) and the `base`/`source` arguments to pass.
 fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
     let snapshot = session.last_good.as_ref()?;
-    let empty_kind = matches!(
-        snapshot.outcome.kind,
-        AnalysisOutcomeKind::NoScope
-            | AnalysisOutcomeKind::NoChangedLines
-            | AnalysisOutcomeKind::NoBehavioralCandidates
-    );
+    let empty_kind = snapshot.outcome.kind.is_empty_scope();
     if !empty_kind || !snapshot.items.is_empty() || snapshot.source != RefreshSource::Committed {
         return None;
     }
-    let why = match &session.desired_base {
-        Some(base) => format!(
-            "the committed diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
-        ),
-        None => match snapshot.outcome.kind {
-            AnalysisOutcomeKind::NoBehavioralCandidates => "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear".to_string(),
-            _ => "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear".to_string(),
-        },
-    };
+    // #12416: the cause and retry wording live in the shared
+    // `AnalysisOutcomeKind` owner; the LSP scope disclosure consumes the
+    // same cause sentence, so the surfaces cannot drift. The bytes are the
+    // pre-refactor hint wording, pinned by the tests below.
+    let why = snapshot.outcome.kind.empty_scope_cause_sentence(
+        session.desired_base.as_deref(),
+        crate::analysis_outcome::EmptyScopeDiffAuthority::CommittedSnapshot,
+    );
     Some(json!({
         "why": why,
-        "pass_base": "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}",
-        "pass_source": "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; repair cards and readiness are offered only when the findings and the seam inventory are shown to have consumed the same source bytes, and are withheld with the cause otherwise",
+        "pass_base": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_BASE_RETRY_ROUTE,
+        "pass_source": AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,
     }))
 }
 
@@ -5153,7 +5182,7 @@ mod tests {
                 RefreshSource::Committed,
                 None,
             )?;
-            assert_eq!(snapshot.snapshot_id, original_id);
+            assert_eq!(snapshot.snapshot_id, original_id.as_str());
 
             let session = WorkspaceSession {
                 in_flight: false,
@@ -5170,9 +5199,9 @@ mod tests {
                 .first()
                 .ok_or_else(|| "the original item oracle must not be empty".to_string())?;
             let document = session
-                .get_gap(&item.canonical_id, Some(&original_id))
+                .get_gap(&item.canonical_id, Some(original_id.as_str()))
                 .map_err(|f| f.detail)?;
-            assert_eq!(document, item.document(&original_id));
+            assert_eq!(document, item.document(original_id.as_str()));
         }
         assert_eq!(lengths.len(), 2);
         assert_eq!(
@@ -5190,6 +5219,26 @@ mod tests {
                 return Err(format!("reserved code is not a wire token: {code}"));
             }
         }
+        Ok(())
+    }
+
+    /// #9190: an explicit-base committed refresh names the analyzed base in
+    /// `scope` even when the worktree is clean.
+    #[test]
+    fn explicit_base_scope_disclosure_on_clean_committed_snapshot() -> Result<(), String> {
+        let mut snapshot = Snapshot::from_output(
+            &output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?,
+            Some("root:sha256:test"),
+        )
+        .map_err(|failure| failure.detail)?;
+        assert!(scope_disclosure(&snapshot).is_none());
+        snapshot.base = Some("trunk".to_string());
+        let disclosure = scope_disclosure(&snapshot).ok_or("explicit base must disclose")?;
+        assert_eq!(disclosure.get("analyzed_base"), Some(&json!("trunk")));
+        assert_eq!(
+            disclosure.get("uncommitted_edits"),
+            Some(&json!("outside this analysis"))
+        );
         Ok(())
     }
 

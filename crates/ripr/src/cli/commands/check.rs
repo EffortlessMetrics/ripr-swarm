@@ -237,6 +237,61 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     None
 }
 
+/// An ordinary package or project manifest at or above the current directory.
+/// `resolve_project_root` anchors on workspaces, Cargo packages and Git top
+/// levels only, so a standalone npm or Python project without Git still reads
+/// as unanchored there; it is a project, and the repair-lifecycle gate keeps
+/// its ordinary answers (#12417).
+pub(in crate::cli) fn package_manifest_above_current_dir() -> bool {
+    const MANIFESTS: [&str; 4] = ["package.json", "pyproject.toml", "setup.py", "setup.cfg"];
+    let Ok(start) = std::fs::canonicalize(".") else {
+        return true;
+    };
+    start
+        .ancestors()
+        .any(|dir| MANIFESTS.iter().any(|name| dir.join(name).is_file()))
+}
+
+/// The cause an implicit repair-lifecycle run refuses with (#12417): the
+/// current directory sits under no workspace, package or Git top level, and
+/// no ordinary package manifest excuses it, so the directory is not a project
+/// and there is no repair state to answer about. `None` when the run is
+/// anchored (or the walk failed, which the ordinary resolution reports).
+pub(in crate::cli) fn unanchored_implicit_root_cause() -> Option<String> {
+    if !matches!(resolve_project_root(Path::new(".")), Ok(None)) {
+        return None;
+    }
+    if package_manifest_above_current_dir() {
+        return None;
+    }
+    Some(
+        "no workspace, package or Git repository was found above the current directory, so ripr did not look for repair state; run from inside your project or pass `--root <dir>`"
+            .to_string(),
+    )
+}
+
+/// The repair-lifecycle root resolution (`repair`, `continue`, `status`, and
+/// the `agent` spellings): the same implicit root [`resolve_implicit_command_root`]
+/// resolves, but an implicit run that no project anchors refuses instead of
+/// silently retaining the current directory (#12417). Retaining it made the
+/// spellings read or answer about an unrelated tree as if it were a project —
+/// for `continue`, by scanning that whole tree for a repair start. `check`,
+/// `pilot`, `context`, `rerun`, `diff`, `explain` and `cache` keep
+/// [`resolve_implicit_command_root`] (retain-start); an explicit `--root`
+/// skips the gate.
+pub(in crate::cli) fn resolve_implicit_command_root_refusing(
+    root: &mut PathBuf,
+    root_explicit: bool,
+) -> Result<Option<String>, String> {
+    if root_explicit {
+        return resolve_implicit_command_root(root, root_explicit);
+    }
+    if let Some(cause) = unanchored_implicit_root_cause() {
+        return Err(cause);
+    }
+    resolve_implicit_command_root(root, root_explicit)
+}
+
 /// Shared by every command that takes `--root` and defaults to `.`: without a
 /// typed `--root`, resolve the workspace root exactly as `ripr check` does
 /// (#8767), with the same stderr disclosure. A typed `--root` is kept as given.
@@ -588,7 +643,10 @@ pub(super) fn refuse_check(
 /// consumers get the requested echo, the published facts, and the bounded
 /// retry; every other failure keeps its unchanged prose.
 fn human_refusal_prose(error: &CoreError) -> String {
-    if error.refusal_notice().identity == "analysis_timeout"
+    if error
+        .refusal_notice(&crate::config::config_error_summary)
+        .identity
+        == "analysis_timeout"
         && let Some(projection) = app::timeout_refusal::take_stashed()
     {
         return format!("{error}\n{}", projection.human_recovery_text());
@@ -610,7 +668,7 @@ pub(super) fn machine_refusal_document(
     format: OutputFormat,
     error: &CoreError,
 ) -> Option<Result<String, String>> {
-    let notice = error.refusal_notice();
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
     match format {
         OutputFormat::Json => {
             let display = error.to_string();
@@ -1616,7 +1674,18 @@ fn check_inner(
     // format — see `repo_audit_path_disclosure`) — like the repo-scope
     // --base/--diff warning above, this is an advisory notice, so it is not
     // part of the --quiet-suppressed progress stream.
-    if let Some(disclosure) = format.repo_audit_path_disclosure() {
+    if let Some(disclosure) = format.repo_audit_path_disclosure(&input.root) {
+        eprintln!("{disclosure}");
+        // The audit-path formats also say when the cache has no usable entry
+        // and the full walk runs (#12505).
+        crate::analysis::announce_seam_facts_cache_misses();
+    }
+    if check_timeout_explicitly_provided
+        && let Some(disclosure) = super::check_budget::explicit_check_timeout_disclosure(
+            check_timeout,
+            format.is_repo_seam_inventory(),
+        )
+    {
         eprintln!("{disclosure}");
     }
     if matches!(format, OutputFormat::RepoExposureJson) {

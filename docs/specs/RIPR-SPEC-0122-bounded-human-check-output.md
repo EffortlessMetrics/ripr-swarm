@@ -126,7 +126,18 @@ to the preview-language note, which carries the `ripr.toml` recovery block
 (#10691). The static-limited `State:` line reads `ripr cannot tell from reading
 the code whether tests would notice this`, and the internal noun "observable
 sink" never appears (`something a test can check (a return value or side
-effect)`). The canonical gap id is labelled `Gap ID (for scripts)`. The promise covers renderer-controlled labels on the
+effect)`). The canonical gap id is labelled `Gap ID (for scripts)`. The
+bounded digest's drill-in commands and the repair start carry the same kind
+of consumer label (#12431): a `  (finding id, for explain/context)` line sits
+above the `ripr explain` / `ripr context --at` pair, and a
+`  (spot id, for repair)` line sits above a printed `ripr repair <seam-id>`
+start, naming the distinct id domain each selector keys on in plain
+glossary-safe words. The label is its own line, never part of the command, so
+every printed command stays byte-identical (line-copy and downstream line
+parsing keep working, and the TypeScript gap-bound start needs no label: its
+`--gap-id` flag already names its domain). `human-full`'s per-finding
+`Drill in:` block prints the same finding-id label through the same shared
+renderer. The promise covers renderer-controlled labels on the
 bounded surface; producer prose (for example a next-step sentence), file
 paths, and required CLI or probe identifiers are data, not renderer labels,
 and are unchanged. The schema ids and their meanings are unchanged and stay
@@ -262,10 +273,10 @@ carded one, so `check` does not report "no repair card" while `ripr pilot` and
 
 The digest's assertion line label reflects the assertion state. Boundary
 (#10692): stage and producer prose that is shared with JSON (for example "No
-strong discriminator was detected", "equality-boundary discriminator is
-missing", and the Python preview next-step text) still says "discriminator" in the
-default digest; changing it needs the shared producer strings and the JSON
-contracts to move together.
+strong discriminator was detected" and the Python preview next-step text) still
+says "discriminator" in the default digest; changing it needs the shared producer
+strings and the JSON contracts to move together. The "equality-boundary check is
+missing" reason was reworded at its producer (#12907).
 
 - `Missing check` — the finding is not `exposed`; the named
   discriminator is absent from the related tests (#10691: the digest says
@@ -278,10 +289,10 @@ contracts to move together.
 
 The line carries the discriminator value alone; the label is not restated
 inside it. `Finding.missing` mixes value-shaped entries, which the classifier
-builds as `Missing discriminator value: <value>`, with prose entries such as
+builds as `Missing check value: <value>`, with prose entries such as
 `No strong discriminator was detected`. Rendering a value-shaped entry verbatim
 under the label produced
-`Missing discriminator: Missing discriminator value: AuthError::RevokedToken`,
+`Missing discriminator: Missing check value: AuthError::RevokedToken`,
 so the renderer strips that prefix and emits
 `Missing check: AuthError::RevokedToken`. Prose entries carry no such
 prefix and are rendered unchanged. This governs the human digest only; no
@@ -1064,7 +1075,7 @@ The format adds no verdict and claims no runtime outcome.
 | Kind-scoped agent-stub not-found guidance | `crates/ripr/src/app/test_stub.rs` |
 | CLI help | `crates/ripr/src/cli/help/core.rs` |
 | First-pr missing-packet recovery | `crates/ripr/src/output/first_pr.rs` |
-| First-pr command options | `crates/ripr/src/output/first_pr/options.rs` |
+| First-pr command options | `crates/ripr/src/cli/commands/first_pr.rs` |
 | Full-human fixture projection guard | `xtask/src/main.rs` |
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |
 | Human golden fixtures | `fixtures/*/expected/human.txt` |

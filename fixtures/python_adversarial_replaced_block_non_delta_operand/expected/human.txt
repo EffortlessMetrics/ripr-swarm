@@ -17,13 +17,14 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:src/account.py:Account.balance:return_value:return_value:max_0_self._balance
   Changed behavior: return max(0, self._balance)
   Missing check (1 of 2): A strong Python oracle reaches `balance`, but its assertion does not
     observe the changed owner's output; static evidence cannot confirm the changed behavior is
     discriminated. Add an assertion on the changed owner's output
-  Related test: tests/test_account.py:4 test_balance_starts_at_the_opening_amount (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: tests/test_account.py:4 test_balance_starts_at_the_opening_amount
   Suggested test file: tests/test_account.py
   Suggested test: test_balance_starts_at_the_opening_amount
   Test node: tests/test_account.py::test_balance_starts_at_the_opening_amount
@@ -45,6 +46,7 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_replaced_block_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_replaced_block_non_delta_operand/diff.patch --mode fast probe:src_account.py:python_preview:c7d70a2d
   ripr context --root <cwd>/fixtures/python_adversarial_replaced_block_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_replaced_block_non_delta_operand/diff.patch --mode fast --at probe:src_account.py:python_preview:c7d70a2d
   no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/account.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
