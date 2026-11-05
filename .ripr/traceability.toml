@@ -8406,6 +8406,9 @@ id = "RIPR-SPEC-0088"
 name = "TypeScript repair-packet surface projection"
 spec = "docs/specs/RIPR-SPEC-0088-typescript-repair-packet-projection.md"
 tests = [
+  "crates/ripr/src/output/gap_decision_ledger.rs::tests::check_output_typescript_family_unknown_preserves_advisory_limit",
+  "crates/ripr/tests/first_pr_run_chain.rs::run_chain_retains_javascript_unknown_as_advisory_limitation",
+  "crates/ripr/tests/first_pr_run_chain.rs::run_chain_retains_typescript_unknown_as_advisory_limitation",
   "crates/ripr/src/output/human.rs::tests::preview_limited_named_limitation_has_terminal_observation_check",
   # Human surface â€” field-note and named limitation
   "crates/ripr/src/app/explain.rs::tests::explain_finding_renders_typescript_actionable_packet_field_note",
@@ -8433,6 +8436,7 @@ fixtures = [
   "fixtures/ts_already_observed"
 ]
 code = [
+  "crates/ripr/src/output/gap_decision_ledger.rs",
   "crates/ripr/src/output/human/triage.rs",
   "crates/ripr/src/app/explain.rs",
   "crates/ripr/src/output/human/sections.rs",
