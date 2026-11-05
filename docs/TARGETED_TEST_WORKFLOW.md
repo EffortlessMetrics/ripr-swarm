@@ -361,7 +361,7 @@ attempt, more than one match, or an attempt without a current eligible after
 verdict refuses. Inspect
 `ripr agent status` and follow its recovery. For regeneration of an already
 eligible attempt, select its exact `--attempt` and retained inputs as described
-in the [operator guide](LLM_OPERATOR_GUIDE.md). Do not delete evidence to force
+in [Repair attempt identity](REPAIR_ATTEMPT.md#rerunning-the-receipt). Do not delete evidence to force
 an unbound receipt or create a post-edit before phase to imply an earlier one.
 
 Once those conditions hold, regenerate verify and issue the manual receipt:
