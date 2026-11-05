@@ -54,10 +54,28 @@ fn pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls() -> R
     for (name, oracle, limited, selected, actionable) in [
         ("settings", SETTINGS, [true, true], [false, false], 1),
         ("literal", LITERAL, [false, true], [true, false], 2),
-        ("literal-same-line", LITERAL, [false, true], [true, false], 2),
+        (
+            "literal-same-line",
+            LITERAL,
+            [false, true],
+            [true, false],
+            2,
+        ),
         ("literal-reversed", LITERAL, [false, true], [true, false], 2),
-        ("literal-inline-record", LITERAL, [false, true], [true, false], 2),
-        ("literal-multiline", LITERAL, [false, true], [true, false], 2),
+        (
+            "literal-inline-record",
+            LITERAL,
+            [false, true],
+            [true, false],
+            2,
+        ),
+        (
+            "literal-multiline",
+            LITERAL,
+            [false, true],
+            [true, false],
+            2,
+        ),
         (
             "weak",
             "assert!(record.items > 0);",
@@ -131,7 +149,10 @@ fn pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls() -> R
             _ => source.clone(),
         };
         if name.starts_with("literal-") {
-            assert_ne!(changed, source, "the requested layout must change the source");
+            assert_ne!(
+                changed, source,
+                "the requested layout must change the source"
+            );
             std::fs::write(&source_path, changed).map_err(|error| error.to_string())?;
             run_git(root, &["add", "src/lib.rs"])?;
             git_commit(root, "field initializer layout")?;
@@ -172,7 +193,11 @@ fn pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls() -> R
                         })
                 })
                 .collect();
-            assert_eq!(matches.len(), 1, "one intended field expression {expression}");
+            assert_eq!(
+                matches.len(),
+                1,
+                "one intended field expression {expression}"
+            );
             let seam = matches[0];
             if !name.starts_with("literal-") {
                 assert_eq!(seam["line"], [8, 9][index]);
