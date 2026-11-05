@@ -677,7 +677,7 @@
     "ungripped_share_of_missed": 0.106
   },
   "replacement_criterion": {
-    "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Every threshold is a placeholder pending the owner's product call (#12901), not an accepted bar. A replaces verdict requires every thresholded criterion met and none not_established; it is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
+    "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established; The verdict is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion is not_established until a real-mutant corpus exists. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
     "criteria": [
       {
         "description": "agreement of ripr claims_discriminator seams with runtime outcomes",
@@ -689,7 +689,7 @@
         ],
         "status": "not_met",
         "threshold": 0.97,
-        "threshold_is_placeholder": true
+        "threshold_source": "docs/METRICS.md release ladder R2"
       },
       {
         "description": "share of runtime-missed mutants ripr flagged as a gap or an honest unknown",
@@ -701,7 +701,7 @@
         ],
         "status": "not_met",
         "threshold": 0.8,
-        "threshold_is_placeholder": true
+        "threshold_source": "docs/METRICS.md release ladder R2"
       },
       {
         "description": "share of runtime-missed mutants ripr flagged ungripped (informational, no threshold)",
@@ -723,24 +723,43 @@
         ],
         "status": "not_met",
         "threshold": 0.5,
-        "threshold_is_placeholder": true
+        "threshold_source": "agent-chosen: a majority of generated mutants must reach a canonical_precise seam join and so receive a scored verdict"
       },
       {
         "description": "ripr wall time on the diff as a share of full cargo-mutants wall time on the same checkout",
         "direction": "at_most",
         "id": "time_vs_full_cargo_mutants",
         "observed": {
-          "cargo_mutants_seconds": null,
-          "ratio": null,
-          "ripr_seconds": null
+          "cargo_mutants_seconds": 128.066,
+          "ratio": 0.002,
+          "ripr_seconds": 0.225
         },
-        "reason": "no paired timing of ripr and full cargo-mutants is recorded for these checkouts; no figure is claimed",
+        "recorded": {
+          "cargo_mutants_command": "cargo mutants --no-shuffle (full crate, cold target directory, 86 mutants: 61 caught, 20 missed, 4 unviable, 1 timeout)",
+          "cargo_mutants_seconds": 128.066,
+          "crate": "rust-hex",
+          "machine": "Linux 6.18 x86_64, 4 vCPU Intel Xeon 2.10GHz, shared cloud VM",
+          "note": "One crate, one diff, one cargo-mutants run; ripr figure is the median of 3 warm-disk runs. ripr is diff-scoped and cargo-mutants whole-crate, which is the comparison the criterion states. Single sample, not a distribution; Rust only.",
+          "revision": "e25a8701f7f6b5ec4acedffcb4a45cfb69cc34eb",
+          "ripr_command": "ripr check --root . --diff <one-line diff changing the `data.len() % 2 != 0` predicate at src/lib.rs:225> --format json (mode draft)",
+          "ripr_runs_seconds": [
+            0.298,
+            0.219,
+            0.225
+          ],
+          "ripr_seconds": 0.225,
+          "tool_versions": {
+            "cargo_mutants": "27.1.0",
+            "ripr": "0.11.0 (5f33055a3a86dc0a68db0b11f51fcb795044db72), debug build",
+            "rustc": "1.95.0"
+          }
+        },
         "scope": [
           "rust"
         ],
-        "status": "not_established",
-        "threshold": 0.25,
-        "threshold_is_placeholder": true
+        "status": "met",
+        "threshold": 0.1,
+        "threshold_source": "agent-chosen: ripr must cost under a tenth of a full cargo-mutants run on the same crate to be a usable substitute in the edit loop"
       },
       {
         "description": "agreement with real mutants on Python and TypeScript",
@@ -756,7 +775,6 @@
       }
     ],
     "not_established": [
-      "time_vs_full_cargo_mutants",
       "python_typescript_real_mutant_agreement"
     ],
     "not_met": [
@@ -1040,5 +1058,25 @@
     "no_containing_seam_share": 0.483,
     "with_caught_or_missed_outcome": 1647
   },
-  "status": "advisory"
+  "status": "advisory",
+  "timing_observation": {
+    "cargo_mutants_command": "cargo mutants --no-shuffle (full crate, cold target directory, 86 mutants: 61 caught, 20 missed, 4 unviable, 1 timeout)",
+    "cargo_mutants_seconds": 128.066,
+    "crate": "rust-hex",
+    "machine": "Linux 6.18 x86_64, 4 vCPU Intel Xeon 2.10GHz, shared cloud VM",
+    "note": "One crate, one diff, one cargo-mutants run; ripr figure is the median of 3 warm-disk runs. ripr is diff-scoped and cargo-mutants whole-crate, which is the comparison the criterion states. Single sample, not a distribution; Rust only.",
+    "revision": "e25a8701f7f6b5ec4acedffcb4a45cfb69cc34eb",
+    "ripr_command": "ripr check --root . --diff <one-line diff changing the `data.len() % 2 != 0` predicate at src/lib.rs:225> --format json (mode draft)",
+    "ripr_runs_seconds": [
+      0.298,
+      0.219,
+      0.225
+    ],
+    "ripr_seconds": 0.225,
+    "tool_versions": {
+      "cargo_mutants": "27.1.0",
+      "ripr": "0.11.0 (5f33055a3a86dc0a68db0b11f51fcb795044db72), debug build",
+      "rustc": "1.95.0"
+    }
+  }
 }

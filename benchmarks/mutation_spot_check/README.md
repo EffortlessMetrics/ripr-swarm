@@ -82,10 +82,14 @@ other keys are unaffected):
   and `scope`, plus an overall `verdict` (`replaces` only when every
   thresholded criterion is met and none is `not_established`; otherwise
   `not_yet` listing `not_met` and `not_established` ids). Thresholds are
-  placeholders pending the owner's product call (#12901). Time versus full
-  cargo-mutants stays `not_established` until a paired timing is recorded as a
-  top-level `timing_observation` (`ripr_seconds`, `cargo_mutants_seconds`);
-  Python/TypeScript agreement is `not_established` (no corpus). A `replaces`
+  bars from the release ladder in docs/METRICS.md (R2: precision 0.97,
+  flagged-or-unknown recall 0.80) or agent-chosen technical bars with the
+  rationale in each row's `threshold_source` (scored coverage 0.50; ripr wall
+  time at most 0.10 of full cargo-mutants). The time criterion reads the
+  top-level `timing_observation` (`ripr_seconds`, `cargo_mutants_seconds`,
+  crate, revision, tool versions, machine); it stays `not_established` when
+  absent. The recorded observation is one crate (rust-hex), one diff, one run.
+  Python/TypeScript agreement is `not_established` (no corpus), so `replaces` is currently unreachable; this is fail-closed by design until a real-mutant corpus exists. A `replaces`
   verdict is not suite adequacy; scope is Rust on the recorded crates.
 
 All are advisory, bound to the recorded revisions, and not suite adequacy. To
