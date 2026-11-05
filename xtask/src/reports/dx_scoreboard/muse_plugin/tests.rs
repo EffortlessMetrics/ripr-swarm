@@ -124,7 +124,10 @@ fn native_muse_fixture_routes_without_inventing_repair() -> Result<(), String> {
     let config = config()?;
     let value = parse_ingest_text(FIXTURE)?;
     let samples = parse_ingest(&value, &config)?;
-    assert_eq!(observed(&samples, "setup_passed")?, &SampleOutcome::Value(1.0));
+    assert_eq!(
+        observed(&samples, "setup_passed")?,
+        &SampleOutcome::Value(1.0)
+    );
     assert_eq!(
         observed(&samples, "durable_ready_reported")?,
         &SampleOutcome::NotMeasured
@@ -161,7 +164,12 @@ fn native_muse_fixture_routes_without_inventing_repair() -> Result<(), String> {
     let absent = report_metric(&report, "executed_discrimination")?;
     assert_eq!(absent["status"], "not_measured");
     assert_eq!(absent["value"], Value::Null);
-    assert!(!absent["reason"].as_str().ok_or("reason")?.contains("no --ingest"));
+    assert!(
+        !absent["reason"]
+            .as_str()
+            .ok_or("reason")?
+            .contains("no --ingest")
+    );
     Ok(())
 }
 
@@ -204,7 +212,12 @@ fn native_muse_sparse_record_retains_context_without_measurements() -> Result<()
         let metric = report_metric(&report, name)?;
         assert_eq!(metric["status"], "not_measured");
         assert_eq!(metric["value"], Value::Null);
-        assert!(!metric["reason"].as_str().ok_or("reason")?.contains("no --ingest"));
+        assert!(
+            !metric["reason"]
+                .as_str()
+                .ok_or("reason")?
+                .contains("no --ingest")
+        );
     }
     for omitted in [false, true] {
         let mut partial = value.clone();
@@ -234,7 +247,10 @@ fn native_muse_envelope_joins_pins_without_aliasing_namespaces() -> Result<(), S
     });
     base["mcp"]["fresh_for_working_tree"] = json!(false);
     base["identity"]["fixture_digest"] = json!(format!("sha256:{}", "5".repeat(64)));
-    assert_ne!(base["environment"]["git_head"], base["identity"]["ripr_commit"]);
+    assert_ne!(
+        base["environment"]["git_head"],
+        base["identity"]["ripr_commit"]
+    );
     to_input(&base)?;
     for (pointer, replacement) in [
         ("/identity/scenario_id", json!("another-scenario")),
@@ -290,9 +306,7 @@ fn native_muse_completion_cannot_override_refuted_observations() -> Result<(), S
     stale["observations"]["durable"]["after_state"] = json!("stale");
     stale["observations"]["durable"]["current"] = json!(false);
     for bad in [wrong_passes, stale] {
-        let err = to_input(&bad)
-            .err()
-            .ok_or("refuted completion accepted")?;
+        let err = to_input(&bad).err().ok_or("refuted completion accepted")?;
         assert!(err.contains("completed_repair"), "{err}");
     }
     for class in ["weakly_exposed", "reachable_unrevealed", "no_static_path"] {
@@ -304,7 +318,10 @@ fn native_muse_completion_cannot_override_refuted_observations() -> Result<(), S
         assert!(err.contains("completed_repair"), "{class}: {err}");
         negative["verdicts"]["combined_claim"] = json!("not_completed");
         assert_eq!(
-            observed(&parse_ingest(&negative, &config()?)?, "static_exposed_after")?,
+            observed(
+                &parse_ingest(&negative, &config()?)?,
+                "static_exposed_after"
+            )?,
             &SampleOutcome::Value(0.0)
         );
     }
@@ -357,7 +374,10 @@ fn native_muse_unknown_static_keeps_executed_evidence_independent() -> Result<()
         let static_metric = report_metric(&report, "static_exposed_after")?;
         assert_eq!(static_metric["status"], "not_measured");
         assert_eq!(static_metric["value"], Value::Null);
-        assert_eq!(report_metric(&report, "executed_discrimination")?["value"], 1.0);
+        assert_eq!(
+            report_metric(&report, "executed_discrimination")?["value"],
+            1.0
+        );
         for key in ["setup", "durable", "executions", "usage"] {
             value["observations"]
                 .as_object_mut()
@@ -412,7 +432,11 @@ fn native_muse_full_trial_keeps_distinct_axes_and_exact_token_arithmetic() -> Re
     let samples = parse_ingest(&value, &config)?;
     assert_eq!(samples.len(), 16);
     for name in &METRICS[..7] {
-        assert_eq!(observed(&samples, name)?, &SampleOutcome::Value(1.0), "{name}");
+        assert_eq!(
+            observed(&samples, name)?,
+            &SampleOutcome::Value(1.0),
+            "{name}"
+        );
     }
     assert_eq!(
         observed(&samples, "input_tokens")?,
@@ -455,13 +479,19 @@ fn native_muse_schema_rejects_pin_shape_and_numeric_drift() -> Result<(), String
     let base = full_fixture()?;
     to_input(&base)?;
     let cases = [
-        ("/observations/subject/plugin_package_sha256", json!("unpinned")),
+        (
+            "/observations/subject/plugin_package_sha256",
+            json!("unpinned"),
+        ),
         ("/observations/subject/ripr_commit", json!("main")),
         ("/observations/subject/model_config_sha256", Value::Null),
         ("/observations/trial_id", json!("")),
         ("/observations/recorded_unix_ms", json!(-1)),
         ("/observations/usage/model_calls", json!(0.5)),
-        ("/observations/usage/tool_calls", json!(9007199254740992_u64)),
+        (
+            "/observations/usage/tool_calls",
+            json!(9007199254740992_u64),
+        ),
         ("/observations/usage/elapsed_ms", json!(-1.0)),
         ("/observations/usage/peak_rss_bytes", Value::Null),
         ("/observations/durable/attempt_id", json!("narrated repair")),
@@ -511,11 +541,18 @@ fn native_muse_accepts_integral_decimal_and_exponent_spellings() -> Result<(), S
     let value = parse_ingest_text(&encoded)?;
     let actual = parse_ingest(&value, &config)?;
     for name in METRICS {
-        assert_eq!(observed(&actual, name)?, observed(&expected, name)?, "{name}");
+        assert_eq!(
+            observed(&actual, name)?,
+            observed(&expected, name)?,
+            "{name}"
+        );
     }
     for (from, to) in [
         ("\"input\":1e2", "\"input\":100.00000000000000001"),
-        ("\"tests_executed\":1.0", "\"tests_executed\":1.00000000000000001"),
+        (
+            "\"tests_executed\":1.0",
+            "\"tests_executed\":1.00000000000000001",
+        ),
         ("\"exit_code\":0.0", "\"exit_code\":0.00000000000000001"),
     ] {
         assert!(encoded.contains(from), "fixture lacks {from}");
@@ -540,21 +577,61 @@ fn native_muse_semantics_reject_contradictory_success_and_unbound_evidence() -> 
     let base = full_fixture()?;
     to_input(&base)?;
     let cases = [
-        ("/observations/setup/mcp_available", json!(false), "setup status"),
-        ("/observations/static/after_evidence", json!("setup-log"), "static_report"),
-        ("/observations/durable/current", json!(false), "ready_to_finish"),
-        ("/observations/durable/edit_cage", json!("violated"), "ready_to_finish"),
-        ("/observations/durable/after_manifest", json!("missing"), "unknown Muse evidence"),
-        ("/observations/executions/original/exit_code", json!(1), "passing execution"),
-        ("/observations/executions/original/tests_executed", json!(0), "passing execution"),
-        ("/observations/executions/counterexample/exit_code", json!(0), "failed execution"),
-        ("/observations/executions/counterexample/tests_executed", json!(0), "assertion failure"),
+        (
+            "/observations/setup/mcp_available",
+            json!(false),
+            "setup status",
+        ),
+        (
+            "/observations/static/after_evidence",
+            json!("setup-log"),
+            "static_report",
+        ),
+        (
+            "/observations/durable/current",
+            json!(false),
+            "ready_to_finish",
+        ),
+        (
+            "/observations/durable/edit_cage",
+            json!("violated"),
+            "ready_to_finish",
+        ),
+        (
+            "/observations/durable/after_manifest",
+            json!("missing"),
+            "unknown Muse evidence",
+        ),
+        (
+            "/observations/executions/original/exit_code",
+            json!(1),
+            "passing execution",
+        ),
+        (
+            "/observations/executions/original/tests_executed",
+            json!(0),
+            "passing execution",
+        ),
+        (
+            "/observations/executions/counterexample/exit_code",
+            json!(0),
+            "failed execution",
+        ),
+        (
+            "/observations/executions/counterexample/tests_executed",
+            json!(0),
+            "assertion failure",
+        ),
         (
             "/observations/executions/counterexample/failed_test",
             json!("unrelated_test"),
             "named test selector",
         ),
-        ("/observations/executions/restored/id", json!("original"), "distinct IDs"),
+        (
+            "/observations/executions/restored/id",
+            json!("original"),
+            "distinct IDs",
+        ),
         (
             "/observations/executions/restored/tests_sha256",
             json!("0".repeat(64)),
@@ -570,9 +647,21 @@ fn native_muse_semantics_reject_contradictory_success_and_unbound_evidence() -> 
             json!("1".repeat(64)),
             "different implementation",
         ),
-        ("/observations/usage/tokens/cached_input", json!(101), "cached_input <= input"),
-        ("/observations/usage/tokens/total", json!(104), "total = input + output"),
-        ("/observations/subject/platform", json!("   "), "blank identity"),
+        (
+            "/observations/usage/tokens/cached_input",
+            json!(101),
+            "cached_input <= input",
+        ),
+        (
+            "/observations/usage/tokens/total",
+            json!(104),
+            "total = input + output",
+        ),
+        (
+            "/observations/subject/platform",
+            json!("   "),
+            "blank identity",
+        ),
     ];
     for (pointer, replacement, reason) in cases {
         let mut bad = base.clone();
@@ -712,7 +801,10 @@ fn native_muse_incomplete_only_keeps_provenance_without_numeric_zero() -> Result
         None,
         false,
     );
-    assert_eq!(report_metric(&report, "setup_passed")?["value"], Value::Null);
+    assert_eq!(
+        report_metric(&report, "setup_passed")?["value"],
+        Value::Null
+    );
     Ok(())
 }
 
@@ -799,7 +891,10 @@ fn native_muse_trials_never_claim_baseline_comparability() -> Result<(), String>
     );
     for (pointer, replacement) in [
         ("/observations/subject/model", json!("different-model")),
-        ("/observations/scenario/fixture_sha256", json!("0".repeat(64))),
+        (
+            "/observations/scenario/fixture_sha256",
+            json!("0".repeat(64)),
+        ),
         ("/observations/usage/model_calls", json!(40)),
         ("/observations/usage/complete", json!(false)),
     ] {

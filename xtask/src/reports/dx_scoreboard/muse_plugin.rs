@@ -72,7 +72,9 @@ pub(super) fn complete_projection(
     }
     if let Some(first) = samples.first_mut() {
         let encoded = serde_json::to_string(value).map_err(|err| err.to_string())?;
-        first.detail.push_str(&format!("; supplied_record={encoded}"));
+        first
+            .detail
+            .push_str(&format!("; supplied_record={encoded}"));
     }
     Ok(samples)
 }
@@ -181,7 +183,9 @@ pub(super) fn to_input(record: &Value) -> Result<Value, String> {
         reference(text(observation, "before_evidence")?, "static_report")?;
         match (observation.get("after"), observation.get("after_evidence")) {
             (Some(after), Some(after_ref)) => {
-                let after_ref = after_ref.as_str().ok_or("after_evidence must be a string")?;
+                let after_ref = after_ref
+                    .as_str()
+                    .ok_or("after_evidence must be a string")?;
                 reference(after_ref, "static_report")?;
                 distinct_snapshots(
                     observation,
@@ -201,9 +205,7 @@ pub(super) fn to_input(record: &Value) -> Result<Value, String> {
             }
             (None, None) => {}
             _ => {
-                return Err(
-                    "static after class and evidence must be supplied together".to_string(),
-                );
+                return Err("static after class and evidence must be supplied together".to_string());
             }
         }
     }
@@ -223,7 +225,13 @@ pub(super) fn to_input(record: &Value) -> Result<Value, String> {
         if supplied != 0 {
             reference(text(durable, "after_manifest")?, "repair_manifest")?;
             let ready = durable["after_state"] == "ready_to_finish";
-            distinct_snapshots(durable, "before_manifest", "after_manifest", ready, &evidence)?;
+            distinct_snapshots(
+                durable,
+                "before_manifest",
+                "after_manifest",
+                ready,
+                &evidence,
+            )?;
             let compliant = durable["current"] == true && durable["edit_cage"] == "compliant";
             if ready && !compliant {
                 return Err("ready_to_finish contradicts current/edit_cage observation".to_string());
@@ -426,7 +434,9 @@ fn distinct_snapshots(
     let first = text(value, before)?;
     let second = text(value, after)?;
     if first == second || (changed && evidence[first]["sha256"] == evidence[second]["sha256"]) {
-        return Err(format!("{before} and {after} need distinct snapshot evidence"));
+        return Err(format!(
+            "{before} and {after} need distinct snapshot evidence"
+        ));
     }
     Ok(())
 }

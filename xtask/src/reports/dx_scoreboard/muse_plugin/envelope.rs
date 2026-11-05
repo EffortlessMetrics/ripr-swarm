@@ -54,8 +54,7 @@ pub(super) fn validate(record: &Value, observations: &Value) -> Result<(), Strin
         ("/efficiency/output_tokens", "/usage/tokens/output", 1),
         ("/efficiency/wall_time", "/usage/elapsed_ms", 1000),
     ] {
-        if let (Some(expected), Some(actual)) =
-            (number(record, outer), number(observations, inner))
+        if let (Some(expected), Some(actual)) = (number(record, outer), number(observations, inner))
             && expected * bigdecimal::BigDecimal::from(multiplier) != actual
         {
             return Err(format!("canonical {outer} contradicts observations{inner}"));

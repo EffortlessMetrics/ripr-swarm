@@ -691,7 +691,8 @@ pub(crate) fn load_ingest(
     let value = parse_ingest_text(&text).map_err(|err| format!("{}: {err}", path.display()))?;
     let mut samples =
         parse_ingest(&value, config).map_err(|err| format!("{}: {err}", path.display()))?;
-    muse_plugin::register_run(&value, muse_runs).map_err(|err| format!("{}: {err}", path.display()))?;
+    muse_plugin::register_run(&value, muse_runs)
+        .map_err(|err| format!("{}: {err}", path.display()))?;
     if value["schema_version"].as_str() == Some(muse_plugin::SCHEMA_VERSION)
         && let Some(first) = samples.first_mut()
     {
