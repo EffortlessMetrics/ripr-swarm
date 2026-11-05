@@ -1,0 +1,247 @@
+{
+  "schema": 1,
+  "candidate_tree": "1df07a7c03660049a44bc92da176649cc24c6006",
+  "binary": {
+    "sha256": "12969463af57ae087366affe89c02596051a234ebb8eacb3324bda50dfdc3a82",
+    "bytes": 368177608,
+    "build_tree": "1df07a7c03660049a44bc92da176649cc24c6006",
+    "compiler_artifact": "review-controls-compiler-artifact.json",
+    "receipt": "review_controls_reload.result.json",
+    "features": [
+      "default",
+      "lang-python",
+      "lang-rust",
+      "lang-typescript"
+    ],
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": true
+    }
+  },
+  "focused_subjects_passed": 23,
+  "results": [
+    {
+      "label": "review_controls_reload",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "ripr",
+        "--lib",
+        "--message-format=json-render-diagnostics",
+        "lsp::tests::external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save",
+        "--",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17971
+      },
+      "duration_seconds": 869.7027058601379,
+      "peak_cgroup_memory_bytes": 15537221632,
+      "min_free_disk_bytes": 23489257472,
+      "log_sha256": "1909caa316e9f9d7da98b83e425fdb1af50a05a575de511f27ebeea90399919d"
+    },
+    {
+      "label": "review_compact_prefill",
+      "command": [
+        "review-controls-lib-test",
+        "analysis::seam_inventory::compact_prefill::",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": {
+        "passed": 7,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17965
+      },
+      "duration_seconds": 2.7025694847106934,
+      "peak_cgroup_memory_bytes": 3151409152,
+      "min_free_disk_bytes": 23867998208,
+      "log_sha256": "d0f21910f25affc4b0153f39e73e194d157778e147bc455c0d22829eddc7a94d"
+    },
+    {
+      "label": "review_window_store",
+      "command": [
+        "review-controls-lib-test",
+        "analysis::seam_cache::store::tests::compact_windows_",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": {
+        "passed": 5,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17967
+      },
+      "duration_seconds": 0.8190450668334961,
+      "peak_cgroup_memory_bytes": 3124236288,
+      "min_free_disk_bytes": 23876534272,
+      "log_sha256": "5b3eaf359f276e7ed46cc164636847e88852942571f9efaa782ff5dbccbf2090"
+    },
+    {
+      "label": "review_compact_evidence",
+      "command": [
+        "review-controls-lib-test",
+        "analysis::test_grip_evidence::compact_windows::",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": {
+        "passed": 5,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17967
+      },
+      "duration_seconds": 0.20195555686950684,
+      "peak_cgroup_memory_bytes": 3114975232,
+      "min_free_disk_bytes": 23876546560,
+      "log_sha256": "bad6e35b36c4052a0f6cfbf5864a1c29f2764b630f0dd97411b7c3d868e5e06b"
+    },
+    {
+      "label": "review_reload_retry_wire",
+      "command": [
+        "review-controls-lib-test",
+        "lsp::tests::did_change_retries_reloaded_content_after_a_failed_refresh_over_the_wire",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17971
+      },
+      "duration_seconds": 1.2216527462005615,
+      "peak_cgroup_memory_bytes": 3125993472,
+      "min_free_disk_bytes": 23876214784,
+      "log_sha256": "5733aaa6318f2eddb6017eb44681750fb7ea6869c12cffc2c1607a311e5b9215"
+    },
+    {
+      "label": "review_failed_save_wire",
+      "command": [
+        "review-controls-lib-test",
+        "lsp::tests::did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17971
+      },
+      "duration_seconds": 0.8040351867675781,
+      "peak_cgroup_memory_bytes": 3124563968,
+      "min_free_disk_bytes": 23876497408,
+      "log_sha256": "4a54b943466830b3139203f5a426eca1585cb7370c0dc40c398f2adcd909e03b"
+    },
+    {
+      "label": "review_uncovered_retry_wire",
+      "command": [
+        "review-controls-lib-test",
+        "lsp::tests::failed_refresh_invalidates_only_uncovered_save_digests_over_the_wire",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17971
+      },
+      "duration_seconds": 2.3435006141662598,
+      "peak_cgroup_memory_bytes": 3126317056,
+      "min_free_disk_bytes": 23876198400,
+      "log_sha256": "97b85aac495b3621121ece1d74895acebdc985e08a32aa73cbe10a845145dbea"
+    },
+    {
+      "label": "review_cancel_retry_control",
+      "command": [
+        "review-controls-lib-test",
+        "lsp::backend::work_done_progress_guard_tests::dropped_refresh_guard_invalidates_only_uncovered_save_digests",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17971
+      },
+      "duration_seconds": 2.142732620239258,
+      "peak_cgroup_memory_bytes": 3139280896,
+      "min_free_disk_bytes": 23876468736,
+      "log_sha256": "2e0d2190f7c989bdedfa9af3ca83a1f2e13d406c6475d59866f7eaf3a00c22ca"
+    },
+    {
+      "label": "review_framed_pair",
+      "command": [
+        "review-controls-lib-test",
+        "lsp::tests::framed_lsp_protocol_smoke_logs_successful_refresh_completion",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered": 17971
+      },
+      "duration_seconds": 0.4078242778778076,
+      "peak_cgroup_memory_bytes": 3133669376,
+      "min_free_disk_bytes": 23876112384,
+      "log_sha256": "2e5898264a0c0a93c40c1d7b96c8a389522fa5eb7d7f7bd106c56cc2bbeab733"
+    }
+  ],
+  "source_review": "Both substantive follow-up findings accepted on this exact tree by existing implementation owner; no new actionable defect. Not a formal hosted approval.",
+  "limits": [
+    "No separate new zero-path cancellation result; existing producer/context cancellation tests passed.",
+    "Wrong-zero production reachability remains unestablished. Negative input is deliberately inconsistent to test complete-generation invariant.",
+    "Framed proof is weak LSP evidence plus stale editor response and a separate positive production inventory, not a positive LSP packet.",
+    "Full17972testclean-rootCargo harness is running; its result and refreshed manifestchecks remain pending."
+  ],
+  "prior_evidence": "Original3aeand1b5receipts retained. Prior1b5full17962pass7envfail1ignored remains unchanged; allsevenunchangedcontrolreruns passed5+1+1inordinarilyreviewedcleanroot."
+}
+
