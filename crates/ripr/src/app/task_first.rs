@@ -908,6 +908,11 @@ pub(crate) fn resolve_repair_start(
     // seam, so repair must not start somewhere else). A diff that changes no
     // Rust production line leaves the whole-repository selection unscoped.
     let diff = live_check_diff_files(root, base);
+    // A deletion immediately after a seam can be its removed tail or an
+    // unrelated next statement. Do not infer a repair target from that gap.
+    if let Some(files) = diff.as_deref() {
+        refuse_ambiguous_adjacent_deletions(&classified, files)?;
+    }
     // #11400: a changed `const` stands for the returned expressions of its
     // readers, by the probe rule `ripr check` uses, so those seams are the
     // change too.
@@ -1634,6 +1639,48 @@ fn seam_touches_change(
                 .chain(file.removed_lines.iter())
                 .any(|line| (start..=end).contains(&line.new_side_line))
         })
+}
+
+fn refuse_ambiguous_adjacent_deletions(
+    classified: &[crate::analysis::ClassifiedSeam],
+    files: &[crate::analysis::ChangedFile],
+) -> Result<(), String> {
+    if classified
+        .iter()
+        .any(|entry| seam_has_adjacent_deletion(entry, files))
+    {
+        Err("repair start refused: a deletion is adjacent to a gap, but its ownership is uncertain; inspect the change with ripr check".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+/// A deletion at end + 1 may be a removed seam tail or a separate statement.
+fn seam_has_adjacent_deletion(
+    entry: &crate::analysis::ClassifiedSeam,
+    files: &[crate::analysis::ChangedFile],
+) -> bool {
+    let path = normalized_relative_path(entry.seam.file());
+    let end = entry
+        .seam
+        .source_lines()
+        .map(|(_, end)| end)
+        .or_else(|| entry.seam.span().map(|span| span.end_line))
+        .unwrap_or_else(|| {
+            entry
+                .seam
+                .display_line()
+                .saturating_add(entry.seam.expression().lines().count().saturating_sub(1))
+        });
+    end.checked_add(1).is_some_and(|gap| {
+        files.iter().any(|file| {
+            normalized_relative_path(&file.path) == path
+                && file
+                    .removed_lines
+                    .iter()
+                    .any(|line| line.new_side_line == gap)
+        })
+    })
 }
 
 /// #11400: whether `entry` is the return-value seam on a line, with the same
@@ -4264,6 +4311,107 @@ pub(crate) mod tests {
         assert_eq!(held_inline_target(&root, &missing), None);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    #[test]
+    fn real_git_adjacent_deletions_are_uncertain_in_both_consumers_13098() -> Result<(), String> {
+        use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+        use crate::testing::fixture_git::{
+            fixture_git_ok, fixture_git_stdout, remove_fixture_tree,
+        };
+        struct Root(std::path::PathBuf);
+        impl Drop for Root {
+            fn drop(&mut self) {
+                let _ = remove_fixture_tree(&self.0);
+            }
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos();
+        let root =
+            Root(std::env::temp_dir().join(format!("ripr-13098-{}-{stamp}", std::process::id())));
+        for (name, before, after) in [
+            (
+                "tail",
+                "fn f(x: i32) -> bool {\n    x > 0\n        && x < 10\n}\n",
+                "fn f(x: i32) -> bool {\n    x > 0\n}\n",
+            ),
+            (
+                "other",
+                "fn f(x: i32) -> bool {\n    let _ = x > 0;\n    audit();\n    false\n}\n",
+                "fn f(x: i32) -> bool {\n    let _ = x > 0;\n    false\n}\n",
+            ),
+        ] {
+            let dir = root.0.join(name);
+            std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+            fixture_git_ok(&dir, &["init", "-q"])?;
+            fixture_git_ok(&dir, &["config", "core.autocrlf", "false"])?;
+            std::fs::write(dir.join("src/pricing.rs"), before).map_err(|e| e.to_string())?;
+            fixture_git_ok(&dir, &["add", "src/pricing.rs"])?;
+            std::fs::write(dir.join("src/pricing.rs"), after).map_err(|e| e.to_string())?;
+            let patch = fixture_git_stdout(&dir, &["diff", "--unified=0", "--", "src/pricing.rs"])?;
+            assert!(patch.contains("@@ -3 +2,0 @@"), "{name}: {patch}");
+            let files = crate::analysis::parse_unified_diff(&patch);
+            assert_eq!(files.len(), 1);
+            assert_eq!(files[0].removed_lines.len(), 1);
+            let mut entry =
+                gate_entry(crate::analysis::seams::SeamGripClass::Ungripped, Vec::new());
+            entry.seam = RepoSeam::new(
+                "src/pricing.rs",
+                "f",
+                SeamKind::PredicateBoundary,
+                1,
+                2,
+                "x > 0",
+                RequiredDiscriminator::BoundaryValue {
+                    description: "boundary".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            );
+            assert!(!seam_touches_change(&entry, &files), "{name}");
+            assert!(seam_has_adjacent_deletion(&entry, &files), "{name}");
+            assert!(
+                refuse_ambiguous_adjacent_deletions(std::slice::from_ref(&entry), &files).is_err(),
+                "{name}"
+            );
+            let change =
+                crate::output::pilot::PilotCurrentChange::from_diff_text(&dir, None, &patch);
+            assert!(!change.touches(&entry), "{name}");
+            assert!(change.may_touch_seam(&entry.seam), "{name}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn task_first_deleted_expression_tail_and_unrelated_adjacent_statement_13098() {
+        let entry = gate_entry(crate::analysis::seams::SeamGripClass::Ungripped, Vec::new());
+        let tail = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -89 +88,0 @@\n-        && x < 10\n",
+        );
+        let unrelated = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -89 +88,0 @@\n-    audit();\n",
+        );
+        assert!(!seam_touches_change(&entry, &tail));
+        assert!(!seam_touches_change(&entry, &unrelated));
+        assert!(seam_has_adjacent_deletion(&entry, &tail));
+        assert!(seam_has_adjacent_deletion(&entry, &unrelated));
+        let added = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -88,0 +89 @@\n+    audit();\n",
+        );
+        assert!(!seam_has_adjacent_deletion(&entry, &added));
+        assert!(refuse_ambiguous_adjacent_deletions(std::slice::from_ref(&entry), &added).is_ok());
+        let far = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -90 +89,0 @@\n-    audit();\n",
+        );
+        assert!(!seam_has_adjacent_deletion(&entry, &far));
+        let mut multiline =
+            gate_entry(crate::analysis::seams::SeamGripClass::Ungripped, Vec::new());
+        multiline.seam = multiline.seam.with_source_lines(Some((88, 90)));
+        let after_multiline = crate::analysis::parse_unified_diff(
+            "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -91 +90,0 @@\n-    tail\n",
+        );
+        assert!(seam_has_adjacent_deletion(&multiline, &after_multiline));
     }
 
     #[test]

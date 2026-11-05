@@ -4632,6 +4632,85 @@ fn pilot_match_source_lines_preserve_identity_and_refuse_invalid_ranges() -> Res
 }
 
 #[test]
+fn pilot_deleted_expression_tail_and_unrelated_adjacent_statement_13098() {
+    let surviving = seam("src/b.rs", 2, "x > 0");
+    let tail = "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -3 +2,0 @@\n-        && x < 10\n";
+    let unrelated = "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -3 +2,0 @@\n-    audit();\n";
+    let tail_change = PilotCurrentChange::from_diff_text(Path::new("."), None, tail);
+    assert!(!tail_change.touches_seam(&surviving));
+    assert!(tail_change.may_touch_seam(&surviving));
+    let other_change = PilotCurrentChange::from_diff_text(Path::new("."), None, unrelated);
+    assert!(!other_change.touches_seam(&surviving));
+    assert!(other_change.may_touch_seam(&surviving));
+    let added = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        None,
+        "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -2,0 +3 @@\n+    audit();\n",
+    );
+    assert!(!added.may_touch_seam(&surviving));
+    let far = PilotCurrentChange::from_diff_text(
+        Path::new("."),
+        None,
+        "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -4 +3,0 @@\n-    audit();\n",
+    );
+    assert!(!far.may_touch_seam(&surviving));
+    assert!(!tail_change.may_touch_seam(&seam("src/other.rs", 2, "x > 0")));
+}
+
+#[test]
+fn pilot_scoped_classification_retains_uncertain_adjacent_seams_13098() {
+    let diff = "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -3 +2,0 @@\n-        && x < 10\n";
+    let change = PilotCurrentChange::from_diff_text(Path::new("."), None, diff);
+    let adjacent = classified_with(SeamGripClass::Ungripped, "src/b.rs", 2, vec![], vec![]);
+    let elsewhere = classified_with(SeamGripClass::Ungripped, "src/b.rs", 5, vec![], vec![]);
+    let mut retained = Vec::new();
+    assert_eq!(
+        change.add_cut_seams(&mut retained, vec![adjacent, elsewhere]),
+        1
+    );
+    let change = change.with_seams_counted(&retained, None);
+    assert_eq!(change.seams().map(|s| s.uncertain), Some(1));
+    assert!(!change.touches(&retained[0]));
+}
+
+#[test]
+fn pilot_renderers_disclose_adjacent_deletion_uncertainty_13098() -> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    let entries = [classified_with(
+        SeamGripClass::Ungripped,
+        "src/b.rs",
+        2,
+        vec![],
+        vec![],
+    )];
+    let diff = "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -3 +2,0 @@\n-        && x < 10\n";
+    let change = PilotCurrentChange::from_diff_text(Path::new("."), None, diff)
+        .with_seams_counted(&entries, None);
+    let mut context = pilot_context(&artifacts);
+    context.current_change = Some(&change);
+    let report: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|error| error.to_string())?;
+    assert!(report["current_change"]["top_recommendation_in_change"].is_null());
+    assert!(report["current_change"]["actionable_seams_in_change"].is_null());
+    assert!(report["current_change"]["withheld_seams_in_change"].is_null());
+    for text in [
+        render_pilot_terminal(&entries, context),
+        render_pilot_summary_md(&entries, context),
+    ] {
+        assert!(
+            text.contains("pilot cannot tell whether it changed the gap"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("this gap is not on a line you changed"),
+            "{text}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn pilot_deletion_gap_uses_next_line_13098() {
     let diff = "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -20 +19,0 @@\n-old\n";
     let change = PilotCurrentChange::from_diff_text(Path::new("."), None, diff);
@@ -4669,7 +4748,8 @@ fn pilot_current_change_matches_the_seam_span_and_new_side_lines() {
         Vec::new(),
         Vec::new(),
     );
-    assert!(deletion.touches(&at_29));
+    assert!(!deletion.touches(&at_29));
+    assert!(deletion.may_touch_seam(&at_29.seam));
     // An absolute root is stripped from seam paths before matching.
     let absolute = PilotCurrentChange::from_diff_text(
         Path::new("/repo"),

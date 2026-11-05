@@ -1119,6 +1119,7 @@ fn scope_rank_label(context: PilotSummaryContext<'_>, rust_ranking_empty: bool) 
 /// `None` when there is no current change or it could not be
 /// loaded: pilot's ranking is then repo-wide, as it always was.
 enum CurrentChangeLabel {
+    Uncertain,
     PartOfChange {
         base: Option<String>,
     },
@@ -1210,6 +1211,8 @@ fn current_change_label(
     let base = change.base().map(str::to_string);
     Some(if change.touches(top) {
         CurrentChangeLabel::PartOfChange { base }
+    } else if change.may_touch_seam(&top.seam) {
+        CurrentChangeLabel::Uncertain
     } else {
         CurrentChangeLabel::Elsewhere {
             base,
@@ -1232,6 +1235,12 @@ fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Optio
     let change = context.current_change?;
     let seams = change.seams()?;
     let diff_only = DiffOnlyNote::of(change);
+    if seams.uncertain > 0 {
+        return Some(
+            "A deletion is adjacent to a spot; pilot cannot tell whether it changed that spot."
+                .to_string(),
+        );
+    }
     if seams.touched == 0 && seams.unanalyzed.is_none() && diff_only.is_none() {
         return None;
     }
@@ -1277,9 +1286,13 @@ impl CurrentChangeLabel {
     ) -> String {
         let ChangeSeams {
             touched,
+            uncertain,
             withheld,
             unanalyzed,
         } = seams;
+        if uncertain > 0 && touched == 0 {
+            return "A deletion is adjacent to a spot; pilot cannot tell whether it changed that spot.".to_string();
+        }
         let lines = |count| Self::changed_lines(base, code, count);
         // Seams past the inventory limit were never classified, so a reason
         // drawn from the analyzed seams alone must say it may not be all.
@@ -1342,12 +1355,19 @@ impl CurrentChangeLabel {
             reason.push_str(", but ");
             reason.push_str(&unseen);
         }
+        if uncertain > 0 {
+            reason.push_str("; a deletion is adjacent to another spot, but pilot cannot tell whether it changed that spot");
+        }
         reason.push('.');
         reason
     }
 
     fn terminal(&self) -> String {
         match self {
+            Self::Uncertain => {
+                "a deletion is adjacent to this gap; pilot cannot tell whether it changed the gap"
+                    .to_string()
+            }
             Self::PartOfChange { base } => format!(
                 "part of it (this gap is on {})",
                 Self::changed_line(base.as_ref(), false)
@@ -1366,6 +1386,10 @@ impl CurrentChangeLabel {
 
     fn markdown(&self) -> String {
         match self {
+            Self::Uncertain => {
+                "a deletion is adjacent to this gap; pilot cannot tell whether it changed the gap"
+                    .to_string()
+            }
             Self::PartOfChange { base } => format!(
                 "part of it (this gap is on {})",
                 Self::changed_line(base.as_ref(), true)
@@ -1441,7 +1465,7 @@ fn push_current_change_json(
         }
         out.push_str("],\n");
     }
-    if change.is_changed() {
+    if change.is_changed() && change.seams().unwrap_or_default().uncertain == 0 {
         out.push_str(&format!(
             "    \"actionable_seams_in_change\": {},\n",
             actionable_in_change(classified, change)
@@ -1455,6 +1479,9 @@ fn push_current_change_json(
         out.push_str("    \"withheld_seams_in_change\": null,\n");
     }
     match top.filter(|_| change.is_changed()) {
+        Some(entry) if !change.touches(entry) && change.may_touch_seam(&entry.seam) => {
+            out.push_str("    \"top_recommendation_in_change\": null\n")
+        }
         Some(entry) => out.push_str(&format!(
             "    \"top_recommendation_in_change\": {}\n",
             change.touches(entry)

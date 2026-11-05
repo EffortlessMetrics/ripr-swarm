@@ -27,6 +27,8 @@ pub(crate) enum PilotCurrentChange {
         base: Option<String>,
         /// Root-relative path (slash separated) to changed new-side lines.
         lines: BTreeMap<String, BTreeSet<usize>>,
+        /// New-side gaps for removed lines, distinct from added lines.
+        deletion_gaps: BTreeMap<String, BTreeSet<usize>>,
         /// The diff was taken against the live working tree, so `ripr check`
         /// sees it only with `--worktree`; its default reads committed
         /// history (RIPR-SPEC-0112).
@@ -89,17 +91,23 @@ impl PilotCurrentChange {
             };
         }
         let mut lines: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+        let mut deletion_gaps: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
         for file in crate::analysis::parse_unified_diff(text) {
             let entry = lines.entry(normalized(&file.path)).or_default();
             // Added lines name themselves; a removal is anchored at the
             // new-side position where the removed text used to be.
             entry.extend(file.added_lines.iter().map(|line| line.new_side_line));
             entry.extend(file.removed_lines.iter().map(|line| line.new_side_line));
+            deletion_gaps
+                .entry(normalized(&file.path))
+                .or_default()
+                .extend(file.removed_lines.iter().map(|line| line.new_side_line));
         }
         Self::Changed {
             root: root.to_path_buf(),
             base,
             lines,
+            deletion_gaps,
             working_tree: false,
             seams: ChangeSeams::default(),
             diff_only: Vec::new(),
@@ -121,6 +129,10 @@ impl PilotCurrentChange {
                 .filter(|(analyzed, total)| analyzed < total),
             ..ChangeSeams::default()
         };
+        counted.uncertain = classified
+            .iter()
+            .filter(|entry| !self.touches(entry) && self.may_touch_seam(&entry.seam))
+            .count();
         for entry in classified.iter().filter(|entry| self.touches(entry)) {
             counted.touched = counted.touched.saturating_add(1);
             if super::ranking::counts_as_withheld_static_limitation(entry) {
@@ -206,7 +218,8 @@ impl PilotCurrentChange {
         }
     }
 
-    /// Append the seams in `scoped` that sit on a changed line and are not
+    /// Append seams in `scoped` that sit on a changed line or are adjacent
+    /// to an uncertain deletion and are not
     /// already in `classified`, returning how many were added. Seams
     /// elsewhere in a changed file stay out, so the cut repo-wide population
     /// the rest of the ranking sees does not tilt toward the changed files.
@@ -220,11 +233,10 @@ impl PilotCurrentChange {
             .map(|entry| entry.seam.id().clone())
             .collect();
         let before = classified.len();
-        classified.extend(
-            scoped
-                .into_iter()
-                .filter(|entry| self.touches(entry) && !known.contains(entry.seam.id())),
-        );
+        classified.extend(scoped.into_iter().filter(|entry| {
+            (self.touches(entry) || self.may_touch_seam(&entry.seam))
+                && !known.contains(entry.seam.id())
+        }));
         classified.len() - before
     }
 
@@ -350,6 +362,32 @@ impl PilotCurrentChange {
         self.touches_seam(&entry.seam)
     }
 
+    /// A deletion immediately after the seam may have removed its last
+    /// expression line, but may instead belong to a following statement.
+    pub(crate) fn may_touch_seam(&self, seam: &RepoSeam) -> bool {
+        let Self::Changed {
+            root,
+            deletion_gaps,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        let file = seam.file();
+        let relative = file.strip_prefix(root).unwrap_or(file);
+        let Some(gaps) = deletion_gaps.get(&normalized(relative)) else {
+            return false;
+        };
+        let (_, end) = seam.source_lines().unwrap_or_else(|| {
+            let start = seam.display_line();
+            (
+                start,
+                start.saturating_add(seam.expression().lines().count().saturating_sub(1)),
+            )
+        });
+        end.checked_add(1).is_some_and(|gap| gaps.contains(&gap))
+    }
+
     /// [`Self::touches`] for a seam not yet classified, so the change's own
     /// classification can skip evidence for seams off the changed lines.
     pub(crate) fn touches_seam(&self, seam: &RepoSeam) -> bool {
@@ -390,6 +428,8 @@ pub(crate) struct ChangeClassification<'a> {
 pub(crate) struct ChangeSeams {
     /// Seams whose span overlaps a changed new-side line.
     pub(crate) touched: usize,
+    /// Seams adjacent to a deletion whose ownership is unknown.
+    pub(crate) uncertain: usize,
     /// Of those, the ones pilot withholds as static limitations
     /// (`opaque` or an `*_unknown` class).
     pub(crate) withheld: usize,
