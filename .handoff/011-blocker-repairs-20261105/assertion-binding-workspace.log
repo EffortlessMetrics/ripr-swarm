@@ -1,0 +1,9 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-12010-successor/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 3m 18s
+     Running tests/return_diagnostic_confirmation.rs (/workspace/12010-proof/target/debug/deps/return_diagnostic_confirmation-f88ac163747e464e)
+
+running 1 test
+test discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.14s
+

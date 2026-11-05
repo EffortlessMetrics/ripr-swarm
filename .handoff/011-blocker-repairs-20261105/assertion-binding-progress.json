@@ -49,7 +49,15 @@
   "current_binding_candidate": {
     "commit": "327ff755cf8c36ed4cc417940a19eaa6adea1a84",
     "tree": "2cff466edf6bc15de985d877f9ac578179c52677",
-    "qualification": "workspace regression build in progress; corrected-fixture reveal compile terminated/reaped for resource guard, not a test outcome"
+    "qualification": "focused workspace discard test passed; broader integration file running; reveal suite pending completed rerun",
+    "workspace_discard_control": {
+      "exit": 0,
+      "passed": 1,
+      "failed": 0,
+      "duration": "3m18s build + 0.14s execution",
+      "log": "assertion-binding-workspace.log",
+      "coverage": "actual workspace pipeline: unrelated negative, direct owner, bound result and both assertion orders"
+    }
   },
   "review_delta": {
     "base": "d1bef96f582a0df8ed627481d808e1f72a25acc0",
