@@ -185,7 +185,20 @@ current function body. Calls only inside uncalled closures, async bodies,
 nested functions, item/const-block initializers, type/const-generic arguments,
 array-repeat lengths or unsupported macro token trees do not establish runtime
 helper reach. Runtime array-element calls retain their evidence. A separate eager call keeps its evidence even when a deferred body
-mentions the same helper.
+mentions the same helper. Conditional-compilation ancestry must establish that
+the call is enabled independently of the library build: `cfg(test)`, unknown
+feature/platform predicates and conditionally introduced unknown gates do not
+grant this qualified-call reach. Constant enabled `cfg(all())` and inactive
+`cfg_attr(any(), ...)` preserve credit; a disabled sibling does not veto a
+separate eager call. This is a conservative availability proof, not Cargo
+configuration evaluation. The same ancestry must preserve its source body:
+unknown proc attributes, including conditionally introduced ones whose absence
+is not build-independently known, cannot grant call credit. An inactive
+constant-false proc-attribute introduction preserves the ordinary eager call.
+The retained fn-keyword body is rebound uniquely to the original indexed file
+source before this proof, preserving function/impl/module/crate ancestors.
+Missing, duplicate or unparseable source does not grant qualified reach; the
+analysis does not re-read live files or change cached source spans.
 
 Full evidence carries the indexed test target. Compact evidence intentionally
 omits target details and preserves the five stage states and contradiction count.

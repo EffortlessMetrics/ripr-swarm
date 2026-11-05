@@ -429,11 +429,48 @@ impl ModuleItemScopes {
     }
 }
 
-/// Qualified calls in the current function's executable body. The existing
-/// nested-function boundary excludes closures, async blocks and nested items;
-/// macro token trees are not parsed call expressions. A qualified textual
-/// mention alone cannot establish ordinary child-delegation reach (#4681).
-pub(crate) fn eager_qualified_call_paths(text: &str) -> BTreeSet<String> {
+/// Rebind a retained FunctionFact body to its unique original parsed function.
+/// The body starts at the fn keyword, so parsing that slice alone loses outer
+/// function, impl, module and crate attributes. Keep all of those ancestors.
+/// Missing, ambiguous or unparseable source cannot establish qualified reach.
+pub(crate) fn eager_qualified_call_paths_from_source(
+    source: &str,
+    body_text: &str,
+) -> BTreeSet<String> {
+    let Some(parse) = super::parse_clean_source_file_memoized(source) else {
+        return BTreeSet::new();
+    };
+    let tree = parse.tree();
+    let mut matching = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            let Some(start) = function
+                .fn_token()
+                .map(|token| usize::from(token.text_range().start()))
+            else {
+                return false;
+            };
+            let end = usize::from(function.syntax().text_range().end());
+            source.get(start..end) == Some(body_text)
+        });
+    let Some(function) = matching.next() else {
+        return BTreeSet::new();
+    };
+    if matching.next().is_some() || function.async_token().is_some() {
+        return BTreeSet::new();
+    }
+    eager_qualified_call_paths_in(&function)
+}
+
+fn qualified_call_attribute_preserves_body(text: &str) -> bool {
+    cfg_predicates::attribute_build_independent_availability(text) == Some(true)
+        && cfg_predicates::attribute_preserves_source_items_build_independent(text)
+}
+
+#[cfg(test)]
+fn eager_qualified_call_paths(text: &str) -> BTreeSet<String> {
     let wrapped;
     let parse = if let Some(parse) = super::parse_clean_source_file_memoized(text) {
         parse
@@ -467,6 +504,17 @@ fn eager_qualified_call_paths_in(function: &ast::Fn) -> BTreeSet<String> {
         .descendants()
         .filter_map(ast::CallExpr::cast)
         .filter(|call| !enclosed_by_nested_fn_like(call.syntax(), &body))
+        // This parent can be a normal library consumed by integration tests.
+        // Require build-independent enabled cfg ancestry and source preservation;
+        // a proc attribute can replace a configuration-enabled call body.
+        .filter(|call| {
+            call.syntax().ancestors().all(|node| {
+                node.children().filter_map(ast::Attr::cast).all(|attr| {
+                    let text = attr.syntax().text().to_string();
+                    qualified_call_attribute_preserves_body(&text)
+                })
+            })
+        })
         // Items and const blocks may evaluate without executing the parent.
         // Keep this extra boundary local to ordinary qualified delegation.
         .filter(|call| {
@@ -505,6 +553,131 @@ fn eager_qualified_call_paths_in(function: &ast::Fn) -> BTreeSet<String> {
 #[cfg(test)]
 mod eager_qualified_call_tests {
     use super::*;
+
+    #[test]
+    fn original_source_rebind_refuses_missing_and_duplicate_bodies() {
+        let body = "fn entry() -> i32 { child::target(); 10 }";
+        let source = format!("mod ordinary {{ {body} }}");
+        assert!(eager_qualified_call_paths_from_source(&source, body).contains("child::target"));
+        assert!(
+            eager_qualified_call_paths_from_source(
+                &format!("mod a {{ {body} }} mod b {{ {body} }}"),
+                body
+            )
+            .is_empty()
+        );
+        assert!(eager_qualified_call_paths_from_source(&source, "fn missing() {}").is_empty());
+        assert!(eager_qualified_call_paths_from_source("mod broken {", body).is_empty());
+        for attribute in [
+            "#[eraser::erase]",
+            "#[cfg_attr(not(test), eraser::erase)]",
+            "#[cfg(any())]",
+        ] {
+            let source = format!("{attribute} mod parent {{ {body} }}");
+            assert!(
+                eager_qualified_call_paths_from_source(&source, body).is_empty(),
+                "{source}"
+            );
+        }
+        let source = format!("#[cfg_attr(any(), eraser::erase)] mod parent {{ {body} }}");
+        assert!(eager_qualified_call_paths_from_source(&source, body).contains("child::target"));
+    }
+
+    #[test]
+    fn fact_body_requires_separately_retained_attribute_authority() -> Result<(), String> {
+        for (attribute, expected) in [
+            ("#[eraser::erase]", false),
+            ("#[cfg_attr(all(), eraser::erase)]", false),
+            ("#[cfg_attr(not(test), eraser::erase)]", false),
+            ("#[cfg_attr(any(), eraser::erase)]", true),
+            ("#[cfg(all())]", true),
+        ] {
+            let source = format!("{attribute} pub fn entry() -> i32 {{ child::target(); 10 }}");
+            let parse = super::super::parse_clean_source_file_memoized(&source)
+                .ok_or("legal function did not parse")?;
+            let function = parse
+                .tree()
+                .items()
+                .find_map(|item| match item {
+                    ast::Item::Fn(function) => Some(function),
+                    _ => None,
+                })
+                .ok_or("missing function")?;
+            let start = usize::from(
+                function
+                    .fn_token()
+                    .ok_or("missing fn token")?
+                    .text_range()
+                    .start(),
+            );
+            let end = usize::from(function.syntax().text_range().end());
+            let body = &source[start..end];
+            assert!(!body.contains("#["), "producer drops outer attributes");
+            assert!(eager_qualified_call_paths(body).contains("child::target"));
+            assert_eq!(
+                eager_qualified_call_paths_from_source(&source, body).contains("child::target"),
+                expected,
+                "{source}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn qualified_calls_require_build_independent_cfg_ancestry() {
+        for body in [
+            "#[cfg(any())] { child::target(); } 10",
+            "#[cfg(any())] child::target(); 10",
+            "#[cfg(any())] let _unused = child::target(); 10",
+            "#[cfg(any())] return child::target(); 10",
+            "#[cfg_attr(all(), cfg(any()))] { child::target(); } 10",
+            "#[cfg_attr(all(), cfg(any()))] let _unused = child::target(); 10",
+            "#[cfg(feature = \"unknown\")] { child::target(); } 10",
+            "#[cfg_attr(feature = \"unknown\", cfg(any()))] { child::target(); } 10",
+            "#[cfg(test)] { child::target(); } 10",
+            "#[cfg(not(test))] { child::target(); } 10",
+        ] {
+            let item = format!("pub fn entry() -> i32 {{ {body} }}");
+            assert!(
+                !eager_qualified_call_paths(&item).contains("child::target"),
+                "{item}"
+            );
+        }
+        for body in [
+            "#[cfg(all())] { child::target(); } 10",
+            "#[cfg(all())] child::target(); 10",
+            "#[cfg_attr(any(), cfg(any()))] { child::target(); } 10",
+            "#[cfg(any())] { child::target(); } child::target(); 10",
+        ] {
+            let item = format!("pub fn entry() -> i32 {{ {body} }}");
+            assert!(
+                eager_qualified_call_paths(&item).contains("child::target"),
+                "{item}"
+            );
+        }
+        assert!(
+            eager_qualified_call_paths("#[cfg(test)] pub fn entry() -> i32 { child::target() }")
+                .is_empty()
+        );
+        for attr in [
+            "#[eraser::erase]",
+            "#[cfg_attr(all(), eraser::erase)]",
+            "#[cfg_attr(not(test), eraser::erase)]",
+        ] {
+            let item = format!("{attr} pub fn entry() -> i32 {{ child::target(); 10 }}");
+            assert!(eager_qualified_call_paths(&item).is_empty(), "{item}");
+        }
+        assert!(
+            eager_qualified_call_paths(
+                "#[cfg_attr(any(), eraser::erase)] pub fn entry() -> i32 { child::target(); 10 }"
+            )
+            .contains("child::target")
+        );
+        assert!(
+            eager_qualified_call_paths("#[cfg(all())] pub fn entry() -> i32 { child::target() }")
+                .contains("child::target")
+        );
+    }
 
     #[test]
     fn parsed_child_calls_keep_eager_paths_and_refuse_deferred_mentions() {

@@ -1621,6 +1621,19 @@ pub(in crate::analysis::test_grip_evidence) struct HelperOwnerCallsByFilePair {
     pub(in crate::analysis::test_grip_evidence) free_spelling: HelperOwnerCallsByFile,
 }
 
+fn eager_qualified_function_calls(
+    function: &FunctionSummary,
+    index: &RustIndex,
+) -> BTreeSet<String> {
+    let Some(file_facts) = index.files().get(&function.file) else {
+        return BTreeSet::new();
+    };
+    crate::analysis::syntax::ra::eager_qualified_call_paths_from_source(
+        &file_facts.data().source,
+        &function.body,
+    )
+}
+
 /// Direct production delegation into an ordinary child module (#4681). The
 /// public parent may call `child::helper()` while tests keep calling the
 /// parent entrypoint; only resolved default `mod` edges qualify.
@@ -1652,7 +1665,7 @@ pub(in crate::analysis::test_grip_evidence) fn ordinary_module_delegation_owner_
     let parent_module_path = super::module_path_for_index(index, &function.file)
         .unwrap_or_default()
         .replace('/', "::");
-    let calls = crate::analysis::syntax::ra::eager_qualified_call_paths(&function.body);
+    let calls = eager_qualified_function_calls(function, index);
     let mut delegated = BTreeSet::new();
     for declaration in &file_facts.module_declarations {
         if declaration.requires_test || declaration.path_target == ModulePathTarget::Unknown {
@@ -1748,13 +1761,14 @@ fn production_owner_name_is_unique_in_package(
 }
 
 fn same_file_nested_module_delegation_owner_calls(
+    index: &RustIndex,
     function: &FunctionSummary,
     same_file_functions: &[&FunctionSummary],
 ) -> BTreeSet<String> {
     if function.source_role.is_evidence_role() || rust_index::is_test_file(&function.file) {
         return BTreeSet::new();
     }
-    let calls = crate::analysis::syntax::ra::eager_qualified_call_paths(&function.body);
+    let calls = eager_qualified_function_calls(function, index);
     let file_prefix = format!("{}::", function.file.display());
     let mut by_module: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for candidate in same_file_functions {
@@ -1823,7 +1837,7 @@ pub(in crate::analysis::test_grip_evidence) fn production_delegation_from_test_r
             if package_scope(&test.file) != package_scope(&callee.file) {
                 continue;
             }
-            let calls = crate::analysis::syntax::ra::eager_qualified_call_paths(&callee.body);
+            let calls = eager_qualified_function_calls(callee, index);
             if let Some(module) = owner_module.as_deref().filter(|module| !module.is_empty()) {
                 if eager_qualified_helper_call(&calls, module, &owner_fn.name)
                     || callee_delegates_to_owner_in_same_module(callee, owner_fn)
@@ -2010,6 +2024,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
             owner_names_by_package_and_module_path,
         );
         let nested_module_delegation = same_file_nested_module_delegation_owner_calls(
+            index,
             function,
             functions_by_file
                 .get(&function.file)

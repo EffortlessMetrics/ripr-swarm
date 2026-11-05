@@ -74,6 +74,38 @@ impl Fixture {
         std::fs::write(fixture.root.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
         Ok(fixture)
     }
+    fn use_integration_observer(&self) -> Result<(), String> {
+        let path = self.root.join("src/lib.rs");
+        let source = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        let (library, _) = source
+            .split_once("#[cfg(test)] mod tests")
+            .ok_or("missing fixture unit-test boundary")?;
+        std::fs::write(&path, library).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(self.root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(self.root.join("tests/integration.rs"),
+            "#[test] fn observes_public_parent() { assert_eq!(parent_output_flow::entry(), 10); }\n")
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+    fn install_eraser(&self, replacement: &str) -> Result<(), String> {
+        let manifest = self.root.join("Cargo.toml");
+        let text = std::fs::read_to_string(&manifest).map_err(|error| error.to_string())?;
+        std::fs::write(
+            &manifest,
+            format!("{text}\n[dependencies]\neraser={{path='eraser'}}\n"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(self.root.join("eraser/src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            self.root.join("eraser/Cargo.toml"),
+            "[package]\nname='eraser'\nversion='0.0.0'\nedition='2024'\n[lib]\nproc-macro=true\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(self.root.join("eraser/src/lib.rs"), format!(
+            "extern crate proc_macro; use proc_macro::TokenStream; #[proc_macro_attribute] pub fn erase(_:TokenStream,_:TokenStream)->TokenStream {{ {replacement:?}.parse().unwrap() }}\n"))
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
     fn seam(&self) -> Result<Value, String> {
         let output = ripr::app::repo_seam_inventory_input(CheckInput {
             root: self.root.clone(),
@@ -257,6 +289,119 @@ fn runtime_array_elements_keep_child_helper_reach() -> Result<(), String> {
         for body in ["let _a = [HELPER; 1]; 10", "let _a = [HELPER, 0]; 10"] {
             let seam = Fixture::new(placement, 9, body, 10)?.seam()?;
             assert_eq!(contradictions(&seam)?, 0, "{placement:?} {body}: {seam}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn conditional_child_calls_need_build_independent_availability() -> Result<(), String> {
+    for placement in [Placement::InlineChild, Placement::FileChild] {
+        for body in [
+            "#[cfg(any())] { HELPER; } 10",
+            "#[cfg(any())] HELPER; 10",
+            "#[cfg(any())] let _unused = HELPER; 10",
+            "#[cfg(any())] return HELPER; 10",
+            "#[cfg_attr(all(), cfg(any()))] { HELPER; } 10",
+            "#[cfg_attr(all(), cfg(any()))] let _unused = HELPER; 10",
+            "#[cfg(feature = \"not_established\")] { HELPER; } 10",
+            "#[cfg_attr(feature = \"not_established\", cfg(any()))] { HELPER; } 10",
+            "#[cfg(test)] { HELPER; } 10",
+            "#[cfg(not(test))] { HELPER; } 10",
+        ] {
+            assert_no_helper_reach(&Fixture::new(placement, 9, body, 10)?.seam()?)?;
+        }
+        for body in [
+            "#[cfg(all())] { HELPER; } 10",
+            "#[cfg(all())] HELPER; 10",
+            "#[cfg_attr(any(), cfg(any()))] { HELPER; } 10",
+            "#[cfg(any())] { HELPER; } HELPER; 10",
+        ] {
+            let seam = Fixture::new(placement, 9, body, 10)?.seam()?;
+            assert_eq!(contradictions(&seam)?, 0, "{placement:?} {body}: {seam}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn integration_call_does_not_make_library_cfg_test_code_available() -> Result<(), String> {
+    for placement in [Placement::InlineChild, Placement::FileChild] {
+        let fixture = Fixture::new(placement, 9, "#[cfg(test)] { HELPER; } 10", 10)?;
+        fixture.use_integration_observer()?;
+        assert_no_helper_reach(&fixture.seam()?)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn proc_attributes_cannot_manufacture_child_helper_reach() -> Result<(), String> {
+    for placement in [Placement::InlineChild, Placement::FileChild] {
+        for (attribute, preserves_body) in [
+            ("#[eraser::erase]", false),
+            ("#[cfg_attr(all(), eraser::erase)]", false),
+            ("#[cfg_attr(not(test), eraser::erase)]", false),
+            ("#[cfg_attr(any(), eraser::erase)]", true),
+        ] {
+            let fixture = Fixture::new(placement, 9, "HELPER; 10", 10)?;
+            fixture.use_integration_observer()?;
+            let path = fixture.root.join("src/lib.rs");
+            let source = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+            std::fs::write(
+                &path,
+                source.replace("pub fn entry", &format!("{attribute}\npub fn entry")),
+            )
+            .map_err(|error| error.to_string())?;
+            fixture.install_eraser("pub fn entry()->i32 { 10 }")?;
+            let seam = fixture.seam()?;
+            if preserves_body {
+                assert_eq!(
+                    contradictions(&seam)?,
+                    0,
+                    "{placement:?} {attribute}: {seam}"
+                );
+            } else {
+                assert_no_helper_reach(&seam)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn enclosing_module_proc_attributes_cannot_manufacture_child_helper_reach() -> Result<(), String> {
+    for placement in [Placement::InlineChild, Placement::FileChild] {
+        for (attribute, preserves_body) in [
+            ("#[eraser::erase]", false),
+            ("#[cfg_attr(any(), eraser::erase)]", true),
+        ] {
+            let fixture = Fixture::new(placement, 9, "HELPER; 10", 10)?;
+            fixture.use_integration_observer()?;
+            let path = fixture.root.join("src/lib.rs");
+            let source = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+            let (child, entry) = source.split_once("pub fn entry").ok_or("missing entry")?;
+            std::fs::write(
+                &path,
+                format!(
+                    "{child}{attribute} pub mod parent {{ pub fn entry{} }}\n",
+                    entry.replace("child::compute_value()", "crate::child::compute_value()")
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+            std::fs::write(fixture.root.join("tests/integration.rs"),
+                "#[test] fn observes_public_parent() { assert_eq!(parent_output_flow::parent::entry(), 10); }\n")
+                .map_err(|error| error.to_string())?;
+            fixture.install_eraser("pub mod parent { pub fn entry()->i32 { 10 } }")?;
+            let seam = fixture.seam()?;
+            if preserves_body {
+                assert_eq!(
+                    contradictions(&seam)?,
+                    0,
+                    "{placement:?} {attribute}: {seam}"
+                );
+            } else {
+                assert_no_helper_reach(&seam)?;
+            }
         }
     }
     Ok(())
