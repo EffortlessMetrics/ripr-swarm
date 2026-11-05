@@ -388,20 +388,11 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
     let with_test = repo_with("hascard", BOUNDARY_BASE, BOUNDARY_NEW, BOUNDARY_TEST)?;
     assert_starts_check_recommendation(&with_test, "existing test target")?;
     // Contrast 2 (#13203 A0): a public owner with no test but an established
-    // `tests/` layout has a producer-owned proposed integration file. Check
-    // and repair share one gate, so check names that start (same seam id,
-    // despite the `no path` finding's static limitation) and bare repair
-    // starts that same seam, with the proposed file as its target.
+    // `tests/` layout has a producer-owned proposed integration file, so
+    // `ripr repair <id>` starts it. The `no path` finding keeps the F3 rule
+    // (#12888): check prints no runnable repair line and names no refusal.
     let proposed = repo("proposed", BOUNDARY_BASE, BOUNDARY_NEW, "", true)?;
-    let screen = text(&ripr(&proposed.root, &["check", "--base", "main"])?.stdout);
-    if !screen.contains("Why no path")
-        || screen.contains("not complete enough to name a safe test target")
-    {
-        return Err(format!(
-            "the finding stays static-limited and names no refusal:\n{screen}"
-        ));
-    }
-    assert_starts_check_recommendation(&proposed, "producer-owned proposal")?;
+    assert_check_silent_repair_starts(&proposed, "producer-owned proposal")?;
     Ok(())
 }
 
@@ -1080,13 +1071,44 @@ fn shell_split(command: &str) -> Result<Vec<String>, String> {
 }
 
 /// #13203 A0: the inline counterpart. A private owner whose file holds one
-/// governed `#[cfg(test)]` module has a producer-owned inline proposal (the module holds no test); check
-/// names that start and bare repair starts the same seam.
+/// governed `#[cfg(test)]` module (no test in it) has a producer-owned inline
+/// proposal; check stays silent (F3) and `ripr repair <id>` starts it.
 #[test]
-fn an_inline_proposal_is_named_by_check_and_started_by_repair() -> Result<(), String> {
+fn an_inline_proposal_starts_by_id_while_check_stays_silent() -> Result<(), String> {
     const MODULE: &str = "\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
     let base = format!("fn is_adult(age: u32) -> bool {{\n    age > 18\n}}\n{MODULE}");
     let changed = format!("fn is_adult(age: u32) -> bool {{\n    age >= 18\n}}\n{MODULE}");
     let inline = repo("inline-proposal", &base, &changed, "", true)?;
-    assert_starts_check_recommendation(&inline, "inline proposal")
+    assert_check_silent_repair_starts(&inline, "inline proposal")
+}
+
+/// Check offers no repair line for the static-limited finding, yet the seam it
+/// would have named starts by id.
+fn assert_check_silent_repair_starts(repo: &Repo, label: &str) -> Result<(), String> {
+    let root = &repo.root;
+    let screen = text(&ripr(root, &["check", "--base", "main"])?.stdout);
+    if check_start_id(root)?.is_some()
+        || screen.contains("ripr repair ")
+        || screen.contains("not complete enough to name a safe test target")
+        || !screen.contains("Why no path")
+    {
+        return Err(format!("{label}: check must stay silent (F3):\n{screen}"));
+    }
+    let exposure = ripr(
+        root,
+        &["check", "--mode", "draft", "--format", "repo-exposure-json"],
+    )?;
+    let json: serde_json::Value = serde_json::from_slice(&exposure.stdout)
+        .map_err(|error| format!("{label}: exposure JSON: {error}"))?;
+    let seam_id = json["seams"]
+        .as_array()
+        .and_then(|seams| seams.iter().find_map(|seam| seam["seam_id"].as_str()))
+        .ok_or_else(|| format!("{label}: no seam"))?
+        .to_string();
+    let started = ripr(root, &["repair", &seam_id])?;
+    let (out, err) = (text(&started.stdout), text(&started.stderr));
+    if started.status.code() != Some(0) || !out.contains("Ready to repair") || attempts(root) != 1 {
+        return Err(format!("{label}: repair by id must start:\n{out}\n{err}"));
+    }
+    Ok(())
 }

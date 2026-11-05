@@ -449,10 +449,7 @@ pub(crate) fn render_human_triage(
             } else {
                 match navigation.repair_route_for(&finding.id) {
                     Some(route) => {
-                        // #13203 A0: a producer-owned proposal start is the
-                        // one start a static-limited finding still names,
-                        // because bare `ripr repair` begins it.
-                        if !is_static_limited(finding) || route.proposal_start {
+                        if !is_static_limited(finding) {
                             repair_printed = true;
                             let command = navigation.repair_command(&route.seam_id);
                             if let Some(file) = route.uncommitted_target.as_deref() {

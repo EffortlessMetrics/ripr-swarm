@@ -2899,14 +2899,7 @@ pub(crate) fn check_repair_route(
             boundary_input_observed: false,
         });
     }
-    // #13203 A0: a seam the shared gate admitted on a producer-owned
-    // new-test proposal is started by bare `ripr repair` whatever the
-    // finding's static limitation, so check names that same start.
-    let proposal_start = matches!(
-        repair_packet_eligibility(entry).readiness.target_selection,
-        crate::analysis::repair_route::RepairTargetSelection::Proposed(_)
-    );
-    if static_limited && !proposal_start {
+    if static_limited {
         // F3: no runnable line for a static-limited finding. The refusal
         // arms above still named any concrete ineligibility; reaching here
         // means the seam was eligible, so the limitation guidance on the
@@ -2921,7 +2914,6 @@ pub(crate) fn check_repair_route(
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
         uncommitted_target,
-        proposal_start,
     })
 }
 
@@ -4561,7 +4553,6 @@ pub(crate) mod tests {
                 finding_id: "f".to_string(),
                 seam_id: seam.to_string(),
                 uncommitted_target: uncommitted.map(str::to_string),
-                proposal_start: false,
             })
         };
         assert_eq!(

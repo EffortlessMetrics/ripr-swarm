@@ -39,8 +39,6 @@ Next: drill into the top finding:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_macro_table_arrow_foreign_macro/input --diff <cwd>/fixtures/rust_macro_table_arrow_foreign_macro/diff.patch --mode fast probe:src_lib.rs:predicate:ea84cf5e
   ripr context --root <cwd>/fixtures/rust_macro_table_arrow_foreign_macro/input --diff <cwd>/fixtures/rust_macro_table_arrow_foreign_macro/diff.patch --mode fast --at probe:src_lib.rs:predicate:ea84cf5e
-  (spot id, for repair)
-  ripr repair 17e8393c4e6bf23c --root <cwd>/fixtures/rust_macro_table_arrow_foreign_macro/input
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_macro_table_arrow_foreign_macro/input --at src/lib.rs:5 --kind predicate
 
