@@ -247,6 +247,21 @@ fn closed_scope(scope: &SyntaxNode, derives: bool) -> bool {
     })
 }
 
+/// A call-less source body proves no callable absence if an unread attribute
+/// or expansion can replace its function or enclosing impl. Reuse the same
+/// exact-owner scopes and closed-binding authority as primitive operand pins.
+pub(in crate::analysis::classify) fn callable_context_is_closed(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let derives = derives_have_root_context(owner, index);
+    function(owner, index).is_some_and(|function| {
+        context_scopes(&function)
+            .iter()
+            .all(|scope| closed_scope(scope, derives))
+    })
+}
+
 /// Constructor-only admission for a directly declared file-root enum. Reuse
 /// the existing closed-scope and standard-derive binding authority; the broader
 /// entry-type guard intentionally keeps rejecting derives. Generic contexts

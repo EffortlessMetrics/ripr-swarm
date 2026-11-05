@@ -556,7 +556,10 @@ in that assertion must agree. Another call elsewhere in the test cannot
 supply this authority; local callable bindings and unindexed receivers
 remain uncertain.
 
-The refusal keeps uncertainty whenever the established candidate makes an
+The candidate's actual function and enclosing impl scopes must preserve the
+read source before any callable absence can be inferred. An unread rewriting
+attribute retains uncertainty even when the source body has no calls.
+The refusal also keeps uncertainty whenever the established candidate makes an
 outgoing call, including calls to indexed helpers or uppercase callable
 parameters. Only actual parsed `Enum::Variant` constructors are treated as
 non-calling: the enum and function must be established in the same file-root

@@ -567,26 +567,83 @@ pub mod other {
 }
 "##,
         ),
+        (
+            "rewriting_method_attribute",
+            "src/lib.rs::consume",
+            r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+
+pub fn consume(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+
+pub struct Widget;
+impl Widget {
+    #[owner_macros::forward]
+    pub fn consume(&self, value: u32) -> Reduction {
+        match value {
+            0 => Reduction::Empty,
+            _ => Reduction::Empty,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        assert_eq!(widget.consume(1), Reduction::Over(16));
+    }
+}
+"##,
+        ),
     ] {
         let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
         let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
-        let selected: Vec<_> = seams.iter().filter(|seam| {
-            seam.kind() == SeamKind::MatchArm
-                && seam.owner() == owner
-                && seam.expression() == "_ =>"
-        }).collect();
+        let selected: Vec<_> = seams
+            .iter()
+            .filter(|seam| {
+                seam.kind() == SeamKind::MatchArm
+                    && seam.owner() == owner
+                    && seam.expression() == "_ =>"
+            })
+            .collect();
         let [arm] = selected.as_slice() else {
-            return Err(format!("{case}: expected one selected arm, got {}", selected.len()));
+            return Err(format!(
+                "{case}: expected one selected arm, got {}",
+                selected.len()
+            ));
         };
         let full = evidence_for_seam(arm, &index);
         let context = CompactGripContext::new(&index);
         let compact = compact_evidence_for_seam(arm, &context);
         assert_eq!(full.related_tests.len(), 1, "{case}: nonempty test stimulus");
         assert_eq!(full.observe.state, StageState::Yes, "{case}: full observe");
-        assert_eq!(full.discriminate.state, StageState::Yes, "{case}: full discriminate");
-        assert_eq!(full.related_tests[0].oracle_strength, OracleStrength::Strong, "{case}: oracle");
-        assert_eq!(compact.observe.state, StageState::Yes, "{case}: compact observe");
-        assert_eq!(compact.discriminate.state, StageState::Yes, "{case}: compact discriminate");
+        assert_eq!(
+            full.discriminate.state,
+            StageState::Yes,
+            "{case}: full discriminate"
+        );
+        assert_eq!(
+            full.related_tests[0].oracle_strength,
+            OracleStrength::Strong,
+            "{case}: oracle"
+        );
+        assert_eq!(
+            compact.observe.state,
+            StageState::Yes,
+            "{case}: compact observe"
+        );
+        assert_eq!(
+            compact.discriminate.state,
+            StageState::Yes,
+            "{case}: compact discriminate"
+        );
     }
     Ok(())
 }

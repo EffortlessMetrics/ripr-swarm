@@ -1245,7 +1245,9 @@ impl OwnerReach<'_, '_> {
     /// Only established enum constructors have no function body to execute.
     fn opposite_kind_function_may_run_owner(&self, function: &FunctionSummary) -> bool {
         use ra_ap_syntax::{AstNode, ast, ast::HasName};
-        if function.item.container == FunctionContainer::Unknown {
+        if function.item.container == FunctionContainer::Unknown
+            || !super::operand_pin::callable_context_is_closed(function, self.index)
+        {
             return true;
         }
         let Some(parse) = self.index.source_syntax.parse_fragment(&function.body) else {
