@@ -170,8 +170,30 @@ child-only wrapper and encoded-flag overrides remove outer llvm-cov compiler
 interposition without mutating the parent environment. Require exactly one
 intended Cargo test artifact and actual test compiler invocation per mode.
 The candidate invocation must request `strip=debuginfo`; do not require Cargo
-to emit its default `strip=none`. Require baseline line tables, no candidate
-debug sections and a smaller candidate executable.
+to emit its default `strip=none`. Require a nonempty, nonallocated `PROGBITS`
+`.debug_line` baseline section and a smaller candidate executable. The
+candidate must remove every debug-prefixed section except the exact nonempty
+`PROGBITS` `.debug_gdb_scripts` loader metadata with `ALLOC` and without
+write/execute flags. Allocation cannot excuse retained DWARF or another
+unknown, compressed or lookalike debug name. The compiler's loader metadata
+is not a DWARF table; use the emitted native section evidence to identify an
+actual remaining section instead of inferring it from this permitted case.
+
+Traverse the complete GNU section-header table, requiring numeric unique
+indices for its data rows. Decode and record type/size/flags only for
+debug-prefixed rows, converting hexadecimal sizes to byte counts, handling
+optional empty flags and requiring unique names among those debug subjects.
+The unnamed `NULL` row is not a debug subject; ordinary section field layouts
+and ordinary section-name uniqueness are outside this control's validation.
+Reject malformed debug fields and missing, truncated or excessive table
+structure. Bound inspection to 256 indexed rows, 32 debug
+sections and text fields of 128/32/16 bytes for names/types/flags. Emit typed
+sections and bounded actual compiler text before the native assertions. Each
+record is at most 4 KiB; compiler and parse-failure text use at most eight
+512-character chunks with explicit remaining/truncated markers. Pure controls
+must reject retained allocated DWARF, a nonallocated loader, wrong/empty
+section types/sizes, writable/executable loader flags, ambiguous tables and
+prefix lookalikes while retaining the valid native-shaped alternatives.
 
 Each executable runs the same exact libtest identity twice. Require one test
 passed and one post-assertion acknowledgement per invocation, plus a fresh,
@@ -269,6 +291,10 @@ The strip compatibility controls are:
 - `tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::native_test_profile_strip_preserves_coverage_and_reduces_fixture_size`:
   actual Cargo compilation, exact acknowledged execution, strict matching LLVM
   merge/export, source/counter equivalence, own-image IDs and active stripping.
+- `tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::debug_sections_require_dwarf_removal_and_exact_allocated_loader_marker`:
+  complete GNU table parsing, unnamed/optional-field handling, exact loader
+  identity/type/flags and nonempty baseline DWARF, with allocated-DWARF,
+  wrong-name/type/size/flag, malformed and duplicate-subject refusals.
 - `tools/repo-policy/src/workflow_tests.rs::coverage_strip_is_generate_only_and_requires_native_controls`:
   mandatory preflight, exact Generate-only setting and full-command wrapper,
   with global/other-step, missing, duplicate, stronger-strip, skipped-control
