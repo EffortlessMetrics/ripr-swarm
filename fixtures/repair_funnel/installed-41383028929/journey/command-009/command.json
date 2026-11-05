@@ -1,0 +1,32 @@
+{
+  "args": [
+    "test",
+    "--manifest-path",
+    "/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop fixture-2939-1793590613047305835/Cargo.toml",
+    "--test",
+    "pricing",
+    "equality_boundary_discounts",
+    "--",
+    "--exact",
+    "--nocapture"
+  ],
+  "budget_ms": 120000,
+  "capture_limit_bytes": 4194304,
+  "containment": "OwnedProcess::spawn_isolated",
+  "cwd": "/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop fixture-2939-1793590613047305835",
+  "explicit_env": [
+    [
+      "CARGO_TARGET_DIR",
+      "/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop-cargo-target-2939-1793590613047417354"
+    ],
+    [
+      "CARGO_TERM_COLOR",
+      "never"
+    ],
+    [
+      "PATH",
+      "/home/runner/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin:/home/runner/work/_temp/pip-consumer/bin:/home/runner/work/_temp/planted-pip:/usr/bin:/bin"
+    ]
+  ],
+  "program": "cargo"
+}

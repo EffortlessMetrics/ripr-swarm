@@ -1,0 +1,49 @@
+{
+  "schema_version": "retained_installed_ordinary_manifest.v1",
+  "cohort": "installed_deterministic_journey",
+  "bundles": [
+    {
+      "directory": "installed-41383028929",
+      "files": {
+        "invocation.json": "sha256:ca1c38e7391a2707c064f682f7b4de676db8e31597ba9e6f9bc80c6769f8878f",
+        "journey/Cargo.lock": "sha256:ad76945202e1920abe567bbc1d8cc4833c1cadecb56ff95b98416c5fee39ca72",
+        "journey/Cargo.toml": "sha256:0b3548cc98ede2eea44a15033dbd8c6f943f4c0c0f03e6bbf8e6e03750f5c178",
+        "journey/admitted.json": "sha256:a071ce2943974dbdbcc2ae0a2af00ca4a1bcda7b81dd9d15891d2c86d25ec972",
+        "journey/after.json": "sha256:3ec4df83ef439aaa94fc31995a9117ec5469836fd00426de85b7cfe6c0cd3417",
+        "journey/before.json": "sha256:e1e0d40096dda8d9dd04a95ef2791c31e3d0a2bdaf7a521da37fac9416153827",
+        "journey/command-000/command.json": "sha256:598ff2e4554155704e261ce3edc5f9b821663f34dc73270280edea054cd08bbc",
+        "journey/command-000/result.json": "sha256:716588a099d9f456c2c79aa3783f562fd91844d6a00e62fde09f3add00c95650",
+        "journey/command-000/stderr": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "journey/command-000/stdout": "sha256:fc052ee32eddc0dc101632ab49816c5b294740b08810117e9fcae58748e7e9f5",
+        "journey/command-001/command.json": "sha256:041c5a322d4a5abcc324019c42e9c1fb12619992d65721176077f15a564dbda1",
+        "journey/command-001/result.json": "sha256:f64a757238cb9647b5d6e492f12be16252375b9b57da43590dbeeb8ce3818d18",
+        "journey/command-001/stderr": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "journey/command-001/stdout": "sha256:79d0c66aceea69330d09ffcfc39f7a501276cec1bcf8947fe57e6d038ac200e1",
+        "journey/command-009/command.json": "sha256:e38b0d5bc19c3957a19de8b2698bd7e37fe26304e02fed005c8920d6591581ae",
+        "journey/command-009/result.json": "sha256:9b67f7b8218bb942c4a0cfc387e1c940bb0dcaed5acd9b5b2a4e97fde2029b6c",
+        "journey/command-009/stderr": "sha256:89cd4fee1dad7bb26d87ef67df39cd735e0b85157b130e36f8118b8a9394b8ad",
+        "journey/command-009/stdout": "sha256:7dcf7977672f3caa3ce6fb9f0e76cb6626c74a163ec59fbe85cfe88787b49101",
+        "journey/command-010/command.json": "sha256:e38b0d5bc19c3957a19de8b2698bd7e37fe26304e02fed005c8920d6591581ae",
+        "journey/command-010/result.json": "sha256:5c639d89227302c2b3a454f08ab31ed4c7c90228b1579706921ce58a67ce3018",
+        "journey/command-010/stderr": "sha256:89cd4fee1dad7bb26d87ef67df39cd735e0b85157b130e36f8118b8a9394b8ad",
+        "journey/command-010/stdout": "sha256:36b1e9cc72ec88614549ca78a9f90fa304b85523ff6c2229eaaad448c4d88ed5",
+        "journey/command-011/command.json": "sha256:041c5a322d4a5abcc324019c42e9c1fb12619992d65721176077f15a564dbda1",
+        "journey/command-011/result.json": "sha256:11020422a39b9d192647ae087b198501fad7deaa7923db6548cf388b384c0eaf",
+        "journey/command-011/stderr": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "journey/command-011/stdout": "sha256:3564df4d5b324f6593fcd5ae4c776b5358cbf4c81f85800d14e777da00e337fb",
+        "journey/command-012/command.json": "sha256:e38b0d5bc19c3957a19de8b2698bd7e37fe26304e02fed005c8920d6591581ae",
+        "journey/command-012/result.json": "sha256:fc9e23d1e07d8db5b0601fda55d687a9a9f9de2e4fdd7bdcbac39088a1b85df2",
+        "journey/command-012/stderr": "sha256:0c3b57de34b564a12ff4075f841b10618aa80cdd411fde079b9b77d9cfa8184f",
+        "journey/command-012/stdout": "sha256:6a1edc9cd292f99826c1ebe18be5459000f4fd32a37932712bc6b39ee4098d62",
+        "journey/native-after.json": "sha256:5871b5e1368d255e9adb0028914bcb7e7d7966a0ec8ac0e11bfd2beb8f776d6e",
+        "journey/native-wrong-expected.json": "sha256:035df87c956a87fdde3246119954d122c126129e599231599a096f2da0633d60",
+        "journey/native-zero-selection.json": "sha256:7d5fbc761ac55a234a87059f9bdb70e1391d545481a2389580f21b17d0230396",
+        "journey/production.rs": "sha256:0656ec79def352524409bf600a1a57abc4a7a096c73059ee4de3c00376cd3392",
+        "journey/subject-after.json": "sha256:6bba73dda26496a17fdf78c8455b81ae83c6f93cc4d7e2fd5b61dc84bee1622f",
+        "journey/subject-before.json": "sha256:6bba73dda26496a17fdf78c8455b81ae83c6f93cc4d7e2fd5b61dc84bee1622f",
+        "runner-receipt.json": "sha256:a6459804001f88fe0ad1ecdb9d9ea43fea0b1abf3865d1ba22d3b3a386e32066",
+        "wheel-receipt.json": "sha256:7fb9b21174fdc5c49878c675eb7452a8d6d2df1930c50f83d7bcb3f33fa3a203"
+      }
+    }
+  ]
+}

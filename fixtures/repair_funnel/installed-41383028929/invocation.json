@@ -1,0 +1,11 @@
+{
+  "candidate_sha": "a3847eed4c4c89d3b9c5ff21ccbbc9dd7ad44965",
+  "runner": "/home/runner/work/ripr-swarm/ripr-swarm/ordinary-runner/boundary_gap_closure",
+  "runner_sha256": "9f0bc1f286a53eff6de94b380304dc1ee214a65cffce1bf815e479cd70b9bd4c",
+  "mode": "installed",
+  "installed_binary": "/home/runner/work/_temp/pip-consumer/bin/ripr",
+  "payload_sha256": "fe97d22cb32227976fbca98bc05d418c280f043caea4d2b767a82c25cd64a735",
+  "full_version": "ripr 0.11.0 (a3847eed4c4c89d3b9c5ff21ccbbc9dd7ad44965)",
+  "selector": "ordinary_daily_loop::ordinary_loop_preserves_production_subject_and_native_outcome",
+  "evidence": "/home/runner/work/ripr-swarm/ripr-swarm/ordinary-evidence/journey"
+}

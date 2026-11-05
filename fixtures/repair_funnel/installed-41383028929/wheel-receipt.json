@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "channel": "pypi-local-wheelhouse",
+  "publication_attempted": false,
+  "candidate_sha": "a3847eed4c4c89d3b9c5ff21ccbbc9dd7ad44965",
+  "candidate_tree": "68015793efe98797a2f0b151abd7073e5bc72e8e",
+  "cargo_lock_sha256": "b31b72867f3ae9a6e67197d293185cb4ecc0fbb9472a0b34ac90d37e85f51765",
+  "native_version": "0.11.0",
+  "python_version": "0.11.0",
+  "distribution": "ripr-rs",
+  "executable": "ripr",
+  "rust_target": "x86_64-unknown-linux-gnu",
+  "compatibility_state": "unqualified",
+  "compatibility_owner": "issue:#4489",
+  "wheel": {
+    "filename": "ripr_rs-0.11.0-py3-none-linux_x86_64.whl",
+    "sha256": "0e76f211ed163339b708d5c8a3f6829466b505d2987a4e0629a4d301260c46a0",
+    "tag": "py3-none-linux_x86_64",
+    "installed_payload_sha256": "fe97d22cb32227976fbca98bc05d418c280f043caea4d2b767a82c25cd64a735"
+  },
+  "negative_controls": [
+    {
+      "mutation": "removed .data/scripts/ripr",
+      "result": "expected exactly one ripr script, got []"
+    },
+    {
+      "mutation": "mutated .data/scripts/ripr without updating RECORD",
+      "result": "RECORD digest mismatch for ripr_rs-0.11.0.data/scripts/ripr"
+    }
+  ],
+  "toolchain": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)\nrelease: 1.95.0\ncommit-hash: f2d3ce0bd7f24a49f8f72d9000448f8838c4e850\ncommit-date: 2026-03-21\nhost: x86_64-unknown-linux-gnu\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.15.0-DEV (sys:0.4.83+curl-8.15.0 vendored ssl:OpenSSL/3.5.4)\nssl: OpenSSL 3.5.4 30 Sep 2025\nos: Ubuntu 22.4.0 (jammy) [64-bit]",
+    "python": "Python 3.10.12 (main, Aug 31 2026, 10:18:17) [GCC 11.4.0] ",
+    "pip": "pip 26.2.1 from /home/runner/work/ripr-swarm/ripr-swarm/target/ripr/python-build/venv/lib/python3.10/site-packages/pip (python 3.10)",
+    "maturin": "maturin 1.14.1",
+    "twine": "twine version 7.0.0 (readme-renderer: 46.0, requests: 2.34.2, requests-",
+    "uv": "uv 0.12.19 (x86_64-unknown-linux-gnu)",
+    "packaging": "26.3"
+  },
+  "runner": {
+    "os": "Linux",
+    "arch": "X64",
+    "image_os": "ubuntu22",
+    "image_version": "20261026.341.1"
+  }
+}

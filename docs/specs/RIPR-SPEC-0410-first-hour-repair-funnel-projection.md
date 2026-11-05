@@ -64,11 +64,64 @@ through `first_hour_repair_funnel_inputs.v1` → `first_hour_repair_funnel.v1`:
 `benchmarks/dx_scoreboard/scoreboards.toml`. Zero selected cases remain
 `not_measured`, never zero duration or success.
 
+## Retained installed ordinary input
+
+`cargo xtask repair-funnel-report --input <manifest.json>` admits the existing
+#11919/#12404 strict installed ordinary-loop producer. With no arguments the
+command continues to check only the separate planted controls corpus.
+
+The input envelope is `retained_installed_ordinary_manifest.v1`, with exactly
+`schema_version`, `cohort`, and `bundles`. Cohort must be
+`installed_deterministic_journey`; each bundle has a relative `directory` and
+`files` mapping every consumed relative filename to its `sha256:<hex>` digest.
+Unknown envelope fields, traversal, escaping symlinks and digest disagreement
+refuse. Paths resolve relative to the manifest. A bundle is bounded to 1,024
+files / 64 MiB and the manifest to 1 MiB.
+
+The adapter understands the historical producer's explicit legacy field shape:
+wheel schema 2, check schema 0.2, admitted installed identity, invocation,
+runner, unchanged before/after subject and source hashes, raw command records,
+result records and stdout/stderr hashes. These older producer fragments do not
+have their own version tag; the input envelope versions this exact adapter.
+A receipt with another shape is unsupported. This is custody and consistency
+admission, not an independent verifier attestation or an assertion that supplied
+hashes can authenticate a maliciously fabricated bundle.
+
+Native verification requires the existing exact Cargo command, selector,
+nonzero selected/executed denominator, raw libtest result and native status.
+A human `pass`, completion boolean or later summary cannot supply it. Static
+movement requires complete source-matched before/after checks for the same
+canonical item and probe; source files, manifest and lockfile must match the
+retained subject digests. A wrong-base quiet report cannot supply movement.
+
+`journey/native-after.json` and `journey/after.json` may be absent. Their absent
+stages remain absent, even if another summary says the fixture completed.
+Zero selection, failed verification and missing after state remain visible.
+Exact duplicate views of one candidate/root/base/head/item count once;
+conflicting duplicate views refuse rather than discard the unfavorable view.
+
+The normalized report keeps `first_hour_repair_funnel.v1` and the existing
+cohort vocabulary. Its identity fields retain each admitted source digest,
+manifest digest, candidate/binary/root/base/head/item, missing stages and
+non-claims. JSON and Markdown render those same fields. Existing `project_case`
+derives native/static stages and exit from admitted ordinary facts; this does
+not reconstruct a RepairAttempt. There is no repair-start, RepairCard or
+terminal-attempt receipt. Legacy command elapsed times supply no common stage
+clock or install timing; all duration metrics remain `not_measured`.
+Installed deterministic results contribute no real `repair.*` samples.
+
+`fixtures/repair_funnel/installed-41383028929.json` pins an exact-byte subset
+of the genuine retained installed artifact. It is regression evidence for this
+adapter and is not a new installed run, governed attempt or personal use.
+See [fixture provenance](../../fixtures/repair_funnel/SPEC.md) for the immutable
+source and imported-byte boundary.
+
 ## Required Evidence
 
 - `fixtures/repair_funnel/controls/corpus.json`
 - `cargo test -p xtask --bin xtask repair_funnel`
 - `cargo xtask repair-funnel-report`
+- `cargo xtask repair-funnel-report --input fixtures/repair_funnel/installed-41383028929.json`
 
 ## Non-Goals
 
@@ -87,6 +140,7 @@ through `first_hour_repair_funnel_inputs.v1` → `first_hour_repair_funnel.v1`:
 ## Test Mapping
 
 - `xtask/src/reports/repair_funnel.rs::tests::*`
+- `xtask/src/reports/repair_funnel/installed.rs::tests::*`
 - `fixtures/repair_funnel/controls/corpus.json` (planted controls)
 
 ## Implementation Mapping
@@ -101,3 +155,4 @@ through `first_hour_repair_funnel_inputs.v1` → `first_hour_repair_funnel.v1`:
 - `repair.time_to_verified_improvement_ms` (advisory, runner-dependent)
 - `repair.time_to_first_honest_result_ms` (advisory, runner-dependent)
 - `repair.selected_case_count` (population visibility)
+

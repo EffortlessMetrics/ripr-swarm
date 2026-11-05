@@ -1,0 +1,10 @@
+   Compiling boundary-gap-closure v0.0.0 (/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop fixture-2939-1793590613047305835)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running tests/pricing.rs (/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop-cargo-target-2939-1793590613047417354/debug/deps/pricing-331d651585cd35cc)
+
+thread 'equality_boundary_discounts' (3538) panicked at tests/pricing.rs:15:5:
+assertion `left == right` failed
+  left: 90
+ right: 91
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `--test pricing`

@@ -1,0 +1,3 @@
+   Compiling boundary-gap-closure v0.0.0 (/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop fixture-2939-1793590613047305835)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running tests/pricing.rs (/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop-cargo-target-2939-1793590613047417354/debug/deps/pricing-331d651585cd35cc)

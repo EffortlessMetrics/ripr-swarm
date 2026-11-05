@@ -1,0 +1,23 @@
+{
+  "args": [
+    "check",
+    "--root",
+    "/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop fixture-2939-1793590613047305835",
+    "--base",
+    "32f6c7f56f68972a3ae0e4e0c9277b47125b1486",
+    "--worktree",
+    "--format",
+    "json"
+  ],
+  "budget_ms": 120000,
+  "capture_limit_bytes": 4194304,
+  "containment": "OwnedProcess::spawn_isolated",
+  "cwd": "/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop-decoy-2939-1793590613047443503",
+  "explicit_env": [
+    [
+      "PATH",
+      "/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop-decoy-2939-1793590613047443503:/home/runner/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin:/home/runner/work/_temp/pip-consumer/bin:/home/runner/work/_temp/planted-pip:/usr/bin:/bin"
+    ]
+  ],
+  "program": "/home/runner/work/_temp/pip-consumer/bin/ripr"
+}

@@ -7,6 +7,8 @@
 //! `cargo xtask dx-scoreboard --boards repair --ingest` consumes the report
 //! receipt via [`repair_funnel_to_input`].
 
+mod installed;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -695,8 +697,12 @@ pub(crate) fn repair_funnel_report_value() -> Result<FirstHourRepairFunnelReport
     Ok(assess_controls_corpus(&corpus))
 }
 
-pub(crate) fn repair_funnel_report() -> Result<(), String> {
-    let report = repair_funnel_report_value()?;
+pub(crate) fn repair_funnel_report(args: &[String]) -> Result<(), String> {
+    let report = match args {
+        [] => repair_funnel_report_value()?,
+        [flag, manifest] if flag == "--input" => installed::report(Path::new(manifest))?,
+        _ => return Err("usage: repair-funnel-report [--input <retained-installed-manifest.json>]".into()),
+    };
     if !report.control_failures.is_empty() {
         return Err(format!(
             "repair funnel controls failed: {}",
@@ -1066,3 +1072,4 @@ mod tests {
         Ok(())
     }
 }
+

@@ -64,7 +64,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::Metrics => super::reports::metrics_report(),
         XtaskCommand::RustRepairTrustReport => super::reports::rust_repair_trust_report(),
         XtaskCommand::RepairCardUsabilityReport => super::reports::repair_card_usability_report(),
-        XtaskCommand::RepairFunnelReport => super::reports::repair_funnel_report(),
+        XtaskCommand::RepairFunnelReport(args) => super::reports::repair_funnel_report(&args),
         XtaskCommand::BlindJourneyContract => super::reports::blind_journey_contract_report(),
         XtaskCommand::BlindJourneyExecute => super::reports::blind_journey_execute_report(),
         XtaskCommand::OrchestrationScorecard(args) => {
@@ -374,3 +374,4 @@ mod tests {
         result
     }
 }
+

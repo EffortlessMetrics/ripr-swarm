@@ -1,0 +1,218 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "draft",
+  "root": "/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop fixture-2939-1793590613047305835",
+  "base": "32f6c7f56f68972a3ae0e4e0c9277b47125b1486",
+  "base_commit": "32f6c7f56f68972a3ae0e4e0c9277b47125b1486",
+  "head": {
+    "source": "working_tree",
+    "commit": "6291065213e1abe9016c6b8d07eb73cf1e661834"
+  },
+  "summary": {"changed_rust_files":2,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":2}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"32f6c7f56f68972a3ae0e4e0c9277b47125b1486","input_identity":"sha256:00542bc6b9a91395c6ad206380e937e5d6263d6ce7ba8c1edb9d43ee2feb52fe","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":2,"changed_line_count":7,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:c80557eb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "discounted_total",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount==discount_threshold"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:c80557eb",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "amount >= discount_threshold"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach discounted_total: equality_boundary_discounts, below_threshold_has_no_discount, far_above_threshold_discounts"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: amount - 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach discounted_total: equality_boundary_discounts, below_threshold_has_no_discount, far_above_threshold_discounts", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: amount - 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: amount - 10 (line 3)", "related test tests/pricing.rs:14 equality_boundary_discounts uses strong exact value oracle: assert_eq!(discounted_total(100, 100), 90);", "related test tests/pricing.rs:4 below_threshold_has_no_discount uses strong exact value oracle: assert_eq!(discounted_total(50, 100), 50);", "related test tests/pricing.rs:9 far_above_threshold_discounts uses strong exact value oracle: assert_eq!(discounted_total(10_000, 100), 9_990);", "source assertion argument value 50 at line 5", "source function argument value amount = 50 at line 5", "source function argument value discount_threshold = 100 at line 5", "source assertion argument value 9_990 at line 10", "source function argument value amount = 10_000 at line 10", "source function argument value discount_threshold = 100 at line 10", "source assertion argument value 90 at line 15", "source function argument value amount = 100 at line 15"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"amount - 10","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: amount - 10", "Detected related test input at the changed boundary", "Related tests appear to reach discounted_total: equality_boundary_discounts, below_threshold_has_no_discount, far_above_threshold_discounts", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "5": "assert_eq!(discounted_total(50, 100), 50);",
+        "10": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+        "15": "assert_eq!(discounted_total(100, 100), 90);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "50",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 5,
+            "value": "amount = 50",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "discount_threshold = 100",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "9_990",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 10,
+            "value": "amount = 10_000",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "discount_threshold = 100",
+            "context": "function_argument"
+          },
+          {
+            "line": 15,
+            "value": "90",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 15,
+            "value": "amount = 100",
+            "context": "function_argument"
+          },
+          {
+            "line": 15,
+            "value": "amount == discount_threshold",
+            "context": "function_argument",
+            "provenance": "assert_eq!(discounted_total(100, 100), 90); | exact input amount = 100; exact input discount_threshold = 100"
+          },
+          {
+            "line": 15,
+            "value": "discount_threshold = 100",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "50",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 5,
+          "value": "amount = 50",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "discount_threshold = 100",
+          "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "9_990",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 10,
+          "value": "amount = 10_000",
+          "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "discount_threshold = 100",
+          "context": "function_argument"
+        },
+        {
+          "line": 15,
+          "value": "90",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 15,
+          "value": "amount = 100",
+          "context": "function_argument"
+        },
+        {
+          "line": 15,
+          "value": "amount == discount_threshold",
+          "context": "function_argument",
+          "provenance": "assert_eq!(discounted_total(100, 100), 90); | exact input amount = 100; exact input discount_threshold = 100"
+        },
+        {
+          "line": 15,
+          "value": "discount_threshold = 100",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 3,
+      "related_tests": [
+        {
+          "name": "equality_boundary_discounts",
+          "file": "tests/pricing.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(discounted_total(100, 100), 90);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "below_threshold_has_no_discount",
+          "file": "tests/pricing.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(discounted_total(50, 100), 50);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "far_above_threshold_discounts",
+          "file": "tests/pricing.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+,
+  "language_completeness": {"completeness":"complete","languages":[{"disclosure":"silent","findings":1,"language":"rust","limitations":[],"status":"complete"}],"mode":"diff","schema_version":"language_completeness.v1","total_findings":1},
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop fixture-2939-1793590613047305835","diff_source":{"working_tree":{"head":null}},"item":"probe:src_lib.rs:predicate:c80557eb"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"terminal_no_action","stop":{"kind":"check_triage","case":"no_diff_finding","detail_route":"ripr explain --root '/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop fixture-2939-1793590613047305835' --base 32f6c7f56f68972a3ae0e4e0c9277b47125b1486 --worktree probe:src_lib.rs:predicate:c80557eb"},"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

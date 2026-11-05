@@ -1,0 +1,21 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--manifest-path",
+    "/home/runner/work/_temp/ordinary-native-fixtures/ripr-ordinary-daily-loop fixture-2939-1793590613047305835/Cargo.toml",
+    "--test",
+    "pricing",
+    "equality_boundary_discounts",
+    "--",
+    "--exact",
+    "--nocapture"
+  ],
+  "executed": 0,
+  "failed": 0,
+  "ignored": 0,
+  "native_exit_code": 0,
+  "passed": 0,
+  "selected": 0,
+  "selector": "equality_boundary_discounts"
+}

@@ -1,0 +1,16 @@
+{
+  "args": [
+    "--version"
+  ],
+  "budget_ms": 120000,
+  "capture_limit_bytes": 4194304,
+  "containment": "OwnedProcess::spawn_isolated",
+  "cwd": "/home/runner/work/ripr-swarm/ripr-swarm",
+  "explicit_env": [
+    [
+      "PATH",
+      "/home/runner/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin:/home/runner/work/_temp/pip-consumer/bin:/home/runner/work/_temp/planted-pip:/usr/bin:/bin"
+    ]
+  ],
+  "program": "/home/runner/work/_temp/pip-consumer/bin/ripr"
+}

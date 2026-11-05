@@ -34,7 +34,7 @@ pub(crate) enum XtaskCommand {
     Metrics,
     RustRepairTrustReport,
     RepairCardUsabilityReport,
-    RepairFunnelReport,
+    RepairFunnelReport(Vec<String>),
     BlindJourneyContract,
     BlindJourneyExecute,
     OrchestrationScorecard(Vec<String>),
@@ -261,7 +261,7 @@ impl XtaskCommand {
             "metrics" => Self::Metrics,
             "rust-repair-trust-report" => Self::RustRepairTrustReport,
             "repair-card-usability-report" => Self::RepairCardUsabilityReport,
-            "repair-funnel-report" => Self::RepairFunnelReport,
+            "repair-funnel-report" => Self::RepairFunnelReport(rest),
             "blind-journey-contract" => Self::BlindJourneyContract,
             "blind-journey-execute" => Self::BlindJourneyExecute,
             "orchestration-scorecard" => Self::OrchestrationScorecard(rest),
@@ -3045,3 +3045,4 @@ mod tests {
 mod help;
 
 use help::{format_help_entries, format_top_level_help};
+
