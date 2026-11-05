@@ -87,7 +87,9 @@ suite('Genuine fixture producer process boundary', function () {
       const transcript = await run(`setTimeout(() => {
         console.log(JSON.stringify({cwd: process.cwd(), value: process.env.RIPR_FIXTURE_CONTROL}));
       }, 150);`, { onProgress: value => progress.push(value), progressIntervalMs: 40 });
-      assert.deepStrictEqual(JSON.parse(transcript), { cwd: fs.realpathSync(root), value: 'literal value with spaces' });
+      const result = JSON.parse(transcript);
+      assert.deepStrictEqual({ ...result, cwd: fs.realpathSync.native(result.cwd) },
+        { cwd: fs.realpathSync.native(root), value: 'literal value with spaces' });
       assert.strictEqual(heartbeat, true, 'producer blocked the parent event loop');
       assert.ok(progress.length >= 2, 'a running producer needs more than a start message');
       assert.ok(progress.every(message => message.includes('fixture producer running')));
@@ -151,11 +153,16 @@ suite('Genuine fixture producer process boundary', function () {
         setInterval(() => {}, 1000);
       `);
       const cancelled = new AbortController();
+      // Windows Node otherwise kills its non-detached child at primary exit.
+      // Detaching this fixture bypasses that private Job but retains the outer
+      // wrapper Job: libuv does not request CREATE_BREAKAWAY_FROM_JOB.
       const outcome = run(`
         const fs = require('fs');
         process.on('SIGTERM', () => {});
         fs.writeFileSync('parent.pid', String(process.pid));
-        const child = require('child_process').spawn(process.execPath, ['descendant.js'], { stdio: 'inherit' });
+        const child = require('child_process').spawn(process.execPath, ['descendant.js'], {
+          stdio: 'inherit', detached: process.platform === 'win32'
+        });
         const timer = setInterval(() => {
           if (fs.existsSync('descendant.pid')) {
             clearInterval(timer);
