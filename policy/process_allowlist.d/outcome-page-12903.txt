@@ -1,0 +1,1 @@
+xtask/src/outcome_page.rs|Command::new|3|dx-scoreboard|#12903: repair-start-page spawns git to build the pinned case repositories and the built ripr binary under a 2-minute bound; it runs only on explicit operator or nightly invocation.

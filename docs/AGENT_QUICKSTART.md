@@ -5,6 +5,10 @@ it reads your diff and names the changed behavior no current test would notice.
 It never runs tests or mutants, never edits files, and its answers are static
 evidence, not proof that tests catch real bugs.
 
+For Muse, follow the [native plugin guide](../plugins/muse/ripr/README.md)
+for installation, MCP approval, and the `ripr-setup` and `ripr-repair` skills.
+The commands below generate instruction files for Claude Code, Codex, and Cursor.
+
 ```bash
 ripr init --agents claude    # CLAUDE.md             (Claude Code)
 ripr init --agents codex     # AGENTS.md             (Codex and other AGENTS.md readers)

@@ -1,2 +1,0 @@
-<!-- section: Internal / CI -->
-- The Windows advisory summarizer no longer rereads the runner's own stall diagnostics ("last output" replay) as test observations — a timeout replay used to manufacture a duplicate-observation provenance error that failed the nightly lane as `incomplete_evidence` (run 41583153155) — and the advisory run 1 deadline now covers the cold compile pass (110 minutes, #12804). The nightly's `issued_history` os-error-183 race and the cache-export seam-limit witness row are recorded as `open` flake ledger entries owned by #12805 and #12421.
