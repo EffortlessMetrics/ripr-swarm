@@ -151,6 +151,14 @@ The live-repository policy facade remains on native Windows for retained-evidenc
 admission (#5044/#13012). On other hosts, `ci-policy` is the blocking producer of
 those same policy checks; nextest does not repeat the whole repository scan.
 
+The actual `check-file-policy` CLI is exercised against a dependency-free,
+two-package temporary Cargo workspace. Valid exact selectors pass with fresh
+host-scoped report rows. Renaming one required common test to a neighboring
+name still lists two real tests but fails packet acceptance with its specific
+missing-subject error and fresh failure report. Unix hosts also exercise the
+native selector this way. Restoring the names must restore a fresh pass. This
+canary exercises the outer CLI wiring without scanning or building this repository.
+
 ## Test Mapping
 
 - `xtask/src/tests.rs::file_policy_allowlist_accepts_host_scoped_coverage`
@@ -167,6 +175,7 @@ those same policy checks; nextest does not repeat the whole repository scan.
 - `xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_rejects_selector_and_host_drift`
 - `xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_rejects_malformed_extra_identities`
 - `xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_preserves_enumerator_failure`
+- `xtask/tests/file_policy_packet_acceptance.rs::file_policy_packet_inventory_reaches_actual_cli_acceptance`
 - `xtask/src/tests.rs::packet_coverage_report_accepts_exact_selected_names`
 - `xtask/src/tests.rs::packet_coverage_report_rejects_unpinned_or_wrong_common_binary`
 - `xtask/src/tests.rs::packet_coverage_report_rejects_neighboring_selected_names`

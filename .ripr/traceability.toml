@@ -14419,6 +14419,7 @@ tests = [
   "xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_rejects_selector_and_host_drift",
   "xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_rejects_malformed_extra_identities",
   "xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_preserves_enumerator_failure",
+  "xtask/tests/file_policy_packet_acceptance.rs::file_policy_packet_inventory_reaches_actual_cli_acceptance",
   "xtask/src/tests.rs::packet_coverage_report_accepts_exact_selected_names",
   "xtask/src/tests.rs::packet_coverage_report_rejects_unpinned_or_wrong_common_binary",
   "xtask/src/tests.rs::packet_coverage_report_rejects_neighboring_selected_names",
