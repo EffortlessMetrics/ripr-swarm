@@ -679,8 +679,13 @@ repair routes at `usable alpha`. Only complete weak-evidence routes get repair
 cards; zero cards is normal for unsupported or non-repairable findings.
 `ripr repair` and `ripr agent stub` support Rust files only.
 
-TypeScript is enabled automatically for TypeScript-shaped repositories without a
-`ripr.toml`; JavaScript is an opt-in preview. Diff analysis recognizes:
+Without a `ripr.toml`, project detection can enable the TypeScript-family
+preview for TypeScript-shaped repositories and for a root `package.json` with
+eligible JavaScript or TypeScript source. A manifest or JavaScript source alone
+is not enough for the latter route. With a config file, its `[languages]` list
+controls selection; the binary must also include the adapter. See
+[language configuration](CONFIGURATION.md#languages) for detection boundaries,
+including mixed Rust repositories. Diff analysis recognizes:
 
 ```text
 .ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs
