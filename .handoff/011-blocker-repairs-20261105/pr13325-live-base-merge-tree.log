@@ -1,0 +1,100 @@
+7ac4e72f85f6364be95dadb76cade6d746549e43
+crates/ripr/src/analysis/seam_cache.rs
+crates/ripr/src/analysis/seam_inventory.rs
+crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+docs/OUTPUT_SCHEMA.md
+fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json
+fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json
+fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json
+fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json
+fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json
+xtask/src/tests/rust_corpus_projection.rs
+
+Auto-merging .ripr/traceability.toml
+Auto-merging crates/ripr/src/analysis/classifier/evidence.rs
+Auto-merging crates/ripr/src/analysis/classify/activation.rs
+Auto-merging crates/ripr/src/analysis/classify/call_identity.rs
+Auto-merging crates/ripr/src/analysis/classify/mod.rs
+Auto-merging crates/ripr/src/analysis/seam_cache.rs
+CONFLICT (content): Merge conflict in crates/ripr/src/analysis/seam_cache.rs
+Auto-merging crates/ripr/src/analysis/seam_inventory.rs
+CONFLICT (content): Merge conflict in crates/ripr/src/analysis/seam_inventory.rs
+Auto-merging crates/ripr/src/analysis/test_grip_evidence.rs
+Auto-merging crates/ripr/src/analysis/test_grip_evidence/tests.rs
+Auto-merging crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+CONFLICT (content): Merge conflict in crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+Auto-merging docs/OUTPUT_SCHEMA.md
+CONFLICT (content): Merge conflict in docs/OUTPUT_SCHEMA.md
+Auto-merging fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json
+Auto-merging fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json
+Auto-merging fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json
+Auto-merging fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json
+CONFLICT (content): Merge conflict in fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/corpus.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json
+Auto-merging fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json
+CONFLICT (content): Merge conflict in fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json
+Auto-merging xtask/src/tests/rust_corpus_projection.rs
+CONFLICT (content): Merge conflict in xtask/src/tests/rust_corpus_projection.rs

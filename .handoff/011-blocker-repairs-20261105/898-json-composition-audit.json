@@ -1,0 +1,361 @@
+[
+  {
+    "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".seams[0].evidence_record.evidence_path.discriminate.state",
+      ".seams[0].evidence_record.evidence_path.discriminate.summary",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
+    "different_leaf_paths": [
+      ".verification.status",
+      ".verification.non_claims",
+      ".summary.next_recommendation",
+      ".summary.next_action.recommended_action",
+      ".provenance.before_artifact.sha256",
+      ".provenance.verify_artifact.sha256",
+      ".provenance.after_artifact.sha256"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
+    "different_leaf_paths": [
+      ".unchanged_seams[0].after_open_legs.length",
+      ".unchanged_seams[0].after_discriminate_state",
+      ".inputs.after_content_sha256",
+      ".inputs.before_content_sha256"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".seams[0].evidence_record.evidence_path.discriminate.state",
+      ".seams[0].evidence_record.evidence_path.discriminate.summary",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".seams[0].evidence_record.evidence_path.discriminate.state",
+      ".seams[0].evidence_record.evidence_path.discriminate.summary",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  },
+  {
+    "path": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json",
+    "different_leaf_paths": [
+      ".artifact.content_sha256",
+      ".artifact.repository.root",
+      ".artifact.repository.head",
+      ".artifact.analysis.worktree",
+      ".artifact.snapshot_identity",
+      ".artifact.generated_at",
+      ".analysis_inputs.workspace_manifests_hash",
+      ".analysis_inputs.analyzer_version",
+      ".source_subject.corpus.cache_schema_version"
+    ],
+    "disposition": "provisional ours bytes retained locally only; regenerate from verified composed production producer before qualification"
+  }
+]

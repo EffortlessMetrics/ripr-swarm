@@ -1,0 +1,33 @@
+{
+  "preparation_commit": "f64fb8edf0be5d5521b44473fe589b455a7197c9",
+  "tree": "650f51914dba9dea750426d4495d771a0ab22758",
+  "branch": "successor/011-pr13325-composition-898197c2",
+  "pr_head_unchanged": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+  "pr": 13325,
+  "parents": [
+    "e133ffc21a8acdd3eed6734373465ab83b03c226",
+    "898197c2ef0ec508fd4e1d5ac52b53e25d1ee320"
+  ],
+  "reason": "Actual merge-tree content conflicts30paths; not a behind-only restack",
+  "patch_kind": "native remerge source/policy resolution, excluding provisional25JSON",
+  "patch_bytes": 14134,
+  "patch_sha256": "06f4fb2c89e3a7fe4d66798df7b04f30dcc694027842ebab6595ce12b41e9562",
+  "patch": "898-source-composition-remerge.patch",
+  "semantic_resolution": "Preserve main FieldSeamAdmission in shared visit_inventory_seams so both bounded/full inventory and compact-prefill visitors apply the same admission. Extend existing main positive/negative field helper to compare full/bounded/streamed identities.",
+  "cache_generations": {
+    "full": "1.164",
+    "compact_sharded": "0.166"
+  },
+  "cache_predecessors": "Add explicit e1331.163/.165 rejection; existing1.161/.163 rejection covers independent snapshot main as well as old external-trait epoch.",
+  "json": "25JSON paths audited; e133 bytes are local provisional placeholders only. Regenerate all25 via composed production producer before qualification.",
+  "qualification": "No new build or test on preparation tree. Active e133 pipeline83479 remains untouched; its full18174/0/2 and focused passes retain e133 identity.",
+  "trigger_boundary": "Preparation branch has no PR. All push workflows at both e133 and898 have only main/master filters. Existing PR13325 head remains e133; no Draft synchronize event is requested. UB/windows autoPR triggers require reconciliation before pushing a resolved Draft head.",
+  "remaining": [
+    "e133 aggregate terminal",
+    "source review of preparation resolution",
+    "advance same hot build worktree only after its pipeline terminal",
+    "composed producer build and25artifact regeneration",
+    "affected qualification and native history-sync checks",
+    "promotion/selection holds"
+  ]
+}

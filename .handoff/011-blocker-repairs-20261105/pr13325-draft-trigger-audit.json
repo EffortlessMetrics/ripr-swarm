@@ -1,0 +1,617 @@
+{
+  "pr": 13325,
+  "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+  "workflow_source_base": "898197c2ef0ec508fd4e1d5ac52b53e25d1ee320",
+  "prepublication_checked": "Routed Rust label-only trigger; incomplete older-route audit acknowledged",
+  "current_primary_observation": "GitHub connector fetch_commit_workflow_runs returned workflow_runs=[]; wrapper is PR-event filtered and first-page only",
+  "findings": [
+    "routed-rust.yml is pull_request:labeled with implementation work only for merge-ready",
+    "windows-advisory.yml requires merge-ready request plus windows-ci/full-ci for PR jobs",
+    "ub-review.yml opened/reopened/synchronize job lacks Draft guard",
+    "windows-gate.yml opened/synchronize/reopened detect can select Windows work without Draft guard"
+  ],
+  "action_boundary": "No qualification labels issued. Do not publish resolved Draft head before trigger/one-PR qualification scope is reconciled. No workflow/protection edits proposed.",
+  "workflows": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "blob": "4689a79b324b61a7416356e0a9ad24d74b19bf0a",
+      "pull_request": {
+        "types": [
+          "opened",
+          "synchronize",
+          "reopened",
+          "labeled"
+        ]
+      },
+      "jobs": {
+        "source-identity": {
+          "if": "contains(toJSON(inputs), '\"subject_sha\"')",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "release-proof": {
+          "if": "always() && !cancelled() && ((contains(toJSON(inputs), '\"subject_sha\"') && needs.source-identity.result == 'success' && inputs.run_release_proof) || (!contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci'))))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "rust-only-features": {
+          "if": "always() && !cancelled() && ((contains(toJSON(inputs), '\"subject_sha\"') && needs.source-identity.result == 'success' && inputs.run_rust_only) || (!contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')))))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "msrv": {
+          "if": "always() && !cancelled() && ((contains(toJSON(inputs), '\"subject_sha\"') && needs.source-identity.result == 'success' && inputs.run_msrv) || (!contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci')))))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "vscode": {
+          "if": "always() && !cancelled() && ((contains(toJSON(inputs), '\"subject_sha\"') && needs.source-identity.result == 'success' && inputs.run_vscode) || (!contains(toJSON(inputs), '\"subject_sha\"') && github.event_name != 'pull_request'))",
+          "runs_on": null,
+          "uses": "./.github/workflows/vscode-e2e.yml"
+        },
+        "ci-result": {
+          "if": "always() && contains(toJSON(inputs), '\"subject_sha\"')",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/coverage.yml",
+      "blob": "c33e4628c8327dc64ff5819185390803ecd9fb81",
+      "pull_request": {
+        "types": [
+          "opened",
+          "synchronize",
+          "reopened",
+          "labeled"
+        ]
+      },
+      "jobs": {
+        "coverage": {
+          "if": "(github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'coverage') || contains(github.event.pull_request.labels.*.name, 'full-ci'))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/droid.yml",
+      "blob": "13e2b3598caa77cc7e9f59dded5594aca208aa66",
+      "pull_request": {
+        "types": [
+          "opened",
+          "edited"
+        ]
+      },
+      "jobs": {
+        "droid": {
+          "if": "(\n  github.event_name == 'issue_comment' &&\n  contains(github.event.comment.body, '@droid') &&\n  contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)\n) ||\n(\n  github.event_name == 'pull_request_review_comment' &&\n  contains(github.event.comment.body, '@droid') &&\n  contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association)\n) ||\n(\n  github.event_name == 'pull_request_review' &&\n  contains(github.event.review.body, '@droid') &&\n  contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.review.author_association)\n) ||\n(\n  github.event_name == 'issues' &&\n  (contains(github.event.issue.body, '@droid') || contains(github.event.issue.title, '@droid')) &&\n  contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.issue.author_association)\n) ||\n(\n  github.event_name == 'pull_request' &&\n  github.event.pull_request.head.repo.full_name == github.repository &&\n  (contains(github.event.pull_request.body, '@droid') || contains(github.event.pull_request.title, '@droid')) &&\n  contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.pull_request.author_association)\n)\n",
+          "runs_on": {
+            "group": "em-ci-review",
+            "labels": [
+              "self-hosted",
+              "Linux",
+              "X64",
+              "em-ci",
+              "trusted-pr",
+              "droid-review"
+            ]
+          },
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/future-clippy.yml",
+      "blob": "f50563bd724ca198bd2842073478b8dc130e223f",
+      "pull_request": {
+        "types": [
+          "labeled",
+          "opened",
+          "synchronize",
+          "reopened"
+        ]
+      },
+      "jobs": {
+        "future-clippy": {
+          "if": "(github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'clippy-future') || contains(github.event.pull_request.labels.*.name, 'full-ci'))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "stable-repo-policy": {
+          "if": "(github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'clippy-future') || contains(github.event.pull_request.labels.*.name, 'full-ci'))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/kani.yml",
+      "blob": "237e8cf4af0abfcc0d5a3b7333c99cd3023c52fe",
+      "pull_request": {
+        "types": [
+          "labeled"
+        ],
+        "paths": [
+          "crates/ripr/src/**",
+          "xtask/src/kani_lane.rs",
+          ".github/workflows/kani.yml"
+        ]
+      },
+      "jobs": {
+        "kani": {
+          "if": "github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/macos-advisory.yml",
+      "blob": "d4a6deb4d8a6d9ed6b44e101786e9580d10fdbaf",
+      "pull_request": {
+        "types": [
+          "opened",
+          "synchronize",
+          "reopened",
+          "labeled"
+        ]
+      },
+      "jobs": {
+        "macos-advisory": {
+          "if": "(github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'macos-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))",
+          "runs_on": "macos-15",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/npm-launcher.yml",
+      "blob": "ab89ce1614e7a6800dd5cd66291f4393a5a0eda3",
+      "pull_request": {
+        "types": [
+          "opened",
+          "synchronize",
+          "reopened",
+          "labeled"
+        ],
+        "paths": [
+          "packaging/npm/launcher/**",
+          "policy/distribution.toml",
+          "policy/non-rust-allowlist.toml",
+          "policy/dependency_allowlist.txt",
+          "policy/ci-risk-packs.toml",
+          "xtask/src/policy/distribution/**",
+          ".github/workflows/npm-launcher.yml"
+        ]
+      },
+      "jobs": {
+        "launcher": {
+          "if": "github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/pilot-ranking.yml",
+      "blob": "cd4c811bc25309d3fe84f0728267561e762b1842",
+      "pull_request": {
+        "types": [
+          "opened",
+          "synchronize",
+          "reopened",
+          "labeled"
+        ],
+        "paths": [
+          "crates/ripr/src/output/pilot/**",
+          "crates/ripr/src/output/path.rs",
+          "crates/ripr/src/cli/commands/pilot.rs",
+          "crates/ripr/src/output/agent_seam_packets.rs",
+          "crates/ripr/src/analysis/repair_route.rs",
+          "crates/ripr/src/analysis/new_test_target.rs",
+          "crates/ripr/src/analysis/new_test_target/**",
+          "crates/ripr/src/analysis/canonical_gap.rs",
+          "crates/ripr/src/repair_guidance.rs",
+          "crates/ripr/src/analysis/seam_classification.rs",
+          "crates/ripr/src/analysis/seams.rs",
+          "crates/ripr/src/analysis/seam_inventory.rs",
+          "crates/ripr/src/analysis/test_grip_evidence.rs",
+          "crates/ripr/src/analysis/test_grip_evidence/**",
+          "benchmarks/pilot_ranking/**",
+          "metrics/dx-scoreboard/pilot-ranking-baseline.json",
+          "xtask/src/reports/pilot_ranking.rs",
+          "xtask/src/reports/pilot_ranking/**",
+          "xtask/src/reports/mutation_spot_check.rs",
+          "xtask/src/reports/mutation_spot_check/pilot.rs",
+          "xtask/src/reports/dx_scoreboard.rs",
+          "benchmarks/dx_scoreboard/scoreboards.toml",
+          ".github/workflows/pilot-ranking.yml"
+        ]
+      },
+      "jobs": {
+        "ranking": {
+          "if": "(github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/printed-command-paste.yml",
+      "blob": "47e506c54df49509db16b200900b1a3bfccf379a",
+      "pull_request": {
+        "types": [
+          "opened",
+          "synchronize",
+          "reopened",
+          "labeled"
+        ],
+        "paths": [
+          "crates/ripr/src/**",
+          "crates/ripr/tests/printed_command_paste.rs",
+          "crates/ripr/tests/common/paste_shell.rs",
+          "crates/ripr/tests/common/fixture_git.rs",
+          ".github/workflows/printed-command-paste.yml",
+          "Cargo.lock"
+        ]
+      },
+      "jobs": {
+        "paste": {
+          "if": "contains(toJSON(inputs), '\"subject_sha\"') || github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))",
+          "runs_on": "${{ matrix.os }}",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/public-proof.yml",
+      "blob": "cc2d9c363c81f08090a13485949bc60d6fdd8538",
+      "pull_request": {
+        "types": [
+          "opened",
+          "synchronize",
+          "reopened",
+          "labeled"
+        ],
+        "paths": [
+          "metrics/dx-scoreboard/baseline.json",
+          "benchmarks/rust_corpus/manifest.json",
+          "metrics/public-proof/**",
+          "docs/PUBLIC_PROOF.md",
+          "xtask/src/public_proof.rs",
+          ".github/workflows/public-proof.yml"
+        ]
+      },
+      "jobs": {
+        "drift": {
+          "if": "(github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/python-wheel-qualification.yml",
+      "blob": "d7984ba9b3b15a73bd5ddd6e2586127c8a5c3c61",
+      "pull_request": {
+        "paths": [
+          ".github/workflows/python-wheel-qualification.yml",
+          "Cargo.lock",
+          "Cargo.toml",
+          "crates/ripr/**",
+          "fixtures/python/**",
+          "packaging/python/**",
+          "tools/python/installed-provider-recovery/**",
+          "policy/dependency_allowlist.txt",
+          "policy/distribution.toml",
+          "policy/non-rust-allowlist.toml",
+          "policy/workflow_allowlist.txt",
+          "rust-toolchain.toml",
+          "xtask/**",
+          "tools/repo-policy/**"
+        ]
+      },
+      "jobs": {
+        "applicability": {
+          "if": "${{ !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) }}",
+          "runs_on": "ubuntu-22.04",
+          "uses": null
+        },
+        "source-contract": {
+          "if": "${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (!contains(toJSON(inputs), '\"subject_sha\"') || needs.applicability.result == 'success') && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}",
+          "runs_on": "ubuntu-22.04",
+          "uses": null
+        },
+        "build-wheel": {
+          "if": "${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (!contains(toJSON(inputs), '\"subject_sha\"') || needs.applicability.result == 'success') && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}",
+          "runs_on": "ubuntu-22.04",
+          "uses": null
+        },
+        "consume": {
+          "if": "${{ always() && !cancelled() && needs.build-wheel.result == 'success' && needs.source-contract.result == 'success' }}",
+          "runs_on": "ubuntu-22.04",
+          "uses": null
+        },
+        "mcp-evidence-pair": {
+          "if": "${{ github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair }}",
+          "runs_on": "ubuntu-22.04",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/ripr-pr.yml",
+      "blob": "b4c9802ae82c4881bd103e3220c03c036d64e25e",
+      "pull_request": {
+        "types": [
+          "opened",
+          "reopened",
+          "synchronize",
+          "ready_for_review"
+        ]
+      },
+      "jobs": {
+        "analyze": {
+          "if": "github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft && github.actor != 'dependabot[bot]'",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "comment": {
+          "if": "${{ !cancelled() && needs.analyze.result != 'skipped' }}",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/routed-rust.yml",
+      "blob": "4fb80704f0866694c35c89ae428b5e9eee9cd4fb",
+      "pull_request": {
+        "types": [
+          "labeled"
+        ]
+      },
+      "jobs": {
+        "route": {
+          "if": "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "detect-docs-only": {
+          "if": "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "admission": {
+          "if": "always() && (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready')",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "rust-cx43": {
+          "if": "needs.route.outputs.router_target == 'cx43' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'",
+          "runs_on": null,
+          "uses": "./.github/workflows/rust-gates.yml"
+        },
+        "rust-cpx42": {
+          "if": "needs.route.outputs.router_target == 'cpx42' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'",
+          "runs_on": null,
+          "uses": "./.github/workflows/rust-gates.yml"
+        },
+        "rust-cx53": {
+          "if": "needs.route.outputs.router_target == 'cx53' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'",
+          "runs_on": null,
+          "uses": "./.github/workflows/rust-gates.yml"
+        },
+        "rust-github": {
+          "if": "!cancelled() && needs.admission.result == 'success' && needs.detect-docs-only.result == 'success' && needs.admission.outputs.docs_only != 'true' && (needs.route.outputs.router_target == 'github' || (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') || (needs.route.outputs.router_target == 'cx53' && needs.rust-cx53.outputs.scratch_status == 'tempfail'))",
+          "runs_on": null,
+          "uses": "./.github/workflows/rust-gates.yml"
+        },
+        "rust-github-tests": {
+          "if": "${{ !cancelled() && needs.rust-github.result == 'success' }}",
+          "runs_on": null,
+          "uses": "./.github/workflows/rust-test-shards.yml"
+        },
+        "vscode-select": {
+          "if": "needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "vscode-e2e": {
+          "if": "${{ !cancelled() && needs.vscode-select.result == 'success' && needs.vscode-select.outputs.selected == 'true' }}",
+          "runs_on": null,
+          "uses": "./.github/workflows/vscode-e2e.yml"
+        },
+        "docs-gate": {
+          "if": "needs.admission.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.admission.outputs.docs_only == 'true'",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "result": {
+          "if": "always()",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/security.yml",
+      "blob": "38ac258abed2a5b3ea740ad700268d264f239723",
+      "pull_request": {
+        "types": [
+          "opened",
+          "synchronize",
+          "reopened",
+          "labeled"
+        ]
+      },
+      "jobs": {
+        "cargo-deny": {
+          "if": "github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "deny-tracker": {
+          "if": "always() && github.event_name == 'schedule' && (github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.ref == 'refs/heads/main' && github.repository == 'EffortlessMetrics/ripr-swarm' && (needs.cargo-deny.result == 'success' || needs.cargo-deny.result == 'failure')",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "dependency-review": {
+          "if": "(github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'pull_request')",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/source-of-truth.yml",
+      "blob": "7ebbd4b683c15809a5f4d7a7b29e831758db9845",
+      "pull_request": {
+        "branches": [
+          "main",
+          "master"
+        ],
+        "paths": [
+          ".github/workflows/source-of-truth.yml",
+          ".ripr/traceability.toml",
+          ".ripr/traceability.d/**",
+          ".allow/spec-system/**",
+          "docs/specs/**",
+          "docs/status/SUPPORT_TIERS.md",
+          "docs/templates/**"
+        ]
+      },
+      "jobs": {
+        "source-of-truth": {
+          "if": null,
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "spec-maintenance-digest": {
+          "if": null,
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/test-analytics.yml",
+      "blob": "36989f8e58c1be60af7cb68473cf999ec49030b7",
+      "pull_request": {
+        "types": [
+          "opened",
+          "synchronize",
+          "reopened",
+          "labeled"
+        ]
+      },
+      "jobs": {
+        "rust-tests": {
+          "if": "(github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci'))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/ub-review.yml",
+      "blob": "7a2c4077194aa65221306a646a7606448ea347d9",
+      "pull_request": {
+        "types": [
+          "opened",
+          "reopened",
+          "synchronize"
+        ]
+      },
+      "jobs": {
+        "ub-review": {
+          "if": "github.event.pull_request.head.repo.full_name == github.repository",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/windows-advisory.yml",
+      "blob": "6a549d52ab43dc4acaf729ca48a6657312e11e8f",
+      "pull_request": {
+        "types": [
+          "labeled",
+          "opened",
+          "synchronize",
+          "reopened"
+        ]
+      },
+      "jobs": {
+        "windows-advisory": {
+          "if": "${{ !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}",
+          "runs_on": "windows-latest",
+          "uses": null
+        },
+        "windows-advisory-subset": {
+          "if": "${{ !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) }}",
+          "runs_on": "windows-latest",
+          "uses": null
+        },
+        "windows-advisory-runner-probe": {
+          "if": "${{ github.event_name == 'workflow_dispatch' && inputs.runner_probe_only && (github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) }}",
+          "runs_on": "windows-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/windows-gate.yml",
+      "blob": "b30f3544021c8b436d7c353ca76be691cee92612",
+      "pull_request": {
+        "types": [
+          "opened",
+          "synchronize",
+          "reopened"
+        ]
+      },
+      "jobs": {
+        "detect": {
+          "if": null,
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        },
+        "run": {
+          "if": "needs.detect.result == 'success' && needs.detect.outputs.windows_relevant == 'true'",
+          "runs_on": "windows-latest",
+          "uses": null
+        },
+        "result": {
+          "if": "always()",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    },
+    {
+      "path": ".github/workflows/zed-extension.yml",
+      "blob": "f758f6d4abe3506f2ac2cb8b442a05baf6671f7d",
+      "pull_request": {
+        "types": [
+          "opened",
+          "synchronize",
+          "reopened",
+          "labeled"
+        ],
+        "paths": [
+          "editors/zed/**",
+          ".github/workflows/zed-extension.yml"
+        ]
+      },
+      "jobs": {
+        "zed-extension": {
+          "if": "github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))",
+          "runs_on": "ubuntu-latest",
+          "uses": null
+        }
+      }
+    }
+  ]
+}

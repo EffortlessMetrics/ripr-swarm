@@ -1,0 +1,238 @@
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+remerge CONFLICT (content): Merge conflict in crates/ripr/src/analysis/seam_cache.rs
+index e43134b3e..a16bb7ec1 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -691,16 +691,13 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// recomputed after loading them.
+ /// `1.160`: same-named receiver and free calls no longer lend one another an
+ /// assertion oracle; real opposite-kind wrappers retain reach uncertainty (#12234).
+-<<<<<<< e133ffc21 (test: regenerate portable boundary artifacts for importer cache epoch)
+ /// `1.162`: compose successor 1.161 with main callback/call-kind semantics.
+ /// `1.163`: collection observers require importer-bound crate identities.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.163";
+-=======
+ /// `1.161`: owner-bound field snapshots carry the shared framework limit
+ /// through full and compact evidence before recommendation admission (#13278).
+ /// Panic markers also use the producer-owned discrimination prefix (#13291).
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.161";
+->>>>>>> 898197c2e (fix(rust): carry snapshot limits and reject test-name marker collisions (#13296))
++/// `1.164`: compose importer identity with main field-snapshot and panic-marker semantics.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.164";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -906,14 +903,11 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.161";
+ /// `0.163`: same external-observer refusal as full `1.161`.
+ /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+ /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+-<<<<<<< e133ffc21 (test: regenerate portable boundary artifacts for importer cache epoch)
+ /// `0.164`: composed successor and main semantics, matching full 1.162.
+ /// `0.165`: same importer-bound observer semantics as full 1.163.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.165";
+-=======
+ /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
+->>>>>>> 898197c2e (fix(rust): carry snapshot limits and reject test-name marker collisions (#13296))
++/// `0.166`: same composed semantics as full `1.164`.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.166";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1121,14 +1115,11 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
+ /// `0.163`: same external-observer refusal as full `1.161`.
+ /// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+ /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+-<<<<<<< e133ffc21 (test: regenerate portable boundary artifacts for importer cache epoch)
+ /// `0.164`: composed successor and main semantics, matching full 1.162.
+ /// `0.165`: same importer-bound observer semantics as full 1.163.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.165";
+-=======
+ /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
+->>>>>>> 898197c2e (fix(rust): carry snapshot limits and reject test-name marker collisions (#13296))
++/// `0.166`: same composed semantics as full `1.164`.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.166";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5282,13 +5273,9 @@ mod tests {
+         // 1.160 -> 1.161: unread external collection-observer interception.
+         // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
+         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+-<<<<<<< e133ffc21 (test: regenerate portable boundary artifacts for importer cache epoch)
+         // Composed main and successor invalidate both predecessor branches.
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.163");
+-=======
+         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.161");
+->>>>>>> 898197c2e (fix(rust): carry snapshot limits and reject test-name marker collisions (#13296))
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.164");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5433,14 +5420,9 @@ mod tests {
+         // 0.162 -> 0.163: same external-observer refusal as full 1.161.
+         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+-<<<<<<< e133ffc21 (test: regenerate portable boundary artifacts for importer cache epoch)
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.165");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.165");
+-=======
+         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
+->>>>>>> 898197c2e (fix(rust): carry snapshot limits and reject test-name marker collisions (#13296))
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.166");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.166");
+     }
+ 
+     #[test]
+@@ -5768,6 +5750,7 @@ mod tests {
+             ("external-observer-interception", "1.160", "0.162"),
+             ("pre-main-composition", "1.161", "0.163"),
+             ("crate-alias-interception", "1.162", "0.164"),
++            ("pre-field-snapshot-composition", "1.163", "0.165"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+@@ -5841,7 +5824,7 @@ mod tests {
+     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
+         for previous in [
+             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
+-            "0.161", "0.162", "0.163", "0.164",
++            "0.161", "0.162", "0.163", "0.164", "0.165",
+         ] {
+             for compact in [false, true] {
+                 let scratch = integrity_scratch("property-shard-generation")?;
+diff --git a/crates/ripr/src/analysis/seam_inventory.rs b/crates/ripr/src/analysis/seam_inventory.rs
+remerge CONFLICT (content): Merge conflict in crates/ripr/src/analysis/seam_inventory.rs
+index 7117a10fc..e41906b84 100644
+--- a/crates/ripr/src/analysis/seam_inventory.rs
++++ b/crates/ripr/src/analysis/seam_inventory.rs
+@@ -4179,7 +4179,6 @@ pub(crate) fn inventory_seams_from_index_bounded(
+         eprintln!("{disclosure}");
+     }
+     let mut collector = BoundedSeamCollector::new(limit);
+-<<<<<<< e133ffc21 (test: regenerate portable boundary artifacts for importer cache epoch)
+     visit_inventory_seams(production_files, index, |seam| {
+         collector.push(seam);
+         Ok(())
+@@ -4193,9 +4192,7 @@ fn visit_inventory_seams(
+     index: &RustIndex,
+     mut visit: impl FnMut(RepoSeam) -> Result<(), String>,
+ ) -> Result<(), String> {
+-=======
+     let admission = FieldSeamAdmission::new(index);
+->>>>>>> 898197c2e (fix(rust): carry snapshot limits and reject test-name marker collisions (#13296))
+     for file in production_files {
+         cancellation::checkpoint()?;
+         let Some(facts) = index.files().get(file) else {
+@@ -4224,14 +4221,9 @@ fn visit_inventory_seams(
+                 &line_starts,
+                 &crlf_pairs,
+                 &arm_ranges,
+-<<<<<<< e133ffc21 (test: regenerate portable boundary artifacts for importer cache epoch)
+-            ) {
+-                visit(seam)?;
+-=======
+             ) && admission.admits(&seam, &facts.source, &lookup)?
+             {
+-                collector.push(seam);
+->>>>>>> 898197c2e (fix(rust): carry snapshot limits and reject test-name marker collisions (#13296))
++                visit(seam)?;
+             }
+         }
+     }
+@@ -5747,7 +5739,23 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
+             index.extend_tests(adapter.summarize_file(path, source)?.tests.iter().cloned());
+         }
+         let paths: Vec<PathBuf> = owned.iter().map(|(path, _)| path.clone()).collect();
+-        Ok(inventory_seams_from_index(&paths, &index)
++        let full = inventory_seams_from_index(&paths, &index);
++        let bounded = inventory_seams_from_index_bounded(&paths, &index, None)?;
++        let mut streamed = Vec::new();
++        visit_inventory_seams(&paths, &index, |seam| {
++            streamed.push(seam);
++            Ok(())
++        })?;
++        let keys = |seams: &[RepoSeam]| -> std::collections::BTreeSet<_> {
++            seams.iter().map(SeamSortKey::of).collect()
++        };
++        assert_eq!(keys(&full), keys(&bounded.seams), "bounded field admission");
++        assert_eq!(
++            keys(&full),
++            keys(&streamed),
++            "compact-prefill visitor field admission"
++        );
++        Ok(full
+             .iter()
+             .filter(|seam| seam.expression().starts_with("self."))
+             .map(|seam| seam.file().display().to_string().replace('\\', "/"))
+diff --git a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+remerge CONFLICT (content): Merge conflict in crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+index e08881316..944a9fcf8 100644
+--- a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
++++ b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+@@ -13,11 +13,7 @@ use std::path::{Path, PathBuf};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-<<<<<<< e133ffc21 (test: regenerate portable boundary artifacts for importer cache epoch)
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.163";
+-=======
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.161";
+->>>>>>> 898197c2e (fix(rust): carry snapshot limits and reject test-name marker collisions (#13296))
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.164";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+remerge CONFLICT (content): Merge conflict in docs/OUTPUT_SCHEMA.md
+index 829995f03..6206f4e77 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -19795,11 +19795,7 @@ top-level `source_subject`:
+ 
+ - `digest_algorithm`: always `"sha256"`.
+ - `corpus` (additive, full Rust inventory only): the analysis-owned
+-<<<<<<< e133ffc21 (test: regenerate portable boundary artifacts for importer cache epoch)
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.163",
+-=======
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.161",
+->>>>>>> 898197c2e (fix(rust): carry snapshot limits and reject test-name marker collisions (#13296))
++  `{ "scope": "rust_workspace", "cache_schema_version": "1.164",
+   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+   classified inventory cache key, including both production and test Rust
+   files after the existing generated-file exclusions. Repo-exposure producers
+@@ -20584,11 +20580,7 @@ targeted-rerun receipt shape:
+     "recomputation_reasons": ["selected_test_scope_recomputed"],
+     "invalidation_status": "not_available",
+     "input_fingerprint": {
+-<<<<<<< e133ffc21 (test: regenerate portable boundary artifacts for importer cache epoch)
+-      "schema_version": "1.163",
+-=======
+-      "schema_version": "1.161",
+->>>>>>> 898197c2e (fix(rust): carry snapshot limits and reject test-name marker collisions (#13296))
++      "schema_version": "1.164",
+       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+       "workspace_root_hash": "…",
+       "files_content_hash": "…",
+diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
+remerge CONFLICT (content): Merge conflict in xtask/src/tests/rust_corpus_projection.rs
+index 13ff948a5..8fd63dafa 100644
+--- a/xtask/src/tests/rust_corpus_projection.rs
++++ b/xtask/src/tests/rust_corpus_projection.rs
+@@ -16,11 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-<<<<<<< e133ffc21 (test: regenerate portable boundary artifacts for importer cache epoch)
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.163";
+-=======
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.161";
+->>>>>>> 898197c2e (fix(rust): carry snapshot limits and reject test-name marker collisions (#13296))
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.164";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
