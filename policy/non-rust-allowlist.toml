@@ -522,6 +522,15 @@ reason = "VS Code extension config or generated metadata."
 covered_by = ["cd editors/vscode && npm run compile"]
 
 [[allow]]
+glob = "editors/vscode/test/developerSetup.cjs"
+kind = "editor_setup_diagnostic"
+owner = "lsp/editor"
+surface = "editor"
+classification = "tooling"
+reason = "#13201: dependency-free read-only checkout observations before Rust/TypeScript builds; no subprocess, network, installation or write authority. Explicit native verification stays in the TypeScript editor owner."
+covered_by = ["cd editors/vscode && npm run test:e2e"]
+
+[[allow]]
 glob = "editors/vscode/**/*.ts"
 kind = "editor_extension"
 owner = "lsp/editor"

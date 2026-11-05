@@ -636,6 +636,15 @@ export function terminateProbeProcessTree(child: cp.ChildProcess): void {
   child.kill('SIGKILL');
 }
 
+// ProcessStartInfo.Arguments uses native Windows argv quoting when no shell
+// participates. Preserve every token, including empty strings and a trailing
+// backslash before the closing quote. Shell command strings keep their
+// separate existing path and are never encoded with this rule.
+export function windowsNativeArguments(args: readonly string[]): string {
+  return args.map(argument => '"' + argument.replace(/(\\*)"/g, '$1$1\\"')
+    .replace(/(\\+)$/, '$1$1') + '"').join(' ');
+}
+
 export function spawnProbeProcess(
   command: string,
   args: readonly string[],
@@ -670,7 +679,7 @@ export function spawnProbeProcess(
         env: {
           ...(context.env ?? process.env),
           RIPR_PROBE_COMMAND: command,
-          RIPR_PROBE_ARGUMENTS: args.join(' '),
+          RIPR_PROBE_ARGUMENTS: useShell ? args.join(' ') : windowsNativeArguments(args),
           RIPR_PROBE_EXIT_NONCE: exitNonce,
           RIPR_PROBE_DRAIN_OUTPUT: context.drainOutput ? '1' : '0',
           RIPR_PROBE_USE_SHELL: useShell ? '1' : '0'

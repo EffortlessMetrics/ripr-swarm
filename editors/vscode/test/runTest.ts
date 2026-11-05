@@ -1,7 +1,8 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { execFileSync, spawn } from 'child_process';
-import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
+import { runTests } from '@vscode/test-electron';
+import { downloadVSCodeWithRetry, requireEditorDisplay, verifyHostPrerequisites } from './hostPrerequisites';
 import { stageGenuineActionableQueue } from './actionableQueueFixture';
 import { REQUIRED_TITLE_SEPARATOR, requiredJourneyTitles } from './requiredJourneys';
 import { finalizeHostRun, resetHostLogDir, resolveUserDataDir } from './hostDiagnostics';
@@ -137,31 +138,6 @@ export function stageMultiRootWorkspace(templatePath: string, workspacePath: str
   return workspaceFile;
 }
 
-const DOWNLOAD_ATTEMPTS = 3;
-
-// The VS Code build is fetched at test time; one transient connect error
-// (ETIMEDOUT/ENETUNREACH, #5072) should not fail the whole lane. The download
-// is cached under `cachePath`; the returned executable is handed to every
-// run so none of them repeats the version lookup.
-async function downloadVSCodeWithRetry(
-  cachePath: string,
-  extensionDevelopmentPath: string
-): Promise<string> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
-    try {
-      return await downloadAndUnzipVSCode({ cachePath, extensionDevelopmentPath });
-    } catch (caught) {
-      lastError = caught;
-      console.warn(`VS Code download attempt ${attempt}/${DOWNLOAD_ATTEMPTS} failed: ${String(caught)}`);
-      if (attempt < DOWNLOAD_ATTEMPTS) {
-        await new Promise<void>((resolve) => setTimeout(resolve, attempt * 5000));
-      }
-    }
-  }
-  throw lastError;
-}
-
 async function runUntrustedTests(
   vscodeExecutablePath: string,
   extensionDevelopmentPath: string,
@@ -199,6 +175,8 @@ async function runUntrustedTests(
 export interface TestHostRuntime {
   downloadVSCode: typeof downloadVSCodeWithRetry;
   stageGenuineActionableQueue: typeof stageGenuineActionableQueue;
+  verifyHostPrerequisites: typeof verifyHostPrerequisites;
+  requireEditorDisplay: typeof requireEditorDisplay;
   runTests: typeof runTests;
   runUntrustedTests: typeof runUntrustedTests;
   exit: (code: number) => void;
@@ -206,6 +184,8 @@ export interface TestHostRuntime {
 
 const defaultTestHostRuntime: TestHostRuntime = {
   downloadVSCode: downloadVSCodeWithRetry,
+  verifyHostPrerequisites,
+  requireEditorDisplay,
   stageGenuineActionableQueue,
   runTests,
   runUntrustedTests,
@@ -248,7 +228,9 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
 
     // Host acquisition can fail before a test can run. Resolve it before the
     // genuine producer, which may compile the separate xtask test harness.
+    runtime.requireEditorDisplay(process.platform, process.env);
     const vscodeExecutablePath = await runtime.downloadVSCode(cachePath, extensionDevelopmentPath);
+    await runtime.verifyHostPrerequisites(vscodeExecutablePath, artifactRoot);
     if (workspaceTrustMode === 'trusted' && process.env.RIPR_TEST_MULTIROOT_ONLY !== '1'
       && !process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT) {
       process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = await runtime.stageGenuineActionableQueue(

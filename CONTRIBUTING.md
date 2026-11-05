@@ -6,6 +6,116 @@ traceability without reconstructing intent from chat history.
 
 ## Local Setup
 
+### Supported developer setup path
+
+Use one selected compiler and one checkout throughout setup. In Bash, ordinary
+startup activates an already installed compiler and refreshes cheap observations:
+
+```bash
+source tools/activate-rust.sh --pinned
+mkdir -p target
+node editors/vscode/test/developerSetup.cjs --json
+```
+
+The activation helper also accepts an installed exact release or `stable`; it
+records the exact resolved compiler and carries it into child and fixture
+directories. It does not install a toolchain. Keep conflicting explicit compiler
+selectors visible and resolve them deliberately. The checkout-local `target`
+directory is still needed for the forced linker temporary paths in
+`.cargo/config.toml`, even with a separate `CARGO_TARGET_DIR`.
+
+The source Node command needs no npm packages or RIPR/xtask build. Its human
+view omits `--json`; `npm run setup:check -- --json` from `editors/vscode` is
+the same diagnostic. It reads bounded source files and local environment/filesystem
+facts, performs no subprocess, network or write operation, and returns status 1
+for a known blocker. A configured display, proxy, compiler selector or existing
+file is an observation; executable identity, LLVM usability, host startup,
+the full suite and a fresh task remain explicitly unexecuted.
+
+The report derives requirements from the existing owners:
+
+| Requirement | Authority and execution boundary |
+| --- | --- |
+| Rust pin/components | `rust-toolchain.toml`; activation selects an installed compiler. An already built `ripr doctor --profile source-build --json` owns effective-compiler product diagnosis. |
+| Node and locked editor tools | `.github/workflows/vscode-e2e.yml`, `editors/vscode/package.json` and `package-lock.json`; install with `npm ci` explicitly. |
+| LLVM and Nextest | `.github/workflows/rust-gates.yml` and the selected compiler's sysroot. The current Nextest install input has no version pin; record the actual `cargo nextest --version` result during verification. |
+| Editor host/version and network | The locked `@vscode/test-electron` downloader owns VS Code version selection, cache and update/download redirects. A network permission or proxy/CA setting is not a successful download. |
+| Native editor dependencies/display | A real host smoke below establishes that the selected host starts with the current native libraries and display. Provision these in the environment before verification. |
+| Output locations | `.cargo/config.toml`, `CARGO_TARGET_DIR`, `RIPR_TEST_ARTIFACT_ROOT` and the existing editor runner; the report observes access without creating directories or claiming a full-build resource budget. |
+
+### Explicit setup verification
+
+On Linux, after coherent activation, run the small existing real-profile control
+before compiling the workspace. It uses PATH `rustc`; that must be the same
+compiler selected for Cargo and any explicit `RUSTC`. Install its matching
+`llvm-tools-preview` component during explicit provisioning. The existing
+[coverage instructions](docs/ci/coverage.md#validate-locally) own selection and
+diagnostic scope.
+
+```bash
+cargo test --locked -p repo-policy --lib coverage_diagnostics::linux::binary_ids::tests::real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata -- --exact --nocapture
+```
+
+Require exactly one executed passing test and its raw-version/layout/build-ID
+record. This compiles and executes a tiny instrumented program with the active
+compiler's LLVM tools. Zero selected tests on another platform are not evidence.
+It is separate from the read-only report and from full coverage qualification.
+
+For editor development, install the locked npm graph, then verify the actual host
+before Rust/xtask compilation:
+
+```bash
+cd editors/vscode
+npm ci
+# Headless Linux, with Xvfb and native host libraries already provisioned:
+xvfb-run -a npm run setup:verify-editor
+```
+
+On a supported live desktop display, use `npm run setup:verify-editor` directly.
+This explicit action runs the cheap report, invokes the installed TypeScript
+compiler directly, uses the real downloader, and runs one empty extension-host
+sentinel under the existing process owner. There is no implicit npm installer.
+Missing display, acquisition failure, missing native libraries, a bad receipt,
+timeout or cancellation leave producer and e2e phases `not_run`. The smoke has a
+60-second process deadline; downloader retries retain test-electron's idle-timeout
+semantics. Timeout/cancellation terminate the owned process tree before cleanup.
+The receipt records the observed VS Code/Electron versions, native status and one
+smoke case in `target/ripr/setup-editor-host.json`; a failure keeps a bounded
+`setup-editor-host.log`. `RIPR_TEST_ARTIFACT_ROOT` relocates both and the host cache.
+
+### Explicit full-development validation
+
+After those prerequisites pass, run the existing full local aggregate and editor
+commands sequentially in the same activated environment:
+
+```bash
+# Repository root:
+cargo xtask ci-full
+# Only after that succeeds:
+cd editors/vscode
+npm run compile
+npm run package
+xvfb-run -a npm run test:e2e
+```
+
+Use the live-display form of the last command on a desktop. `ci-full` owns its
+local review, workspace checks/tests, policy, fixture/golden/evidence and package
+dry-run sequence. Do not launch its constituent Cargo work in parallel or repeat
+the full suite through both `npm test` and `npm run test:e2e`: those are aliases.
+The canonical editor runner rechecks its current native host before producing
+the genuine queue, and runs the e2e suite once. Existing hosted required gates
+retain their own nextest, feature and artifact contract; this local sequence
+does not substitute for protected PR qualification.
+
+Ordinary startup stops at activation and cheap observations. Cold provisioning,
+repeat provisioning reuse and a genuinely fresh saved task need their own
+execution receipts. A fresh shell, cached hosted run, successful tiny smoke or
+available tool does not establish those outcomes. Retain the checkout/source,
+resolved tool versions, selected capabilities, native status/counts and remaining
+blockers when performing that explicit verification.
+
+### Focused setup reference
+
 1. Install [`rustup`](https://rustup.rs/) if you don't already have it.
    `rust-toolchain.toml` pins the exact toolchain version and its
    `rustfmt` and `clippy` components with the minimal installation profile;

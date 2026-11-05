@@ -1001,6 +1001,7 @@ jobs:
 
       # #13175: full-transcript and descendant cleanup proof uses the same
       # native Windows owner as the producer, without launching an editor host.
+      # #13201 adds literal argv, read-only diagnosis and host-adapter cleanup.
       - name: Run fixture producer process controls (advisory, #13175)
         shell: bash
         working-directory: editors/vscode
@@ -1011,7 +1012,7 @@ jobs:
             printf '%s\n' 1 > ../../target/subset-vscode-fixture-producer.status
             exit 0
           fi
-          npx mocha --ui tdd --reporter json out/test/suite/fixture_producer.test.js 2>&1 | tee ../../target/subset-vscode-fixture-producer.log
+          npx mocha --ui tdd --reporter json out/test/suite/fixture_producer.test.js out/test/suite/developer_setup.test.js 2>&1 | tee ../../target/subset-vscode-fixture-producer.log
           pipe_status=("${PIPESTATUS[@]}")
           printf '%s\n' "${pipe_status[0]}" > ../../target/subset-vscode-fixture-producer.status
           if [ "${pipe_status[1]}" != "0" ]; then echo 'fixture producer evidence capture failed' >&2; exit 1; fi
@@ -1557,6 +1558,7 @@ jobs:
               report = json.loads(log_path.read_text(encoding='utf-8-sig'))
               expected = {
                   "Genuine fixture producer process boundary runs asynchronously with the explicit child cwd/env and visible progress",
+                  "Genuine fixture producer process boundary preserves literal native arguments including spaces quotes empty values and trailing backslashes",
                   "Genuine fixture producer process boundary retains native status and both streams for a failed process",
                   "Genuine fixture producer process boundary retains the final transcript before accepting native success",
                   "Genuine fixture producer process boundary reports the actual missing executable as a spawn failure",
@@ -1565,14 +1567,25 @@ jobs:
                   "Genuine fixture producer process boundary timeout-after-primary-exit terminates an owned descendant that ignores SIGTERM and inherits pipes",
                   "Genuine fixture producer process boundary cancel-active-tree terminates an owned descendant that ignores SIGTERM and inherits pipes",
                   "Genuine fixture producer process boundary validates the deadline instead of silently disabling or overflowing it",
+                  "Developer setup capability boundary reads changed source requirements and leaves execution capabilities unclaimed",
+                  "Developer setup capability boundary missing display and unsupported or oversized authorities fail visibly before downstream work",
+                  "Developer setup capability boundary source frontdoor succeeds when writes network and subprocess APIs are forbidden",
+                  "Developer setup capability boundary display check distinguishes absent Linux display from other platforms without launching anything",
+                  "Developer setup capability boundary report bounds observed text and never renders proxy or CA values",
+                  "Developer setup capability boundary requires native success and one current host sentinel and preserves the observed version",
+                  "Developer setup capability boundary refuses absent host evidence and removes an earlier success receipt",
+                  "Developer setup capability boundary refuses wrong_nonce host evidence and removes an earlier success receipt",
+                  "Developer setup capability boundary refuses native_failure host evidence and removes an earlier success receipt",
+                  "Developer setup capability boundary timeout of the public host prerequisite terminates its actual owned descendant",
+                  "Developer setup capability boundary cancel of the public host prerequisite terminates its actual owned descendant",
               }
               observed = [row['fullTitle'] for row in report.get('passes', [])]
               stats = report.get('stats', {})
               if len(observed) != len(expected) or set(observed) != expected:
                   raise SystemExit('fixture producer PASS is missing native process controls')
-              if any(stats.get(key) != value for key, value in {'tests': 12, 'passes': 9, 'failures': 0, 'pending': 3}.items()):
+              if any(stats.get(key) != value for key, value in {'tests': 24, 'passes': 21, 'failures': 0, 'pending': 3}.items()):
                   raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
-              print('Verified nine native process controls; three POSIX-only adapter controls are pending.')
+              print('Verified 21 native process/setup controls; three POSIX-only adapter controls are pending.')
           PY
 
       - name: Require selector consumer receipt, log and native status
