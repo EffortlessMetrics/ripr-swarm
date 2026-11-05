@@ -493,8 +493,8 @@ type DebugAssertEqCall = (usize, String);
 type BareCallKey = (PathBuf, usize, String, PathBuf, usize);
 
 /// RIPR-SPEC-0225 decision 9: a field-integer key: owner file, owner name,
-/// record type name, field name.
-type FieldIntegerKey = (PathBuf, String, String, String);
+/// optional indexed owner line, record type name, field name.
+type FieldIntegerKey = (PathBuf, String, Option<usize>, String, String);
 
 /// #6974: run-scoped answers for [`OwnerReturnPin::path_reaches_owner`].
 #[derive(Clone, Debug, Default)]
@@ -5391,10 +5391,18 @@ impl OwnerReturnPin {
             {
                 return None;
             }
-            field_builtin_integer_of(owner, type_name, field, true, index, syntax)?;
+            field_builtin_integer_of(
+                owner,
+                type_name,
+                field,
+                true,
+                Some(owner.start_line),
+                index,
+                syntax,
+            )?;
         } else {
             let type_name = self.tuple_projection.as_deref()?;
-            field_builtin_integer_of(owner, type_name, "0", true, index, syntax)?;
+            field_builtin_integer_of(owner, type_name, "0", true, None, index, syntax)?;
         }
         Some((stripped, suffix))
     }
@@ -10270,23 +10278,26 @@ pub(in crate::analysis) fn field_builtin_integer(
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> Option<&'static str> {
-    field_builtin_integer_of(owner, type_name, field, false, index, syntax)
+    field_builtin_integer_of(owner, type_name, field, false, None, index, syntax)
 }
 
 /// [`field_builtin_integer`] for an owner that may be an `impl` method. A
 /// method is found only when it is the file's one `fn` of its name, so a
-/// second same-named method or function refuses (#12796).
+/// second same-named method or function refuses (#12796). The independently
+/// bound tuple-slot view may supply its exact indexed owner line instead.
 fn field_builtin_integer_of(
     owner: &FunctionSummary,
     type_name: &str,
     field: &str,
     methods: bool,
+    owner_line: Option<usize>,
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> Option<&'static str> {
     let key = (
         owner.file.clone(),
         owner.name.clone(),
+        owner_line,
         type_name.to_owned(),
         if methods {
             format!("method:{field}")
@@ -10297,7 +10308,8 @@ fn field_builtin_integer_of(
     if let Some(found) = syntax.field_integer_memo.borrow().get(&key) {
         return *found;
     }
-    let found = field_builtin_integer_uncached(owner, type_name, field, methods, index, syntax);
+    let found =
+        field_builtin_integer_uncached(owner, type_name, field, methods, owner_line, index, syntax);
     syntax.field_integer_memo.borrow_mut().insert(key, found);
     found
 }
@@ -10307,6 +10319,7 @@ fn field_builtin_integer_uncached(
     type_name: &str,
     field: &str,
     methods: bool,
+    owner_line: Option<usize>,
     index: &RustIndex,
     syntax: &OwnerPinSyntax,
 ) -> Option<&'static str> {
@@ -10327,6 +10340,7 @@ fn field_builtin_integer_uncached(
             .filter_map(ast::Module::cast)
             .collect::<Vec<_>>()
     };
+    let lines = LineIndex::new(&file.source);
     let mut owners = tree
         .syntax()
         .descendants()
@@ -10335,6 +10349,11 @@ fn field_builtin_integer_uncached(
             function
                 .name()
                 .is_some_and(|name| name.text() == owner.name.as_str())
+                && owner_line.is_none_or(|line| {
+                    function
+                        .fn_token()
+                        .is_some_and(|token| lines.line(token.text_range().start()) == line)
+                })
                 && function.syntax().parent().is_some_and(|parent| {
                     ast::SourceFile::can_cast(parent.kind())
                         || ast::ItemList::can_cast(parent.kind())

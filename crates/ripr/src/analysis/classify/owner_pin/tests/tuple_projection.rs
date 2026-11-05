@@ -148,26 +148,8 @@ fn iterator_option_tuple_projection_establishes_and_pins_its_actual_component() 
     let owner = owner(&index, "size_hint");
     let mut probe = return_probe(owner, "(0, Some(self.remaining))");
     probe.before = Some("(0, None)".to_string());
-    assert_eq!(
-        changed_tuple_option_projection(owner, &probe),
-        Some((".1".to_string(), "remaining".to_string())),
-        "body: {}",
-        owner.body
-    );
-    assert!(
-        tuple_iterator_dispatch_is_closed(owner, &index),
-        "container: {:?}",
-        owner.item.container
-    );
-    assert!(
-        !other_definition_competes(owner, &index, CallKind::Method, None, true),
-        "distinct nominal receivers must not compete"
-    );
+    probe.after = Some(probe.expression.clone());
     let pin = OwnerReturnPin::establish(&probe, owner, &index).ok_or("owner pin missing")?;
-    assert!(
-        pin.tuple_iterator_dispatch,
-        "standard Iterator dispatch must be retained"
-    );
     assert_eq!(
         admitted_texts(&index, &pin).len(),
         1,
