@@ -2175,7 +2175,6 @@ qualification and publication histories.
   no repair start). The first failing step, or a step that exits 0 without a
   non-empty, parseable JSON artifact, stops it with exit 2 and no packet. The default stays analysis-free with an unchanged disclosure
   (#11720, #11298).
-- `cargo xtask source-promotion verify` now verifies the staged public-to-swarm return preview (a `fast_forward` preflight: ordered parents `[P, S]`, tree equal to S's tree) and records the preflight `mode` in its receipt; `two_parent_join` verification is unchanged (#1627).
 - `ripr first-pr --run-chain` steps are bounded: 2 hours by default, set
   `RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS` (whole seconds, `0` for no bound).
   A step past its bound is terminated and named as `timed out after <N>
@@ -2196,24 +2195,6 @@ qualification and publication histories.
   `stop=` terminal line and a `next=` `ripr context` command. `--format json`
   is refused with a pointer to `ripr context`, which stays JSON (#12104).
 
-- Reconcile 0.11 RC guidance with dated public tag/release state, historical
-  conditional RC1 authority and tentative next-cut intent. Require exact
-  candidate-bound authority and qualification; ordinary source integration
-  does not authorize a cut. (#1848, ripr)
-
-- Release workflow supply-chain hardening: `release-server-binaries.yml` now assembles the final subjects read-only, attests them with GitHub build provenance in a dedicated OIDC-only job, verifies every attestation, and only then uploads in a job that holds `contents: write` and no OIDC token; third-party actions in CI workflows are pinned to full commit SHAs and `badge-endpoints.yml` scopes its write permissions to its one job. This is a step toward #1502 and does not close it (no typed inventory/receipt yet).
-
-- Document staged public-to-swarm integration, qualification and return promotion;
-  route agent guidance through the same runbook and identify the existing
-  direct-J contract reconciliation without changing runtime gates (#1768).
-
-- Tightened release distribution catalog admission so schema-2 RC/stable catalogs must carry the canonical producer identity, and the Rust producer now rejects uppercase SHA-256 input before emitting a catalog that the closed VS Code parser would reject. (#1708, ripr)
-
-- Add `xtask release-final-server-subjects` to prepare the exact twelve existing
-  server upload subjects from canonical assembler output. The nonpublishing
-  inventory, provenance inputs and checksum list are bound by the terminal
-  preparation receipt; rejection retains diagnostics without successful files.
-  This does not attest, verify provenance, authorize uploads or close #1502.
 [Full development diff since v0.10.0](https://github.com/EffortlessMetrics/ripr/compare/v0.10.0...main).
 
 ### Distribution and installation
@@ -2238,7 +2219,7 @@ qualification and publication histories.
   packaging provenance. Qualification covers local/global/npm exec/npx installs
   without lifecycle scripts; this does not itself publish npm or add platforms.
   Use the scoped package after npm's unscoped-name rejection, retaining the
-  installed `ripr` command and verifying scoped package paths during reinstall. (RIPR-SPEC-0370)
+  installed `ripr` command and verifying scoped package paths during reinstall. (RIPR-SPEC-0374)
 
 - Prepare the first `ripr-rs` PyPI prerelease (`0.11.0a1`, native
   `0.11.0-alpha.1`) as a native CLI wheel for Linux x86-64 with glibc 2.34 or
@@ -2259,29 +2240,28 @@ qualification and publication histories.
   Third-party actions in CI workflows are pinned to full commit SHAs, and
   `badge-endpoints.yml` scopes its write permissions to its one job. This is a
   step toward #1502 and does not close it (no typed inventory/receipt yet).
-- Tightened release distribution catalog admission so schema-2 RC/stable
-  catalogs must carry the canonical producer identity. The Rust producer now
-  rejects uppercase SHA-256 input before emitting a catalog that the closed
-  VS Code parser would reject.
+
+- Tightened release distribution catalog admission so schema-2 RC/stable catalogs must carry the canonical producer identity, and the Rust producer now rejects uppercase SHA-256 input before emitting a catalog that the closed VS Code parser would reject. (#1708, ripr)
+
+### Internal / CI
+
+- `cargo xtask source-promotion verify` now verifies the staged public-to-swarm return preview (a `fast_forward` preflight: ordered parents `[P, S]`, tree equal to S's tree) and records the preflight `mode` in its receipt; `two_parent_join` verification is unchanged (#1627).
+
+- Reconcile 0.11 RC guidance with dated public tag/release state, historical
+  conditional RC1 authority and tentative next-cut intent. Require exact
+  candidate-bound authority and qualification; ordinary source integration
+  does not authorize a cut. (#1848, ripr)
+
+- Document staged public-to-swarm integration, qualification and return promotion;
+  route agent guidance through the same runbook and identify the existing
+  direct-J contract reconciliation without changing runtime gates (#1768).
+
 - Add `xtask release-final-server-subjects` to prepare the exact twelve existing
   server upload subjects from canonical assembler output. The nonpublishing
   inventory, provenance inputs and checksum list are bound by the terminal
   preparation receipt; rejection retains diagnostics without successful files.
   This does not attest, verify provenance, authorize uploads or close #1502.
 
-### Release coordination
-
-- `cargo xtask source-promotion verify` now verifies the staged public-to-swarm
-  return preview (a `fast_forward` preflight: ordered parents `[P, S]`, tree equal
-  to S's tree) and records the preflight `mode` in its receipt;
-  `two_parent_join` verification is unchanged (#1627).
-- Reconcile 0.11 RC guidance with dated public tag/release state, historical
-  conditional RC1 authority and tentative next-cut intent. Require exact
-  candidate-bound authority and qualification; ordinary source integration
-  does not authorize a cut.
-- Document staged public-to-swarm integration, qualification and return promotion;
-  route agent guidance through the same runbook and identify the existing
-  direct-J contract reconciliation without changing runtime gates (#1768).
 
 ## 0.11.0 - Swarm promotion and fail-closed output hardening
 

@@ -21772,6 +21772,8 @@ outputs = [
   "packaging/npm/README.md",
 ]
 metrics = ["selected_routes", "executed_routes", "failed_routes", "payload_sha256", "tarball_sha256", "stage_eligible", "selected_requests", "observed_requests"]
+
+[[behavior]]
 id = "RIPR-SPEC-0410"
 name = "First-hour repair funnel projection"
 spec = "docs/specs/RIPR-SPEC-0410-first-hour-repair-funnel-projection.md"
