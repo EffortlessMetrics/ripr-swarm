@@ -381,7 +381,7 @@ official SDK transport:
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v4`.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v5`.
   v4 adds `omitted_page` and the `omitted_offset` argument (#9360): the
   omission disclosure pages on its own axis, at most 200 identities and 16 KiB per response, so
   a large truncated selection no longer fails the listing with
