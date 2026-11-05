@@ -272,7 +272,7 @@ impl crate::analysis::ScopedEvidenceConsumer for BoundedAgentBrief<'_> {
     fn second_stage_filter<'s>(
         &'s self,
         index: &crate::analysis::RustIndex,
-    ) -> Option<Box<dyn Fn(&RepoSeam) -> bool + 's>> {
+    ) -> Option<crate::analysis::SecondStageFilter<'s>> {
         // Fallback seams are discarded once any scoped seam is represented, so
         // narrowing is only sound after a first-stage seam matched.
         if !self.matched_scope {
@@ -439,7 +439,7 @@ mod tests {
         fn second_stage_filter<'s>(
             &'s self,
             index: &crate::analysis::RustIndex,
-        ) -> Option<Box<dyn Fn(&RepoSeam) -> bool + 's>> {
+        ) -> Option<crate::analysis::SecondStageFilter<'s>> {
             if self.narrow {
                 self.inner.second_stage_filter(index)
             } else {

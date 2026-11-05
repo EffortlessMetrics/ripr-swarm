@@ -2274,6 +2274,10 @@ pub(crate) fn diff_only_rust_files(
 
 /// A bounded consumer of classified windows. Implementations retain their
 /// result payloads independently from the complete evaluation denominator.
+/// Predicate over remaining seams; `false` means the consumer provably
+/// discards the seam whatever its evidence says (#12940).
+pub(crate) type SecondStageFilter<'s> = Box<dyn Fn(&RepoSeam) -> bool + 's>;
+
 pub(crate) trait ScopedEvidenceConsumer {
     fn in_first_stage(&self, seam: &RepoSeam) -> bool;
     fn observe(&mut self, ordinal: usize, entry: ClassifiedSeam) -> Result<(), String>;
@@ -2283,10 +2287,7 @@ pub(crate) trait ScopedEvidenceConsumer {
     /// sufficient. Returns a predicate over the remaining seams that must be
     /// `false` only for a seam the consumer will provably discard whatever its
     /// evidence says. `None` evaluates every remaining seam.
-    fn second_stage_filter<'s>(
-        &'s self,
-        _index: &RustIndex,
-    ) -> Option<Box<dyn Fn(&RepoSeam) -> bool + 's>> {
+    fn second_stage_filter<'s>(&'s self, _index: &RustIndex) -> Option<SecondStageFilter<'s>> {
         None
     }
 }
