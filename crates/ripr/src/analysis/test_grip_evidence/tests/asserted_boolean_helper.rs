@@ -110,6 +110,18 @@ fn comparison_receipt_requires_live_source_owner_and_exact_asserted_identity() -
         .ok_or("receipt object")?
         .remove("workspace_root");
     assert!(serde_json::from_value::<BooleanComparisonReceipt>(old_shape).is_err());
+    let mut old_invocation_shape = serialized.clone();
+    old_invocation_shape
+        .as_object_mut()
+        .ok_or("receipt object")?
+        .remove("invocation_dir");
+    assert!(serde_json::from_value::<BooleanComparisonReceipt>(old_invocation_shape).is_err());
+    let mut wrong_invocation = serialized.clone();
+    wrong_invocation["invocation_dir"] =
+        serde_json::json!(workspace_root.join("foreign-invocation"));
+    let wrong_invocation: BooleanComparisonReceipt =
+        serde_json::from_value(wrong_invocation).map_err(|error| error.to_string())?;
+    assert!(!wrong_invocation.matches_source(&owner.file, 26, expression));
     let mut wrong_root = serialized;
     wrong_root["workspace_root"] = serde_json::json!(workspace_root.join("foreign-root"));
     let wrong_root: BooleanComparisonReceipt =
@@ -136,4 +148,41 @@ fn comparison_receipt_requires_live_source_owner_and_exact_asserted_identity() -
         "u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])"
     ));
     Ok(())
+}
+
+#[test]
+fn captured_workspace_anchor_resolves_prefixed_relative_probe_paths() {
+    use crate::analysis::facts::WorkspaceRootAuthority;
+    let invocation = std::env::temp_dir();
+    let root = invocation.join("ripr-relative-helper-subject");
+    let expected = std::path::Path::new("src/lib.rs");
+    for path in [
+        PathBuf::from("src/lib.rs"),
+        PathBuf::from("./src/lib.rs"),
+        PathBuf::from("ripr-relative-helper-subject/src/lib.rs"),
+        PathBuf::from("./ripr-relative-helper-subject/src/lib.rs"),
+        root.join("src/lib.rs"),
+    ] {
+        assert!(
+            WorkspaceRootAuthority::source_path_matches(&root, &invocation, expected, &path),
+            "{path:?}"
+        );
+    }
+    for path in [
+        PathBuf::from("foreign-subject/src/lib.rs"),
+        PathBuf::from("ripr-relative-helper-subject/src/other.rs"),
+        PathBuf::from("ripr-relative-helper-subject/../src/lib.rs"),
+        invocation.join("foreign-subject/src/lib.rs"),
+    ] {
+        assert!(
+            !WorkspaceRootAuthority::source_path_matches(&root, &invocation, expected, &path),
+            "{path:?}"
+        );
+    }
+    assert!(!WorkspaceRootAuthority::source_path_matches(
+        &root,
+        &invocation.join(".."),
+        expected,
+        expected
+    ));
 }

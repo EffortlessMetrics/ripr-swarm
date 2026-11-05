@@ -28,6 +28,7 @@ pub(in crate::analysis) struct BooleanComparisonReceipt {
     helper: SymbolId,
     file: PathBuf,
     workspace_root: PathBuf,
+    invocation_dir: PathBuf,
     owner_line: usize,
     expression: String,
     parameter: String,
@@ -69,6 +70,7 @@ impl BooleanComparisonReceipt {
         let mut fields = self.fields();
         fields.extend([
             self.workspace_root.to_string_lossy().into_owned(),
+            self.invocation_dir.to_string_lossy().into_owned(),
             self.source_hash.clone(),
             self.owner_line.to_string(),
             self.test_line.to_string(),
@@ -90,13 +92,12 @@ impl BooleanComparisonReceipt {
         line: usize,
         expression: &str,
     ) -> bool {
-        crate::analysis::facts::WorkspaceRootAuthority::root_relative_source_path(
+        crate::analysis::facts::WorkspaceRootAuthority::source_path_matches(
             &self.workspace_root,
+            &self.invocation_dir,
+            &self.file,
             file,
-        )
-        .as_ref()
-            == Some(&self.file)
-            && self.owner_line == line
+        ) && self.owner_line == line
             && self.expression == normalize_semantic_text(expression)
             && !self.samples.is_empty()
             && self.semantic_digest == digest(&self.fields())
@@ -174,6 +175,7 @@ pub(in crate::analysis) fn boolean_comparison_receipt(
         return None;
     }
     let workspace = index.workspace_authority.as_ref()?;
+    let invocation_dir = workspace.invocation_dir.as_ref()?;
     if crate::analysis::facts::WorkspaceRootAuthority::root_relative_source_path(
         &workspace.root,
         &owner.file,
@@ -509,6 +511,7 @@ pub(in crate::analysis) fn boolean_comparison_receipt(
             helper: helper.id.clone(),
             file: owner.file.clone(),
             workspace_root: workspace.root.clone(),
+            invocation_dir: invocation_dir.clone(),
             owner_line,
             expression,
             parameter: owner_parameter_name,
