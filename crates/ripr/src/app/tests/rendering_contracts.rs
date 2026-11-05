@@ -60,6 +60,24 @@ fn repo_format_render_reports_stage_events_to_the_progress_sink() -> Result<(), 
     Ok(())
 }
 
+/// #13103: `json-compact` is the same document as `json`, minified. The
+/// parsed values must be identical and the `json` bytes must not move.
+#[test]
+fn json_compact_parses_identically_to_json_and_is_smaller() -> Result<(), String> {
+    let output = check_output_with(vec![sample_finding("src/lib.rs", 1)]);
+    let config = RiprConfig::default();
+    let json = render_check_with_config(&output, &OutputFormat::Json, &config)?;
+    let compact = render_check_with_config(&output, &OutputFormat::JsonCompact, &config)?;
+    let json_value: serde_json::Value =
+        serde_json::from_str(&json).map_err(|error| error.to_string())?;
+    let compact_value: serde_json::Value =
+        serde_json::from_str(&compact).map_err(|error| error.to_string())?;
+    assert_eq!(json_value, compact_value);
+    assert!(compact.len() < json.len(), "compact {compact}");
+    assert!(!compact.contains("\n  "), "compact {compact}");
+    Ok(())
+}
+
 #[test]
 fn summary_default_is_empty() {
     let summary = Summary::default();
@@ -86,6 +104,48 @@ fn configured_finding_severity_applies_to_human_json_and_github() -> Result<(), 
     }
     if !github.starts_with("::notice ") {
         return Err(format!("github severity was not configured: {github}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn per_crate_severity_overrides_change_json_independently() -> Result<(), String> {
+    let config = crate::config::tests_only_parse(
+        "[severity.findings]\nweakly_exposed = \"warning\"\n\n\
+         [[overrides]]\npath = \"crates/alpha/**\"\nseverity.findings.weakly_exposed = \"info\"\n\n\
+         [[overrides]]\npath = \"crates/beta/**\"\nseverity.findings.weakly_exposed = \"note\"\n",
+    )?;
+    let alpha = render_check_with_config(
+        &check_output_with(vec![sample_finding("crates/alpha/src/lib.rs", 1)]),
+        &OutputFormat::Json,
+        &config,
+    )?;
+    let beta = render_check_with_config(
+        &check_output_with(vec![sample_finding("crates/beta/src/lib.rs", 1)]),
+        &OutputFormat::Json,
+        &config,
+    )?;
+    if !alpha.contains("\"severity\": \"info\"") {
+        return Err(format!("alpha crate expected info: {alpha}"));
+    }
+    if !beta.contains("\"severity\": \"note\"") {
+        return Err(format!("beta crate expected note: {beta}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn no_overrides_keep_configured_severity_byte_identical() -> Result<(), String> {
+    let output = check_output_with(vec![sample_finding("crates/alpha/src/lib.rs", 1)]);
+    let repo_wide =
+        crate::config::tests_only_parse("[severity.findings]\nweakly_exposed = \"info\"\n")?;
+    let empty_overrides = crate::config::tests_only_parse(
+        "overrides = []\n\n[severity.findings]\nweakly_exposed = \"info\"\n",
+    )?;
+    let left = render_check_with_config(&output, &OutputFormat::Json, &repo_wide)?;
+    let right = render_check_with_config(&output, &OutputFormat::Json, &empty_overrides)?;
+    if left != right {
+        return Err("empty overrides must not change rendered JSON".to_string());
     }
     Ok(())
 }

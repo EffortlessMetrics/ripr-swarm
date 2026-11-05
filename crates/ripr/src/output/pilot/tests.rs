@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 mod native_artifacts;
+mod panic_outcome;
 mod spec_0237;
 mod timeout_retry;
 
@@ -937,6 +938,83 @@ fn pilot_summary_ranks_a_true_gap_ahead_of_withheld_limitations() {
         "{terminal}"
     );
     assert!(terminal.contains("src/c.rs:4"), "{terminal}");
+}
+
+fn classified_with_propagate_state(
+    class: SeamGripClass,
+    file: &str,
+    line: usize,
+    propagate: StageState,
+) -> ClassifiedSeam {
+    let mut entry = classified_with(class, file, line, vec![missing()], vec![related_test()]);
+    entry.evidence.propagate = stage(propagate);
+    entry
+}
+
+#[test]
+fn pilot_ranking_uses_is_static_limited_not_class_alone_for_gap_classes() {
+    // #5497 policy single authority: a gap-class seam with an unknown stage
+    // is withheld like evidence-record actionability, not ranked on class alone.
+    let limited_gap_class = classified_with_propagate_state(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        10,
+        StageState::Unknown,
+    );
+    let true_gap = classified_in_owner(SeamGripClass::Ungripped, "src/b.rs", "b::g", 11);
+    let entries = [limited_gap_class, true_gap];
+    let ranked = top_actionable_seams(&entries, 5, None);
+    assert_eq!(ranked.len(), 1);
+    assert_eq!(ranked[0].class, SeamGripClass::Ungripped);
+    assert_eq!(withheld_static_limitations(&entries), 1);
+}
+
+#[test]
+fn pilot_ranks_an_unreached_ungripped_seam_whose_activation_is_unknown() {
+    // #5497: with no test reaching the seam, `activate: unknown` is the
+    // missing test, not a limitation. The pilot answer key confirms these
+    // seams by mutation, so withholding them cost every seam-tier pick.
+    let mut unreached = classified_in_owner(SeamGripClass::Ungripped, "src/a.rs", "a::f", 10);
+    unreached.evidence.reach = stage(StageState::No);
+    unreached.evidence.activate = stage(StageState::Unknown);
+    unreached.evidence.activate.summary =
+        "No concrete activation values observed for seam `x > 1`".to_string();
+    // The summary quotes the seam expression. A keyword in the expression
+    // (`snapshot_count`) must not read as a snapshot limitation.
+    let mut quoting = classified_in_owner(SeamGripClass::Ungripped, "src/d.rs", "d::k", 13);
+    quoting.evidence.reach = stage(StageState::No);
+    quoting.evidence.activate = stage(StageState::Unknown);
+    quoting.evidence.activate.summary =
+        "No concrete activation values observed for seam `snapshot_count >= 10`".to_string();
+    let mut limited = classified_in_owner(SeamGripClass::Ungripped, "src/b.rs", "b::g", 11);
+    limited.evidence.reach = stage(StageState::Yes);
+    limited.evidence.activate = stage(StageState::Unknown);
+    // A producer-named operand limit survives absent reach: the activation
+    // is unknown because ripr cannot resolve the boundary, not because no
+    // test calls the seam.
+    let mut unresolved = classified_in_owner(SeamGripClass::Ungripped, "src/c.rs", "c::h", 12);
+    unresolved.evidence.reach = stage(StageState::No);
+    unresolved.evidence.activate = stage(StageState::Unknown);
+    unresolved.evidence.activate.summary = "Boundary activation operand is a local computed value for seam `x > limit`; add analyzer support before emitting an actionable repair packet".to_string();
+    let entries = [unreached, quoting, limited, unresolved];
+    let ranked = top_actionable_seams(&entries, 5, None);
+    assert_eq!(
+        ranked_places(&ranked),
+        vec![("a::f".to_string(), 10), ("d::k".to_string(), 13)]
+    );
+    assert_eq!(withheld_static_limitations(&entries), 2);
+
+    // The limitation projection agrees with eligibility: the exempt
+    // activation carries no limitation, the producer-named one keeps its.
+    let stages = |entry: &ClassifiedSeam| {
+        crate::output::evidence_record::static_limitations_for(entry)
+            .into_iter()
+            .map(|limitation| limitation.stage)
+            .collect::<Vec<_>>()
+    };
+    assert!(!stages(&entries[0]).contains(&"activate".to_string()));
+    assert!(!stages(&entries[1]).contains(&"activate".to_string()));
+    assert!(stages(&entries[3]).contains(&"activate".to_string()));
 }
 
 #[test]
@@ -2279,16 +2357,17 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
     use crate::output::agent_seam_packets::targeted_test_brief_outline_for_classified_seam;
 
     let artifacts = pilot_artifacts();
-    for (test_files, eligible, offered_expected) in [
-        (&["tests/pricing.rs"][..], true, true),
+    for (test_files, eligible, offered_expected, rankable) in [
+        (&["tests/pricing.rs"][..], true, true, true),
         (
             &["tests/pricing.rs", "tests/pricing.test.ts"][..],
+            false,
             false,
             false,
         ),
         // Eligible, but the recommended test is an inline module in a
         // production file, which `agent repair` refuses as an edit target.
-        (&["src/pricing.rs"][..], true, false),
+        (&["src/pricing.rs"][..], true, false, true),
     ] {
         let test_file = test_files.join(" + ");
         let entry = route_ready_entry(test_files);
@@ -2327,9 +2406,25 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
             serde_json::from_str(&json).map_err(|e| format!("parse pilot JSON: {e}\n{json}"))?;
         let md = render_pilot_summary_md(&entries, pilot_context(&artifacts));
 
-        // Both must be the ranked top seam, or the negative half is vacuous.
-        if !terminal.contains(&format!("gap {}: ", entries[0].seam.id().as_str())) {
-            return Err(format!("{test_file}: must be the top seam\n{terminal}"));
+        if rankable {
+            // Both must be the ranked top seam, or the negative half is vacuous.
+            if !terminal.contains(&format!("gap {}: ", entries[0].seam.id().as_str())) {
+                return Err(format!("{test_file}: must be the top seam\n{terminal}"));
+            }
+        } else {
+            assert_eq!(
+                summary["withheld_static_limitations_total"], 1,
+                "{test_file}: cross-language static limitation must be withheld\n{json}"
+            );
+            assert_eq!(
+                summary["top_actionable_seams"],
+                serde_json::json!([]),
+                "{test_file}\n{json}"
+            );
+            assert!(
+                terminal.contains("none ranked: 1 spot were withheld"),
+                "{test_file}\n{terminal}"
+            );
         }
         let offered = [
             terminal.contains(&format!("  repair this gap: {command}\n")),

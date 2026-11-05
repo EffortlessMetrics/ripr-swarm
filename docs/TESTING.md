@@ -108,6 +108,23 @@ Inspect the selected package instead with
 For workflow-policy, agent-skill, and executable-file edits, use the existing
 [`cargo policy` frontdoor](../CONTRIBUTING.md#local-setup) for focused feedback.
 
+For local checks selected by your committed changes, inspect the fast route's
+scope and then run it from the repository root:
+
+```bash
+cargo xtask help check-fast
+cargo xtask check-fast
+```
+
+`check-fast` selects checks from the committed `origin/main...HEAD` diff;
+unstaged, staged, and untracked changes do not enter that selector, although
+the selected gates inspect the live worktree. It records selector identity and
+ran/skipped gates in `target/ripr/reports/check-fast.md` and
+`target/ripr/reports/check-fast-selector.md`. Local ref freshness is not checked;
+fetch `origin main` and retry if the recorded basis is unexpected. The first
+invocation builds `xtask`, and Rust changes select workspace/all-target Clippy.
+This focused route does not replace `precommit` or required hosted CI.
+
 ### Bounded module-motion controls
 
 The #4680 controls implement the
@@ -296,6 +313,22 @@ npm ci
 npm run test:e2e
 ```
 
+`npm test` runs the same full end-to-end entry point as `npm run test:e2e`.
+Choose one command per validation pass. The package scripts can build the Rust
+server and compile the extension, so prepare the repository's pinned Rust
+toolchain and Node dependencies first. Those compilation steps precede the Node
+launcher and its host acquisition; the ordering below saves the additional
+genuine queue-producer build when host acquisition fails.
+
+The host download needs access to the VS Code update/download endpoints and
+their redirects through the environment's configured proxy and CA trust.
+Headless Linux also needs Xvfb and the native libraries required by VS Code;
+provide those before invoking the `xvfb-run` command below. The editor runner
+acquires its host before invoking the genuine actionable-queue producer. If
+host acquisition fails, the runner retains the failure diagnostics without
+starting that producer. Extension compilation or a completed host download
+alone does not establish a completed extension test run.
+
 The test suite:
 
 - opens a fixture Rust workspace (`test-fixtures/workspace/Cargo.toml`)
@@ -346,6 +379,43 @@ test-host failure copies a size-capped, redacted log subset into
 `target/ripr/vscode-test-host-diagnostics/`; CI uploads that folder only when
 the vscode job fails. Success runs do not retain the diagnostics copy, and
 collection cannot change the original test exit status.
+
+After the normal extension compile step, the setup-ordering controls can run
+without a VS Code download or a Rust producer build:
+
+```bash
+# From editors/vscode, after npm run compile:
+node node_modules/mocha/bin/mocha.js --ui tdd out/test/suite/host_setup.test.js
+```
+
+These controls invoke the retained runner with isolated host and producer
+boundaries, including rejected acquisition, asynchronous success, producer
+failure, untrusted, multi-root-only, and supplied-queue paths. They also run as
+part of the full suite; they do not replace genuine producer or editor-host
+qualification.
+
+The genuine actionable-queue fixture has a separate 30-minute Cargo deadline.
+It reports the producer phase and log directory immediately, then progress every
+15 seconds. For a deliberately slower cold build, set
+`RIPR_TEST_PRODUCER_TIMEOUT_MS` to an integer from `1` through `7200000`
+(two hours); zero and invalid values refuse setup before the producer starts.
+`SIGINT` or `SIGTERM` cancels the producer through the editor's existing process
+containment helper, and setup waits for process/pipe closure before returning.
+The same deadline covers a completed Cargo process whose descendants still hold
+its output pipes. Captured stdout and stderr have a combined 16 MiB limit.
+Timeout, cancellation, excess output or a native failure cannot supply a queue.
+The bounded original output and cause remain in `producer-failure.log` under
+the printed `actionable-queue-…` directory. Successful setup retains its existing
+exact-test, compiler executable and queue-hash receipt. This producer receipt
+does not establish that the subsequent VS Code host suite passed.
+
+After extension compilation, its process and adapter controls can be run without
+launching the editor:
+
+```bash
+cd editors/vscode
+node node_modules/mocha/bin/mocha.js --ui tdd out/test/suite/fixture_producer.test.js
+```
 
 ## Flaky tests
 
@@ -430,6 +500,13 @@ cargo test --workspace --doc
 
 The JUnit output path is configured in `.config/nextest.toml` at
 `target/nextest/ci/junit.xml`.
+
+After a `ci`-profile run, `cargo xtask slow-test-report` lists the 50 slowest
+tests from that file and judges each against the per-test budget in
+`policy/test-time-budget.toml` (advisory; the baseline allowlist names tests
+already over budget so the budget can be enforced later; a baselined test that
+slows past `regression_factor` times its recorded time is reported as regressed). The JUnit file is also
+the `rust-junit` artifact of the Test Analytics workflow.
 
 ## Unused suppression-policy disclosure
 

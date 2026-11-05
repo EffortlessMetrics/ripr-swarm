@@ -123,6 +123,7 @@ pub(crate) fn extend_index_from_loaded_files_with_cache(
         .include_targets
         .extend(extra_index.include_targets.iter().cloned());
     super::includes::resolve_repository_local_includes(root, index);
+    super::resource_dependencies::attach_resource_dependencies(root, index);
     index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         root,
         index
@@ -306,6 +307,7 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     let (mut index, files_content_hash) = batched?;
     cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
+    super::resource_dependencies::attach_resource_dependencies(root, &mut index);
     cancellation::checkpoint()?;
     index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         root,
@@ -374,7 +376,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
         first_corrupt_reason,
     } = accounting;
     enum Pending {
-        Ready(super::FileFacts),
+        Ready(Box<super::FileFacts>),
         Parse { key: RepoFileFactCacheKey },
     }
     // Only genuine misses need historical paths for invalidation attribution.
@@ -415,7 +417,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
             match load {
                 CacheLoad::Hit(facts) => {
                     stats.hits += 1;
-                    pending.push(Pending::Ready(facts));
+                    pending.push(Pending::Ready(Box::new(facts)));
                 }
                 CacheLoad::Miss => {
                     stats.misses += 1;
@@ -521,7 +523,7 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                 index.non_utf8_sources.insert(file.clone());
             }
             let summary = match entry {
-                Pending::Ready(facts) => facts,
+                Pending::Ready(facts) => *facts,
                 Pending::Parse { key } => {
                     let Some(facts) = parsed[position].take() else {
                         return Err(format!(
@@ -719,6 +721,7 @@ fn build_index_with_adapters(
     }
     cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
+    super::resource_dependencies::attach_resource_dependencies(root, &mut index);
     cancellation::checkpoint()?;
     index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         root,

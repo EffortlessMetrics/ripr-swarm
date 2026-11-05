@@ -85,7 +85,9 @@ Options:
   --max-seams N     Maximum ranked gaps in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
-                    240000 more. An explicit value is a hard limit.
+                    240000 more (270000 ms total from start, plus up to about 5 s of
+                    cancel grace before the partial summary is written). An explicit value
+                    is a hard limit with no extension.
   --format FORMAT   human (default) or json. `--format json` writes the same
                     pilot-summary.json document to stdout and suppresses the
                     human terminal; packet files are still written.
@@ -211,9 +213,9 @@ Common options:
                     this directory.
   --quiet           Suppress stderr progress; known seam totals as processed_n_of_total.
                     Unknown totals show no percentage or ETA, and progress makes no speed claim.
-  --timeout SECS    Wall-clock analysis budget (600s default; 0 disables;
-                    excludes the repo-wide formats). On analysis_timeout,
-                    raise/disable it or narrow the diff; re-run.
+  --timeout SECS    Analysis-worker budget (600s default; 0 off; repo formats skip).
+                    Pre-worker git/post-run rendering outside; in-worker git diff
+                    load counts against it (each git call has its own timeout). Raise/disable on analysis_timeout.
 
 Exit status: 0 for a completed run, including findings that are `exposed` or weak.
 `unsupported_input` reports exit 2, as do usage errors. Do not build
@@ -300,6 +302,8 @@ Options:
                            Choose by task: eye review -> human (the default);
                            every finding with drill-in commands -> human-full;
                            machine consumer (jq, CI scripts) -> json (--json);
+                           same document with less whitespace for a machine
+                           or coding agent -> json-compact;
                            compact report for a coding agent -> agent;
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif; README badge ->
@@ -308,7 +312,8 @@ Options:
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
-                               human, human-full, json, github, sarif, agent,
+                               human, human-full, json, json-compact, github,
+                               sarif, agent,
                                check-findings-json (identified snapshot
                                for `agent verify`)
                              Badge (diff-scoped, for PR/CI status):
@@ -383,15 +388,17 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
-  --timeout SECS           Wall-clock budget in seconds for the whole
-                           diff or worktree analysis (not the repo-wide
-                           repo-exposure and seam formats). When it runs
-                           out, check stops and refuses with
-                           analysis_timeout: no findings
-                           are produced and the result is never a clean
-                           pass. 0 disables the budget. Default: 600 (10
-                           minutes). Also settable via RIPR_CHECK_TIMEOUT
-                           env var.
+  --timeout SECS           Analysis-worker wall-clock budget in seconds (not
+                           the repo-wide repo-exposure and seam formats).
+                           Pre-analysis git work and post-analysis rendering
+                           are outside this budget; git-backed diff loading
+                           inside the worker counts against it, and each git
+                           invocation is bounded separately by RIPR_GIT_TIMEOUT.
+                           When the analysis worker exceeds it, check stops and
+                           refuses with analysis_timeout: no findings are
+                           produced and the result is never a clean pass. 0
+                           disables the budget. Default: 600 (10 minutes). Also
+                           settable via RIPR_CHECK_TIMEOUT env var.
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
@@ -562,7 +569,7 @@ Exit status:
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--format human|agent] [--quiet] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--format human|agent] [--quiet] <finding-id|file:line>
 
 Options:
   --root PATH  Workspace root. Defaults to the current directory, then
@@ -589,6 +596,13 @@ Options:
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree`, so a finding listed from uncommitted
                edits can be selected. Not combinable with --diff or --from.
+  --path GLOB  Analyze only changed files matching GLOB (repeatable). Same
+               patterns and intake filter as `ripr check --path`. A scoped
+               `ripr check` prints this flag on its explain drill-in so the
+               pasted command does not re-analyze the full oversized diff.
+  --exclude GLOB
+               Skip changed files matching GLOB (repeatable; wins over
+               --path). Same patterns as `ripr check --exclude`.
   --from PATH  Load findings from a check artifact written by
                `ripr check --write-artifact PATH` instead of re-running the
                analysis. The artifact's recorded diff source is re-resolved
@@ -628,7 +642,7 @@ The packet is always JSON, for an agent or tool to consume; `--json` is
 accepted and changes nothing. To read the same finding as prose, run
 `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
   --root PATH  Workspace root. Defaults to the current directory, then
@@ -648,6 +662,12 @@ Options:
                the same worktree default as `ripr check`.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree` (see `ripr explain --help`).
+  --path GLOB  Analyze only changed files matching GLOB (repeatable). Same
+               patterns and intake filter as `ripr check --path`. A scoped
+               `ripr check` prints this flag on its context drill-in.
+  --exclude GLOB
+               Skip changed files matching GLOB (repeatable; wins over
+               --path). Same patterns as `ripr check --exclude`.
   --from PATH  Load findings from a check artifact written by
                `ripr check --write-artifact PATH` instead of re-running the
                analysis (same identity check as explain --from).

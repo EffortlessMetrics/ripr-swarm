@@ -248,12 +248,12 @@ involves indirection that ripr cannot verify at runtime.
 - `crates/ripr/src/analysis/language/typescript/tests.rs` — unit tests for
   `ReExportIndex::from_parts`, `ReExportIndex::resolve_to_owner`, and
   `find_related_tests` with re-export index.
-- `crates/ripr/src/domain/evidence.rs` — `relation_reason_labels_are_stable_contract_terms`
+- `crates/ripr-contract/src/domain/evidence.rs` — `relation_reason_labels_are_stable_contract_terms`
   includes `ReExportChainFollowed`.
 
 ## Implementation Mapping
 
-- `crates/ripr/src/domain/evidence.rs`: `RelationReason::ReExportChainFollowed` variant.
+- `crates/ripr-contract/src/domain/evidence.rs`: `RelationReason::ReExportChainFollowed` variant.
 - `crates/ripr/src/analysis/language/typescript/types.rs`:
   `TypeScriptRelationKind::ReExportChainFollowed` variant.
 - `crates/ripr/src/analysis/language/typescript/related_tests.rs`:

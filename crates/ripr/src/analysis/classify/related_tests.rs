@@ -19,7 +19,7 @@ use crate::analysis::extract::{
     mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
 };
 use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
-use crate::analysis::seam_cache::PathDependencySection;
+use crate::analysis::seam_cache::path_dependencies::PathDependencySection;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationConfidence, RelationReason};
 use ra_ap_syntax::{
@@ -7235,13 +7235,33 @@ fn free_function_call_start_in(text: &str, name: &str) -> Option<usize> {
 /// `text` is a call that can reach a free function (see
 /// [`test_calls_free_function`]).
 pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name: &str) -> bool {
+    name_may_denote_free_function_at(text, at, name) && {
+        let after = at + name.len();
+        call_paren_follows(text, after)
+    }
+}
+
+/// Whether the occurrence of `name` starting at byte `at` of `text` (masked
+/// source, or raw source when the caller also admits doctest and string
+/// mentions) is spelled so that it can denote a module-level free function:
+/// the name at an identifier boundary, not a `fn name` declaration, not a
+/// receiver-dot selection (`x.name`, which picks a method or field), and not
+/// qualified by a type (`Type::name`, `u64::name`, `<T as Tr>::name`). A bare
+/// `name`, a lowercase `module::name` path and a range operand (`0..name`)
+/// qualify. Unlike [`is_free_function_call_at`] it does not require a call
+/// paren, so a function-pointer use (`.map(name)`) still qualifies.
+pub(in crate::analysis) fn name_may_denote_free_function_at(
+    text: &str,
+    at: usize,
+    name: &str,
+) -> bool {
     let bytes = text.as_bytes();
     if name.is_empty() || text.get(at..).is_none_or(|rest| !rest.starts_with(name)) {
         return false;
     }
     {
         let after = at + name.len();
-        if !ident_boundary(text, at, after) || !call_paren_follows(text, after) {
+        if !ident_boundary(text, at, after) {
             return false;
         }
         let mut before = at;
@@ -7281,7 +7301,7 @@ pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name:
 /// cache) fails closed — an unestablished owner keeps the credit — and so
 /// does every method container, including trait declarations, which share
 /// the `None` self-type branch with free functions (#7006).
-fn is_established_free_function(owner: &FunctionSummary) -> bool {
+pub(in crate::analysis) fn is_established_free_function(owner: &FunctionSummary) -> bool {
     matches!(owner.item.container, FunctionContainer::Free) && !owner.item.has_self_param
 }
 
@@ -8532,6 +8552,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 attrs: Vec::new(),
                 nested_fn_names: Vec::new(),
                 let_bindings: Vec::new(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -11007,7 +11028,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         edges: &[(&str, &str, PathDependencySection, &str)],
         limitations: bool,
     ) -> PathDependencyAdjacency {
-        use crate::analysis::seam_cache::{
+        use crate::analysis::seam_cache::path_dependencies::{
             PathDependencyEdge, PathDependencyLimitation, PathDependencyLimitationKind,
             PathDependencyResolution, PathDependencySource, WorkspaceGraphProvenance,
         };
@@ -12713,6 +12734,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![macro_test],
@@ -12743,6 +12765,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             tests: vec![call_test],
@@ -13424,6 +13447,7 @@ fn crate_c_score_test() {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -14138,6 +14162,7 @@ let r = try_parse_summary(\"x\");",
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let mut first = second.clone();
         first.start_line = 3;
@@ -14825,6 +14850,7 @@ try_parse_summary(raw).map_err(Into::into)"
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -14888,6 +14914,7 @@ try_parse_summary(raw).map_err(Into::into)"
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

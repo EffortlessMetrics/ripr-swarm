@@ -19,6 +19,7 @@ export const RESUMABLE_REPAIR_ATTEMPT_DISPOSITION = 'resumable';
 
 export interface BeforePhaseRepairStart {
   attemptId: string;
+  baselineAmbiguous: boolean;
   manifestPath?: string;
   nextCommand?: string;
   seamId?: string;
@@ -138,6 +139,12 @@ export function parseBeforePhaseRepairStart(stdout: string): BeforePhaseRepairSt
   if (!attemptId) {
     return undefined;
   }
+  const baselineAmbiguous = continuation['baseline_ambiguous'];
+  if (baselineAmbiguous !== undefined && typeof baselineAmbiguous !== 'boolean') {
+    return undefined;
+  }
+  const manifestPath = nonEmptyString(continuation['manifest_path']);
+  const nextCommand = nonEmptyString(continuation['next_command']);
   const packet = firstPacket(parsed);
   const related = packet ? relatedTestFromPacket(packet) : {};
   const seamId = packet ? nonEmptyString(packet['seam_id']) : undefined;
@@ -150,7 +157,12 @@ export function parseBeforePhaseRepairStart(stdout: string): BeforePhaseRepairSt
       : [])
     : [];
   const mustNot = packet ? stringArray(packet['must_not_change']) : [];
-  const summaryLines = [
+  const summaryLines = (baselineAmbiguous ? [
+    `Repair attempt ${attemptId} has an ambiguous baseline and cannot be scored; its after phase can only return Incomparable.`,
+    seamId ? `spot: ${seamId}` : undefined,
+    manifestPath ? `Attempt manifest: ${manifestPath}` : undefined,
+    'Resolve the workspace condition that caused the ambiguity, then run the same --phase before command again from the clean state before editing a test.',
+  ] : [
     `Repair attempt ${attemptId} is awaiting an external test edit; the repair is not complete.`,
     seamId ? `spot: ${seamId}` : undefined,
     missing.length > 0 ? `Missing check: ${missing.join('; ')}` : undefined,
@@ -159,15 +171,16 @@ export function parseBeforePhaseRepairStart(stdout: string): BeforePhaseRepairSt
     related.file
       ? `Related test: ${related.file}${related.line ? `:${related.line}` : ''}${related.name ? ` (${related.name})` : ''}`
       : undefined,
-    nonEmptyString(continuation['next_command'])
-      ? `Next after the edit: ${continuation['next_command']}`
+    nextCommand
+      ? `Next after the edit: ${nextCommand}`
       : undefined,
-  ].filter((line): line is string => line !== undefined);
+  ]).filter((line): line is string => line !== undefined);
 
   return {
     attemptId,
-    manifestPath: nonEmptyString(continuation['manifest_path']),
-    nextCommand: nonEmptyString(continuation['next_command']),
+    baselineAmbiguous: baselineAmbiguous === true,
+    manifestPath,
+    nextCommand,
     seamId,
     relatedTestFile: related.file,
     relatedTestLine: related.line,

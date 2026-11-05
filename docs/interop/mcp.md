@@ -184,8 +184,13 @@ Order is upstream first: a producer static limit outranks every readiness
 gate, and the seam validator outranks the finding-level gates, so a
 renderer-convenient limitation never replaces the fact that owns the stop. An
 item with no limitation answers with the explicit `no_limitation_established`
-kind, never `null`. Only a saved-worktree withhold is `retryable` without a
-source change. The read uses committed facts, so repeated reads are identical
+kind, never `null`. A source-custody withhold is `retryable` without a test
+change. Its recovery retains the custody owner's source-specific remedy:
+a committed refresh over dirty Rust files recommends committing them or using
+`source: "worktree"`; a saved-worktree disagreement recommends refreshing
+once edits settle. Keep the snapshot's explicit `base`, if any, in the refresh
+request and re-read the limitation against the new snapshot. The read uses
+committed facts, so repeated reads are identical
 and analysis is never rerun. Failures are the gap read's: `stale_snapshot`,
 `item_not_found`, `no_snapshot`, `workspace_unavailable`, `result_too_large`.
 The resource route reads the whole canonical id before the `/limitation`
@@ -771,6 +776,15 @@ machine-readable fields (`argument`, `expected`, `allowed`, `minimum`,
 names one. Still JSON-RPC errors: an unknown tool name, a `tools/call` whose
 `arguments` is not an object or whose `name` is missing, a missing `_meta`, a
 catalog `cursor`, and resource-read errors, because in those cases no tool ran.
+
+Unknown argument names are echoed exactly up to 128 Unicode scalar values.
+Longer names use that prefix in `failure.data.argument`, with
+`failure.data.argument_truncated: true` and `failure.data.argument_bytes`
+giving the original UTF-8 byte length before JSON escaping. Validation still
+compares the complete original key; `failure.data.allowed` remains the full
+list of accepted names. The human detail marks truncation and names the
+allowed arguments before the preview. This bounds the diagnostic even when
+an admitted request contains a key larger than the response limit (#13154).
 
 ### Reading errors: the JSON-RPC code is coarse by contract
 

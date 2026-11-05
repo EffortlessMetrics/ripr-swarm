@@ -44,7 +44,7 @@ Write a test for it:
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
     - ./util/src/stream/take.rs:15 (unknown: infection unclear); kind: predicate; reason: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the boundary a test…
-    - ./util/src/stream/take.rs:15 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./util/src/stream/take.rs:15 (weak); kind: return_value; reason: No assertion was tied to the changed value
   Hidden classes:
     weak = tests reach it but check it only loosely
     unknown: infection unclear = ripr could not tell what input makes the change take effect
