@@ -24,6 +24,7 @@ pub mod limit_guidance;
 pub mod probe;
 pub mod project_facts;
 pub mod refusal_remedy;
+pub mod resource_dependency;
 pub mod summary;
 pub mod support;
 pub mod test_candidate_set;
@@ -128,6 +129,10 @@ pub use probe::declared_const_name;
 pub use project_facts::{
     CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
     SourceUnitFactV1, TestEnvironmentFactV1,
+};
+pub use resource_dependency::{
+    ResourceAccessKindV1, ResourceCompletenessClassV1, ResourceDependencyEdgeV1, ResourceKindV1,
+    ResourcePresenceV1,
 };
 pub use summary::{LanguageFileCount, Summary};
 pub use support::{ProbeId, SourceLocation, SymbolId};

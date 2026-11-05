@@ -47,6 +47,7 @@ mod kani_lane;
 mod public_proof;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
+mod current_state;
 mod exact_candidate_harness;
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
@@ -60,7 +61,10 @@ mod issue_lifecycle_real_rows;
 mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
+mod outcome_page;
 mod output_enum_contracts;
+#[cfg(test)]
+mod output_properties;
 mod package_qualification;
 mod packaged_repair_receipt;
 mod policy;
@@ -75,6 +79,7 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod readiness_snapshot;
 mod repo_readiness;
+mod repository_orientation;
 mod ripr_agent_disposition;
 mod schema_pattern;
 mod size_scaling;
@@ -14688,6 +14693,32 @@ mod architecture_rule_tests {
                 .any(|violation| violation.contains("is stale"))
         );
     }
+
+    #[test]
+    fn output_cli_back_edge_rule_rejects_a_production_import_and_allows_only_the_scoped_test_path()
+    {
+        const OUTPUT_CLI: &str =
+            "crates/ripr/src/output/**|crate::cli|output must not import CLI adapters";
+        const SCOPED: &str = "!crates/ripr/src/output/first_pr.rs|crate::cli|#5193: test wrapper";
+        let violations = architecture_rule_violations(
+            &[record(OUTPUT_CLI), record(SCOPED)],
+            &[
+                (
+                    "crates/ripr/src/output/first_pr/options.rs".to_string(),
+                    "use crate::cli::unknown_argument;".to_string(),
+                ),
+                (
+                    "crates/ripr/src/output/first_pr.rs".to_string(),
+                    "crate::cli::commands::first_pr::first_pr(args)".to_string(),
+                ),
+            ],
+        );
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("first_pr/options.rs"),
+            "{violations:?}"
+        );
+    }
 }
 
 /// #3534: Rust source-role authority. Producer modules derive source role
@@ -23781,6 +23812,16 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if path == "tools/activate-rust.sh" {
+        return Some(
+            "Sourced Bash must update the caller's environment before Cargo is available; a Rust subprocess cannot export into its parent shell (#13123).",
+        );
+    }
+    if path == "tools/test-activate-rust.sh" {
+        return Some(
+            "Bash controls directly inspect source-time caller options, arguments and variable attributes; the Rust-owned rust_activation integration test executes this exact harness (#13123).",
+        );
+    }
     if path == ".ci/contabo-result.sh" {
         return Some(
             "Pinned EM CI requires a Bash result script; this lightweight jq consumer accepts only centrally authenticated exact-subject product imports without compiling or executing product code (#4988).",
@@ -23801,6 +23842,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(
             "VS Code extension source and tests must run in the VS Code Extension Host TypeScript API.",
+        );
+    }
+
+    if path == "tools/python/installed-provider-recovery/run.py" {
+        return Some(
+            "Installed pip-wheel recovery control runs without a source checkout or xtask executable, using the consumer's stdlib Python and qualified installed payload (#10864).",
         );
     }
 
@@ -23835,6 +23882,18 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     {
         return Some(
             "Fixture workspaces may contain TypeScript / JavaScript / Python source as analyzed inputs for the Campaign 27 preview adapters (RIPR-SPEC-0027 / RIPR-SPEC-0028).",
+        );
+    }
+
+    if path.starts_with("benchmarks/muse-plugin/fixtures/")
+        && (path.ends_with(".ts")
+            || path.ends_with(".tsx")
+            || path.ends_with(".js")
+            || path.ends_with(".jsx")
+            || path.ends_with(".py"))
+    {
+        return Some(
+            "Muse plugin evaluation fixtures are analyzed inputs for the plugin scenarios (#13106); the TypeScript weak-assertion fixture must stay TypeScript to exercise the analyzer honestly.",
         );
     }
 
@@ -23955,6 +24014,14 @@ fn network_policy_patterns() -> Vec<String> {
         concat!("async-", "std"),
         concat!("Invoke-", "WebRequest"),
         concat!("Invoke-", "RestMethod"),
+        // Python network literals (#13092): stdlib fetch/socket surfaces
+        // that were previously invisible in tracked .py files. Split with
+        // concat! so the gate does not flag its own source. Deliberately
+        // excludes urllib.parse, which performs no network behavior.
+        concat!("urllib.", "request"),
+        concat!("url", "open"),
+        concat!("import so", "cket"),
+        concat!("http.", "client"),
     ]
     .iter()
     .map(|value| value.to_string())

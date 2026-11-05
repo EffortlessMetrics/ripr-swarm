@@ -3370,11 +3370,14 @@ impl AssertionRefusal {
 
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
+        // Evidence text is host-independent: use the stable slash spelling
+        // so Windows and Unix emit identical bytes (#2337 family).
         let at = |path: &Path, line: usize| {
+            let text = crate::analysis::stable_path_text(path);
             if line == 0 {
-                path.display().to_string()
+                text
             } else {
-                format!("{}:{line}", path.display())
+                format!("{text}:{line}")
             }
         };
         match self {
@@ -3457,7 +3460,7 @@ impl AssertionRefusal {
                     match &site.kind {
                         MacroBindingKind::Unparsed => format!(
                             "{} did not parse cleanly, so it may redefine `{name}!`",
-                            path.display()
+                            crate::analysis::stable_path_text(path)
                         ),
                         MacroBindingKind::NoImplicitPrelude => format!(
                             "`#![no_implicit_prelude]` at {place} removes the standard `{name}!`"

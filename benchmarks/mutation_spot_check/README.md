@@ -58,6 +58,44 @@ cargo xtask mutation-spot-check --repo zola=../corpus/zola --run-mutants \
   --mutants-arg zola=--workspace --mutants-arg zola=--file=components/site/src/queue.rs
 ```
 
+## Derived summary rows
+
+The v2 receipt also carries three additive rows derived from
+`outcomes_by_disposition_and_grip_class` (no schema bump; consumers that read
+other keys are unaffected):
+
+- `recall_of_missed`: runtime-missed mutants across every disposition, counted
+  by ripr grip class (`ungripped`, `activation_unknown`, `strongly_gripped`,
+  `opaque`, `weakly_gripped`, `no_joined_seam`) and two labelled shares: the
+  strict `ungripped_share_of_missed`, and `flagged_or_unknown_share_of_missed`
+  (ungripped, weakly_gripped, activation_unknown and opaque, i.e. a gap or an
+  honest unknown rather than a confirmed gap), with `not_flagged_missed`
+  (strongly_gripped and no_joined_seam) for the remainder. `by_language`
+  splits the same figures: Rust is established; Python and TypeScript are
+  `not_established` until a real-mutant corpus exists, and carry no numbers.
+- `seam_coverage`: mutants total, caught and missed counts, `canonical_precise`
+  and no-containing-seam counts, and their shares of all recorded mutants.
+
+- `replacement_criterion`: the stated "replaces cargo-mutants" criterion, one
+  row per criterion with `threshold`, `observed`, `status` (`met`, `not_met`,
+  `not_established`, or `informational` for the unthresholded strict recall)
+  and `scope`, plus an overall `verdict` (`replaces` only when every
+  thresholded criterion is met and none is `not_established`; otherwise
+  `not_yet` listing `not_met` and `not_established` ids). Thresholds are
+  bars from the release ladder in docs/METRICS.md (R2: precision 0.97,
+  flagged-or-unknown recall 0.80) or agent-chosen technical bars with the
+  rationale in each row's `threshold_source` (scored coverage 0.50; ripr wall
+  time at most 0.10 of full cargo-mutants). The time criterion reads the
+  top-level `timing_observation` (`ripr_seconds`, `cargo_mutants_seconds`,
+  crate, revision, tool versions, machine); it stays `not_established` when
+  absent. The recorded observation is one crate (rust-hex), one diff, one run.
+  Python/TypeScript agreement is `not_established` (no corpus), so `replaces` is unreachable until a corpus exists (fail-closed). A `replaces`
+  verdict is not suite adequacy; scope is Rust on the recorded crates.
+
+All are advisory, bound to the recorded revisions, and not suite adequacy. To
+refresh a recorded receipt without re-running mutation testing:
+`cargo xtask mutation-spot-check --rederive-summaries metrics/public-proof/mutation-spot-check.json`.
+
 ## What is scored
 
 The receipt is `ripr-mutation-spot-check-v2`. `ripr calibrate cargo-mutants`

@@ -278,6 +278,7 @@ reached the caller.
   | `awaiting_edit` | 3 | `retryable` | `continue`: edit the focused test, then rerun |
   | `retry_budget_exhausted` | 3 | `terminal` | `continue`: the retry budget is spent |
   | `no_current_attempt` | 3 | `not_started` | `continue`: no attempt to continue |
+  | `attempt_baseline_blocked` | 3 | `not_started` | `continue`: the retained before baseline is ambiguous or unavailable; no after phase ran; inspect the shared status and its admitted recovery |
   | `unanchored_root` | 3 | `not_started` | no workspace, package or Git repository anchors the current directory, so the repair spellings answer nothing there; an explicit `--root` skips the discovery gate (#12417) |
   | `ambiguous_attempts` | 3 | `needs_selection` | `continue`: pass `--attempt` |
   | `attempt_ended_without_receipt` | 3 | `terminal` | the attempt failed, went stale, or is incomparable |

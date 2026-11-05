@@ -1778,7 +1778,7 @@ persisted credentials) builds ripr from the PR's base commit, so the pull reques
 cannot change the analyzer that judges it, and runs
 `ripr check --committed --mode draft --format agent` on the head checkout as data.
 The `comment` job holds the only write token, checks out nothing and posts the
-uploaded report as text. Nothing here is a required check or a gate; fork pull
+uploaded report as text; when ripr refuses (for example an oversized diff) the comment shows the refusal code and, for size refusals, its numbers (never raw diagnostics, which only go to the job log with workflow commands disabled). Nothing here is a required check or a gate; fork pull
 requests are skipped. The generated adopter workflow above remains the product
 route; this one is lean because `ripr review-comments` and the full CI packet
 exceed their workspace-size ceilings on this repository (tracked in #12940).
@@ -2708,7 +2708,7 @@ current workspace can produce coverage and JUnit artifacts. The jobs still run
 only on pull requests, pushes to `main`/`master`, and manual dispatches, and
 Codecov upload remains non-blocking.
 
-Future Clippy also runs on `ubuntu-latest` with installation and invocation
+The `future-clippy` job runs on `ubuntu-latest` with installation and invocation
 pinned to Rust `1.95.0`. Selected lint findings remain advisory warnings. A
 missing component, compilation failure, failed log capture, or absent Cargo
 artifact/completion evidence fails that job instead of appearing as a completed
@@ -2718,6 +2718,18 @@ scan completion. The summary rejects evidence from another SHA, run, or attempt.
 This advisory lane has no new branch-protection requirement. Completion shows
 that the scan ran; planned lints still have the support/configuration limits
 recorded in [Clippy policy](CLIPPY_POLICY.md).
+
+The same workflow's separate `stable-repo-policy` job executes the marked
+[focused toolchain-upgrade recipe](ci/coverage.md#validate-locally) after running
+its workflow controls. It starts with the stable SDK first on `PATH` and an
+absolute stable `RUSTC`, so the recipe must switch to the repository pin and back
+to stable. The recipe explicitly installs the pin, refreshes stable, and selects
+matching LLVM tools. The job requires ordered successful pinned/stable diagnostics,
+stable `frontdoor` fixtures and strict package Clippy, with nonempty test summaries,
+genuine profile observations, and completion tied to the current run. Missing or
+malformed recipe boundaries, omitted checks, native failures and stale evidence
+fail this advisory job. Compiler and LLVM identities remain in the native log;
+the repository pin, MSRV, 15-minute budget and required merge gates are unchanged.
 
 It installs `cargo-deny` as a normal command-line binary before running the
 check, so self-hosted runners do not need Docker just to execute the security
@@ -2888,6 +2900,20 @@ matching `### <Section>` under `## Unreleased` at the release cut, in file-name
 order, and deletes them with `--write`. The default is a dry run. It reuses the
 `check-changelog-fragments` validator, refuses malformed fragments by file name
 and is not part of `precommit`. `changelog.d/README.md` has the batch procedure.
+
+## Install Receipt
+
+`cargo xtask install-receipt [--check] | --cells <dir> [--run-id <id>] [--write]`
+(#13064) records the per-platform, per-channel install seconds behind the R0
+install row in `docs/METRICS.md`. `published-install-matrix.yml` uploads one
+JSON file per cell (`install-cell-<channel>-<os>`); download a run's artifacts
+into a directory and pass it as `--cells`. The command merges them with the
+hand-kept `metrics/install/dispositions.json` (channels outside the matrix:
+archive, binstall, extension, Homebrew), refuses a missing, duplicate or unknown
+cell, derives the R0 verdict (`met`, `not_met`, `not_established`) and writes
+`metrics/install/receipt.json` and `receipt.md` with `--write`. `--check` is the
+default and re-validates the checked-in receipt offline. It is not part of
+`precommit`.
 
 ## Capability Registry Docs Block
 

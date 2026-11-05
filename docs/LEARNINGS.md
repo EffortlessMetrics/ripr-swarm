@@ -1613,7 +1613,7 @@ Practical sequencing rule:
 Hard-won during a multi-PR autonomous campaign. Each item cost a real CI failure
 or a near-miss.
 
-### Verify with the policy-checker facade, not a hand-picked gate subset
+### Verify with the aggregate policy path
 
 Running a few `cargo xtask check-*` gates by hand before pushing missed two
 required gates twice in a row (`check-generated`, then `check-static-language`).
@@ -1622,10 +1622,12 @@ The required Rust gate set runs as the named per-producer steps in
 locally with one command:
 
 ```bash
-cargo test -p xtask policy_checker_facade_runs_current_repo_checks
+cargo xtask ci-policy
 ```
 
-It runs the same gate set CI runs (~70s) and catches what a subset misses.
+The current aggregate policy path runs the required policy checks and catches
+what a subset misses. The original facade is now Windows-only for retained
+evidence admission (#5044/#13012); other hosts avoid its repeated scan (#12916).
 Pair it with a behavioral repro of the actual change — gate-pass is necessary,
 not sufficient.
 
@@ -1717,8 +1719,8 @@ fails because `--diff` wants a file — the line was verified to *print*, not to
 *run* (textbook weak oracle). A "not fail-closed" bug was nearly filed that was
 actually a `| head` pipe masking the real exit code. The discipline: trust
 `cargo check` + a behavioral repro of the *effect*, never a self-report or an
-IDE diagnostic; mirror the whole CI gate set with
-`cargo test -p xtask policy_checker_facade_runs_current_repo_checks` before
+IDE diagnostic; run the aggregate policy gate set with
+`cargo xtask ci-policy` before
 pushing (cherry-picking gates leaked `check-generated` and a forbidden word);
 and verify the claim, not the pipeline that measured it.
 
@@ -2955,7 +2957,7 @@ Three lane-operations lessons from the #1628/#2119 wave:
 
 A builder switched its worktree onto `main` twice (once mid-run, once at completion as a "courtesy"), and two rounds of root commits landed on local `main` instead of the feature branch — the tell was `git push` attempting `main -> main` and bouncing off branch protection. Recovery each time: force-move the feature branch to the stray commit, `git switch` to it (cherry-pick when the stray commit's parent was wrong — and expect the cherry-pick to conflict against context the branch already changed), then restore the shared `main` pointer from the main worktree with `git reset --mixed origin/main` (content-identical, so non-destructive). The cheap prevention: `git branch --show-current` is now part of the pre-commit ritual in any builder-touched worktree, and commits in builder worktrees always run with an explicit branch check before `git push origin <branch>` (never bare `git push`).
 
-Two adjacent lessons from the same PR (#2317): adding a field to a widely-constructed struct (`AnalysisOptions.git_timeout`) cascades `field: None` into every literal site — including files outside the planned cage (`cli/commands.rs`) and into `policy/no-panic-allowlist.toml` receiver fingerprints, which embed the literal text and must be updated in the same PR. And the xtask policy facade (`tests::policy_checker_facade_runs_current_repo_checks`) runs gates a hand-picked `check-*` list misses — it caught a second `allow(dead_code)` over the per-file cap that the individual gate list never ran. Run the facade test locally before pushing policy-adjacent changes; prefer deleting a dead wrapper over bumping an allowlist cap.
+Two adjacent lessons from the same PR (#2317): adding a field to a widely-constructed struct (`AnalysisOptions.git_timeout`) cascades `field: None` into every literal site — including files outside the planned cage (`cli/commands.rs`) and into `policy/no-panic-allowlist.toml` receiver fingerprints, which embed the literal text and must be updated in the same PR. And the xtask policy facade (`tests::policy_checker_facade_runs_current_repo_checks`) runs gates a hand-picked `check-*` list misses — it caught a second `allow(dead_code)` over the per-file cap that the individual gate list never ran. Run `cargo xtask ci-policy` locally before pushing policy-adjacent changes; prefer deleting a dead wrapper over bumping an allowlist cap.
 
 ## 2026-07-23: Branch-switching builders are a repeating class, and stall recovery has a pattern
 
@@ -3628,3 +3630,43 @@ mir_borrowck is diffuse (115 s over 76,536 bodies), mono breadth is 673,763
 instances — no single hotspot, so targeted simplification (option 3) is
 contraindicated as the primary lever; the ~5 GB gap to ≤8 GB must come from
 cfg(test) extraction and/or the crate split.
+
+## 2026-11-04: Agent-efficiency study — needed subset is 26% of delivered context; uplift needs harder scenarios
+
+A 3-scenario × 3-variant A/B (Nov 2-4; run on a local off-repo harness tree
+whose corpus encoding lands at `benchmarks/agent-discrimination/`) measured
+whether ripr context helps an agent write a discriminating test. Three scenario crates (`inserted-guard`,
+`flipped-comparison`, `silent-return`), three context variants (vanilla
+diff-only, ripr-context handed over, ripr-tool runnable), one model, and one
+objective mutation evaluator — the test must fail on the changed behavior and
+pass on the original. All nine solvers wrote a discriminating test in exactly
+one test-production round, so discrimination uplift was unmeasurable at this
+difficulty (the Wilson 95% floor at 3/3 is 43.8% — with every run a success
+there is no separator to measure). That makes ripr's value proposition for
+agents unproven on easy diffs, not disproven.
+
+The measured cost delta: ripr-context delivered 3.69× the vanilla context
+bytes (14,897 vs 4,039 across the three scenarios), and a
+mechanically-extracted needed subset was 26.1% of that delivered context
+(−73.9%) with zero loss of the facts all six ripr-variant runs named
+decisive — the top finding's one-line check record (150 bytes in the study's
+measure, 101-153 re-measured from the retained contexts) carried the
+discriminating input (`missing=age == 65`). The same payloads expose the
+render problem: the explain surface triple-rendered each related-test
+assertion (check `t1=` line, evidence bullet, "Why this verdict" row) and
+repeated an unconfirmed-observation phrase to 28.5% of one context.
+
+Durable rules:
+
+- An analyzer's agent-surface value must be measured with scenarios hard
+  enough that the vanilla baseline sometimes fails, at N ≥ 12 with Wilson
+  intervals; an all-success baseline cannot certify or refute uplift.
+- Render each fact once. Duplication is not emphasis; it is context cost
+  plus drift risk across the copies.
+- The harness is part of the measurement: 9/9 PATH failures, 4-5/9 writer
+  collisions on shared scenario crates, a swallowed evaluator exit code, and
+  zeroed structured record fields invalidated or unrecorded more than the
+  study measured (fixes tracked on #13113).
+
+The benchmark corpus encoding lives at `benchmarks/agent-discrimination/`
+(sibling entry).

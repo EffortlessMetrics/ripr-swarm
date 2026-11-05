@@ -123,8 +123,8 @@ exists.
 
 ## Implementation Mapping
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind`
-- `crates/ripr/src/core_error.rs::check_refusal`
+- `crates/ripr-contract/src/core_error.rs::CheckFailureKind`
+- `crates/ripr-contract/src/core_error.rs::check_refusal`
 - `crates/ripr/src/cli/commands/check.rs::refuse_check`
 - `crates/ripr/src/cli/commands/check.rs::config_load_refusal`
 - `crates/ripr/src/output/limited_check.rs::render_check_failure_json`
@@ -257,11 +257,11 @@ all renderers.
 
 ## Implementation Mapping (Amendment #7331, #7332)
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, SeamPolicyOmitted, SeamNotActionable, DiffInputUnsupported, AnalysisTimeout, AnalysisWorkerStopped}`
+- `crates/ripr-contract/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, SeamPolicyOmitted, SeamNotActionable, DiffInputUnsupported, AnalysisTimeout, AnalysisWorkerStopped}`
 - `crates/ripr/src/cli/commands/check_budget.rs::run_with_budget`
 - `crates/ripr/src/cli/commands_agent_support.rs::agent_brief_checked_lines_from_diff`
-- `crates/ripr/src/core_error.rs::RefusalNotice`
-- `crates/ripr/src/core_error.rs::refusal_notice`
+- `crates/ripr-contract/src/core_error.rs::RefusalNotice`
+- `crates/ripr-contract/src/core_error.rs::refusal_notice`
 - `crates/ripr/src/output/limited_check.rs::RefusalEnvelopeContext`
 - `crates/ripr/src/output/limited_check.rs::render_refusal_envelope`
 - `crates/ripr/src/cli/commands_context.rs::refuse_json_envelope`

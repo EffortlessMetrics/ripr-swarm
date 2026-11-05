@@ -64,12 +64,14 @@ mod rust_repair_trust;
 mod sarif;
 mod scale_cliff;
 mod seam_inventory_scaling;
+mod slow_tests;
 mod source_promotion;
 mod spec_maintenance;
 mod spec_receipts;
 mod targeted_rerun;
 mod targeted_test;
 mod test_oracles;
+mod token_cost;
 mod verdict_corpus;
 mod verdict_corpus_perl_edit_replay;
 mod verdict_corpus_relabel;
@@ -199,6 +201,7 @@ pub(crate) use sarif::{
 };
 pub(crate) use scale_cliff::scale_cliff_benchmark;
 pub(crate) use seam_inventory_scaling::seam_inventory_scaling_benchmark;
+pub(crate) use slow_tests::slow_test_report;
 pub(crate) use source_promotion::source_promotion;
 pub(crate) use spec_maintenance::spec_digest;
 pub(crate) use spec_maintenance::spec_maintenance;
@@ -212,6 +215,7 @@ pub(crate) use test_oracles::{test_efficiency_report, test_oracle_report};
 pub(crate) use test_oracles::{
     test_oracle_report_impl_for_roots, test_oracle_report_json, test_oracle_report_markdown,
 };
+pub(crate) use token_cost::token_cost;
 pub(crate) use verdict_corpus::{
     expected_report as verdict_corpus_expected_report,
     render_report_json as render_verdict_corpus_report, verdict_corpus,

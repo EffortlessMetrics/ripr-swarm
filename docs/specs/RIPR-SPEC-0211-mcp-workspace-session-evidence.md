@@ -557,6 +557,20 @@ near-miss id, as does a slash that would leave the id empty
 `receipt`) stay strict inside the id, and this tolerance never turns an
 unknown route into a recognized one.
 
+### Snapshot URI-template expansion (#13229)
+
+The `ripr://snapshot/{snapshot_id}` template uses RFC 6570 simple expansion,
+which percent-encodes the colons in `snapshot:sha256:<digest>`. The resource
+parser decodes only the captured id, exactly once, accepting either hex case
+and retaining raw URI compatibility. The shared session still checks the
+decoded identity against the current snapshot, and successful contents echo
+the original request URI. A wrong namespace is never decoded into a route.
+Malformed escapes remain literal; a non-UTF-8 decode retains the raw capture.
+Neither those spellings nor double-encoded or stale ids resolve to the current
+snapshot. Encoded slashes remain stale identities; literal interior slashes
+remain invalid routes. Tool `snapshot_id` arguments are plain canonical JSON
+strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
+
 ## Required Evidence
 
 - `cargo test -p ripr --lib mcp::workspace` — session state machine,
@@ -595,7 +609,11 @@ unknown route into a recognized one.
   `resource_reads_match_tools_after_refresh` pins gap tool/resource
   parsed-document equality plus the snapshot envelope
   (`ripr-mcp-snapshot-v1`, identity, typed outcome) after refresh
-  (#7145), and the #9895 trailing-slash tolerance: one appended slash on
+  (#7145). Its #13229 controls compare raw and encoded snapshot documents,
+  preserve the original URI, reject invalid or double-encoded identities
+  with typed recovery, keep namespace routing strict and tool ids exact,
+  and complete a valid pinned read after the refusals. It also pins the
+  #9895 trailing-slash tolerance: one appended slash on
   the snapshot, gap, and repair-card URIs returns the identical document,
   while a second slash fails closed. Resource payloads are pretty-printed
   while tool payloads are compact by design, so the control compares
@@ -794,6 +812,17 @@ unknown route into a recognized one.
   request-ID refusal, unknown-method routing and same-session recovery.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
+- `crates/ripr/src/mcp/server_tests.rs::unknown_argument_names_keep_bounded_explicit_diagnostics`
+  + `crates/ripr/tests/mcp_stdio.rs::unknown_argument_names_stay_typed_bounded_and_recover`
+  — unknown-name diagnostic prefixes preserve ordinary names, disclose
+  truncation and original UTF-8 byte length, and retain typed recovery for
+  admitted large/escaped/multibyte keys in both protocol lifecycles (#13154).
+- `crates/ripr/src/mcp/server_tests.rs::unknown_method_names_keep_bounded_explicit_diagnostics`
+  + `crates/ripr/tests/mcp_stdio.rs::unknown_method_names_stay_bounded_and_recover`
+  — unknown methods retain bounded `-32601` errors, exact ordinary messages,
+  Unicode-safe previews and original UTF-8 byte counts. Large/escaped/multibyte
+  names remain correlated in both protocol lifecycles, preserve metadata
+  validation precedence, and allow a valid request after every refusal (#13220).
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
   hosted wire interop controls, including
   `post_initialize_ping_with_handshake_meta_returns_an_empty_result`
@@ -822,6 +851,15 @@ unknown route into a recognized one.
   outcomes (negative invariant)
 
 ## Source-preserving recovery follow-up (#10799)
+
+The top-limitation document retains the source-custody owner's recovery (#13127) for
+`worktree_source_not_committed`. This code can describe committed input over
+dirty Rust files as well as an unsettled saved-worktree snapshot; it must not
+choose a default committed refresh solely from the shared refusal code.
+`mcp::gaps::tests::limitation_custody_recovery_preserves_the_source_owner_remedy`
+checks producer-owned remedies for dirty committed input, saved-file movement
+and head movement, their refusal state and restart identity. Recovery keeps an
+explicit base in the next refresh request and requires a read of the new snapshot.
 
 Single-gap overflow recovery is captured with its evidence snapshot and reused
 at the raw-document, tool-envelope and resource-envelope boundaries. The CLI
