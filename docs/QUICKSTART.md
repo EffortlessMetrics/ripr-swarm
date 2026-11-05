@@ -151,8 +151,46 @@ use the separate [repository exploration](#explore-the-repository) path,
 
 No `ripr.toml` is required. The development CLI prints a summary and a bounded
 `Start here:` section with a finding, a no-action result, or the limitation
-preventing useful guidance. Read the changed behavior, related test, and
-suggested next test. No findings does not mean the tests are complete.
+preventing useful guidance. No findings does not mean the tests are complete.
+
+Read the changed behavior, the related test, and the suggested next test. For a
+change that moves a comparison from `>` to `>=`, the static, advisory finding
+names the changed behavior, the check no test makes, and the next test to add
+(selected lines from the
+[boundary example's checked output](../fixtures/boundary_gap/expected/human.txt)):
+
+```text
+  Changed behavior: amount >= discount_threshold
+  Missing check: amount == discount_threshold
+  Related test (1 of 2 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
+  Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
+```
+
+When a finding is selected, copy its printed `ripr explain` command to inspect
+the evidence, or its `ripr context` command for an agent handoff. Those commands
+retain the root, diff selection, mode, and finding ID. Do not substitute an ID
+from a documentation example.
+
+To expand the output:
+
+```bash
+ripr check --format human-full
+ripr check --format json
+```
+
+If `check` offers a finding but no `ripr repair` start, run
+`ripr pilot --root .`: it ranks the whole repository differently and may name a
+supported repair that `check` did not.
+
+A finding can guide an ordinary test improvement through the
+[daily loop](#check-test-and-refresh-the-same-change) below. For a governed
+repair attempt with before/after artifacts, the
+[repair workflow](#agent-or-reviewer-first-hour) prepares its supported route
+before the test edit.
+
+### Progress, terms and machine output
+
+Reference for the output above. None of it is needed to read a first finding.
 
 While analysis is running, `ripr check` writes producer stages to **stderr**
 as `ripr progress: <stage> [<scope>]`, with throttled heartbeats if a stage
@@ -168,7 +206,7 @@ terminal, progress is off by default (set `RIPR_PROGRESS=1` to restore it);
 `ripr continue`. Stdout is the output contract, so for machine capture (for
 example the JSON from `context`) keep stderr separate rather than `2>&1`.
 
-A short glossary for the terms below:
+Terms used in the output:
 
 | Term | Meaning |
 | --- | --- |
@@ -192,28 +230,6 @@ Agents and scripts reading `ripr check --json` get a stderr free of
 `RIPR_QUIET=1`) to make that unconditional, including on a terminal. The JSON is the full versioned report and
 is large: read `summary` and `canonical_next_action` (when present) first, then fetch one
 finding's evidence with `ripr context --at <finding-id> --json --quiet`.
-
-When a finding is selected, copy its printed `ripr explain` command to inspect
-the evidence, or its `ripr context` command for an agent handoff. Those commands
-retain the root, diff selection, mode, and finding ID. Do not substitute an ID
-from a documentation example.
-
-To expand the output:
-
-```bash
-ripr check --format human-full
-ripr check --format json
-```
-
-If `check` offers a finding but no `ripr repair` start, run
-`ripr pilot --root .`: it ranks the whole repository differently and may name a
-supported repair that `check` did not.
-
-A finding can guide an ordinary test improvement through the
-[daily loop](#check-test-and-refresh-the-same-change) below. For a governed
-repair attempt with before/after artifacts, the
-[repair workflow](#agent-or-reviewer-first-hour) prepares its supported route
-before the test edit.
 
 ### Choose the change
 
