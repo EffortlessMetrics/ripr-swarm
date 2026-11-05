@@ -709,6 +709,12 @@ fn macro_binding_scan_needed(source: &str, trusted: &[&str]) -> bool {
 
 type NamedMacroSites = Vec<(String, MacroBindingSite)>;
 
+/// Binding-independent indexes shared by union and singleton scans of one tree.
+struct MacroBindingTreeIndexes<'a> {
+    binding_free: &'a BindingFreeFileIndex,
+    inline_globs: &'a RootInlineGlobIndex,
+}
+
 fn macro_binding_ambiguities(
     source: &str,
     packages: &BTreeSet<String>,
@@ -786,6 +792,10 @@ fn macro_binding_ambiguity_sets(
     let tree = parse.tree();
     let binding_free = BindingFreeFileIndex::collect(tree.syntax());
     let inline_globs = RootInlineGlobIndex::collect(tree.syntax(), packages);
+    let indexes = MacroBindingTreeIndexes {
+        binding_free: &binding_free,
+        inline_globs: &inline_globs,
+    };
     let scan = |names: &[&str]| {
         macro_binding_sites_in_tree(
             source,
@@ -794,8 +804,7 @@ fn macro_binding_ambiguity_sets(
             allowed_empty,
             module_resolved,
             drop_in_verified,
-            &binding_free,
-            &inline_globs,
+            &indexes,
         )
     };
     let union = scan(trusted);
@@ -815,9 +824,10 @@ fn macro_binding_sites_in_tree(
     allowed_empty: &BTreeSet<String>,
     module_resolved: &dyn Fn(usize, &str) -> bool,
     drop_in_verified: &dyn Fn(&str) -> bool,
-    binding_free: &BindingFreeFileIndex,
-    inline_globs: &RootInlineGlobIndex,
+    indexes: &MacroBindingTreeIndexes<'_>,
 ) -> NamedMacroSites {
+    let binding_free = indexes.binding_free;
+    let inline_globs = indexes.inline_globs;
     let mut ambiguous = Vec::new();
     let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
         trusted

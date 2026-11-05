@@ -6518,8 +6518,8 @@ impl OwnerReturnPin {
             return false;
         };
         if owner.item.has_self_param
-            || !indexed_item_nesting(index, &owner.file, &owner.name, owner.start_line, true)
-                .is_some_and(|item| !item.cfg_gated)
+            || indexed_item_nesting(index, &owner.file, &owner.name, owner.start_line, true)
+                .is_none_or(|item| item.cfg_gated)
             || syntax.file_cfg_gated(index, &owner.file)
         {
             return false;
