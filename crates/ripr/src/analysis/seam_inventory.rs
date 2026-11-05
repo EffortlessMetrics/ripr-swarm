@@ -6795,7 +6795,7 @@ mod tests {
             write_file(
                 &root.join("src/lib.rs"),
                 r#"
-pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
+pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
 #[cfg(test)] mod tests {
     use super::discount;
     #[test] fn snapshots_discount() { insta::assert_snapshot!(discount(12, 10)); }
