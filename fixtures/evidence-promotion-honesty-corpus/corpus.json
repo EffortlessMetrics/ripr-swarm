@@ -17806,6 +17806,91 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "expected_class", "class": "no_static_path" }
       ]
+    },
+    {
+      "id": "rust_slice_counter_masked_boundary",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_counter_masked_boundary",
+      "probe_family": "predicate",
+      "vector": "later_return_supplies_the_same_counter_firing_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        }
+      ]
+    },
+    {
+      "id": "rust_slice_counter_shadowed_result_constructor",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_counter_shadowed_result_constructor",
+      "probe_family": "predicate",
+      "vector": "shadowed_success_constructor_supplies_counter_firing_error",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
+      ]
+    },
+    {
+      "id": "rust_slice_counter_derived_result_constructor",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_counter_derived_result_constructor",
+      "probe_family": "predicate",
+      "vector": "procedural_derive_supplies_hidden_result_constructor",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
+      ]
+    },
+    {
+      "id": "rust_slice_counter_early_error_equality",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_counter_early_error_equality",
+      "probe_family": "predicate",
+      "vector": "early_error_equality_masks_counter_boundary",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
+      ]
+    },
+    {
+      "id": "rust_slice_counter_tuple_assignment",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_counter_tuple_assignment",
+      "probe_family": "predicate",
+      "vector": "tuple_assignment_changes_counter_trajectory",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"}
+      ]
+    },
+    {
+      "id": "rust_slice_counter_overflowing_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_counter_overflowing_predicate",
+      "probe_family": "predicate",
+      "vector": "integer_literal_truncation_changes_counter_predicate",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"}
+      ]
     }
   ]
 }

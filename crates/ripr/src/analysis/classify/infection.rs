@@ -697,6 +697,8 @@ pub(in crate::analysis) struct OwnerInputs<'a> {
     pub(in crate::analysis) owner: Option<&'a FunctionSummary>,
     pub(in crate::analysis) literal_length_boundary:
         Option<&'a super::literal_length_boundary::LiteralLengthBoundary>,
+    pub(in crate::analysis) slice_counter_boundary:
+        Option<&'a super::slice_counter_boundary::SliceCounterBoundary>,
 }
 
 /// [`infection_evidence_with_boundary_input`] given the changed owner, which
@@ -720,6 +722,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     let OwnerInputs {
         owner,
         literal_length_boundary,
+        slice_counter_boundary,
     } = owner_inputs;
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
@@ -775,6 +778,12 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
         }
     }
     if let Some(evidence) = literal_length_boundary
+        .zip(owner)
+        .and_then(|(boundary, owner)| boundary.infection(probe, owner))
+    {
+        return evidence;
+    }
+    if let Some(evidence) = slice_counter_boundary
         .zip(owner)
         .and_then(|(boundary, owner)| boundary.infection(probe, owner))
     {
@@ -1615,6 +1624,7 @@ mod tests {
             OwnerInputs {
                 owner: Some(&owner),
                 literal_length_boundary: None,
+                slice_counter_boundary: None,
             },
             true,
             false,

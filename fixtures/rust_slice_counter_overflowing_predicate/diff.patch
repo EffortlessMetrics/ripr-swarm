@@ -1,0 +1,6 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -13,1 +13,1 @@
+-        if count > 256 {
++        if count >= 256 {

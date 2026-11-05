@@ -1,0 +1,5 @@
+[package]
+name="rust-slice-counter-tuple-assignment"
+version="0.0.0"
+edition="2024"
+[workspace]

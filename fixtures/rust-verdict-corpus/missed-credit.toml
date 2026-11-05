@@ -57,10 +57,6 @@ case = "grid-bindings-shadowed"
 reason = "Tests discriminate the change but ripr abstains because the changed syntax is not mapped to a probe family, so the infection stage is static_unknown (#12770; parent #12766). Delete this entry when the row credits."
 
 [[entry]]
-case = "grid-bits-length-pinned"
-reason = "Tests discriminate the change but ripr abstains because the boundary operand is a local or computed value ripr cannot map to the related test input (#12771; parent #12766). Delete this entry when the row credits."
-
-[[entry]]
 case = "grid-delete-helper"
 reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
 

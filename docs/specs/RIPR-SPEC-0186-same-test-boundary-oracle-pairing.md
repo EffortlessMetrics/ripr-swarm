@@ -365,3 +365,54 @@ relation are out of scope.
 - `same_test_boundary_oracle_pairing`: a predicate does not read `exposed`
   unless one test both feeds a boundary input to the owner and holds a
   discriminating oracle on that call's result.
+
+Per-byte counter-boundary specialization must refuse additional returns,
+loop exits, conditional tails, post-loop statements, and opaque fallible
+suffixes that can mask the firing branch. Its admitted normal output path
+ends with a simple `Ok` value after the loop; the loop suffix is straight-line
+calculation with only the character `to_digit(16).ok_or(...)?` escape.
+Its error must be a distinct unit variant declared in the same retained
+module as the directly named Result error enum, or a distinct string literal
+for a direct string-reference error type. Unknown paths, aliases and
+intermediate error conversions decline. This retains the grid-bits
+`BadDigit` escape while refusing a `TooLong` fallback.
+Differing asserted return spellings alone do not identify which branch
+supplied a result.
+
+Bare `Ok` and `Err` require an unambiguous prelude-constructor binding before
+specialized counter credit, including owners without a `?` suffix. Retained
+source scope checks reject competing local functions/values/types, imported
+aliases, glob or macro ambiguity. Raw identifier spellings have the same name
+identity. A sibling test-module import does not shadow the production owner.
+A callable named `Ok` can otherwise manufacture the firing error after the loop,
+so differing asserted result spellings do not establish predicate causality.
+
+Unknown attribute and derive producers in the owner's lexical scopes also
+withhold specialized counter credit: expansion may introduce a Result
+constructor without a visible source declaration. Only known inert builtin
+attributes and unambiguous builtin derives are admitted. Imported aliases,
+globs and extern-crate macro namespaces remain unknown. Conditional expansion
+is not assumed absent based on the analyzer's build configuration; library
+code consumed by integration tests does not globally have `cfg(test)`.
+
+The admitted hex-conversion `?` requires a second proof beyond distinct error
+spellings: every credited repeat row must contain a literal ASCII hex byte,
+and the conversion must consume that unchanged byte from exactly
+`for &b in` the immutable primitive `&[u8]` input. The loop binding is unique,
+not assigned or mutably/raw borrowed, and `u8`/`char` names cannot be shadowed.
+Unproved rows contribute no counter activation; reference completeness still
+counts their calls. Other early-return, conditional, post-loop and fallible
+paths retain the existing refusals. Thus the earlier conversion cannot produce
+an error on the credited rows, even when custom error equality makes its error
+equal to the firing error. No-fallible-suffix shapes retain their existing gate.
+
+Counter trajectory credit also requires exactly one parsed assignment place: the
+initial per-byte increment. Grouped/destructuring assignments, mutable or raw
+borrows, ref-mut patterns in any context and unknown methods on the counter
+refuse credit. The primitive counter must represent both the predicate literal
+and every admitted input length. An unannotated integer-zero binding proves
+only the common nonnegative range 0..127; explicit unshadowed primitive integer
+annotations prove their corresponding range (pointer-sized types use their
+minimum supported width). Unknown annotations refuse. Overflowing literal lints
+are not a type proof. Representable default 16/17 and explicit usize grids remain
+admitted.

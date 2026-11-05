@@ -1,0 +1,8 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,3 +4,3 @@
+         count += 1;
+-        if count > 17 { return Err("too long"); }
++        if count >= 17 { return Err("too long"); }
+         if count == 17 { return Err("too long"); }

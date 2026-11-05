@@ -352,6 +352,118 @@ pub(super) fn literal_slice_length(text: &str) -> Option<usize> {
     .then_some(elements.len())
 }
 
+/// Byte length of a slice argument at an owner call: `&[1, 2]`, `&[b'f'; 16]`,
+/// `&[0; 4]`, or a byte string `b"ff"` coerced to `&[u8]`. Repeat arrays are
+/// handled here, not in [`literal_slice_length`], so the other slice-length
+/// consumers keep rejecting them.
+pub(super) fn slice_argument_byte_length(text: &str) -> Option<usize> {
+    if let Some(length) = literal_slice_length(text) {
+        return Some(length);
+    }
+    if text.len() > 4096 {
+        return None;
+    }
+    let parse = parse_clean_source_file(&format!("fn input() {{ let value = {text}; }}"))?;
+    let binding = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)?;
+    match binding.initializer()? {
+        ast::Expr::Literal(literal) => match literal.kind() {
+            ast::LiteralKind::ByteString(text) => text
+                .value()
+                .ok()
+                .map(|value| value.len())
+                .filter(|length| *length <= 256),
+            _ => None,
+        },
+        ast::Expr::RefExpr(reference) => {
+            if reference.mut_token().is_some() || reference.raw_token().is_some() {
+                return None;
+            }
+            let ast::Expr::ArrayExpr(array) = reference.expr()? else {
+                return None;
+            };
+            repeat_array_length(&array)
+        }
+        _ => None,
+    }
+}
+
+/// The compact repeated element of a `&[element; count]` slice argument, so
+/// two calls can be shown to differ only in length. `None` for any other
+/// shape.
+pub(super) fn slice_argument_repeat_element(text: &str) -> Option<String> {
+    if text.len() > 4096 {
+        return None;
+    }
+    let parse = parse_clean_source_file(&format!("fn input() {{ let value = {text}; }}"))?;
+    let binding = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)?;
+    let ast::Expr::RefExpr(reference) = binding.initializer()? else {
+        return None;
+    };
+    if reference.mut_token().is_some() || reference.raw_token().is_some() {
+        return None;
+    }
+    let ast::Expr::ArrayExpr(array) = reference.expr()? else {
+        return None;
+    };
+    repeat_array_parts(&array).map(|(element, _)| element)
+}
+
+fn repeat_array_length(array: &ast::ArrayExpr) -> Option<usize> {
+    repeat_array_parts(array).map(|(_, count)| count)
+}
+
+/// The compact repeated element and the repeat count of `[element; count]`.
+fn repeat_array_parts(array: &ast::ArrayExpr) -> Option<(String, usize)> {
+    array.semicolon_token()?;
+    if array
+        .syntax()
+        .descendants()
+        .any(|node| ast::Attr::can_cast(node.kind()))
+    {
+        return None;
+    }
+    let exprs: Vec<_> = array.exprs().collect();
+    let [element, repeat] = exprs.as_slice() else {
+        return None;
+    };
+    let ast::Expr::Literal(repeat_lit) = repeat else {
+        return None;
+    };
+    let ast::LiteralKind::IntNumber(number) = repeat_lit.kind() else {
+        return None;
+    };
+    let repeat_count = usize::try_from(number.value().ok()?).ok()?;
+    if repeat_count > 256 {
+        return None;
+    }
+    let element_is_literal = match element {
+        ast::Expr::Literal(_) => true,
+        ast::Expr::PrefixExpr(prefix) => {
+            prefix.op_kind() == Some(ast::UnaryOp::Neg)
+                && matches!(prefix.expr(), Some(ast::Expr::Literal(_)))
+        }
+        _ => false,
+    };
+    element_is_literal.then(|| {
+        let element = element
+            .syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        (element, repeat_count)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,5 +562,45 @@ mod tests {
         }
         let float = owner_with_body("fn mean(xs: &[f64]) -> f64 { 0.0 }");
         assert_eq!(slice_parameter(&float, "xs"), Some(0));
+    }
+
+    #[test]
+    fn slice_argument_byte_length_reads_repeat_arrays_and_byte_strings() {
+        for (text, expected) in [
+            ("&[1, 2]", Some(2)),
+            ("&[0; 4]", Some(4)),
+            ("&[b'f'; 16]", Some(16)),
+            ("&[-1; 3]", Some(3)),
+            ("b\"ff\"", Some(2)),
+            ("&[0; 257]", None),
+            ("&[0; n]", None),
+            ("&[x; 4]", None),
+            ("&mut [0; 4]", None),
+            ("&raw const [0; 4]", None),
+            ("[0; 4]", None),
+            ("\"ff\"", None),
+            ("buffer", None),
+        ] {
+            assert_eq!(slice_argument_byte_length(text), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn slice_argument_repeat_element_reads_only_repeat_arrays() {
+        for (text, expected) in [
+            ("&[b'f'; 16]", Some("b'f'")),
+            ("&[ b'f' ; 17 ]", Some("b'f'")),
+            ("&[-1; 3]", Some("-1")),
+            ("&[1, 2]", None),
+            ("b\"ff\"", None),
+            ("&mut [0; 4]", None),
+            ("&[x; 4]", None),
+        ] {
+            assert_eq!(
+                slice_argument_repeat_element(text).as_deref(),
+                expected,
+                "{text}"
+            );
+        }
     }
 }
