@@ -1,0 +1,394 @@
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index eeace5ea0..318235605 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -4745,16 +4745,27 @@ impl OwnerReturnPin {
+         // #7063: an early error-variant pin reads the other exits' variants
+         // of the owner's own error enum, and the pinned `==` must compare the
+         // variant's payload.
+-        // A payload-carrying `Err(Type::Variant ..)` of a workspace enum
+-        // under the `Err` head gate is held to the same variant rules: its
+-        // payload is pinned only through `Type`'s derived `==`
++        // An `Err(Type::Variant ..)` of a workspace enum under the `Err`
++        // head gate is held to the same variant rules, including unit variants:
++        // its payload is pinned only through `Type`'s derived `==`
+         // (RIPR-SPEC-0197 early error-variant pins, rule 3). An associated
+         // function call (`Err(String::from(..))`) keeps the `Err` head gate.
+         let path = match path {
+-            ReturnPathGate::Head("Err") => match payload_variant_construction(&probe.expression)
+-                .filter(|(qualifier, variant)| {
+-                    workspace_enum_declares_variant(qualifier, variant, index)
+-                }) {
++            ReturnPathGate::Head("Err") => match error_variant_key(
++                probe
++                    .expression
++                    .trim()
++                    .trim_end_matches(';')
++                    .trim_end()
++                    .strip_prefix("return ")
++                    .map_or(
++                        probe.expression.trim().trim_end_matches(';').trim_end(),
++                        str::trim,
++                    ),
++            )
++            .filter(|(qualifier, variant)| {
++                workspace_enum_declares_variant(qualifier, variant, index)
++            }) {
+                 Some((qualifier, variant)) => ReturnPathGate::ErrVariant {
+                     qualifier,
+                     variant,
+@@ -6075,7 +6086,24 @@ impl OwnerReturnPin {
+             // Err-return guard twin `if !matches!(owner(..), Ok(5)) { return
+             // Err(..) }` (RIPR-SPEC-0154 example 2).
+             matches_operands = operands;
+-            let Some(call) = owner_call_shape(&matches_operands[0], &self.name) else {
++            let bound_call = self
++                .returns_scalar
++                .then(|| {
++                    let_bound_owner_call(
++                        test,
++                        assertion,
++                        &matches_operands[0],
++                        "",
++                        &self.name,
++                        true,
++                        false,
++                    )
++                })
++                .flatten();
++            let call = owner_call_shape(&matches_operands[0], &self.name).or_else(|| {
++                bound_call.and_then(|text| self.awaited_call_shape(poll_context, text, &self.name))
++            });
++            let Some(call) = call else {
+                 return false;
+             };
+             // A pattern resolves `None` or `Some(..)` in the test's scope, so
+@@ -6094,7 +6122,7 @@ impl OwnerReturnPin {
+             (
+                 call,
+                 matches_operands[1].as_str(),
+-                Some(matches_operands[0].as_str()),
++                Some(bound_call.unwrap_or(matches_operands[0].as_str())),
+             )
+         } else if let Some(operands) = inline_expect_operands(&assertion.text) {
+             // #6578: `expect![["alice: 42"]].assert_eq(&render_row("alice", 41))`
+@@ -14042,7 +14070,12 @@ fn let_bound_owner_call<'a>(
+         // A bare `assert!(operand)` / `assert!(!operand)` reads the operand
+         // as the whole condition, which is the `assert_eq!(operand, bool)`
+         // operand once; the scalar check below bounds it to one mention.
+-        let whole_operand = whole_operand || (reviewed && bare_condition);
++        let whole_operand = whole_operand
++            || (reviewed && bare_condition)
++            || (reviewed
++                && scalar
++                && projection.is_empty()
++                && literal_matches_binding_uses(&other.text, operand) == Some(in_text));
+         let read_only = scalar
+             && !reviewed
+             && READ_ONLY_ASSERTION_MACROS
+@@ -14063,7 +14096,8 @@ fn let_bound_owner_call<'a>(
+     }
+     if scalar {
+         let reviewed = mask_comments_and_strings(&assertion.text);
+-        return (whole_word_offsets(&reviewed, operand).len() == 1
++        let admitted_uses = literal_matches_binding_uses(&assertion.text, operand).unwrap_or(1);
++        return (whole_word_offsets(&reviewed, operand).len() == admitted_uses
+             && if assertion.line == let_line {
+                 same_line_scalar_binding_precedes(test, binding_at, assertion)
+             } else {
+@@ -18483,7 +18517,8 @@ fn is_plain_assert_of_matches(text: &str) -> bool {
+ /// RIPR-SPEC-0197 literal `matches!` pins: the scrutinee and the pinned value of a
+ /// `matches!(scrutinee, pattern)` condition whose pattern is literal-only, so
+ /// that matching it is equality with one value. Anything else refuses: a
+-/// guard, an or-pattern, a wildcard, a rest or range, a reference or slice
++/// guard except `_ if scrutinee == scalar_literal`, an or-pattern, a bare
++/// wildcard, a rest or range, a reference or slice
+ /// pattern, a binding without a literal subpattern, and every path or
+ /// constant, since the line cannot tell a constant from a binding or check
+ /// that a path names the std `Option`/`Result` variants.
+@@ -18512,10 +18547,51 @@ fn literal_matches_operands(condition: &str) -> Option<[String; 2]> {
+         _ => return None,
+     };
+     let scrutinee = rest.get(1..comma + 1)?.trim();
+-    let pattern = literal_value_pattern(rest.get(comma + 2..end + 1)?)?;
++    let raw_pattern = rest.get(comma + 2..end + 1)?.trim();
++    let pattern = literal_value_pattern(raw_pattern).or_else(|| {
++        // A wildcard binds nothing. Its exact scalar equality guard therefore
++        // reads the same immutable scrutinee, rather than a pattern binding.
++        if !is_plain_identifier(scrutinee) {
++            return None;
++        }
++        let after_wildcard = raw_pattern.strip_prefix('_')?;
++        if !after_wildcard.starts_with(char::is_whitespace) {
++            return None;
++        }
++        let guard = after_wildcard.trim_start().strip_prefix("if ")?;
++        let operands = top_level_equality_operands(guard)?;
++        let expected = match (
++            operands[0].trim() == scrutinee,
++            operands[1].trim() == scrutinee,
++        ) {
++            (true, false) => &operands[1],
++            (false, true) => &operands[0],
++            _ => return None,
++        };
++        let literal = literal_value_pattern(expected)?;
++        (literal == "true"
++            || literal == "false"
++            || literal.starts_with(['"', '-'])
++            || literal.starts_with(|c: char| c.is_ascii_digit()))
++        .then_some(literal)
++    })?;
+     (!scrutinee.is_empty()).then(|| [scrutinee.to_string(), pattern])
+ }
+ 
++/// Uses of an immutable whole scalar binding by an admitted literal match.
++/// Diagnostics and other expression uses cannot borrow this exemption.
++fn literal_matches_binding_uses(assertion: &str, operand: &str) -> Option<usize> {
++    let condition = matches_pin_condition(assertion)?;
++    let [subject, _] = literal_matches_operands(&condition)?;
++    if subject.trim() != operand || !is_plain_identifier(operand) {
++        return None;
++    }
++    let uses = whole_word_offsets(&mask_comments_and_strings(&condition), operand).len();
++    (matches!(uses, 1 | 2)
++        && whole_word_offsets(&mask_comments_and_strings(assertion), operand).len() == uses)
++        .then_some(uses)
++}
++
+ /// A literal-only pattern rewritten as the value it matches: `Some(x @ 3)`
+ /// becomes `Some(3)`. Only `Some`, `Ok` and `Err` around a payload, `None`,
+ /// `true`, `false`, a numeric literal (optionally negated) and a plain string
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index 6406ab362..8fa717a17 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -698,7 +698,8 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// Panic markers also use the producer-owned discrimination prefix (#13291).
+ /// `1.164`: compose importer identity with main field-snapshot and panic-marker semantics.
+ /// `1.165`: returned comparisons retain same-owner/element boundary pairing.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.165";
++/// `1.166`: canonical scalar-match and unit-error unwrap observer identity.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.166";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -909,7 +910,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.165";
+ /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+ /// `0.166`: same composed semantics as full `1.164`.
+ /// `0.167`: same returned-boundary pairing as full `1.165`.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.167";
++/// `0.168`: same observer identity as full `1.166`.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.168";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1122,7 +1124,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.167";
+ /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+ /// `0.166`: same composed semantics as full `1.164`.
+ /// `0.167`: same returned-boundary pairing as full `1.165`.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.167";
++/// `0.168`: same observer identity as full `1.166`.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.168";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5278,7 +5281,7 @@ mod tests {
+         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+         // Composed main and successor invalidate both predecessor branches.
+         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.165");
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.166");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5424,8 +5427,8 @@ mod tests {
+         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.167");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.167");
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.168");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.168");
+     }
+ 
+     #[test]
+@@ -5755,6 +5758,7 @@ mod tests {
+             ("crate-alias-interception", "1.162", "0.164"),
+             ("pre-field-snapshot-composition", "1.163", "0.165"),
+             ("pre-returned-boundary-pairing", "1.164", "0.166"),
++            ("pre-scalar-and-unit-error-identity", "1.165", "0.167"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+@@ -5828,7 +5832,7 @@ mod tests {
+     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
+         for previous in [
+             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
+-            "0.161", "0.162", "0.163", "0.164", "0.165", "0.166",
++            "0.161", "0.162", "0.163", "0.164", "0.165", "0.166", "0.167",
+         ] {
+             for compact in [false, true] {
+                 let scratch = integrity_scratch("property-shard-generation")?;
+diff --git a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+index ae61a0f48..d241da0f8 100644
+--- a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
++++ b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.165";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.166";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index cc445af5e..a43267bc3 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -713,3 +713,109 @@ fn returned_array_field_identity_tracks_the_changed_element() -> Result<(), Stri
+     }
+     Ok(())
+ }
++
++#[test]
++fn unit_error_variant_unwrap_identity_preserves_current_binding() -> Result<(), String> {
++    let source = "#[derive(Debug,PartialEq,Eq)]\npub enum CalcError { Negative, TooLarge }\npub fn compute(x:i32)->Result<i32,CalcError> {\n if x<0 { return Err(CalcError::Negative); }\n Ok(x*2)\n}\n";
++    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,1 +4,1 @@\n- if x<0 { return Err(CalcError::TooLarge); }\n+ if x<0 { return Err(CalcError::Negative); }\n";
++    for (body, exposed) in [
++        (
++            "assert_eq!(compute(-1).unwrap_err(),CalcError::Negative);",
++            true,
++        ),
++        (
++            "let err=compute(-1).unwrap_err();\n assert_eq!(err,CalcError::Negative);",
++            true,
++        ),
++        (
++            "let err=compute(-1).expect_err(\"must reject\");\n assert_eq!(err,CalcError::Negative);",
++            true,
++        ),
++        (
++            "let _=compute(-1);\n let err=CalcError::Negative;\n assert_eq!(err,CalcError::Negative);",
++            false,
++        ),
++        (
++            "let mut err=compute(-1).unwrap_err();\n err=CalcError::Negative;\n assert_eq!(err,CalcError::Negative);",
++            false,
++        ),
++    ] {
++        let test = format!(
++            "use rust_catalog_description_structural_oracle::{{compute,CalcError}};\n#[test]\nfn observes() {{\n {body}\n}}\n"
++        );
++        let report = check_report(source, &test, MANIFEST, diff)?;
++        let findings = report["findings"].as_array().ok_or("missing findings")?;
++        for family in ["error_path", "return_value"] {
++            let selected: Vec<_> = findings
++                .iter()
++                .filter(|f| f["probe"]["family"] == family)
++                .collect();
++            assert_eq!(selected.len(), 1, "{family}: {report}");
++            assert_eq!(
++                selected[0]["classification"] == "exposed",
++                exposed,
++                "{body}: {report}"
++            );
++        }
++    }
++    Ok(())
++}
++
++#[test]
++fn bound_literal_matches_keeps_scalar_identity_and_currentness() -> Result<(), String> {
++    let source = "pub fn score(value:i32)->i32 {\n value+1\n}\n";
++    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n- value+2\n+ value+1\n";
++    for (body, exposed) in [
++        ("let value=score(1);\n assert!(matches!(value,2));", true),
++        (
++            "let value=score(1);\n assert!(matches!(value,_ if value==2));",
++            true,
++        ),
++        (
++            "let value=score(1);\n assert!(matches!(value,_ if 2==value));",
++            true,
++        ),
++        ("let value=score(1);\n assert!(matches!(value,5));", false),
++        (
++            "let value=score(1);\n assert!(matches!(value,_ if value==5));",
++            false,
++        ),
++        (
++            "let mut value=score(1);\n value=2;\n assert!(matches!(value,2));",
++            false,
++        ),
++        (
++            "let _=score(1);\n let value=2;\n assert!(matches!(value,2));",
++            false,
++        ),
++        (
++            "let value={let _=score(1);2};\n assert!(matches!(value,2));",
++            false,
++        ),
++        (
++            "let value=score(1);\n let other=2;\n assert!(matches!(value,_ if other==2));",
++            false,
++        ),
++        (
++            "let value=score(1);\n assert!(matches!(value,_ if value==2 || true));",
++            false,
++        ),
++    ] {
++        let test = format!(
++            "use rust_catalog_description_structural_oracle::score;\n#[test]\nfn observes() {{\n {body}\n}}\n"
++        );
++        let report = check_report(source, &test, MANIFEST, diff)?;
++        let findings = report["findings"].as_array().ok_or("missing findings")?;
++        let selected: Vec<_> = findings
++            .iter()
++            .filter(|f| f["probe"]["family"] == "return_value")
++            .collect();
++        assert_eq!(selected.len(), 1, "{report}");
++        assert_eq!(
++            selected[0]["classification"] == "exposed",
++            exposed,
++            "{body}: {report}"
++        );
++    }
++    Ok(())
++}
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index db02474f0..1a162dc70 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -19795,7 +19795,7 @@ top-level `source_subject`:
+ 
+ - `digest_algorithm`: always `"sha256"`.
+ - `corpus` (additive, full Rust inventory only): the analysis-owned
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.165",
++  `{ "scope": "rust_workspace", "cache_schema_version": "1.166",
+   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+   classified inventory cache key, including both production and test Rust
+   files after the existing generated-file exclusions. Repo-exposure producers
+@@ -20580,7 +20580,7 @@ targeted-rerun receipt shape:
+     "recomputation_reasons": ["selected_test_scope_recomputed"],
+     "invalidation_status": "not_available",
+     "input_fingerprint": {
+-      "schema_version": "1.165",
++      "schema_version": "1.166",
+       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+       "workspace_root_hash": "…",
+       "files_content_hash": "…",
+diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
+index c53c687ef..74aad33b5 100644
+--- a/xtask/src/tests/rust_corpus_projection.rs
++++ b/xtask/src/tests/rust_corpus_projection.rs
+@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.165";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.166";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";

@@ -1,0 +1,341 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "/dev/shm/ripr-011-qualification/observer-v62sc4vw",
+  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":3,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:f7c19f55e8f9075739eb2d4129996cc2c12b45676353a4f506f72d89cf682eee","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:error_path:6188ddb8",
+      "canonical_gap_id": "gap:rust:src/lib.rs:compute:error_variant:error_path:err_calcerror_negative",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:compute:error_variant:error_path:err_calcerror_negative",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "compute",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "err_calcerror_negative"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:error_path:6188ddb8",
+        "family": "error_path",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "return Err(CalcError::Negative)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach compute: observes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach compute: observes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches error variant: Result::Err(CalcError::Negative) (line 4)", "related test tests/catalog.rs:3 observes uses strong exact value oracle: assert_eq!(err,CalcError::Negative);", "source function argument value x = -1 at line 4", "source enum variant value CalcError::Negative at line 6", "missing discriminator CalcError::Negative: No exact error variant assertion for CalcError::Negative"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)", "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach compute: observes"],
+      "missing": ["Missing check value: CalcError::Negative", "No exact error variant discriminator was detected"],
+      "assertion_texts": {
+        "4": "let _=compute(-1);",
+        "6": "assert_eq!(err,CalcError::Negative);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 4,
+            "value": "x = -1",
+            "context": "function_argument"
+          },
+          {
+            "line": 6,
+            "value": "CalcError::Negative",
+            "context": "enum_variant"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "CalcError::Negative",
+            "reason": "No exact error variant assertion for CalcError::Negative",
+            "flow_sink": {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":4}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 4,
+          "value": "x = -1",
+          "context": "function_argument"
+        },
+        {
+          "line": 6,
+          "value": "CalcError::Negative",
+          "context": "enum_variant"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "CalcError::Negative",
+          "reason": "No exact error variant assertion for CalcError::Negative",
+          "flow_sink": {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":4}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes",
+          "file": "tests/catalog.rs",
+          "line": 3,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(err,CalcError::Negative);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `CalcError::Negative`"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Assert the exact error variant or payload instead of only is_err().",
+      "suggested_next_action": "Assert the exact error variant or payload instead of only is_err().",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:91137bca",
+      "canonical_gap_id": "gap:rust:src/lib.rs:compute:predicate_boundary:predicate:x==0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:compute:predicate_boundary:predicate:x==0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "compute",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x==0"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.84,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:91137bca",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "x<0"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach compute: observes"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary check is missing"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence error variant: Result::Err(CalcError::Negative)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach compute: observes", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence error variant: Result::Err(CalcError::Negative)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches error variant: Result::Err(CalcError::Negative) (line 4)", "related test tests/catalog.rs:3 observes uses strong exact value oracle: assert_eq!(err,CalcError::Negative);", "source function argument value x = -1 at line 4", "source enum variant value CalcError::Negative at line 6", "missing discriminator CalcError::Negative: No exact error variant assertion for CalcError::Negative", "missing discriminator x == 0: No related test call uses x equal to 0; observed x values: -1; target 0 value: 0"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence error variant: Result::Err(CalcError::Negative)", "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "Related tests appear to reach compute: observes", "Related tests contain input values, but the equality-boundary check is missing"],
+      "missing": ["Missing check value: CalcError::Negative", "Missing check value: x == 0", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "4": "let _=compute(-1);",
+        "6": "assert_eq!(err,CalcError::Negative);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 4,
+            "value": "x = -1",
+            "context": "function_argument"
+          },
+          {
+            "line": 6,
+            "value": "CalcError::Negative",
+            "context": "enum_variant"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "CalcError::Negative",
+            "reason": "No exact error variant assertion for CalcError::Negative",
+            "flow_sink": {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":4}
+          },
+          {
+            "value": "x == 0",
+            "reason": "No related test call uses x equal to 0; observed x values: -1; target 0 value: 0",
+            "flow_sink": {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":4}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 4,
+          "value": "x = -1",
+          "context": "function_argument"
+        },
+        {
+          "line": 6,
+          "value": "CalcError::Negative",
+          "context": "enum_variant"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "CalcError::Negative",
+          "reason": "No exact error variant assertion for CalcError::Negative",
+          "flow_sink": {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":4}
+        },
+        {
+          "value": "x == 0",
+          "reason": "No related test call uses x equal to 0; observed x values: -1; target 0 value: 0",
+          "flow_sink": {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":4}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes",
+          "file": "tests/catalog.rs",
+          "line": 3,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(err,CalcError::Negative);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no test input reaches `x == 0`"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:8fe349d2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:compute:return_value:return_value:err_calcerror_negative",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:compute:return_value:return_value:err_calcerror_negative",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "compute",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "err_calcerror_negative"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:8fe349d2",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "return Err(CalcError::Negative)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach compute: observes"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach compute: observes", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches error variant: Result::Err(CalcError::Negative) (line 4)", "related test tests/catalog.rs:3 observes uses strong exact value oracle: assert_eq!(err,CalcError::Negative);", "source function argument value x = -1 at line 4", "source enum variant value CalcError::Negative at line 6", "missing discriminator CalcError::Negative: No exact error variant assertion for CalcError::Negative"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)", "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach compute: observes"],
+      "missing": ["Missing check value: CalcError::Negative", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "4": "let _=compute(-1);",
+        "6": "assert_eq!(err,CalcError::Negative);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 4,
+            "value": "x = -1",
+            "context": "function_argument"
+          },
+          {
+            "line": 6,
+            "value": "CalcError::Negative",
+            "context": "enum_variant"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "CalcError::Negative",
+            "reason": "No exact error variant assertion for CalcError::Negative",
+            "flow_sink": {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":4}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 4,
+          "value": "x = -1",
+          "context": "function_argument"
+        },
+        {
+          "line": 6,
+          "value": "CalcError::Negative",
+          "context": "enum_variant"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "CalcError::Negative",
+          "reason": "No exact error variant assertion for CalcError::Negative",
+          "flow_sink": {"kind":"error_variant","text":"Result::Err(CalcError::Negative)","line":4}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "observes",
+          "file": "tests/catalog.rs",
+          "line": 3,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(err,CalcError::Negative);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `CalcError::Negative`"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add a test input that reaches the changed error path and assert the exact error variant it returns.",
+      "suggested_next_action": "Add a test input that reaches the changed error path and assert the exact error variant it returns.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+,
+  "language_completeness": {"completeness":"complete","languages":[{"disclosure":"silent","findings":3,"language":"rust","limitations":[],"status":"complete"}],"mode":"diff","schema_version":"language_completeness.v1","total_findings":3},
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/dev/shm/ripr-011-qualification/observer-v62sc4vw","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_lib.rs:error_path:6188ddb8"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"inspect_details","stop":{"kind":"check_triage","case":"top_gap","detail_route":"ripr explain --root /dev/shm/ripr-011-qualification/observer-v62sc4vw --diff /workspace/011-integration-proof/observer-preservation-576a2f44f779/error-discard.patch --mode fast probe:src_lib.rs:error_path:6188ddb8"},"alternatives":[{"label":"considered finding probe:src_lib.rs:predicate:91137bca","route":"ripr explain --root /dev/shm/ripr-011-qualification/observer-v62sc4vw --diff /workspace/011-integration-proof/observer-preservation-576a2f44f779/error-discard.patch --mode fast probe:src_lib.rs:predicate:91137bca"},{"label":"considered finding probe:src_lib.rs:return_value:8fe349d2","route":"ripr explain --root /dev/shm/ripr-011-qualification/observer-v62sc4vw --diff /workspace/011-integration-proof/observer-preservation-576a2f44f779/error-discard.patch --mode fast probe:src_lib.rs:return_value:8fe349d2"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

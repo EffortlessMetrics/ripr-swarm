@@ -1,0 +1,11 @@
+{
+  "base": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+  "candidate": "0402cb776a96d21324b53792dc41356915e3aa31",
+  "tree": "3c68e7f7851120dc67bf56e0ee77b84e29951af9",
+  "patch_bytes": 20144,
+  "patch_sha256": "43c84c2f9d469a0bd2d22b3a0deee04d731465eac3af398d683264862b323707",
+  "baseline_receipt": "observer-preservation-576a2f44f779/receipt.json",
+  "red_controls": "six actual intended positives fail before repair; all nine negative controls pass",
+  "current_proof": "guarded production/native-path compile active; no post-repair runtime claim",
+  "remaining": "receiver/tuple/format-effect/boxed-error golden regressions;25 provisional artifacts;field parity/performance;remote trigger reconciliation;release selection and promotion hold"
+}
