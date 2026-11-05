@@ -179,7 +179,8 @@ verifies that:
   configured in `[workspace.lints.*]` in `Cargo.toml` at the same level;
 - every `[[planned]]` entry is **not** yet configured in `Cargo.toml`
   (they're future flips, not active);
-- every `[workspace.lints.*]` line has a matching ledger entry;
+- every Rust or Clippy lint in `[workspace.lints.rust]` or
+  `[workspace.lints.clippy]` has a matching ledger entry;
 - every `[[planned]]` `activate_when_msrv` that is already met by
   `[workspace.package] rust-version` has a remaining non-MSRV `blocked_by`
   (empty or MSRV-only `blocked_by` text fails; `reason` does not satisfy
@@ -188,6 +189,14 @@ verifies that:
   unique `id` / `lint`, required nonblank fields, a `target` that is not
   in the past, and a lint that is not already `[[active]]`, `[[planned]]`,
   or present in `Cargo.toml`.
+
+The workspace lint levels are read from parsed TOML. String settings such as
+`panic = "deny"` and table settings such as
+`unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }` participate
+in the same ledger and debt comparisons. Invalid TOML, non-table lint sections,
+missing or non-string table levels, and unsupported levels fail the gate.
+The accepted levels are `allow`, `warn`, `deny`, and `forbid`; Cargo retains
+responsibility for other configuration fields such as `priority` and `check-cfg`.
 
 `activate_when_msrv` on `[[planned]]` entries is compared to
 `[workspace.package] rust-version`. When the recorded MSRV is already

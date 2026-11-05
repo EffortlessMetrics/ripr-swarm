@@ -351,6 +351,11 @@ name = "unsafe_code"
 level = "forbid"
 
 [[active.rust]]
+name = "unexpected_cfgs"
+level = "warn"
+note = "The workspace check-cfg configuration recognizes cfg(kani); unexpected cfg names and values still warn."
+
+[[active.rust]]
 name = "const_item_interior_mutations"
 level = "deny"
 
