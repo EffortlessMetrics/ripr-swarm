@@ -189,7 +189,7 @@ suite('Genuine fixture producer process boundary', function () {
       const result = await within(observed);
       assert.ok('error' in result && result.error instanceof FixtureProducerError, JSON.stringify(result));
       assert.strictEqual(result.error.kind, mode === 'cancel-active-tree' ? 'cancelled' : 'timeout');
-      await waitFor(() => !running(parent) && !running(descendant), 'the primary or descendant survived producer completion');
+      await waitFor(() => !running(parent) && !running(descendant), 'the primary or descendant remained active after producer completion');
     });
   }
 
