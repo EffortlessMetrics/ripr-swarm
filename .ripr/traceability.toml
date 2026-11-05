@@ -1302,6 +1302,11 @@ tests = [
   "crates/ripr/src/output/doctor.rs::tests::doctor_tool_check_fails_closed_for_guaranteed_missing_tool",
   "crates/ripr/src/output/doctor.rs::tests::doctor_tool_check_times_out_a_hanging_tool_100_times",
   "crates/ripr/src/output/doctor.rs::tests::old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build",
+  "crates/ripr/src/output/doctor.rs::tests::source_build_compiler_overrides_precede_path_without_shell_splitting",
+  "crates/ripr/src/output/doctor.rs::tests::source_build_compiler_failure_never_borrows_a_healthy_fallback",
+  "crates/ripr/src/output/doctor.rs::tests::source_build_compiler_empty_override_is_an_error_before_fallback",
+  "crates/ripr/src/output/doctor.rs::tests::source_build_compiler_non_unicode_override_is_disclosed",
+  "crates/ripr/tests/doctor_json_schema.rs::source_build_doctor_json_refuses_missing_explicit_compiler",
   "crates/ripr/src/output/doctor.rs::tests::rust_root_with_missing_cargo_discloses_verification_limitation",
   "crates/ripr/src/output/doctor.rs::tests::nested_workspace_under_git_root_passes_cargo_toml",
   "crates/ripr/src/output/doctor.rs::tests::nested_package_under_git_root_passes_cargo_toml",
@@ -6763,6 +6768,7 @@ id = "RIPR-SPEC-0060"
 name = "Source-of-truth stack"
 spec = "docs/specs/RIPR-SPEC-0060-source-of-truth-stack.md"
 tests = [
+  "xtask/tests/help_hierarchy.rs::check_fast_is_discoverable_with_its_local_proof_boundary",
   "xtask/tests/support_tier_fast_route.rs::committed_spec_declarations_reach_actual_check_fast_dispatch",
   "xtask/src/check_fast_strict.rs::selected_support_tier_inputs_require_leaf_receipt",
   "xtask/src/check_fast_strict.rs::support_tier_near_matches_keep_noop_applicability",
@@ -8232,6 +8238,13 @@ tests = [
   "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::deterministic_row_and_summary_assembly",
   "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::all_eight_statuses_produce_a_validatable_receipt",
   "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::unstable_repeat_comparison_records_the_mismatch_list",
+  "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::bounded_documents_never_yield_a_passing_summary_gate",
+  "xtask/src/reports/eval_sweep_refresh/admission/tests.rs::malformed_findings_never_become_complete_or_stable",
+  "xtask/src/reports/eval_sweep_refresh/admission/tests.rs::malformed_or_inconsistent_outcomes_never_pass",
+  "xtask/src/reports/eval_sweep_refresh/admission/tests.rs::duplicate_keys_and_invalid_utf8_keep_a_named_execution_limitation",
+  "xtask/src/reports/eval_sweep_refresh/admission/tests.rs::real_empty_nonempty_and_grouped_reports_keep_stable_comparisons",
+  "xtask/src/reports/eval_sweep_refresh/admission/tests.rs::missing_envelope_and_terminal_states_stay_distinct",
+  "xtask/src/reports/eval_sweep_refresh/admission/tests.rs::additive_fields_and_unknown_alignment_strings_remain_compatible",
   "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::refresh_candidate_validates_through_eval_sweep_check",
   "xtask/src/reports/eval_sweep_refresh.rs::python_eval_sweep_refresh::stale_subject_path_keeps_the_denominator_without_loss",
   "xtask/src/reports/eval_sweep_report.rs",
@@ -8262,12 +8275,18 @@ tests = [
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
-  "fixtures/python-eval-sweep"
+  "fixtures/python-eval-sweep",
+  "fixtures/python_noop_docstring_change",
+  "fixtures/python_boundary_gap",
+  "fixtures/error_variant_boxed_wrapper_downcast_witness",
+  "fixtures/python_disabled",
+  "fixtures/typescript_parse_error_unsupported_syntax"
 ]
 code = [
   "xtask/src/reports/eval_sweep.rs",
   "xtask/src/reports/eval_sweep_check.rs",
   "xtask/src/reports/eval_sweep_refresh.rs",
+  "xtask/src/reports/eval_sweep_refresh/admission.rs",
   "xtask/src/reports/eval_sweep_report.rs"
 ]
 outputs = []

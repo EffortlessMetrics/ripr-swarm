@@ -47,8 +47,89 @@ fn required_text<'a>(record: &'a Value, key: &str) -> Result<&'a str, String> {
         .ok_or_else(|| format!("corpus identity has missing or invalid `{key}`"))
 }
 
+fn valid_url_escapes(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len()
+                || !bytes[index + 1].is_ascii_hexdigit()
+                || !bytes[index + 2].is_ascii_hexdigit()
+            {
+                return false;
+            }
+            index += 3;
+        } else {
+            index += 1;
+        }
+    }
+    true
+}
+
+fn valid_url_authority(authority: &str) -> bool {
+    if authority.matches('@').count() > 1 {
+        return false;
+    }
+    let host_port = authority.rsplit('@').next().unwrap_or("");
+    if authority.chars().any(char::is_whitespace) || host_port.is_empty() {
+        return false;
+    }
+    let valid_port = |port: &str| !port.is_empty() && port.parse::<u16>().is_ok();
+    if let Some(ip) = host_port.strip_prefix('[') {
+        let Some((address, suffix)) = ip.split_once(']') else {
+            return false;
+        };
+        let address = match address.split_once("%25") {
+            Some((address, zone)) if !zone.is_empty() => address,
+            Some(_) => return false,
+            None => address,
+        };
+        return address.parse::<std::net::Ipv6Addr>().is_ok()
+            && (suffix.is_empty() || suffix.strip_prefix(':').is_some_and(valid_port));
+    }
+    let (host, port) = host_port
+        .split_once(':')
+        .map_or((host_port, None), |(h, p)| (h, Some(p)));
+    !host.is_empty()
+        && host
+            .chars()
+            .all(|c| c.is_alphanumeric() || "-._%".contains(c))
+        && valid_url_escapes(host)
+        && port.is_none_or(valid_port)
+}
+
+// Git accepts local paths and scp-style remotes. For hierarchical URLs,
+// validate the authority; a server root can itself serve a repository. File
+// URL paths retain literal characters accepted by Git, including spaces.
+fn usable_repository_url(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return true;
+    };
+    if scheme.is_empty()
+        || !scheme.as_bytes()[0].is_ascii_alphabetic()
+        || !scheme
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"+-.".contains(&b))
+    {
+        return false;
+    }
+    if scheme.eq_ignore_ascii_case("file") {
+        let Some((authority, _)) = rest.split_once('/') else {
+            return false;
+        };
+        return authority.is_empty() || valid_url_authority(authority);
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    !rest.chars().any(char::is_whitespace)
+        && valid_url_escapes(rest)
+        && valid_url_authority(authority)
+}
+
 fn identity(record: &Value, repo: &str) -> Result<WorkloadIdentity, String> {
     let url = required_text(record, "url")?;
+    if !usable_repository_url(url) {
+        return Err("corpus identity has missing or invalid `url`".to_string());
+    }
     let sha = required_text(record, "sha")?;
     let base = required_text(record, "base")?;
     let language = required_text(record, "language")?;

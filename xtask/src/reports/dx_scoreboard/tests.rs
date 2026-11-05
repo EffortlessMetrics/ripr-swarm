@@ -11,6 +11,7 @@ use super::measure::{
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
 
+mod partial;
 #[path = "workload_tests.rs"]
 mod workload_tests;
 

@@ -187,7 +187,10 @@ fn partial_overlap_uses_only_matching_workloads_and_retains_all_exclusions() -> 
     assert_eq!(compared["value"], json!(100.0));
     assert_eq!(compared["delta"], json!(900.0));
     assert_eq!(compared["regressed_repos"][0]["repo"], "stable");
-    assert_eq!(compared["regressed_repos"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        compared["regressed_repos"].as_array().map(Vec::len),
+        Some(1)
+    );
     assert_eq!(compared["new_repos"], json!(["added"]));
     assert_eq!(compared["missing_repos"], json!(["removed"]));
     assert_eq!(compared["uncompared_repos"][0]["repo"], "moved");
@@ -319,5 +322,69 @@ fn workload_exclusions_leave_absolute_ceilings_and_other_sources_in_force() -> R
     assert_eq!(compared["comparable"], true);
     assert_eq!(compared["regressed"], true);
     assert!(compared["uncompared_repos"].is_null());
+    Ok(())
+}
+
+#[test]
+fn malformed_repository_urls_are_not_numeric_workload_evidence() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    for url in [
+        "https://",
+        "https://:443/repo",
+        "https://@/repo",
+        "https://example.org:bogus/repo",
+        "https://example.org:999999/repo",
+        "https://[bad/repo",
+        "https://example.org/a b",
+        "https://%ZZ/repo",
+        "https://example.org/a%ZZ",
+        "file://[bad]/repo",
+        "https://one@two@host/repo",
+    ] {
+        let mut ctx = pinned_context("r", &["a"]);
+        ctx.corpus[0]["url"] = json!(url);
+        let baseline = report(&config, &warm(&[("a", 1000.0)]), &ctx, None);
+        let current = report(&config, &warm(&[("a", 3000.0)]), &ctx, Some(&baseline));
+        let comparison = &metric(&current, WARM)?["baseline"];
+        assert_eq!(comparison["comparable"], false, "{url}: {comparison}");
+        assert!(comparison["delta"].is_null());
+        assert!(
+            comparison["uncompared_repos"][0]["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("url"))
+        );
+        assert!(render_markdown(&current).contains("invalid `url`"));
+    }
+    Ok(())
+}
+
+#[test]
+fn repository_identity_accepts_git_remote_and_local_forms() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    for url in [
+        "https://github.com/serde-rs/serde",
+        "https://git.example.org/",
+        "https://git.example.org",
+        "https://[::1]:443/repo",
+        "https://[fe80::1%25eth0]/repo",
+        "https://bücher.de/repo",
+        "https://%65xample.org/repo",
+        "ssh://git@example.org/group/repo.git",
+        "git@example.org:group/repo.git",
+        "file:///tmp/repo space.git",
+        "file:///tmp/repo?#.git",
+        "file:///tmp/repo%ZZ.git",
+        "/tmp/repo space.git",
+        "relative/repo.git",
+    ] {
+        let mut ctx = pinned_context("r", &["a"]);
+        ctx.corpus[0]["url"] = json!(url);
+        let baseline = report(&config, &warm(&[("a", 1000.0)]), &ctx, None);
+        let current = report(&config, &warm(&[("a", 3000.0)]), &ctx, Some(&baseline));
+        let comparison = &metric(&current, WARM)?["baseline"];
+        assert_eq!(comparison["comparable"], true, "{url}: {comparison}");
+        assert_eq!(comparison["delta"], json!(2000.0));
+        assert_eq!(comparison["regressed"], true);
+    }
     Ok(())
 }

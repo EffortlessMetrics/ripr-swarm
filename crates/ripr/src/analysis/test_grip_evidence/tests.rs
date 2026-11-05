@@ -22601,6 +22601,47 @@ fn inherent_receiver_name_only_residual_gaps_issue_8917() -> Result<(), String> 
     Ok(())
 }
 
+/// #13080: tests and doctests that only call the same-named associated
+/// function `ByteSize::kb(..)` are no path to the free helper `kb`, so the
+/// helper reads `reach: no` (ungripped), not the weak reach a bare-name scan
+/// gave. A bare call of the helper keeps reach undecided.
+#[test]
+fn given_free_helper_when_only_the_same_named_associated_fn_is_called_then_reach_is_no()
+-> Result<(), String> {
+    let prod = |extra: &str| {
+        format!(
+            "pub fn kb(size: u64) -> u64 {{ size * 1000 }}\n\
+             pub struct ByteSize(pub u64);\n\
+             impl ByteSize {{ pub fn kb(size: u64) -> ByteSize {{ ByteSize(size * 1000) }} }}\n\
+             // assert_eq!(\"4.1 kb\", \"x\");\n{extra}"
+        )
+    };
+    let test = "#[test] fn kb_scales() {{ assert_eq!(ByteSize::kb(4).0, 4000); }}\n";
+    let reach_of = |production: &str, test_src: &str| -> Result<StageState, String> {
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/lib.rs"), production),
+            (PathBuf::from("tests/kb.rs"), test_src),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|s| s.owner().ends_with("::kb") && !s.owner().contains("impl"))
+            .ok_or_else(|| "free helper seam present".to_string())?;
+        Ok(evidence_for_seam(seam, &index).reach.state)
+    };
+    let negative = reach_of(&prod(""), test)?;
+    assert_eq!(negative, StageState::No);
+    // Controls: one spelling that can name the free helper keeps reach undecided.
+    let bare_call = "#[test] fn kb_bare() { assert_eq!(kb(4), 4000); }\n";
+    assert_ne!(reach_of(&prod(""), bare_call)?, StageState::No);
+    assert_ne!(
+        reach_of(&prod("fn caller() -> u64 { crate::kb(4) }\n"), test)?,
+        StageState::No
+    );
+    Ok(())
+}
+
 /// #11870: the missing-discriminator facts of the `self.count = 2` write seam
 /// in `bump`, given the owner signature and the test body.
 fn field_write_facts(signature: &str, test_body: &str) -> Result<Vec<String>, String> {

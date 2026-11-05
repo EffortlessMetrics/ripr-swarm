@@ -11,6 +11,10 @@ pub enum OutputFormat {
     HumanFull,
     /// Versioned JSON report for automation.
     Json,
+    /// The same versioned JSON report as [`OutputFormat::Json`], minified
+    /// for machine/agent consumers (#13103). Parsed values are identical;
+    /// only insignificant whitespace differs.
+    JsonCompact,
     /// Unbounded `json` check findings with the producer `artifact` identity
     /// envelope (ADR 0020 amendment), so a gap-keyed verify can reject a
     /// fabricated, edited or incomplete snapshot.
@@ -128,6 +132,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
     OutputFormatSpec {
         format: OutputFormat::Json,
         cli_names: &["json"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
+        format: OutputFormat::JsonCompact,
+        cli_names: &["json-compact"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
         is_repo_seam_inventory: false,
@@ -350,6 +361,7 @@ impl OutputFormat {
     pub(crate) fn is_machine_readable(&self) -> bool {
         match self {
             Self::Json
+            | Self::JsonCompact
             | Self::CheckFindingsJson
             | Self::Sarif
             | Self::BadgeJson
@@ -433,6 +445,7 @@ mod tests {
     fn machine_readable_formats_are_the_documents_and_the_agent_report() {
         for (name, machine) in [
             ("json", true),
+            ("json-compact", true),
             ("sarif", true),
             ("badge-json", true),
             ("repo-exposure-json", true),

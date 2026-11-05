@@ -302,6 +302,8 @@ Options:
                            Choose by task: eye review -> human (the default);
                            every finding with drill-in commands -> human-full;
                            machine consumer (jq, CI scripts) -> json (--json);
+                           same document with less whitespace for a machine
+                           or coding agent -> json-compact;
                            compact report for a coding agent -> agent;
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif; README badge ->
@@ -310,7 +312,8 @@ Options:
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
-                               human, human-full, json, github, sarif, agent,
+                               human, human-full, json, json-compact, github,
+                               sarif, agent,
                                check-findings-json (identified snapshot
                                for `agent verify`)
                              Badge (diff-scoped, for PR/CI status):

@@ -1488,6 +1488,70 @@ fn unknown_arguments_are_refused_by_name_and_allowed_ones_pass() -> Result<(), S
         .ok_or_else(|| format!("unknown-argument refusal lost structured data: {error:?}"))?;
     assert_eq!(data["argument"], serde_json::json!("verbose"));
     assert_eq!(data["allowed"], serde_json::json!(allowed));
+    assert!(data.get("argument_truncated").is_none());
+    assert!(data.get("argument_bytes").is_none());
+    Ok(())
+}
+
+/// #13154: diagnostic previews must not turn an admitted caller error into
+/// a generic output-limit failure. Validation still uses the complete key.
+#[test]
+fn unknown_argument_names_keep_bounded_explicit_diagnostics() -> Result<(), String> {
+    let allowed = ["base", "source"];
+    for (name, preview, truncated) in [
+        ("x".repeat(128), "x".repeat(128), false),
+        ("x".repeat(129), "x".repeat(128), true),
+        ("雪".repeat(128), "雪".repeat(128), false),
+        ("雪".repeat(129), "雪".repeat(128), true),
+        (
+            format!("base{}", "x".repeat(128)),
+            format!("base{}", "x".repeat(124)),
+            true,
+        ),
+        ("x".repeat(150_000), "x".repeat(128), true),
+        ("\u{1}".repeat(40_000), "\u{1}".repeat(128), true),
+    ] {
+        let arguments = argument_map(serde_json::json!({ name.clone(): true }));
+        let error = reject_unknown_arguments(&arguments, &allowed)
+            .err()
+            .ok_or("the complete unknown argument name must be refused")?;
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        let failure = invalid_argument_failure(&error);
+        let envelope = protocol::tool_failure(&failure, workspace::REFRESH_SCHEMA_VERSION)?;
+        let bytes = serde_json::to_vec(&envelope)
+            .map_err(|error| error.to_string())?
+            .len();
+        assert!(bytes <= 8 * 1024, "typed diagnostic grew to {bytes} bytes");
+        assert_eq!(envelope["isError"], serde_json::json!(true));
+        assert_eq!(failure.code, workspace::CODE_INVALID_ARGUMENT);
+        assert_eq!(failure.data["argument"], serde_json::json!(preview));
+        assert_eq!(failure.data["allowed"], serde_json::json!(allowed));
+        if truncated {
+            assert_eq!(failure.data["argument_truncated"], serde_json::json!(true));
+            assert_eq!(
+                failure.data["argument_bytes"],
+                serde_json::json!(name.len())
+            );
+            assert!(failure.detail.contains("truncated"), "{}", failure.detail);
+        } else {
+            assert!(failure.data.get("argument_truncated").is_none());
+            assert!(failure.data.get("argument_bytes").is_none());
+        }
+        // Allowed names remain visible even when Debug escaping expands
+        // the preview beyond the shared human-detail character bound.
+        assert!(failure.detail.contains("base"), "{}", failure.detail);
+        assert!(failure.detail.contains("source"), "{}", failure.detail);
+        assert!(
+            failure.recovery.contains("inputSchema"),
+            "{}",
+            failure.recovery
+        );
+    }
+    // A preview equal to a permitted name is still an unknown full key.
+    // This rejects a wrong implementation that validates after clipping.
+    let allowed_name = "x".repeat(128);
+    let arguments = argument_map(serde_json::json!({ format!("{allowed_name}x"): true }));
+    assert!(reject_unknown_arguments(&arguments, &[allowed_name.as_str()]).is_err());
     Ok(())
 }
 
