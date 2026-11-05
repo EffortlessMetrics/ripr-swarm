@@ -5,7 +5,7 @@
   "patch_sha256": "4ba8c0555aa59ee7d7548ca027c2dc146e128606dd1bb41cb954d3abb3de617e",
   "patch_bytes": 22314,
   "base": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
-  "status": "Frozen e133: current driver/schema11/cache3 passed; compatibility running; remaining native/full qualification pending",
+  "status": "Frozen e133: driver/schema11/cache3/compatibility44+6+70/portable1/production11+native4 passed; full library running",
   "reproduced": "Single-package own-name dependency alias and alloc alias falsely credit external trait first/last. Correct and wrong native Cargo tests each pass; old producer reports exposed. Multi-member collision was not discriminating and is not claimed reproduced.",
   "before_producer": "0.11.0+147d1968ab4ff0d9739c0c328a1a50a274073f76+languages:rust=1,typescript=1,python=1,perl=0",
   "repair": "Reuse importer-aware MemberCrates.import_names for indexed library roots; remove unconditional alloc root; advance cache generation to full1.163 / compact+sharded0.165 and reject predecessor.",
@@ -34,11 +34,37 @@
   "fixture_refresh": "3d82-importer-portable-fixture-regeneration-receipt.json",
   "running": {
     "session": 83479,
-    "phase": "owner-call-compatibility"
+    "phase": "final-full-lib",
+    "pid": 897176
   },
   "frozen_passes": {
     "driver": 0,
     "schema": 11,
-    "cache": 3
+    "cache": 3,
+    "compatibility": [
+      44,
+      6,
+      70
+    ],
+    "portable_chain": 1,
+    "production": 11,
+    "native_paths": 4
+  },
+  "review_scope": {
+    "candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+    "result": "No actionable source defect found in scoped owner inspection; overall integration review remains incomplete for terminal native/hosted evidence. Independent reviewer packet is available.",
+    "surfaces": [
+      "importer-aware closed import authority and existing MemberCrates resolver",
+      "same-assertion effect identity and first/last refusal boundaries",
+      "real Cargo nonempty correct/wrong test controls",
+      "cache epoch and predecessor refusal",
+      "dynamic consumer pins and portable artifact commitments"
+    ],
+    "limitations": [
+      "Multi-member external alias control did not establish a defect",
+      "Changed-payload proof is side-effect with before text",
+      "Linux proof does not establish native Windows readiness",
+      "No release selection or publication claim"
+    ]
   }
 }

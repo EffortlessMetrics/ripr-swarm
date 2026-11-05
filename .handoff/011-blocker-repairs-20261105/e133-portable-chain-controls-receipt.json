@@ -1,0 +1,74 @@
+{
+  "stage": "portable-chain-controls",
+  "candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+  "tree": "945114e13bdd8c02bf5b8ac429837b838465cbfd",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "cli_smoke",
+    "first_useful_action_corpus_pins_routing_cases",
+    "--",
+    "--exact",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 30.06,
+  "counts": {
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 715
+  },
+  "log_sha256": "912c34f7523539e63afeb2fc00955a1e83899d4bac12cd0e72f3136c9d586044",
+  "peak_cgroup_memory_bytes": 3887931392,
+  "samples": [
+    {
+      "utc": "2026-11-05T17:32:52.753525+00:00",
+      "stage": "portable-chain-controls",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 895181,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3174481920,
+      "workspace_free_bytes": 21529542656,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:33:02.754864+00:00",
+      "stage": "portable-chain-controls",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 895181,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3632230400,
+      "workspace_free_bytes": 21529542656,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:33:12.758880+00:00",
+      "stage": "portable-chain-controls",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 895181,
+      "elapsed": 20.01,
+      "cgroup_memory_bytes": 3887931392,
+      "workspace_free_bytes": 21507874816,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

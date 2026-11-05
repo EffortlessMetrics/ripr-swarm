@@ -1,0 +1,566 @@
+{
+  "stage": "owner-call-compatibility",
+  "candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+  "tree": "945114e13bdd8c02bf5b8ac429837b838465cbfd",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "owner_pin_execution",
+    "--test",
+    "crate_qualified_entry_reach",
+    "--test",
+    "glob_call_identity",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 520.34,
+  "counts": {
+    "passed": 70,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 0
+  },
+  "log_sha256": "1f7a8469625ace4b8d02b2e7898ea4ce142cbcee49d9ed9cd79cb14a8449191c",
+  "peak_cgroup_memory_bytes": 8524341248,
+  "samples": [
+    {
+      "utc": "2026-11-05T17:24:12.407752+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 2898915328,
+      "workspace_free_bytes": 21530537984,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:24:22.409751+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3810594816,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:24:32.412059+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 20.01,
+      "cgroup_memory_bytes": 4214718464,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:24:42.433620+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 30.03,
+      "cgroup_memory_bytes": 4448514048,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:24:52.453348+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 40.05,
+      "cgroup_memory_bytes": 4304035840,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:25:02.457725+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 50.05,
+      "cgroup_memory_bytes": 4541181952,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:25:12.465521+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 60.06,
+      "cgroup_memory_bytes": 4779966464,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:25:22.469297+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 70.06,
+      "cgroup_memory_bytes": 5093527552,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:25:32.470011+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 80.06,
+      "cgroup_memory_bytes": 5432590336,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:25:42.470653+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 90.07,
+      "cgroup_memory_bytes": 5774901248,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:25:52.471973+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 100.07,
+      "cgroup_memory_bytes": 6150967296,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:26:02.474367+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 110.07,
+      "cgroup_memory_bytes": 6567829504,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:26:12.483070+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 120.08,
+      "cgroup_memory_bytes": 6847000576,
+      "workspace_free_bytes": 21987131392,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:26:22.486751+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 130.08,
+      "cgroup_memory_bytes": 7322259456,
+      "workspace_free_bytes": 21929566208,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:26:32.487370+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 140.08,
+      "cgroup_memory_bytes": 7733518336,
+      "workspace_free_bytes": 21929566208,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:26:42.488378+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 150.08,
+      "cgroup_memory_bytes": 8009834496,
+      "workspace_free_bytes": 21929566208,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:26:52.489533+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 160.08,
+      "cgroup_memory_bytes": 8293158912,
+      "workspace_free_bytes": 21998342144,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:27:02.492006+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 170.09,
+      "cgroup_memory_bytes": 8311193600,
+      "workspace_free_bytes": 21950599168,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:27:12.496030+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 180.09,
+      "cgroup_memory_bytes": 8524341248,
+      "workspace_free_bytes": 21939146752,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:27:22.498529+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 190.09,
+      "cgroup_memory_bytes": 8198049792,
+      "workspace_free_bytes": 21875101696,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:27:32.502900+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 200.1,
+      "cgroup_memory_bytes": 8241573888,
+      "workspace_free_bytes": 21859618816,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:27:42.507478+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 210.1,
+      "cgroup_memory_bytes": 8344137728,
+      "workspace_free_bytes": 21813800960,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:27:52.509276+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 220.1,
+      "cgroup_memory_bytes": 8216813568,
+      "workspace_free_bytes": 21772533760,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:28:02.516307+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 230.11,
+      "cgroup_memory_bytes": 8182964224,
+      "workspace_free_bytes": 21747015680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:28:12.519598+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 240.11,
+      "cgroup_memory_bytes": 8231137280,
+      "workspace_free_bytes": 21718339584,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:28:22.522745+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 250.12,
+      "cgroup_memory_bytes": 8250150912,
+      "workspace_free_bytes": 21695881216,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:28:32.524614+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 260.12,
+      "cgroup_memory_bytes": 8414691328,
+      "workspace_free_bytes": 21678804992,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:28:42.534718+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 270.13,
+      "cgroup_memory_bytes": 3383898112,
+      "workspace_free_bytes": 21529628672,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:28:52.541134+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 280.14,
+      "cgroup_memory_bytes": 3607580672,
+      "workspace_free_bytes": 21530357760,
+      "temp_free_bytes": 9441308672
+    },
+    {
+      "utc": "2026-11-05T17:29:02.542530+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 290.14,
+      "cgroup_memory_bytes": 3623854080,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9441267712
+    },
+    {
+      "utc": "2026-11-05T17:29:12.550089+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 300.14,
+      "cgroup_memory_bytes": 3623243776,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9441267712
+    },
+    {
+      "utc": "2026-11-05T17:29:22.562522+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 310.16,
+      "cgroup_memory_bytes": 3619561472,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9441300480
+    },
+    {
+      "utc": "2026-11-05T17:29:32.579191+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 320.17,
+      "cgroup_memory_bytes": 3614064640,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9441325056
+    },
+    {
+      "utc": "2026-11-05T17:29:42.580127+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 330.17,
+      "cgroup_memory_bytes": 3606446080,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9440104448
+    },
+    {
+      "utc": "2026-11-05T17:29:52.581725+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 340.18,
+      "cgroup_memory_bytes": 3576041472,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9441296384
+    },
+    {
+      "utc": "2026-11-05T17:30:02.589247+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 350.18,
+      "cgroup_memory_bytes": 3578458112,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9441312768
+    },
+    {
+      "utc": "2026-11-05T17:30:12.590295+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 360.18,
+      "cgroup_memory_bytes": 3597824000,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9441325056
+    },
+    {
+      "utc": "2026-11-05T17:30:22.600547+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 370.2,
+      "cgroup_memory_bytes": 3541721088,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9437405184
+    },
+    {
+      "utc": "2026-11-05T17:30:32.605077+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 380.2,
+      "cgroup_memory_bytes": 3529945088,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9441267712
+    },
+    {
+      "utc": "2026-11-05T17:30:42.606228+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 390.2,
+      "cgroup_memory_bytes": 3521069056,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9441304576
+    },
+    {
+      "utc": "2026-11-05T17:30:52.607232+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 400.2,
+      "cgroup_memory_bytes": 3445063680,
+      "workspace_free_bytes": 21530353664,
+      "temp_free_bytes": 9441304576
+    },
+    {
+      "utc": "2026-11-05T17:31:02.609180+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 410.2,
+      "cgroup_memory_bytes": 3447406592,
+      "workspace_free_bytes": 21530210304,
+      "temp_free_bytes": 9439981568
+    },
+    {
+      "utc": "2026-11-05T17:31:12.610449+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 420.2,
+      "cgroup_memory_bytes": 3456073728,
+      "workspace_free_bytes": 21530210304,
+      "temp_free_bytes": 9440657408
+    },
+    {
+      "utc": "2026-11-05T17:31:22.611295+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 430.21,
+      "cgroup_memory_bytes": 3428552704,
+      "workspace_free_bytes": 21530198016,
+      "temp_free_bytes": 9441320960
+    },
+    {
+      "utc": "2026-11-05T17:31:32.698126+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 440.29,
+      "cgroup_memory_bytes": 3422638080,
+      "workspace_free_bytes": 21529882624,
+      "temp_free_bytes": 9441312768
+    },
+    {
+      "utc": "2026-11-05T17:31:42.701912+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 450.3,
+      "cgroup_memory_bytes": 3450933248,
+      "workspace_free_bytes": 21529882624,
+      "temp_free_bytes": 9441292288
+    },
+    {
+      "utc": "2026-11-05T17:31:52.705758+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 460.3,
+      "cgroup_memory_bytes": 3460247552,
+      "workspace_free_bytes": 21529870336,
+      "temp_free_bytes": 9439559680
+    },
+    {
+      "utc": "2026-11-05T17:32:02.707851+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 470.3,
+      "cgroup_memory_bytes": 3355648000,
+      "workspace_free_bytes": 21529759744,
+      "temp_free_bytes": 9434406912
+    },
+    {
+      "utc": "2026-11-05T17:32:12.708979+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 480.3,
+      "cgroup_memory_bytes": 3364253696,
+      "workspace_free_bytes": 21529759744,
+      "temp_free_bytes": 9440096256
+    },
+    {
+      "utc": "2026-11-05T17:32:22.710022+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 490.3,
+      "cgroup_memory_bytes": 3370078208,
+      "workspace_free_bytes": 21529550848,
+      "temp_free_bytes": 9437233152
+    },
+    {
+      "utc": "2026-11-05T17:32:32.711858+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 500.31,
+      "cgroup_memory_bytes": 3261333504,
+      "workspace_free_bytes": 21529550848,
+      "temp_free_bytes": 9441251328
+    },
+    {
+      "utc": "2026-11-05T17:32:42.713190+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 861386,
+      "elapsed": 510.31,
+      "cgroup_memory_bytes": 3244617728,
+      "workspace_free_bytes": 21529550848,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

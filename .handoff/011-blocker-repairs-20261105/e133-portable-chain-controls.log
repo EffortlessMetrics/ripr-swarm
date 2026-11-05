@@ -1,0 +1,9 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-current-main/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 23.25s
+     Running tests/cli_smoke.rs (/workspace/12010-proof/target/debug/deps/cli_smoke-3df38f0d4017bff1)
+
+running 1 test
+test first_useful_action_corpus_pins_routing_cases ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 715 filtered out; finished in 0.19s
+
