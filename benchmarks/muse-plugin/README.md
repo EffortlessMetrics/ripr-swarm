@@ -8,8 +8,12 @@ expected verdicts in `expected/`.
 
 ## Contract
 
-Every run produces one `muse-plugin-eval-v1` record
-(`schemas/ripr/muse-plugin-eval.schema.json`) plus retained raw
+Every run produces one `muse-plugin-eval-v1` record (identity,
+environment, model, task, MCP exchange, repair, execution, separate
+static/executed verdicts, efficiency, provenance — the field groups
+recorded in `receipts/`; the JSON Schema file lands with the
+scoreboard-ingestion change that owns its version bindings, #13120)
+plus retained raw
 material: the initial fixture unchanged, the exact edits and Git diff,
 the actual MCP exchange, before/after artifacts, executed test
 results, the original transcript, and log digests. Missing cost,

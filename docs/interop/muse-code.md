@@ -61,6 +61,7 @@ muse plugins approve ripr:mcp_server:core
 Manifest validation alone is insufficient. The acceptance journey —
 cold install, approval, new session, tool discovery, boundary repair,
 refusal cases — and its retained receipts live under
-`benchmarks/muse-plugin/`, with the machine-readable record shape in
-`schemas/ripr/muse-plugin-eval.schema.json`. Plugin results report
+`benchmarks/muse-plugin/` (the `muse-plugin-eval-v1` JSON Schema
+lands with the scoreboard-ingestion change that owns its version
+bindings, #13120). Plugin results report
 beside the DX scoreboard; plugin runs never edit its baselines.
