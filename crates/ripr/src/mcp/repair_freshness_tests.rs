@@ -957,19 +957,31 @@ fn retained_baseline_artifact_failures_never_offer_continuation() -> Result<(), 
                 .any(|warning| warning.kind == "repair_attempt_unreadable")
         );
         assert!(reusable_awaiting_attempt(&root, "seam:freshness").is_none());
-        assert!(select_continue_attempt(&root, None).is_err());
-        assert!(select_continue_attempt(&root, Some(id.as_str())).is_err());
+        for selected_id in [None, Some(id.as_str())] {
+            assert!(
+                matches!(
+                    select_continue_attempt(&root, selected_id),
+                    Err(reason) if reason.contains(artifact.path.as_str())
+                ),
+                "{damage} baseline: continue {selected_id:?} must refuse the damaged retained artifact"
+            );
+        }
         let session = WorkspaceSession::default();
-        assert!(
-            session
-                .repair_attempt_document(id.as_str(), Some(&root), None)
-                .is_err()
-        );
-        assert!(
-            session
-                .receipt_status_document(id.as_str(), Some(&root), None)
-                .is_err()
-        );
+        for (route, result) in [
+            (
+                "repair attempt",
+                session.repair_attempt_document(id.as_str(), Some(&root), None),
+            ),
+            (
+                "receipt status",
+                session.receipt_status_document(id.as_str(), Some(&root), None),
+            ),
+        ] {
+            assert!(
+                matches!(result, Err(failure) if failure.code == CODE_ATTEMPT_INVALID),
+                "{damage} baseline: {route} must refuse as attempt_invalid"
+            );
+        }
     }
     Ok(())
 }
