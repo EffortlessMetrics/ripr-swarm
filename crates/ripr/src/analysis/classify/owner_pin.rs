@@ -383,6 +383,11 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// pass retained, completed on demand, so naming a refusal never
     /// rescans the workspace per (name, test root).
     workspace_site_scan: SyncMemo<Option<WorkspaceMacroSiteIndex>>,
+    /// #13269: per module file, whether it may carry an ancestor's private
+    /// glob import down to its own modules (see [`source_may_carry_glob_chain`]).
+    glob_chain_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
+    /// Files that may import from an ancestor beyond their immediate parent.
+    glob_jump_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
     /// #8255 test witness: full-index macro-site passes this run paid.
     #[cfg(test)]
     workspace_scan_passes: SyncMemo<u32>,
@@ -1249,6 +1254,36 @@ impl OwnerPinSyntax {
             })
     }
 
+    /// #13269: memoized [`source_may_carry_glob_chain`] for an indexed file;
+    /// an unindexed file is read as carrying one.
+    fn file_may_carry_glob_chain(&self, file: &Path, index: &RustIndex) -> bool {
+        if let Some(known) = self.glob_chain_by_file.borrow().get(file) {
+            return *known;
+        }
+        let carries = index
+            .files()
+            .get(file)
+            .is_none_or(|facts| source_may_carry_glob_chain(facts.data().source.as_ref()));
+        self.glob_chain_by_file
+            .borrow_mut()
+            .insert(file.to_path_buf(), carries);
+        carries
+    }
+
+    fn file_may_skip_glob_parent(&self, file: &Path, index: &RustIndex) -> bool {
+        if let Some(known) = self.glob_jump_by_file.borrow().get(file) {
+            return *known;
+        }
+        let jumps = index
+            .files()
+            .get(file)
+            .is_none_or(|facts| source_may_skip_glob_parent(facts.data().source.as_ref()));
+        self.glob_jump_by_file
+            .borrow_mut()
+            .insert(file.to_path_buf(), jumps);
+        jumps
+    }
+
     fn execution_context(
         &self,
         file: &PathBuf,
@@ -1728,6 +1763,8 @@ impl OwnerPinSyntax {
             let context = self.execution_context(&file.to_path_buf(), index);
             module_ancestry(&context, file, self.target_roots(index), index)
         });
+        let carries = |file: &Path| self.file_may_carry_glob_chain(file, index);
+        let jumps = |file: &Path| self.file_may_skip_glob_parent(file, index);
         let scan = self.workspace_site_scan.borrow();
         let retained = scan.as_ref()?;
         let mut rebinding: Option<&OrderedMacroSite> = None;
@@ -1746,8 +1783,14 @@ impl OwnerPinSyntax {
             }
         }
         for (file, binding) in &retained.by_module {
-            if module_binding_reaches(file, binding, ancestry.as_ref(), test_roots)
-                && let Some(rank) = binding.sites.get(name)
+            if module_binding_reaches(
+                file,
+                binding,
+                ancestry.as_ref(),
+                test_roots,
+                &carries,
+                &jumps,
+            ) && let Some(rank) = binding.sites.get(name)
             {
                 merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
                 keep_earliest_site(&mut field_blocking, rank.field_blocking.as_ref());
@@ -2468,22 +2511,163 @@ struct ModuleLocalBinding {
 }
 
 /// Whether a module-local binding in `file` reaches a test. With the test's
-/// module ancestry the rule is exact: the declaring file is the test's file
-/// or one of its ancestors. Without it the binding keeps its crate-local
+/// module ancestry the declaring file must be the test's file or an ancestor.
+/// A private `use` is not inherited by a child module, but qualified globs
+/// can skip intermediate modules. Such imports, macro expansion and unknown
+/// syntax retain the refusal; otherwise follow possible single-parent chains.
+/// Without the ancestry the binding keeps its crate-local
 /// reach: every test of its crate roots, or every test when unrooted.
 fn module_binding_reaches(
     file: &Path,
     binding: &ModuleLocalBinding,
-    ancestry: Option<&BTreeSet<PathBuf>>,
+    ancestry: Option<&ModuleAncestry>,
     test_roots: Option<&BTreeSet<PathBuf>>,
+    carries: &dyn Fn(&Path) -> bool,
+    jumps: &dyn Fn(&Path) -> bool,
 ) -> bool {
     match ancestry {
-        Some(ancestors) => ancestors.contains(file),
+        Some(ancestry) => {
+            ancestry.files.contains(file)
+                && (file == ancestry.test_file
+                    || ancestry
+                        .files
+                        .iter()
+                        .any(|child| child != file && jumps(child))
+                    || glob_chain_reaches(file, ancestry, carries))
+        }
         None => match (test_roots, binding.roots.as_ref()) {
             (Some(test), Some(site)) => !test.is_disjoint(site),
             _ => true,
         },
     }
+}
+
+/// Whether some path of module edges leads from the glob's file down to the
+/// test's file with every file entered after the glob's own possibly carrying
+/// a glob. A file ripr cannot establish is read as carrying one.
+fn glob_chain_reaches(
+    glob_file: &Path,
+    ancestry: &ModuleAncestry,
+    carries: &dyn Fn(&Path) -> bool,
+) -> bool {
+    let mut seen: BTreeSet<&Path> = BTreeSet::from([glob_file]);
+    let mut frontier = vec![glob_file];
+    while let Some(parent) = frontier.pop() {
+        for (edge_parent, child) in &ancestry.edges {
+            if edge_parent != parent || seen.contains(child.as_path()) || !carries(child) {
+                continue;
+            }
+            if child == &ancestry.test_file {
+                return true;
+            }
+            seen.insert(child);
+            frontier.push(child);
+        }
+    }
+    false
+}
+
+/// Whether a file may import an ancestor module's private glob into its own
+/// modules (#13269): it holds a glob `use` anywhere, or an item-position macro
+/// call whose expansion could emit one, or it does not parse cleanly. A file
+/// with none cannot name the parent's glob-imported items, so the parent's
+/// glob stops there.
+fn source_may_carry_glob_chain(source: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        if let Some(tree) = ast::UseTree::cast(node.clone()) {
+            return tree.star_token().is_some();
+        }
+        ast::MacroCall::can_cast(node.kind())
+            && node.parent().is_some_and(|parent| {
+                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
+            })
+    })
+}
+
+/// A qualified glob can jump over a file edge, and macro expansion or a broken
+/// parse can hide one. Only a plain single-parent glob is known not to jump;
+/// unknown attributes and other forms deliberately over-refuse.
+fn source_may_skip_glob_parent(source: &str) -> bool {
+    const BUILTIN_DERIVES: &[&str] = &[
+        "Clone",
+        "Copy",
+        "Debug",
+        "Default",
+        "PartialEq",
+        "Eq",
+        "PartialOrd",
+        "Ord",
+        "Hash",
+    ];
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    parse.tree().syntax().descendants().any(|node| {
+        if let Some(attr) = ast::Attr::cast(node.clone()) {
+            let compact: String = attr
+                .syntax()
+                .text()
+                .to_string()
+                .chars()
+                .filter(|ch| !ch.is_whitespace())
+                .collect();
+            let builtin_derive = compact
+                .strip_prefix("#[derive(")
+                .and_then(|value| value.strip_suffix(")]"))
+                .is_some_and(|names| names.split(',').all(|name| BUILTIN_DERIVES.contains(&name)));
+            let inert = compact == "#[test]"
+                || builtin_derive
+                || compact.starts_with("///")
+                || compact.starts_with("//!")
+                || compact.starts_with("#[doc=")
+                || ["cfg", "allow", "warn", "deny", "forbid"]
+                    .iter()
+                    .any(|name| {
+                        compact.starts_with(&format!("#[{name}(")) && compact.ends_with(")]")
+                    });
+            if !inert {
+                return true;
+            }
+        }
+        if let Some(item) = ast::Use::cast(node.clone()) {
+            let text = item.syntax().text().to_string();
+            // A named assertion import can reach a child file outside the
+            // declaring file's scoped lookup. An imported `test` can also
+            // shadow the built-in attribute and expand to a glob.
+            if text.contains("test")
+                || BUILTIN_DERIVES.iter().any(|name| text.contains(*name))
+                || assertion_context_macros()
+                    .iter()
+                    .any(|name| text.contains(*name))
+            {
+                return true;
+            }
+            let has_glob = item
+                .syntax()
+                .descendants()
+                .filter_map(ast::UseTree::cast)
+                .any(|tree| tree.star_token().is_some());
+            if has_glob {
+                let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+                return compact != "usesuper::*;";
+            }
+        }
+        ast::MacroCall::can_cast(node.kind())
+            && node.parent().is_some_and(|parent| {
+                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
+            })
+    })
+}
+
+/// A test file's established module ancestry: the files whose module subtree
+/// holds it, with the module edges that compose them.
+struct ModuleAncestry {
+    files: BTreeSet<PathBuf>,
+    edges: Vec<(PathBuf, PathBuf)>,
+    test_file: PathBuf,
 }
 
 /// Whether a site can be confined to its file's module subtree: a private
@@ -2516,7 +2700,7 @@ fn module_ancestry(
     file: &Path,
     roots: &TargetRoots,
     index: &RustIndex,
-) -> Option<BTreeSet<PathBuf>> {
+) -> Option<ModuleAncestry> {
     // A file no recognized target places may be compiled under any module the
     // indexer never recorded (a `mod` inside a macro body), so its context of
     // just itself is not an established ancestry.
@@ -2537,7 +2721,15 @@ fn module_ancestry(
         ancestors.insert(edge.parent.clone());
         ancestors.insert(edge.child.clone());
     }
-    Some(ancestors)
+    Some(ModuleAncestry {
+        files: ancestors,
+        edges: context
+            .edges
+            .iter()
+            .map(|edge| (edge.parent.clone(), edge.child.clone()))
+            .collect(),
+        test_file: file.to_path_buf(),
+    })
 }
 
 /// The earliest rebinding site, else the earliest site that only may
@@ -2973,10 +3165,19 @@ impl OwnerPinSyntax {
         let roots = self.target_roots(index);
         let ancestry = module_ancestry(&context, &test.file, roots, index);
         let test_roots = roots.roots(&test.file, index);
+        let carries = |file: &Path| self.file_may_carry_glob_chain(file, index);
+        let jumps = |file: &Path| self.file_may_skip_glob_parent(file, index);
         by_module
             .iter()
             .filter(|(file, binding)| {
-                module_binding_reaches(file, binding, ancestry.as_ref(), test_roots.as_ref())
+                module_binding_reaches(
+                    file,
+                    binding,
+                    ancestry.as_ref(),
+                    test_roots.as_ref(),
+                    &carries,
+                    &jumps,
+                )
             })
             .flat_map(|(_, binding)| binding.names.iter().cloned())
             .collect()
