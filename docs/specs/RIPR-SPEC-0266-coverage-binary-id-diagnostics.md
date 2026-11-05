@@ -102,6 +102,56 @@ coverage failure.
 
 ## Required Evidence
 
+### During-run storage evidence
+
+The Linux coverage owner also supplies bounded, metadata-only storage
+observations around the unchanged all-workspace/all-features LCOV command.
+The fixed run-coverage entry accepts no arguments and inherits the original
+command environment and standard streams. Normal exit codes are preserved;
+signal exits retain the signal in the receipt and the corresponding shell
+status. Sampler failures and exhausted sampling budgets cannot terminate the
+command or turn its failure into success. The workflow timeout stays unchanged.
+
+Before, periodic and final observations emit versioned summary, bucket,
+profile-entry and completion records with a shared sequence. Each write is at
+most 4 KiB and each sample at most 16 KiB, including its partiality record.
+There are at most 46 periodic samples, one per 60 seconds, plus initial and
+final samples. Incomplete writes and missing completion records are not full
+samples. Native command output remains inherited and uncaptured.
+
+Disjoint target buckets separate raw profiles, plain and instrumented build
+state, RIPR artifacts, fixture native-target builds and remaining target
+scratch. Additional declared cache/toolchain/Git/runner-temp roots never
+authorize reading their contents. Count logical regular-file bytes by entry
+and allocated blocks once per device/inode; expose duplicate identities,
+available bytes/inodes, scope, errors, limits and non-atomic observation.
+Prioritize direct raw-profile metadata and retain at most eight largest
+inspected entries with names bounded to 128 bytes. No profile is deleted,
+rewritten, pooled, copied or excluded from coverage.
+
+Directory traversal uses held descriptors and no-follow opens, with explicit
+root overlap handling and limits of 100,000 directory entries, 32 descended
+levels and five seconds checked before processing entries. Capacity uses safe
+fstatvfs queries on held directory handles, checked available-block
+multiplication and native available-inode counts. It spawns no diagnostic
+process; filesystem operations are not individually preempted. The long-lived
+Cargo child uses the established non-reaping PID-custody ordering before
+owned-group termination and reaping. No numeric signal follows lost custody.
+
+Required controls distinguish sparse allocation from logical size, hard links
+from independent files, native fixture builds from profiles, symlinks from
+traversable directories, incomplete scopes from zero totals, and native zero
+capacity from unavailable or overflowing capacity. Exercise the real held
+directory after a rename, and the fixed command builder
+with inherited environment and exact arguments, native success/failure/signal
+results, observation exhaustion, a confirmed separate descendant, and lost
+child custody. Exercise realistic complete emission with all buckets and
+escaped largest-entry names; emitted/omitted counters must match retained
+data. These controls do not identify the historical storage producer or
+replace a native full-coverage measurement.
+
+### Profile and compiler evidence
+
 - Exercise the genuine retained 160-byte header/ID from run 38613901957 with the
   active compiler's matching LLVM: retain its bytes and failed merge outcome
   for malformed data or a raw-version mismatch; associate only a controlled
@@ -150,7 +200,9 @@ coverage failure.
 - Determining the historical coverage producer or cause of a short profile.
 - Changing instrumentation, profile bytes, coverage thresholds, or required
   merge gates.
-- Scanning outside the four declared build roots or collecting whole binaries.
+- Binary-ID scanning outside its four declared build roots or collecting whole
+  binaries. Storage observations use only metadata in their separately declared
+  roots and never widen binary-ID or profile-content reads.
 
 ## Acceptance Examples
 
@@ -230,6 +282,14 @@ The stable advisory job is covered in `tools/repo-policy/tests/future_clippy.rs`
 These shell fixtures do not substitute for genuine compiler/LLVM execution.
 
 ## Implementation Mapping
+
+- tools/repo-policy/src/coverage_diagnostics/storage.rs owns the fixed coverage
+  command, metadata accounting, bounded records and child custody.
+- tools/repo-policy/src/coverage_diagnostics/storage_tests.rs owns the storage,
+  command-fidelity, emission and process-lifetime controls registered in
+  .ripr/traceability.d/4978-coverage-storage-observer.toml.
+- The existing Coverage workflow invokes the prebuilt adapter; its command
+  inventory and workflow controls preserve the existing failure paths.
 
 - `tools/repo-policy/src/coverage_diagnostics/binary_ids.rs` owns bounded
   profile-ID parsing and executable association.

@@ -5,7 +5,7 @@ fn coverage_failure_capture_preserves_original_command_and_failure() -> Result<(
     let root = crate::test_support::workspace_root()?;
     let text = fs::read_to_string(root.join(".github/workflows/coverage.yml"))
         .map_err(|error| error.to_string())?;
-    assert!(text.contains("id: generate-coverage\n        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info"));
+    assert!(text.contains("id: generate-coverage\n        run: target/debug/repo-policy run-coverage"));
     assert!(!text.contains("continue-on-error:"));
     assert!(text.contains("failure() && steps.generate-coverage.outcome == 'failure'"));
     assert!(text.contains("always() && steps.generate-coverage.outcome == 'failure'"));
