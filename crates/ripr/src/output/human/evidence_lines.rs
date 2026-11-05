@@ -365,7 +365,7 @@ fn evidence_path<T>(
             );
             let stated = stated_reasons.entry(key).or_default();
             let reason = format!("{label}: {why}");
-            if stated.iter().any(|existing| existing == &reason) {
+            if stated.contains(&reason) {
                 true
             } else {
                 stated.push(reason);
