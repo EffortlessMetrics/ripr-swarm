@@ -68,11 +68,14 @@ pub(super) fn render(
     // while a test-side gap is still open (#11825).
     let gaps = gap_findings(&triage);
     let mut out = header_line(output, &considered, gaps.len());
+    let incomplete = render_incomplete_analysis(&mut out, output);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
-        out.push_str(
-            "done=no changed behavior found in scope; static advisory, not runtime proof\n",
-        );
+        out.push_str(if incomplete {
+            "stop=analysis incomplete; zero findings is not a clean result\n"
+        } else {
+            "done=no changed behavior found in scope; static advisory, not runtime proof\n"
+        });
         return out;
     }
     if should_emit_stop(&gaps) {
@@ -80,7 +83,13 @@ pub(super) fn render(
         if !open.is_empty() {
             return render_open_limited(out, output, &considered, &open, drill_in);
         }
-        out.push_str(&terminal_line(&triage, output));
+        if incomplete {
+            out.push_str(
+                "stop=analysis incomplete; retained findings are advisory, not a complete result\n",
+            );
+        } else {
+            out.push_str(&terminal_line(&triage, output));
+        }
         push_limits(&mut out, &considered, &[]);
         if let Some(next) = next {
             out.push_str(&next);
@@ -112,6 +121,48 @@ pub(super) fn render(
         out.push('\n');
     }
     out
+}
+
+/// Project the producer's closed completeness decision, before any terminal
+/// claim. Retained gaps may still be useful, but do not complete this run.
+/// The pipeline already projects partial-scope budgets into this outcome.
+fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
+    let Some(outcome) = output
+        .analysis_outcome
+        .as_ref()
+        .filter(|outcome| !outcome.kind.is_complete())
+    else {
+        return false;
+    };
+    out.push_str(&format!(
+        "analysis=incomplete|outcome={}\n",
+        outcome.kind.as_str()
+    ));
+    // One bounded preview keeps the compact surface useful. The recovery is
+    // producer-bounded text and stays whole; clipping it could break a route.
+    if let Some(limitation) = outcome
+        .limitations
+        .iter()
+        .find(|limitation| !limitation.kind.is_advisory_disclosure())
+    {
+        let reason = limitation
+            .bounded_detail
+            .as_deref()
+            .unwrap_or_else(|| limitation.kind.plain_label());
+        out.push_str(&format!(
+            "limitation={}|reason={}|recovery={}\n",
+            limitation.kind.as_str(),
+            field(&clip(reason)),
+            field(&limitation.recovery.detail)
+        ));
+        if outcome.limitations.len() > 1 {
+            out.push_str(&format!(
+                "+{} more analysis limitations; `--format json` lists all\n",
+                outcome.limitations.len() - 1
+            ));
+        }
+    }
+    true
 }
 
 /// `ripr explain --format agent` (#12104): the one-finding counterpart of

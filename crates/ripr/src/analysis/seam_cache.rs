@@ -1715,6 +1715,18 @@ pub(crate) enum CacheLoad<T> {
     CorruptIgnored { reason: String },
 }
 
+/// Bounded read of a classified-seam cache file (single entry, shard, or
+/// manifest). The store never publishes a file above the encoded shard
+/// ceiling, so a larger file on disk is corrupt, legacy, or hostile: the
+/// bounded read fails instead of allocating it whole, and callers degrade
+/// to `CorruptIgnored` rebuild. An unparseable ceiling env falls back to
+/// the default ceiling rather than failing the load.
+fn read_classified_cache_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    let ceiling = classified_seam_cache_encoded_shard_ceiling_bytes()
+        .unwrap_or(CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES);
+    crate::bounded_input::read_with_limit(path, ceiling as u64)
+}
+
 /// Names the entry file in a corrupt-load reason so a burst of
 /// "cache entry ignored" warnings is attributable (#4383).
 fn corrupt_entry<T>(path: &Path, reason: impl std::fmt::Display) -> CacheLoad<T> {
@@ -2553,7 +2565,7 @@ impl RepoSeamFactCache {
         Vec<PathBuf>,
     )> {
         let path = self.entry_path(key);
-        let bytes = match std::fs::read(&path) {
+        let bytes = match read_classified_cache_file(&path) {
             Ok(b) => b,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
             Err(err) => {
@@ -2671,7 +2683,7 @@ impl RepoSeamFactCache {
         Vec<PathBuf>,
     )> {
         let manifest_path = self.sharded_manifest_path(key);
-        let bytes = match std::fs::read(&manifest_path) {
+        let bytes = match read_classified_cache_file(&manifest_path) {
             Ok(bytes) => bytes,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
             Err(err) => {
@@ -2751,7 +2763,7 @@ impl RepoSeamFactCache {
                     Ok(path) => path,
                     Err(reason) => return CacheLoad::CorruptIgnored { reason },
                 };
-            let bytes = match std::fs::read(&shard_path) {
+            let bytes = match read_classified_cache_file(&shard_path) {
                 Ok(bytes) => bytes,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                     return CacheLoad::CorruptIgnored {
@@ -7933,6 +7945,37 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn given_oversized_cache_entry_when_loading_then_corrupt_ignored_is_reported()
+    -> Result<(), String> {
+        // Memory bound: a cache file above the encoded shard ceiling is
+        // never allocated whole; the load degrades to a rebuild.
+        let dir = isolated_dir("oversized");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_state().cache_key();
+        let path = cache.entry_path(&key);
+        let oversized = vec![b'x'; CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES + 1];
+        std::fs::write(&path, oversized).map_err(|err| format!("write oversized entry: {err}"))?;
+        let result = match cache.load_classified_seams(&key) {
+            CacheLoad::CorruptIgnored { reason } => {
+                if reason.contains("exceeds") {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "oversized reason should name the byte limit, got {reason}"
+                    ))
+                }
+            }
+            other => Err(format!(
+                "expected CorruptIgnored on oversized entry, got {other:?}"
+            )),
+        };
+        ignore_remove_dir_all(&dir);
+        result
     }
 
     #[test]
