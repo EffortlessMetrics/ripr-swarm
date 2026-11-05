@@ -4131,7 +4131,9 @@ fn unknown_argument_names_stay_typed_bounded_and_recover() -> Result<(), String>
             if recovered.get("id") != Some(&recovery_id)
                 || document.pointer("/session/attempt_state") != Some(&json!("no_snapshot"))
             {
-                return Err(format!("unknown argument must not start analysis: {recovered}"));
+                return Err(format!(
+                    "unknown argument must not start analysis: {recovered}"
+                ));
             }
         }
     }

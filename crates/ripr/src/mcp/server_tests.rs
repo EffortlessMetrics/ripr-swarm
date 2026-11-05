@@ -1528,7 +1528,10 @@ fn unknown_argument_names_keep_bounded_explicit_diagnostics() -> Result<(), Stri
         assert_eq!(failure.data["allowed"], serde_json::json!(allowed));
         if truncated {
             assert_eq!(failure.data["argument_truncated"], serde_json::json!(true));
-            assert_eq!(failure.data["argument_bytes"], serde_json::json!(name.len()));
+            assert_eq!(
+                failure.data["argument_bytes"],
+                serde_json::json!(name.len())
+            );
             assert!(failure.detail.contains("truncated"), "{}", failure.detail);
         } else {
             assert!(failure.data.get("argument_truncated").is_none());
