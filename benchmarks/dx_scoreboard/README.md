@@ -340,6 +340,16 @@ baseline" instead of failing the gate; one that does not complete still fails.
 A repository that completes again after an incomplete baseline sample has no
 value to compare, so it is listed as "completed again" and left out of the
 compared worst.
+A passing gate is named honestly. When the missing-evidence counts the
+headline prints — `not_measured` plus the not-compared list — exceed half
+of the selected metrics, the gate status is `pass_with_gaps` instead of
+plain `pass`, and the headline rollup (in the Markdown report, on the
+console, and as `gate.counts` in the JSON) prints the meets-target,
+below-target, not-measured, failed and not-compared counts.
+`pass_with_gaps` still exits zero; only `fail` exits nonzero, because the
+gate judges regressions, not completeness. The committed baseline, for
+example, records 37 `not_measured` and 17 uncompared of 66 metrics, so a
+run matching it would headline `pass_with_gaps`, not `pass`.
 Metrics the baseline measured that a run cannot compare, such as ingested
 metrics without a receipt, are listed as not compared. One exception: when
 every selected metric has no value this run and nothing comparable (as
