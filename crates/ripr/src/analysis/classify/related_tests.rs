@@ -5902,6 +5902,9 @@ fn assertion_arguments_resolve_with(
     let Some(arguments) = super::reveal::split_top_level_arguments(arguments) else {
         return false;
     };
+    if all_named_calls.is_some() && arguments.len() < operands {
+        return false;
+    }
     let mut named_call_seen = false;
     for argument in arguments.into_iter().take(operands) {
         let text = format!("fn ripr_receiver_operand() {{ let _ = {argument}; }}");

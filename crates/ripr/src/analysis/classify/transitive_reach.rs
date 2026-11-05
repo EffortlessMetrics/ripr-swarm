@@ -1239,12 +1239,17 @@ impl OwnerReach<'_, '_> {
         }
     }
 
-    /// Only actual parsed enum constructors may be ignored as non-calling
-    /// values. An uppercase local callable is as uncertain as a lowercase one.
-    fn constructor_call_names(&self, function: &FunctionSummary) -> HashSet<String> {
+    /// A callable beyond this established target can reach the owner through
+    /// bindings or dispatch the name graph cannot settle. Inspect actual syntax,
+    /// including unnamed invocations; absent lexical call facts prove nothing.
+    /// Only established enum constructors have no function body to execute.
+    fn opposite_kind_function_may_run_owner(&self, function: &FunctionSummary) -> bool {
         use ra_ap_syntax::{AstNode, ast, ast::HasName};
+        if function.item.container == FunctionContainer::Unknown {
+            return true;
+        }
         let Some(parse) = self.index.source_syntax.parse_fragment(&function.body) else {
-            return HashSet::new();
+            return true;
         };
         let syntax = parse.tree().syntax().clone();
         let type_parameters: HashSet<String> = syntax
@@ -1252,50 +1257,27 @@ impl OwnerReach<'_, '_> {
             .filter_map(ast::TypeParam::cast)
             .filter_map(|parameter| parameter.name().map(|name| name.text().to_string()))
             .collect();
-        let mut names: HashMap<String, bool> = HashMap::new();
-        for call in syntax.descendants().filter_map(ast::CallExpr::cast) {
+        syntax.descendants().any(|node| {
+            if ast::MethodCallExpr::can_cast(node.kind()) || ast::MacroCall::can_cast(node.kind()) {
+                return true;
+            }
+            let Some(call) = ast::CallExpr::cast(node) else {
+                return false;
+            };
             let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
-                continue;
+                return true;
             };
             let Some(path) = callee.path() else {
-                continue;
+                return true;
             };
-            let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
-                continue;
-            };
-            let path_text = path.syntax().text().to_string();
-            let constructor = !path.syntax().descendants().any(|node| {
+            path.syntax().descendants().any(|node| {
                 ast::NameRef::cast(node)
                     .is_some_and(|name| type_parameters.contains(&*name.text()))
-            }) && super::owner_pin::owner_builds_declared_error_variant(
-                &path_text,
+            }) || !super::owner_pin::owner_builds_declared_error_variant(
+                &path.syntax().text().to_string(),
                 function,
                 self.index,
-            );
-            names
-                .entry(name.text().to_string())
-                .and_modify(|all| *all &= constructor)
-                .or_insert(constructor);
-        }
-        names
-            .into_iter()
-            .filter_map(|(name, all)| all.then_some(name))
-            .collect()
-    }
-
-    /// A callable beyond this established target can reach the owner through
-    /// bindings or dispatch the name graph cannot settle. Keep that uncertainty,
-    /// including indexed helpers and both lower- and uppercase callable values.
-    /// Only parser-established enum constructors have no function body to run.
-    fn opposite_kind_function_may_run_owner(&self, function: &FunctionSummary) -> bool {
-        if function.item.container == FunctionContainer::Unknown {
-            return true;
-        }
-        let constructors = std::cell::OnceCell::new();
-        calls_of(function).any(|call| {
-            !constructors
-                .get_or_init(|| self.constructor_call_names(function))
-                .contains(call.name.as_str())
+            )
         })
     }
 

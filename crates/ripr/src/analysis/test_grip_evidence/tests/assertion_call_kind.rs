@@ -207,7 +207,10 @@ fn same_named_call_kinds_keep_diff_owner_observation_scoped() -> Result<(), Stri
 #[test]
 fn same_named_call_kinds_preserve_real_wrapper_and_binding_paths() -> Result<(), String> {
     for (case, owner, source) in [
-        ("plain", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+        (
+            "plain",
+            "src/lib.rs::consume",
+            r##"#[derive(Debug, PartialEq)]
 pub enum Reduction { Over(u32), Empty }
 pub fn consume(value: u32) -> Reduction {
     match value {
@@ -230,8 +233,12 @@ mod tests {
         assert_eq!(widget.consume(1), Reduction::Over(16));
     }
 }
-"##),
-        ("generic", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+"##,
+        ),
+        (
+            "generic",
+            "src/lib.rs::consume",
+            r##"#[derive(Debug, PartialEq)]
 pub enum Reduction { Over(u32), Empty }
 pub fn consume<T>(value: u32) -> Reduction {
     match value {
@@ -254,8 +261,13 @@ mod tests {
         assert_eq!(widget.consume(1), Reduction::Over(16));
     }
 }
-"##),
-        ("unicode_lrm", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+"##,
+        ),
+        (
+            "unicode_lrm",
+            "src/lib.rs::consume",
+            concat!(
+                r##"#[derive(Debug, PartialEq)]
 pub enum Reduction { Over(u32), Empty }
 pub fn consume(value: u32) -> Reduction {
     match value {
@@ -264,7 +276,11 @@ pub fn consume(value: u32) -> Reduction {
     }
 }
 type Operation = fn(u32) -> Reduction;
-pub fn forward() -> Operation { ‎consume‎ }
+pub fn forward() -> Operation { "##,
+                "\u{200e}",
+                r##"consume"##,
+                "\u{200e}",
+                r##" }
 pub struct Widget;
 impl Widget {
     pub fn consume(&self, value: u32) -> Reduction { forward()(value) }
@@ -278,8 +294,14 @@ mod tests {
         assert_eq!(widget.consume(1), Reduction::Over(16));
     }
 }
-"##),
-        ("unicode_line_separator", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+"##,
+            ),
+        ),
+        (
+            "unicode_line_separator",
+            "src/lib.rs::consume",
+            concat!(
+                r##"#[derive(Debug, PartialEq)]
 pub enum Reduction { Over(u32), Empty }
 pub fn consume(value: u32) -> Reduction {
     match value {
@@ -288,9 +310,11 @@ pub fn consume(value: u32) -> Reduction {
     }
 }
 type Operation = fn(u32) -> Reduction;
-pub fn forward() -> Operation {
-consume
- }
+pub fn forward() -> Operation { "##,
+                "\u{2028}",
+                r##"consume"##,
+                "\u{2028}",
+                r##" }
 pub struct Widget;
 impl Widget {
     pub fn consume(&self, value: u32) -> Reduction { forward()(value) }
@@ -304,8 +328,13 @@ mod tests {
         assert_eq!(widget.consume(1), Reduction::Over(16));
     }
 }
-"##),
-        ("raw_helper", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+"##,
+            ),
+        ),
+        (
+            "raw_helper",
+            "src/lib.rs::consume",
+            r##"#[derive(Debug, PartialEq)]
 pub enum Reduction { Over(u32), Empty }
 pub fn consume(value: u32) -> Reduction {
     match value {
@@ -329,8 +358,12 @@ mod tests {
         assert_eq!(widget.consume(1), Reduction::Over(16));
     }
 }
-"##),
-        ("unicode_nfc_helper", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+"##,
+        ),
+        (
+            "unicode_nfc_helper",
+            "src/lib.rs::consume",
+            r##"#[derive(Debug, PartialEq)]
 pub enum Reduction { Over(u32), Empty }
 pub fn consume(value: u32) -> Reduction {
     match value {
@@ -354,8 +387,12 @@ mod tests {
         assert_eq!(widget.consume(1), Reduction::Over(16));
     }
 }
-"##),
-        ("unindexed_std_receiver", "src/lib.rs::next", r##"#[derive(Debug, PartialEq)]
+"##,
+        ),
+        (
+            "unindexed_std_receiver",
+            "src/lib.rs::next",
+            r##"#[derive(Debug, PartialEq)]
 pub enum Reduction { Over(u32), Empty }
 pub fn next() -> Reduction {
     match 1 {
@@ -376,8 +413,12 @@ mod tests {
         assert_eq!(external.next(), Some(Reduction::Over(16)));
     }
 }
-"##),
-        ("uppercase_callable", "src/lib.rs::consume", r##"#[derive(Debug, PartialEq)]
+"##,
+        ),
+        (
+            "uppercase_callable",
+            "src/lib.rs::consume",
+            r##"#[derive(Debug, PartialEq)]
 pub enum Reduction { Over(u32), Empty }
 pub fn consume(value: u32) -> Reduction {
     match value {
@@ -401,8 +442,12 @@ mod tests {
         assert_eq!(widget.consume(run), Reduction::Over(16));
     }
 }
-"##),
-        ("shadowed_free_callable", "src/lib.rs::impl Widget::consume", r##"#[derive(Debug, PartialEq)]
+"##,
+        ),
+        (
+            "shadowed_free_callable",
+            "src/lib.rs::impl Widget::consume",
+            r##"#[derive(Debug, PartialEq)]
 pub enum Reduction { Over(u32), Empty }
 pub fn consume(value: u32) -> Reduction { Reduction::Over(15 + value) }
 pub struct Widget;
@@ -424,7 +469,72 @@ mod tests {
         assert_eq!(consume(1), Reduction::Over(16));
     }
 }
-"##),
+"##,
+        ),
+        (
+            "parenthesized_callable",
+            "src/lib.rs::consume",
+            r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn consume(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+type Operation = fn(u32) -> Reduction;
+pub struct Widget;
+impl Widget {
+    #[allow(non_snake_case)]
+    pub fn consume(&self, Run: Operation) -> Reduction { (Run)(1) }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        let run = consume;
+        assert_eq!(widget.consume(run), Reduction::Over(16));
+    }
+}
+"##,
+        ),
+        (
+            "constructor_method_name_collision",
+            "src/lib.rs::consume",
+            r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn consume(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+pub struct Runner { callback: fn(u32) -> Reduction }
+impl Runner {
+    #[allow(non_snake_case)]
+    pub fn Over(&self, value: u32) -> Reduction { (self.callback)(value) }
+}
+pub struct Widget;
+impl Widget {
+    pub fn consume(&self, runner: &Runner, value: u32) -> Reduction {
+        let _unused = Reduction::Over(15);
+        runner.Over(value)
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn receiver_contract() {
+        let widget = Widget;
+        let runner = Runner { callback: consume };
+        assert_eq!(widget.consume(&runner, 1), Reduction::Over(16));
+    }
+}
+"##,
+        ),
     ] {
         let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
         let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
