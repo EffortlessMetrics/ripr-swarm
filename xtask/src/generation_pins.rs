@@ -997,7 +997,7 @@ mod tests {
     #[test]
     fn merge_ref_resolution_surfaces_sibling_collision_in_a_real_repo() -> Result<(), String> {
         use super::{
-            EvaluationPoints, ResolvedBase, git_show_text, production_blob_reader, resolve_base,
+            EvaluationPoints, ResolvedBase, production_blob_reader, resolve_base,
             resolve_evaluation_points,
         };
         let root = crate::tests::temp_dir("generation-pins-merge-ref");
@@ -1006,24 +1006,36 @@ mod tests {
                 .map(|text| text.trim().to_string())
         };
         let commit_with = |value: &str, message: &str| -> Result<String, String> {
-            // Rewrite the classified constant; every other row stays at 5.5.
-            for pin in GENERATION_PINS {
-                let path = root.join(pin.defining_file);
+            // Write each defining file once so shared-file registry rows do
+            // not overwrite the classified generation or one another.
+            for (file, text) in synthetic_texts(|family| {
+                if family == "classified_seam_cache" {
+                    value.to_string()
+                } else {
+                    "5.5".to_string()
+                }
+            }) {
+                let path = root.join(file);
                 std::fs::create_dir_all(path.parent().ok_or("fixture path has no parent")?)
                     .map_err(|error| format!("create {}: {error}", path.display()))?;
-                let value_for_row = if pin.family == "classified_seam_cache" {
+                std::fs::write(&path, text)
+                    .map_err(|error| format!("write {}: {error}", path.display()))?;
+            }
+            // Establish the stimulus through the production reader before
+            // Git commits it: every declaration must survive the fixture write.
+            let reader = production_blob_reader(&root);
+            for pin in GENERATION_PINS {
+                let expected = if pin.family == "classified_seam_cache" {
                     value
                 } else {
                     "5.5"
                 };
-                std::fs::write(
-                    &path,
-                    format!(
-                        "pub(crate) const {}: &str = \"{value_for_row}\";\n",
-                        pin.constant
-                    ),
-                )
-                .map_err(|error| format!("write {}: {error}", path.display()))?;
+                assert_eq!(
+                    super::read_generation(&reader, None, pin)?,
+                    expected,
+                    "fixture generation for {}",
+                    pin.family
+                );
             }
             run(&["add", "-A"])?;
             run(&[
@@ -1039,9 +1051,13 @@ mod tests {
         };
         run(&["init"])?;
         let base = commit_with("5.5", "base")?;
-        let _ = base;
         run(&["checkout", "-b", "pr"])?;
         let pr_head = commit_with("7.7", "pr claims 7.7")?;
+        assert_ne!(
+            run(&["rev-parse", &format!("{base}^{{tree}}")])?,
+            run(&["rev-parse", &format!("{pr_head}^{{tree}}")])?,
+            "the PR must change the classified generation, not make an empty commit"
+        );
         run(&["checkout", "-"])?;
         let main_tip = commit_with("7.7", "sibling merged 7.7")?;
         run(&["update-ref", "refs/remotes/origin/main", &main_tip])?;
@@ -1091,11 +1107,15 @@ mod tests {
             "the collision must name the claimed value and class: {violation}"
         );
         // The fork is the PR's true fork (value 5.5), not the aliased base tip.
+        assert_eq!(
+            points.fork_commit, base,
+            "the true PR fork must be selected"
+        );
         let fork_value =
-            git_show_text(&root, &points.fork_commit, GENERATION_PINS[0].defining_file)?;
-        assert!(
-            fork_value.contains("5.5"),
-            "fork must be the PR's original fork, not the aliased base tip: {fork_value}"
+            super::read_generation(&reader, Some(&points.fork_commit), &GENERATION_PINS[0])?;
+        assert_eq!(
+            fork_value, "5.5",
+            "the classified fork generation must not alias the base tip"
         );
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
