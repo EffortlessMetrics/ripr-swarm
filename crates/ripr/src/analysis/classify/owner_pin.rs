@@ -4195,6 +4195,15 @@ enum ReceiverType {
 enum ReturnPathGate {
     /// The changed expression is the owner's only exit.
     Any,
+    /// #13037 Defect A: the changed exit (`return <lit>;` or the tail) is a
+    /// whole decimal scalar literal and every other exit builds a different
+    /// whole decimal scalar literal, so the changed exit is the owner's only
+    /// source of `<lit>`. A passing exact pin at `<lit>` on an owner call
+    /// then proves the changed exit ran: any other exit would return its own
+    /// distinct literal and fail the pin. A second source of the same
+    /// literal, a parameter/computed exit (which may alias `<lit>` under
+    /// some input), a `?`, or a nested-closure return refuses (fail closed).
+    EarlyScalar { literal: String },
     /// The pinned value must start with this constructor. `Head("Err")`
     /// comes only from an early `return Err(..)`, and like `EarlyHead` it
     /// refuses an owner file that binds `Ok` or `Err` as a value.
@@ -7471,6 +7480,9 @@ impl ReturnPathGate {
                 constructor_call_span(expected.trim(), head).is_some()
             }
             Self::Exact(value) => expected.trim() == *value,
+            Self::EarlyScalar { literal } => {
+                super::boundary_pairing::same_scalar_literal(expected.trim(), literal)
+            }
             Self::ErrVariant {
                 qualifier, variant, ..
             } => {
@@ -8393,7 +8405,10 @@ fn return_path_gate_from(
             return None;
         }
         return early_return_gate(body, inner, inner_text, changed, &spans_changed_line)
-            .or_else(|| err_variant_gate(body, inner, inner_text, changed, &spans_changed_line));
+            .or_else(|| err_variant_gate(body, inner, inner_text, changed, &spans_changed_line))
+            .or_else(|| {
+                scalar_early_return_gate(body, inner, inner_text, changed, &spans_changed_line)
+            });
     }
     if has_unbounded_macro(inner) {
         return None;
@@ -8423,6 +8438,18 @@ fn return_path_gate_from(
     if early_exits == 0 {
         return Some(ReturnPathGate::Any);
     }
+    // #13037 Defect A: a scalar literal tail beside early returns that build
+    // only different scalar literals is the owner's only source of its value,
+    // like `Any` but multi-exit. Refused when any exit may alias the tail
+    // value (a parameter, computed exit or same literal elsewhere).
+    if !conditional
+        && !inner.contains('?')
+        && scalar_exits_are_distinct_literals(inner, inner_text, changed).is_some()
+    {
+        return Some(ReturnPathGate::EarlyScalar {
+            literal: changed.to_string(),
+        });
+    }
     let (head, other) = if constructor_call_span(changed, "Ok").is_some() {
         ("Ok", "Err")
     } else if constructor_call_span(changed, "Some").is_some() {
@@ -8445,6 +8472,40 @@ fn return_path_gate_from(
             || starts_with_word(inner[offset + "return".len()..].trim_start(), other)
     });
     returns_agree.then_some(ReturnPathGate::Head(head))
+}
+
+/// #13037 Defect A, the propagation witness's owner-side question: whether the
+/// changed early `return <lit>;` on `changed_line` is the owner's only exit
+/// producing `<lit>`. Returns the literal when the same fail-closed exit rule
+/// as the [`ReturnPathGate::EarlyScalar`] pin gate establishes it; the witness
+/// may then complete the direct-return edge, and reveal's per-test pin
+/// admission (the value check) remains the authority for whether a test
+/// observes the exit.
+pub(in crate::analysis) fn scalar_early_return_exit(
+    body: &str,
+    expression: &str,
+    changed_line: usize,
+) -> Option<String> {
+    let masked = mask_comments_and_strings(body);
+    let open = body_block_open(&masked)?;
+    let close = matching_close(&masked, open, b'{', b'}')?;
+    let inner = &masked[open + 1..close];
+    let inner_text = &body[open + 1..close];
+    let changed = collapse_whitespace(expression.trim().trim_end_matches(';'));
+    let changed = changed
+        .strip_prefix("return ")
+        .map_or(changed.as_str(), str::trim);
+    let spans_changed_line = |start: usize, end: usize| {
+        let line_of = |offset: usize| body[..open + 1 + offset].matches('\n').count();
+        let text = &inner_text[start..end];
+        let first = start + (text.len() - text.trim_start().len());
+        let last = start + text.trim_end().len();
+        (line_of(first)..=line_of(last)).contains(&changed_line)
+    };
+    match scalar_early_return_gate(body, inner, inner_text, changed, &spans_changed_line)? {
+        ReturnPathGate::EarlyScalar { literal } => Some(literal),
+        _ => None,
+    }
 }
 
 /// An early `return None;` / `return Err(..);` is the only source of that
@@ -8513,6 +8574,87 @@ fn early_return_gate(
     // The tail must itself build the opposite constructor: an empty tail
     // after a trailing `if .. { .. } else { None }` hides a second source.
     (changed_returns == 1 && opposite(tail)).then_some(gate)
+}
+
+/// #13037 Defect A: an early `return <lit>;` whose value is a whole decimal
+/// scalar literal is the owner's only source of `<lit>` when every other
+/// `return` builds a different whole scalar literal and the tail is also a
+/// different whole scalar literal. A pin expecting `<lit>` on an owner call
+/// then observes the changed return: the sibling exits would return their own
+/// distinct literals and fail the pin, so a passing pin proves the changed
+/// exit ran. Fail closed (no gate) for a second source of the same literal
+/// (`return 0; .. 0`), a parameter or computed exit (which may alias `<lit>`
+/// for some input the gate does not read), a `?`, a nested-closure return, an
+/// unbounded macro, or a conditionally-evaluated changed value.
+fn scalar_early_return_gate(
+    body: &str,
+    inner: &str,
+    inner_text: &str,
+    changed: &str,
+    spans_changed_line: &dyn Fn(usize, usize) -> bool,
+) -> Option<ReturnPathGate> {
+    if !super::boundary_pairing::is_whole_decimal_literal(changed)
+        || evaluates_conditionally(&mask_comments_and_strings(changed))
+        || inner.contains('?')
+        || !returns_leave_the_function(body)
+    {
+        return None;
+    }
+    let mut changed_returns = 0usize;
+    for offset in whole_word_offsets(inner, "return") {
+        let value_start = offset + "return".len();
+        let value_end = value_start + inner[value_start..].find(';')?;
+        let value = collapse_whitespace(&inner_text[value_start..value_end]);
+        let value = value.trim();
+        if !super::boundary_pairing::is_whole_decimal_literal(value) {
+            // A parameter, const or computed exit may alias the changed
+            // literal under an input this static read does not evaluate.
+            return None;
+        }
+        if super::boundary_pairing::same_scalar_literal(value, changed) {
+            // Only the changed line may produce this literal; a second
+            // `return` of it elsewhere is a second source.
+            if !spans_changed_line(offset, value_end) {
+                return None;
+            }
+            changed_returns += 1;
+        }
+    }
+    let (after_semicolon, after_brace) = top_level_tail_starts(inner);
+    let tail = collapse_whitespace(&inner_text[after_semicolon.max(after_brace)..]);
+    let tail = tail.trim();
+    (changed_returns == 1
+        && super::boundary_pairing::is_whole_decimal_literal(tail)
+        && !super::boundary_pairing::same_scalar_literal(tail, changed))
+    .then(|| ReturnPathGate::EarlyScalar {
+        literal: changed.to_string(),
+    })
+}
+
+/// #13037 Defect A, tail direction: whether every early `return` in `inner`
+/// builds a whole decimal scalar literal different from `changed`. Used for a
+/// scalar literal tail beside early returns: with the tail established as the
+/// changed expression and no `?` in the body, the tail is then the owner's
+/// only source of its value. A parameter, computed or same-literal return
+/// refuses (fail closed), as does a second return of the tail's own literal.
+fn scalar_exits_are_distinct_literals(inner: &str, inner_text: &str, changed: &str) -> Option<()> {
+    if !super::boundary_pairing::is_whole_decimal_literal(changed) {
+        return None;
+    }
+    for offset in whole_word_offsets(inner, "return") {
+        let value_start = offset + "return".len();
+        let value_end = value_start + inner[value_start..].find(';')?;
+        let value = collapse_whitespace(&inner_text[value_start..value_end]);
+        let value = value.trim();
+        if !super::boundary_pairing::is_whole_decimal_literal(value)
+            || super::boundary_pairing::same_scalar_literal(value, changed)
+        {
+            // A parameter/computed exit may alias the tail value; a return of
+            // the tail's own literal is a second source of it.
+            return None;
+        }
+    }
+    Some(())
 }
 
 /// #7063: the enum and variant segments (`ConfigError`, `MissingEquals`) of
