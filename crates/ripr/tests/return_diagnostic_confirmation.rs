@@ -291,7 +291,7 @@ fn persisted_effect_observer_retains_identity_without_lending_it_to_another_inst
     let diff = include_str!("../../../fixtures/observation_verified_side_effect/diff.patch");
     let unrelated = test.replace(
         "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
-        "let other = Notifier::new(); assert_eq!(*other.sent.borrow(), Vec::<String>::new());",
+        "let other = Notifier::new();\n    assert_eq!(*other.sent.borrow(), Vec::<String>::new());",
     );
     assert_ne!(unrelated, test);
     for (test, expected) in [(test, "exposed"), (unrelated.as_str(), "weakly_exposed")] {
