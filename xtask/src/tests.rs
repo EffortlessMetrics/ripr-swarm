@@ -7639,11 +7639,8 @@ fn local_context_retained_receipts_are_exact_and_do_not_admit_neighbors() -> Res
             .iter()
             .find(|e| e.receipt_sha256.is_some())
             .ok_or("retained row")?;
-        let manifest: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string("fixtures/repair_funnel/installed-41383028929.json")
-                .map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
+        let manifest = std::fs::read("fixtures/repair_funnel/installed-41383028929.json")
+            .map_err(|e| e.to_string())?;
         let hash = entry.receipt_sha256.as_deref().ok_or("retained digest")?;
         let admits = |row: &LocalContextAllow, actual: &str, count| {
             super::retained_local_context_identity(row, &manifest, actual, count)
@@ -7664,6 +7661,33 @@ fn local_context_retained_receipts_are_exact_and_do_not_admit_neighbors() -> Res
         assert!(
             !admits(&neighbor, hash, entry.max_count),
             "unregistered neighboring path"
+        );
+        use sha2::{Digest, Sha256};
+        let new_receipt = serde_json::to_vec(&serde_json::json!({"path": entry.pattern}))
+            .map_err(|e| e.to_string())?;
+        let replacement = format!("sha256:{:x}", Sha256::digest(&new_receipt));
+        neighbor.max_count =
+            super::local_context_line_findings(&String::from_utf8_lossy(&new_receipt))
+                .iter()
+                .filter(|(pattern, _)| pattern == &neighbor.pattern)
+                .count();
+        assert!(
+            neighbor.max_count > 0,
+            "new receipt must contain the retained runner pattern"
+        );
+        neighbor.receipt_sha256 = Some(replacement.clone());
+        let mut repinned: serde_json::Value =
+            serde_json::from_slice(&manifest).map_err(|e| e.to_string())?;
+        repinned["bundles"][0]["files"]["neighbor.json"] = serde_json::json!(replacement);
+        let repinned_bytes = serde_json::to_vec(&repinned).map_err(|e| e.to_string())?;
+        assert!(
+            !super::retained_local_context_identity(
+                &neighbor,
+                &repinned_bytes,
+                &replacement,
+                neighbor.max_count
+            ),
+            "co-edited manifest, allowlist and new receipt cannot enroll another artifact"
         );
         neighbor = entry.clone();
         neighbor.receipt_sha256 = None;

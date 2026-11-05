@@ -89,7 +89,8 @@ result records and stdout/stderr hashes. These older producer fragments do not
 have their own version tag; the input envelope versions this exact adapter.
 A receipt with another shape is unsupported. This is custody and consistency
 admission, not an independent verifier attestation or an assertion that supplied
-hashes can authenticate a maliciously fabricated bundle.
+hashes can authenticate a maliciously fabricated bundle. Hostile concurrent
+pre-open filesystem namespace mutation is outside this custody contract.
 
 Native verification requires the existing exact Cargo command, selector,
 nonzero selected/executed denominator, raw libtest result and native status.

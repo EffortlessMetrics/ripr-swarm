@@ -22732,10 +22732,19 @@ fn validate_local_context_allowlist(allowlist: &[LocalContextAllow]) -> Vec<Stri
 
 fn retained_local_context_identity(
     entry: &LocalContextAllow,
-    manifest: &Value,
+    manifest_bytes: &[u8],
     actual_sha: &str,
     actual_count: usize,
 ) -> bool {
+    use sha2::{Digest, Sha256};
+    if format!("{:x}", Sha256::digest(manifest_bytes))
+        != "312f7ea65c43ebf4ffac256c3ab4a5f257bbc6a65de30123024526ffb149448a"
+    {
+        return false;
+    }
+    let Ok(manifest) = serde_json::from_slice::<Value>(manifest_bytes) else {
+        return false;
+    };
     let Some(expected) = entry.receipt_sha256.as_deref() else {
         return false;
     };
@@ -22783,10 +22792,7 @@ fn retained_local_context_identity(
 }
 
 fn retained_local_context_allowance(entry: &LocalContextAllow) -> bool {
-    let Ok(manifest) = read_text_lossy(Path::new(
-        "fixtures/repair_funnel/installed-41383028929.json",
-    ))
-    .and_then(|text| serde_json::from_str::<Value>(&text).map_err(|e| e.to_string())) else {
+    let Ok(manifest) = fs::read("fixtures/repair_funnel/installed-41383028929.json") else {
         return false;
     };
     let Some(expected) = entry.receipt_sha256.as_deref() else {

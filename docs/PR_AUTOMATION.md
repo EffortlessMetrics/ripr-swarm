@@ -956,6 +956,9 @@ Its optional fifth `receipt_sha256` column is limited to the reviewed #6308
 public CI receipt subset from run 41383028929, artifact 13114861147. Each row
 binds one exact JSON path, detected CI-runner pattern, occurrence count and
 original file SHA-256, also present in the existing retained-input manifest.
+The policy hashes the same raw manifest bytes it parses and requires original
+SHA-256 `312f7ea65c43ebf4ffac256c3ab4a5f257bbc6a65de30123024526ffb149448a`;
+co-editing manifest entries and allowlist pins cannot enroll another artifact.
 Every embedded home segment must name the CI runner. Changed bytes, new paths,
 private-user paths, memory/sandbox state and excess occurrences still refuse;
 this is no directory exclusion or general receipt waiver.

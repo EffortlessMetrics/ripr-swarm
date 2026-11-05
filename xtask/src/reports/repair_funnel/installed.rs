@@ -722,6 +722,12 @@ mod tests {
         assert_eq!(report.case_count, 1);
         let row = report.cases.first().ok_or("row")?;
         assert_eq!(row.cohort, "installed_deterministic_journey");
+        assert_eq!(
+            row.identity.get("manifest_sha256"),
+            Some(&digest(
+                &fs::read(manifest_path()).map_err(|e| e.to_string())?
+            ))
+        );
         assert_eq!(row.funnel_exit, "verified_improvement");
         assert!(row.control_violations.is_empty());
         assert!(row.stages.iter().any(|s| s.stage == "first_honest_result"));
