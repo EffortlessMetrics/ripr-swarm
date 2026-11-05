@@ -214,6 +214,16 @@ pub(in crate::analysis) fn withhold_framework_oracle_gap(
     true
 }
 
+/// The existing field snapshot reader, shared with repository seam evidence.
+/// Returning its advice keeps the private idiom classification in one owner.
+pub(in crate::analysis) fn insta_field_snapshot_limitation(
+    test: &TestFact,
+    changed_text: &str,
+    owner: &str,
+) -> Option<&'static str> {
+    insta_field_snapshot_limit(test, changed_text, owner).map(Idiom::advice)
+}
+
 fn masked(text: &str) -> String {
     crate::analysis::extract::mask_comments_and_strings(text)
 }

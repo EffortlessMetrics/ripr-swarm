@@ -1,0 +1,37 @@
+# One framework reader governs fresh Findings and field-seam uncertainty.
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests/framework_snapshot.rs::full_and_compact_field_snapshots_reuse_the_framework_reader",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/framework_snapshot.rs::a_literal_redacted_field_remains_a_gap_while_its_sibling_is_unresolved",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/framework_snapshot.rs::unrelated_or_shadowed_snapshot_values_do_not_name_the_limit",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/framework_snapshot.rs::noncode_configuration_words_keep_the_literal_field_gap",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/framework_snapshot.rs::an_ordinary_test_named_like_the_limit_remains_unmarked",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/framework_snapshot.rs::an_independent_exact_field_assertion_keeps_strong_grip",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/framework_snapshot.rs::compact_limit_reads_a_snapshot_witness_past_the_related_test_cap",
+  "crates/ripr/src/output/pilot/tests/framework_snapshot.rs::a_named_field_snapshot_limit_alone_withholds_pilot_brief_and_repair",
+  "crates/ripr/src/output/pilot/tests/framework_snapshot.rs::source_mentions_in_other_stages_do_not_create_framework_limitations",
+  "crates/ripr/tests/task_first_facade/field_snapshot.rs::pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0021"
+tests = [
+  "crates/ripr/src/output/pilot/tests/framework_snapshot.rs::a_named_field_snapshot_limit_alone_withholds_pilot_brief_and_repair",
+  "crates/ripr/src/output/pilot/tests/framework_snapshot.rs::source_mentions_in_other_stages_do_not_create_framework_limitations",
+  "crates/ripr/tests/task_first_facade/field_snapshot.rs::pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "xtask/src/evidence_promotion/repo_seam_reports.rs::tests::named_limitation_assertions_distinguish_identical_class_and_stages",
+  "xtask/src/evidence_promotion/repo_seam_reports.rs::tests::named_limitation_assertions_reject_missing_malformed_and_duplicate_rows",
+  "xtask/src/evidence_promotion/repo_seam_reports.rs::tests::named_limitation_cases_require_explicit_presence_and_a_live_subject",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_repo_field_snapshot_settings.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_repo_field_snapshot_literal.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_repo_field_snapshot_weak.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_repo_field_snapshot_exact.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_repo_field_snapshot_other.json",
+  "fixtures/evidence-promotion-honesty-corpus/cases/rust_repo_field_snapshot_inline.json",
+]

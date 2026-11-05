@@ -6246,6 +6246,10 @@ fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Resul
 
 #[path = "task_first_facade/brief_diff_status.rs"]
 mod brief_diff_status;
+#[path = "task_first_facade/field_snapshot.rs"]
+mod field_snapshot;
+#[path = "task_first_facade/panic_marker.rs"]
+mod panic_marker;
 
 /// #11598: `--quiet` (and `RIPR_QUIET`) on `repair` / `continue` drop the
 /// phase narration and `wrote <path>` lines but never the results (attempt
