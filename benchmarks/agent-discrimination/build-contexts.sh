@@ -27,8 +27,6 @@ CRATE="$1"; RIPR_BIN="$2"; OUT="$3"; SCENARIO="$4"; RUN_ID="$5"
 [ -d "$CRATE" ] || { echo "ERROR: crate path not found: $CRATE" >&2; exit 2; }
 [ -x "$RIPR_BIN" ] || { echo "ERROR: ripr binary not executable: $RIPR_BIN" >&2; exit 2; }
 CRATE="$(cd "$CRATE" && pwd -W 2>/dev/null || pwd)"
-OUT="$(cd "$OUT" 2>/dev/null && pwd -W 2>/dev/null || pwd)" || OUT="$(mkdir -p "$OUT" && cd "$OUT" && pwd -W 2>/dev/null || pwd)"
-mkdir -p "$OUT"
 
 LOWER="$(printf '%s' "$CRATE" | tr '[:upper:]' '[:lower:]')"
 case "$LOWER" in
@@ -37,7 +35,22 @@ case "$LOWER" in
     exit 2 ;;
 esac
 
+# Match the generator and evaluator: reject a crate below a Cargo manifest
+# before writing any context files that imply the run is usable.
+DIR_WALK="$(dirname "$CRATE")"
+while [ "$DIR_WALK" != / ] && [ "$DIR_WALK" != . ]; do
+  if [ -f "$DIR_WALK/Cargo.toml" ]; then
+    echo "ERROR: crate '$CRATE' sits under Cargo manifest '$DIR_WALK/Cargo.toml'; materialize outside Cargo workspaces." >&2
+    exit 2
+  fi
+  PARENT="$(dirname "$DIR_WALK")"
+  [ "$PARENT" = "$DIR_WALK" ] && break
+  DIR_WALK="$PARENT"
+done
+
 git -C "$CRATE" rev-parse --verify -q HEAD~1 >/dev/null || { echo "ERROR: $CRATE has no HEAD~1 (need 2 commits)" >&2; exit 2; }
+mkdir -p "$OUT"
+OUT="$(cd "$OUT" && { pwd -W 2>/dev/null || pwd; })"
 
 RIPR_VERSION="$("$RIPR_BIN" --version)"
 echo "ripr: $RIPR_VERSION"

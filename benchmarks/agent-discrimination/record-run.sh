@@ -9,7 +9,8 @@
 #   - the report and summary.csv are written atomically (same-directory
 #     temp file + rename);
 #   - summary.csv is DERIVED from the report files on every write, so it can
-#     never lose rows (the seed-study summary was missing 4 of 9 rows).
+#     include every valid report on successful rebuild (the seed-study summary
+#     was missing 4 of 9 rows). A crash between renames can leave it stale.
 #
 # Usage:
 #   bash record-run.sh --results-dir <dir> --run-id <scenario>-<variant>-rNN \
@@ -76,11 +77,20 @@ EV="$(tr -d '\r' < "$EVAL_OUTPUT" | grep -m1 '^DISCRIMINATES: ' || true)"
 [ "$EV" = "DISCRIMINATES: $DISCRIMINATES" ] \
   || fail "--discriminates '$DISCRIMINATES' contradicts evaluator output ('$EV')"
 
+# Bind the recorded source bytes to the source used by the evaluator.
+EVAL_HASH="$(tr -d '\r' < "$EVAL_OUTPUT" | sed -n 's/^TEST_SOURCE_SHA256: //p')"
+SOURCE_HASH="$(sha256sum "$FINAL_TEST" | awk '{print $1}')"
+[ "$EVAL_HASH" = "$SOURCE_HASH" ] || fail "final test source does not match evaluator source digest"
+
 # ---- Write the report atomically --------------------------------------------
 mkdir -p "$RESULTS_DIR"
+# A summary is a snapshot of all reports. Fail closed when another writer is
+# rebuilding it so an older snapshot cannot overwrite a newer one.
+LOCK="$RESULTS_DIR/.record-run.lock"
+mkdir "$LOCK" 2>/dev/null || fail "another record writer holds $LOCK (or a stale lock needs inspection)"
 REPORT="$RESULTS_DIR/$RUN_ID.md"
 TMP_REPORT="$RESULTS_DIR/.${RUN_ID}.md.tmp$$"
-trap 'rm -f "$TMP_REPORT" "$TMP_CSV"' EXIT
+trap 'rm -f "$TMP_REPORT" "$TMP_CSV"; rmdir "$LOCK"' EXIT
 TMP_CSV="$RESULTS_DIR/.summary.csv.tmp$$"
 
 {

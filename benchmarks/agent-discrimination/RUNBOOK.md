@@ -13,8 +13,8 @@ then records the run with `record-run.sh`.
 This encoding applies the measurement-validity fixes from issue #13113 over
 the Nov 2-4 seed-study harness: **per-run cloned crates** (never a shared
 scenario crate), **toolchain PATH normalization**, **true cargo exit codes**
-in the evaluator, **populated structured record fields**, and **atomic
-report+summary writes**. Do not weaken any of them to save a step.
+in the evaluator, **populated structured record fields**, and **individual atomic
+report and summary writes**. Do not weaken any of them to save a step.
 
 ## Layout
 
@@ -35,7 +35,7 @@ benchmarks/agent-discrimination/
   results/seed-study/          RECORDED first calibration (see README.md)
   scratch/                     gitignored; not used by the protocol — clones
                                live outside any Cargo workspace checkout
-  logs/                        gitignored; eval phase logs
+  logs/                        legacy seed-study logs; new phase logs live in each run-owned crate
 ```
 
 Each scenario crate is a git repo with EXACTLY two commits:
@@ -124,11 +124,18 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
    ```
 
    Exit code 0 and `DISCRIMINATES: yes` = discriminating test.
-   Anything else: keep the verbatim output; the score is `no`.
+   Exit code 1 and `DISCRIMINATES: no` = non-discriminating test. Exit 2
+   indicates an invalid setup, including an ambiguous function name; repair it
+   before scoring. The named function must occur in exactly one top-level
+   `tests/*.rs` integration target, which is run with an exact name filter.
 
 6. **Record the run** (structured fields are validated; `context_bytes` is
-   measured from the actual context file — for `ripr-tool` pass the saved
-   solver ripr output file; reports and summary are written atomically):
+   measured from the actual context file; the final test bytes must match the
+   evaluator digest. This binds that file only, not the contents of any
+   included modules or other dependencies; retain those separately when used.
+   Concurrent record writers to one results directory are
+   refused and may be retried after the current writer finishes. For `ripr-tool` pass the saved
+   solver ripr output file; each report and summary is written by atomic rename):
 
    ```bash
    bash <benchmark-dir>/record-run.sh \
@@ -143,7 +150,9 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
    ```
 
    `record-run.sh` rebuilds `summary.csv` from every report in the results
-   directory on each write, so the summary cannot lose rows.
+   directory on each successful write. A crash between the two renames can leave
+   the summary stale until a subsequent successful rebuild; inspect a stale lock
+   before removing it.
 
 7. **Clean up the run**: delete `$SCRATCH` (the clone is run-owned; no reset
    protocol is needed because nothing is shared). Keep the transcript, the
@@ -211,7 +220,7 @@ or a `--discriminates` value that contradicts the evaluator's own
    exact `test <name> ... FAILED` line).
 
 A test that passes on both, fails to compile, or fails for a setup reason
-scores `no`. The full phase logs are kept in `logs/<crate>-eval-*.log`.
+scores `no`. The full phase logs are kept in `<crate>/.agent-bench-logs/`.
 
 ## ripr invocation (per run-owned clone)
 

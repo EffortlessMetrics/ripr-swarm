@@ -7,14 +7,14 @@
 #
 # Protocol (fixed direction, matches RUNBOOK.md):
 #   Phase 1 (ORIGINAL): flip the crate's changed source files back to
-#            HEAD~1 content, run `cargo test <name>`  -> MUST PASS
+#            HEAD~1 content, run the exact integration test -> MUST PASS
 #            (exit 0 AND an exact `test <name> ... ok` line).
-#   Phase 2 (CHANGED): restore HEAD content, run `cargo test <name>`
+#   Phase 2 (CHANGED): restore HEAD content, run the exact integration test
 #            -> MUST FAIL (nonzero exit AND an exact
 #            `test <name> ... FAILED` line).
 #
 # Prints DISCRIMINATES: yes|no plus the assert lines (inputs) the test uses.
-# Phase logs are kept in <bench>/logs/. Exit code 0 iff DISCRIMINATES: yes.
+# Phase logs are kept in the run-owned crate under .agent-bench-logs/. Exit code 0 iff DISCRIMINATES: yes.
 #
 # Validity fixes over the Nov 2-4 seed-study evaluator (issue #13113):
 #   - step-zero toolchain PATH normalization (cargo was off the harness PATH
@@ -29,19 +29,17 @@ set -u
 export CARGO_TERM_COLOR=never
 
 BENCH_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG_DIR="$BENCH_DIR/logs"
-mkdir -p "$LOG_DIR"
 
 if [ $# -ne 2 ]; then
   echo "Usage: bash eval.sh <crate_path> <test_function_name>"
   exit 2
 fi
 
-CRATE="$(cd "$1" 2>/dev/null && pwd -W 2>/dev/null || pwd)" || { echo "ERROR: crate path not found: $1"; exit 2; }
+CRATE="$(cd "$1" 2>/dev/null && { pwd -W 2>/dev/null || pwd; })" || { echo "ERROR: crate path not found: $1"; exit 2; }
 TEST_NAME="$2"
-CRATE_NAME="$(basename "$CRATE")"
-LOG_ORIG="$LOG_DIR/$CRATE_NAME-eval-original.log"
-LOG_CHNG="$LOG_DIR/$CRATE_NAME-eval-changed.log"
+LOG_DIR="$CRATE/.agent-bench-logs"
+LOG_ORIG="$LOG_DIR/eval-original.log"
+LOG_CHNG="$LOG_DIR/eval-changed.log"
 
 # ---- Step zero: toolchain PATH normalization (issue #13113) -----------------
 if ! command -v cargo >/dev/null 2>&1; then
@@ -93,12 +91,29 @@ if ! git -C "$CRATE" diff --quiet -- $CHANGED_FILES; then
   exit 2
 fi
 
-TEST_FILE="$(grep -RlF "fn ${TEST_NAME}(" "$CRATE/tests" 2>/dev/null | head -n 1)"
-if [ -z "$TEST_FILE" ]; then
-  echo "ERROR: no 'fn ${TEST_NAME}(' found under $CRATE/tests"
-  echo "       The new test must live in a file under tests/ (see RUNBOOK.md)."
+# Cargo can run identically named tests in multiple integration targets.  A
+# name alone cannot bind its verdict and displayed input to one source file.
+case "$TEST_NAME" in
+  ''|*[!a-zA-Z0-9_]*) echo "ERROR: test name must be a Rust function identifier"; exit 2 ;;
+esac
+TEST_FILES="$(grep -RlF "fn ${TEST_NAME}(" "$CRATE/tests" 2>/dev/null || true)"
+TEST_COUNT="$(printf '%s\n' "$TEST_FILES" | awk 'NF { n++ } END { print n+0 }')"
+if [ "$TEST_COUNT" -ne 1 ]; then
+  echo "ERROR: expected exactly one test file defining fn ${TEST_NAME}( under $CRATE/tests; found $TEST_COUNT"
   exit 2
 fi
+TEST_FILE="$TEST_FILES"
+# The protocol uses a top-level integration target, not a unit test or an
+# included helper module with an unrelated Cargo target name.
+case "$TEST_FILE" in
+  "$CRATE"/tests/*.rs) ;;
+  *) echo "ERROR: test must be in a top-level tests/*.rs integration target"; exit 2 ;;
+esac
+TEST_TARGET="${TEST_FILE##*/}"
+TEST_TARGET="${TEST_TARGET%.rs}"
+case "$TEST_FILE" in "$CRATE"/tests/*/*) echo "ERROR: nested test files are not supported"; exit 2 ;; esac
+
+mkdir -p "$LOG_DIR"
 
 restore_changed() {
   git -C "$CRATE" checkout -q HEAD -- $CHANGED_FILES
@@ -109,7 +124,7 @@ trap restore_changed EXIT
 # NOT $? : the trailing assignment inside this function makes the function
 # itself always exit 0 (the seed-study bug this fixes).
 run_phase() { # $1=logpath
-  ( cd "$CRATE" && cargo test --color never "$TEST_NAME" ) > "$1" 2>&1
+  ( cd "$CRATE" && cargo test --color never --test "$TEST_TARGET" -- "$TEST_NAME" --exact ) > "$1" 2>&1
   PHASE_RC=$?
 }
 
@@ -158,6 +173,7 @@ if [ -n "$REASON" ]; then
   tr -d '\r' < "$LOG_CHNG" | tail -n 20
 fi
 
+echo "TEST_SOURCE_SHA256: $(sha256sum "$TEST_FILE" | awk '{print $1}')"
 echo "TEST_INPUT_EVIDENCE (from $(basename "$TEST_FILE")):"
 tr -d '\r' < "$TEST_FILE" | sed -n "/fn ${TEST_NAME}(/,/^}/p" | grep -n "assert" | sed 's/^/  /'
 

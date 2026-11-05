@@ -58,7 +58,7 @@ run records are retained** in `results/seed-study/` (+ `summary.csv`); the
 other 4 records (the three `ripr-context` variant cells and
 `silent-return-vanilla`) were not written before the harness was reworked and
 are not recoverable — this recording loss is exactly defect 4 of issue
-#13113, and `record-run.sh` exists so future runs cannot lose rows. Do not
+#13113, and `record-run.sh` rebuilds the summary from retained reports on each successful write. Do not
 average over the missing cells. Provenance and the encode-time path
 sanitization are documented in `results/seed-study/README.md`.
 
