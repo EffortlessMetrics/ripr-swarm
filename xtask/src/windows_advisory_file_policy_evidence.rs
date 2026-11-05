@@ -10,7 +10,7 @@
 //! - the facade cargo exit status captured by `windows-advisory-run`;
 //! - a present, nonempty `Status: pass` report;
 //! - the subject sidecar written only after a successful `check-file-policy`
-//!   producer on the same host; and
+//!   producer on the same host, binding the exact report bytes by SHA-256; and
 //! - the existing packet-coverage oracle shared with the facade test.
 
 use std::fs;
@@ -200,7 +200,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
 mod tests {
     use super::*;
     use crate::policy::file_policy_retained_evidence::{
-        SUBJECT_RELATIVE, validate_packet_coverage_report,
+        SUBJECT_RELATIVE, report_sha256, validate_packet_coverage_report,
     };
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -250,7 +250,13 @@ mod tests {
     }
 
     fn valid_subject(head: &str, host: &str) -> String {
-        format!("{{\"head\":\"{head}\",\"host\":\"{host}\",\"status\":\"pass\"}}\n")
+        serde_json::json!({
+            "head": head,
+            "host": host,
+            "status": "pass",
+            "report_sha256": report_sha256(&valid_report(host)),
+        })
+        .to_string()
     }
 
     fn ok_log() -> String {
@@ -301,6 +307,68 @@ mod tests {
             "--head".to_string(),
             head,
         ])
+    }
+
+    #[test]
+    fn substituted_pass_report_with_matching_subject_is_refused() -> Result<(), String> {
+        let head = "a".repeat(40);
+        let original = valid_report("windows");
+        let substituted = format!("{original}\n## Diagnostics from another execution\n");
+        // Both reports independently satisfy the current packet oracle. The
+        // subject must bind to the original bytes, not just the same shape.
+        validate_packet_coverage_report(&substituted, "windows")?;
+        let report = write_temp("report-substituted", &substituted)?;
+        let subject = write_temp("subject-original", &valid_subject(&head, "windows"))?;
+        let log = write_temp("log", &ok_log())?;
+        let status = write_temp("status", "0")?;
+        let guard = run(&[
+            "--report".to_string(),
+            report,
+            "--subject".to_string(),
+            subject,
+            "--log".to_string(),
+            log,
+            "--status".to_string(),
+            status,
+            "--head".to_string(),
+            head,
+        ]);
+        let Err(refusal) = guard else {
+            return Err(
+                "a pass-shaped report from another execution must not substitute".to_string(),
+            );
+        };
+        assert!(refusal.contains("report digest"));
+        Ok(())
+    }
+
+    #[test]
+    fn subject_without_report_digest_is_refused() -> Result<(), String> {
+        let head = "b".repeat(40);
+        let report = write_temp("report", &valid_report("windows"))?;
+        let subject = write_temp(
+            "legacy-subject",
+            &serde_json::json!({"head": head, "host": "windows", "status": "pass"}).to_string(),
+        )?;
+        let log = write_temp("log", &ok_log())?;
+        let status = write_temp("status", "0")?;
+        let guard = run(&[
+            "--report".to_string(),
+            report,
+            "--subject".to_string(),
+            subject,
+            "--log".to_string(),
+            log,
+            "--status".to_string(),
+            status,
+            "--head".to_string(),
+            head,
+        ]);
+        let Err(refusal) = guard else {
+            return Err("an unbound sidecar must not qualify evidence".to_string());
+        };
+        assert!(refusal.contains("report_sha256"));
+        Ok(())
     }
 
     #[test]

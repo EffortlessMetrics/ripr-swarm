@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub(crate) const SUBJECT_RELATIVE: &str = "target/ripr/reports/file-policy.subject.json";
 
@@ -17,6 +18,7 @@ pub(crate) struct FilePolicyRetainedSubject {
     pub head: String,
     pub host: String,
     pub status: String,
+    pub report_sha256: String,
 }
 
 pub(crate) fn host_label() -> &'static str {
@@ -33,14 +35,32 @@ pub(crate) fn write_retained_subject() -> Result<(), String> {
             "file-policy subject: git HEAD is not a 40-character commit: {head:?}"
         ));
     }
+    write_retained_subject_in(&crate::reports_dir(), &head, host_label())
+}
+
+fn write_retained_subject_in(directory: &Path, head: &str, host: &str) -> Result<(), String> {
+    let report_path = directory.join("file-policy.md");
+    let report = fs::read_to_string(&report_path).map_err(|error| {
+        format!(
+            "file-policy subject: cannot read completed report {}: {error}",
+            report_path.display()
+        )
+    })?;
+    validate_nonempty_pass_report(&report)?;
     let subject = FilePolicyRetainedSubject {
-        head,
-        host: host_label().to_string(),
+        head: head.to_string(),
+        host: host.to_string(),
         status: "pass".to_string(),
+        report_sha256: report_sha256(&report),
     };
     let json = serde_json::to_string_pretty(&subject)
         .map_err(|error| format!("file-policy subject: cannot encode JSON: {error}"))?;
-    crate::write_report("file-policy.subject.json", &format!("{json}\n"))
+    crate::write_report_in(directory, "file-policy.subject.json", &format!("{json}\n"))
+}
+
+pub(crate) fn report_sha256(report: &str) -> String {
+    // Hash the retained UTF-8 bytes without trimming or newline normalization.
+    format!("{:x}", Sha256::digest(report.as_bytes()))
 }
 
 pub(crate) fn remove_retained_subject() {
@@ -190,6 +210,13 @@ pub(crate) fn validate_retained_bundle(
             subject.host
         ));
     }
+    let actual_digest = report_sha256(report);
+    if subject.report_sha256 != actual_digest {
+        return Err(format!(
+            "file-policy report digest {actual_digest} does not match subject report digest {}; report bytes changed or the sidecar belongs to another producer output",
+            subject.report_sha256
+        ));
+    }
     validate_packet_coverage_report(report, &subject.host)
 }
 
@@ -246,6 +273,66 @@ mod tests {
             host = host,
             native = native,
         )
+    }
+
+    #[test]
+    fn subject_requires_a_completed_pass_report_and_binds_its_bytes() -> Result<(), String> {
+        let directory = std::env::temp_dir().join(format!(
+            "ripr-file-policy-subject-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        fs::create_dir(&directory).map_err(|error| error.to_string())?;
+        let head = "a".repeat(40);
+        let subject_path = directory.join("file-policy.subject.json");
+        assert!(write_retained_subject_in(&directory, &head, "windows").is_err());
+        assert!(
+            !subject_path.exists(),
+            "missing report publishes no subject"
+        );
+        fs::write(
+            directory.join("file-policy.md"),
+            "Status: stopped during x\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(write_retained_subject_in(&directory, &head, "windows").is_err());
+        assert!(
+            !subject_path.exists(),
+            "stopped report publishes no subject"
+        );
+        let report = fixture_report("windows");
+        fs::write(directory.join("file-policy.md"), &report).map_err(|error| error.to_string())?;
+        write_retained_subject_in(&directory, &head, "windows")?;
+        let subject = read_retained_subject(&directory.join("file-policy.subject.json"))?;
+        validate_retained_bundle(&report, &subject, &head)?;
+        let substituted = format!("{report}\n## Different producer diagnostics\n");
+        validate_packet_coverage_report(&substituted, "windows")?;
+        let refusal = validate_retained_bundle(&substituted, &subject, &head);
+        fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+        let Err(refusal) = refusal else {
+            return Err("another pass-shaped report must be refused".to_string());
+        };
+        assert!(refusal.contains("report digest"));
+        Ok(())
+    }
+
+    #[test]
+    fn report_digest_preserves_every_retained_byte() {
+        assert_eq!(
+            report_sha256("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_ne!(
+            report_sha256("Status: pass\n"),
+            report_sha256("Status: pass\r\n")
+        );
+        assert_ne!(
+            report_sha256("Status: pass\n"),
+            report_sha256("Status: pass\n\n")
+        );
     }
 
     #[test]
