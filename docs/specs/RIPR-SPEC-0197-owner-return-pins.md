@@ -2579,10 +2579,11 @@ receiving call is itself resolved.
   keeps the refusal. Named assertion-macro imports, item-position macro calls,
   unknown attributes and unparsed files also retain the refusal (#13269).
   A private `use` is not inherited by a child module,
-  so a crate-root `use colored::*;` does not refuse a descendant when no
-  import can carry it there. A glob in a sibling or unrelated file of the
-  same crate no longer refuses the test. The confinement needs established
-  composition on both ends: the glob's file has an execution context (so it
+  so a crate-root `use colored::*;` does not refuse a descendant when ripr
+  establishes that no import or expansion can carry it there. A glob in a
+  sibling or unrelated file of the same crate no longer refuses the test.
+  The confinement needs established composition on both ends: the glob's
+  file has an execution context (so it
   is no `include!` fragment and nothing above it is unresolved), the test's
   file has one, and no `include!` or `#[path]` is unresolved anywhere in the
   workspace. Otherwise the glob keeps its crate-local reach above. `pub`
