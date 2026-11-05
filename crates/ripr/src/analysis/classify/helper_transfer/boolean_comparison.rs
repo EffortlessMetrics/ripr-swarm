@@ -506,6 +506,12 @@ pub(in crate::analysis) fn boolean_comparison_receipt(
         {
             return None;
         }
+        // Parsed #[test] syntax is not execution authority when Cargo uses a
+        // custom harness or skips the library target. Pay for the shared
+        // target inventory only after every source-profile premise holds.
+        if !syntax.admits_ordinary_library_test_target(index, &owner.file) {
+            return None;
+        }
         let mut receipt = BooleanComparisonReceipt {
             owner: owner.id.clone(),
             helper: helper.id.clone(),

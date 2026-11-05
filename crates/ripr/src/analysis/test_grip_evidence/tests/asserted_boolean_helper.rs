@@ -9,6 +9,141 @@ const SOURCE: &str = include_str!(concat!(
 ));
 
 #[test]
+fn ordinary_library_settings_revoke_and_restore_the_receipt() -> Result<(), String> {
+    let source = format!("{SOURCE}\nfn main() {{}}\n");
+    let path = PathBuf::from("src/lib.rs");
+    let mut index = index_from_files(&[(path, source.as_str())])?;
+    let root = index
+        .workspace_authority
+        .as_ref()
+        .ok_or("workspace")?
+        .root
+        .clone();
+    let manifest =
+        fs::read_to_string(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
+    let syntax = OwnerPinSyntax::default();
+    let has_receipt = |index: &RustIndex| -> Result<bool, String> {
+        let functions = index.functions();
+        let owner = functions
+            .iter()
+            .find(|owner| owner.name == "read_u32")
+            .ok_or("owner")?;
+        let tests = index.tests();
+        let test = tests
+            .iter()
+            .find(|test| test.name == "u32_reads_what_was_written")
+            .ok_or("test")?;
+        Ok(boolean_comparison_receipt(owner, test, index, &syntax).is_some())
+    };
+    assert!(has_receipt(&index)?);
+    fs::write(
+        root.join("Cargo.toml"),
+        format!("{manifest}\n[lib]\nharness=false\n"),
+    )
+    .map_err(|error| error.to_string())?;
+    assert!(
+        !has_receipt(&index)?,
+        "old indexed manifest cannot reuse warm target credit"
+    );
+    for (settings, expected) in [
+        ("\n[lib]\nharness=false\n", false),
+        ("\n[lib]\ntest=false\n", false),
+        ("", true),
+    ] {
+        fs::write(root.join("Cargo.toml"), format!("{manifest}{settings}"))
+            .map_err(|error| error.to_string())?;
+        index.index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
+            &root,
+            index
+                .files()
+                .iter()
+                .map(|(path, facts)| (path, facts.data().source.as_ref())),
+        ));
+        assert_eq!(has_receipt(&index)?, expected, "{settings}");
+    }
+    Ok(())
+}
+
+#[test]
+fn root_default_member_changes_revoke_a_warm_helper_receipt() -> Result<(), String> {
+    let source = format!("{SOURCE}\nfn main() {{}}\n");
+    let mut index = index_from_files(&[(PathBuf::from("b/src/lib.rs"), source.as_str())])?;
+    let root = index
+        .workspace_authority
+        .as_ref()
+        .ok_or("workspace")?
+        .root
+        .clone();
+    for member in ["a", "b"] {
+        let directory = root.join(member);
+        fs::create_dir_all(directory.join("src")).map_err(|error| error.to_string())?;
+        fs::write(
+            directory.join("Cargo.toml"),
+            format!("[package]\nname='{member}'\nversion='0.1.0'\nedition='2021'\n"),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    fs::write(root.join("a/src/lib.rs"), "").map_err(|error| error.to_string())?;
+    let selected = "[workspace]\nmembers=['a','b']\ndefault-members=['b']\nresolver='2'\n";
+    let unselected = "[workspace]\nmembers=['a','b']\ndefault-members=['a']\nresolver='2'\n";
+    fs::write(root.join("Cargo.toml"), selected).map_err(|error| error.to_string())?;
+    let authority = || {
+        WorkspaceRootAuthority::from_sources(
+            &root,
+            [(PathBuf::from("b/src/lib.rs"), source.as_str())]
+                .iter()
+                .map(|(path, source)| (path, *source)),
+        )
+    };
+    index.index.workspace_authority = Some(authority());
+    let original_identity = index
+        .workspace_authority
+        .as_ref()
+        .ok_or("workspace")?
+        .workspace_identity
+        .clone();
+    let syntax = OwnerPinSyntax::default();
+    let has_receipt = |index: &RustIndex| -> Result<bool, String> {
+        let functions = index.functions();
+        let owner = functions
+            .iter()
+            .find(|owner| owner.name == "read_u32")
+            .ok_or("owner")?;
+        let tests = index.tests();
+        let test = tests
+            .iter()
+            .find(|test| test.name == "u32_reads_what_was_written")
+            .ok_or("test")?;
+        Ok(boolean_comparison_receipt(owner, test, index, &syntax).is_some())
+    };
+    assert!(has_receipt(&index)?);
+    fs::write(root.join("Cargo.toml"), unselected).map_err(|error| error.to_string())?;
+    assert!(
+        !has_receipt(&index)?,
+        "root selector change must revoke the warm target"
+    );
+    index.index.workspace_authority = Some(authority());
+    assert_eq!(
+        index
+            .workspace_authority
+            .as_ref()
+            .ok_or("workspace")?
+            .workspace_identity,
+        original_identity
+    );
+    assert!(
+        !has_receipt(&index)?,
+        "nearest-manifest identity alone is insufficient"
+    );
+    fs::write(root.join("Cargo.toml"), selected).map_err(|error| error.to_string())?;
+    assert!(
+        has_receipt(&index)?,
+        "exact selector restoration restores admission"
+    );
+    Ok(())
+}
+
+#[test]
 fn same_asserted_helper_receipt_owns_repository_return_evidence() -> Result<(), String> {
     let path = PathBuf::from("src/lib.rs");
     let index = index_from_files(&[(path.clone(), SOURCE)])?;

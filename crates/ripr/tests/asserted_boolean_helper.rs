@@ -44,8 +44,18 @@ fn finding(source: &str, repo: bool) -> Result<Value, String> {
 }
 
 fn finding_with_proc_macro(source: &str, repo: bool, local_macro: bool) -> Result<Value, String> {
+    finding_with_manifest(source, repo, local_macro, "")
+}
+
+fn finding_with_manifest(
+    source: &str,
+    repo: bool,
+    local_macro: bool,
+    library_settings: &str,
+) -> Result<Value, String> {
     let scratch = Scratch::new()?;
     let mut manifest = MANIFEST.to_owned();
+    manifest.push_str(library_settings);
     if local_macro {
         manifest.push_str("\n[dev-dependencies]\nshadow={path=\"shadow\"}\n[workspace]\nmembers=[\"shadow\"]\nresolver=\"2\"\n");
         std::fs::create_dir_all(scratch.0.join("shadow/src")).map_err(|error| error.to_string())?;
@@ -96,6 +106,50 @@ fn expansion() -> TokenStream {
         ));
     };
     Ok((*finding).clone())
+}
+
+#[test]
+fn disabled_library_targets_withhold_the_new_helper_observer() -> Result<(), String> {
+    // Keep the custom-harness program native-valid. The source is identical
+    // across settings, including the ordinary-harness positive.
+    let source = format!("{ORIGINAL}\nfn main() {{}}\n");
+    for repo in [false, true] {
+        let positive = finding_with_manifest(&source, repo, false, "")?;
+        assert!(
+            positive
+                .to_string()
+                .contains("asserted_u32_helper_comparison")
+        );
+        assert_eq!(
+            positive["observed_values"]
+                .as_array()
+                .ok_or("positive observed values")?
+                .iter()
+                .filter(|value| value.to_string().contains("bytes = ["))
+                .count(),
+            4,
+            "{positive}"
+        );
+        for settings in ["\n[lib]\nharness=false\n", "\n[lib]\ntest=false\n"] {
+            let finding = finding_with_manifest(&source, repo, false, settings)?;
+            assert!(
+                !finding
+                    .to_string()
+                    .contains("asserted_u32_helper_comparison"),
+                "repo={repo}, {settings}: {finding}"
+            );
+            assert_ne!(finding["classification"], "exposed", "{finding}");
+            assert!(
+                finding["observed_values"]
+                    .as_array()
+                    .ok_or("disabled target observed values")?
+                    .iter()
+                    .all(|value| !value.to_string().contains("bytes = [")),
+                "disabled target must not lend owner byte rows: {finding}"
+            );
+        }
+    }
+    Ok(())
 }
 
 #[test]

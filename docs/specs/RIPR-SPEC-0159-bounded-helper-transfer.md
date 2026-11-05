@@ -881,6 +881,13 @@ forwarding that return unchanged. The closed profile is one root free owner
 `fn owner(bytes: &[u8]) -> u32`, imported into one ordinary test module through
 `use super::*`, and an unannotated helper with exactly one immutable builtin
 `u32` parameter and a sole tail `owner(&parameter.to_be_bytes()) == parameter`.
+The same source file must be the exact root of one current Cargo library target
+collected under Cargo defaults with the ordinary libtest harness. The shared
+target inventory binds metadata ownership, selected default package membership,
+collection and required features to the owning manifest's `harness` and `test`
+settings. Disabled, unavailable,
+ambiguous and unproved target shapes supply no receipt. Target decisions are
+memoized only for the current indexed workspace and manifest identity.
 The comparison is builtin integer equality; its expected operand is the same
 unchanged parameter. No projection, discarded comparison, replacement Boolean,
 custom type, import alias, generic operator, statement or early exit is admitted.
