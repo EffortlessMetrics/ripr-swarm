@@ -4043,6 +4043,101 @@ fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
     Ok(())
 }
 
+/// #13154: an unknown key can fit the input cap while its diagnostic would
+/// exceed the output cap. Both lifecycles must retain typed recovery, then
+/// answer a valid call without having started analysis.
+#[test]
+fn unknown_argument_names_stay_typed_bounded_and_recover() -> Result<(), String> {
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = workspace_root()?;
+    for legacy in [false, true] {
+        let mut session = SequentialStdio::spawn(&root)?;
+        if legacy {
+            let initialized = session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": "setup", "method": "initialize",
+                    "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                        "clientInfo": {"name": "argument-name-control", "version": "1"}}
+                }))?,
+                REPLY_TIMEOUT,
+            )?;
+            if initialized.pointer("/result/protocolVersion") != Some(&json!("2025-11-25")) {
+                return Err(format!("legacy initialization failed: {initialized}"));
+            }
+            session.send_raw(&line(json!({
+                "jsonrpc": "2.0", "method": "notifications/initialized"
+            }))?)?;
+        }
+        // The modern connection deliberately starts with tools/call plus
+        // inline metadata, without initialize or server/discover.
+        for (label, name, preview) in [
+            ("ascii", "x".repeat(150_000), "x".repeat(128)),
+            (
+                "escaped",
+                "\u{1}\"\\".repeat(22_000),
+                format!("{}\u{1}\"", "\u{1}\"\\".repeat(42)),
+            ),
+            ("unicode", "😀".repeat(40_000), "😀".repeat(128)),
+        ] {
+            let name_bytes = name.len();
+            let encoded_name = serde_json::to_vec(&name).map_err(|error| error.to_string())?;
+            if encoded_name.len() <= 128 * 1024 {
+                return Err(format!("{label} control does not exceed the output cap"));
+            }
+            let id = json!(format!("unknown-key-\"\\\n雪-{label}"));
+            let mut params = json!({
+                "name": "ripr_refresh", "arguments": { name: true }
+            });
+            if !legacy {
+                params["_meta"] = current_meta();
+            }
+            let request = line(json!({
+                "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params
+            }))?;
+            if request.len() > 256 * 1024 {
+                return Err(format!("{label} control exceeds the input cap"));
+            }
+            let reply = session.raw_exchange(&request, REPLY_TIMEOUT)?;
+            require_invalid_argument(&reply, label)?;
+            let bytes = serde_json::to_vec(&reply)
+                .map_err(|error| error.to_string())?
+                .len();
+            let data = reply
+                .pointer("/result/structuredContent/failure/data")
+                .ok_or("typed failure omitted data")?;
+            if reply.get("id") != Some(&id)
+                || bytes > 8 * 1024
+                || data["argument_truncated"] != json!(true)
+                || data["argument_bytes"] != json!(name_bytes)
+                || data["argument"] != json!(preview)
+                || data["allowed"] != json!(["base", "source"])
+            {
+                return Err(format!(
+                    "{label} legacy={legacy} lost bounded correlated recovery (bytes={bytes}): {reply}"
+                ));
+            }
+            let recovery_id = json!(format!("recovered-{label}"));
+            let mut params = json!({"name": "ripr_workspace_status", "arguments": {}});
+            if !legacy {
+                params["_meta"] = current_meta();
+            }
+            let recovered = session.raw_exchange(
+                &line(json!({
+                    "jsonrpc": "2.0", "id": recovery_id, "method": "tools/call", "params": params
+                }))?,
+                REPLY_TIMEOUT,
+            )?;
+            let document = structured_tool_success(&recovered, "status after unknown key")?;
+            if recovered.get("id") != Some(&recovery_id)
+                || document.pointer("/session/attempt_state") != Some(&json!("no_snapshot"))
+            {
+                return Err(format!("unknown argument must not start analysis: {recovered}"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Send one `tools/call` whose `arguments` object is raw JSON text, so number
 /// literals such as `18446744073709551616` and `1e30` reach the server exactly
 /// as a client could write them. A `serde_json::Value` cannot hold

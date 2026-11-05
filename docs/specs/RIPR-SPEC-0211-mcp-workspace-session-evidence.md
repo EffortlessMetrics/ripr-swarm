@@ -794,6 +794,11 @@ unknown route into a recognized one.
   request-ID refusal, unknown-method routing and same-session recovery.
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptor and dispatch contracts.
+- `crates/ripr/src/mcp/server_tests.rs::unknown_argument_names_keep_bounded_explicit_diagnostics`
+  + `crates/ripr/tests/mcp_stdio.rs::unknown_argument_names_stay_typed_bounded_and_recover`
+  — unknown-name diagnostic prefixes preserve ordinary names, disclose
+  truncation and original UTF-8 byte length, and retain typed recovery for
+  admitted large/escaped/multibyte keys in both protocol lifecycles (#13154).
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
   hosted wire interop controls, including
   `post_initialize_ping_with_handshake_meta_returns_an_empty_result`
