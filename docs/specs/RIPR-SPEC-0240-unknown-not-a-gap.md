@@ -242,6 +242,17 @@ unchanged. Ordinary unmarked gaps and weak asserting controls remain eligible
 for selection. A pilot with only these limitations names the withheld work and
 provides no repair, after-snapshot or outcome command (#12977).
 
+The full and compact producers reserve the exact
+`rust_panic_outcome_unresolved: ` prefix of the discrimination summary
+(#13291). `names_static_limit` is the common authority for pilot, brief,
+repair admission and the typed limitation row. A matching test name, a code
+mention in another stage, or a token later in a summary supplies no marker.
+The panic producer retains the deciding tests and original discrimination
+summary after the prefix. It runs before the field-snapshot adapter, which
+preserves an established panic marker and its reason rather than obscuring
+it with a second prefix. This changes no grip class or stage state and grants
+no new observation, panic or snapshot credit.
+
 ### Profile-dependent `debug_assert_eq!`
 
 `debug_assert_eq!` runs under the default `cargo test` profile and is
@@ -438,8 +449,23 @@ non-ignored related test matches one of these shapes:
   disposition when configuration is readable. This is bounded syntax admission;
   settings scopes, type aliases and dynamic selectors remain unsupported.
   Snapshot-byte identity and positive projection credit remain with #8121.
-  Repository seam evidence and pilot/brief selection have a separate producer;
-  its snapshot-uncertainty disclosure remains a residual under #8121.
+  The same reader governs candidate field changes in
+  repository seam evidence (#13278). The adapter supplies each extracted field
+  expression while retaining owner-span checks, preserving field identity when
+  initializers share a line or span several lines. On weak or unrevealed field seams, both
+  full and compact producers read every directly related, nonignored test
+  before detail caps, naming `rust_framework_oracle_unresolved` in the
+  discrimination summary using the reserved `<code>: ` prefix. A test name or
+  other source mention of the code cannot manufacture that marker. Raw class
+  and all stage states stay intact. Pilot,
+  agent brief and repair admission honor the marker, including when every
+  stage is concrete. Literal redacted-field gaps and independent exact
+  assertions keep their existing behavior. Return-value recommendations and
+  other framework idioms are outside this repository-seam adaptation.
+  The shared reader's bounded matching does not establish arbitrary callee
+  identity: a separate direct owner call beside a snapshot initialized by a
+  same-named method can still produce conservative uncertainty. That inherited
+  false withholding remains an explicit residual under #8121.
 - **fixture receiver** (#9609): a `return_value` probe whose changed line
   holds a closure (`|..|`, `move |..|` or `|| ..` opening an argument; a boolean or bitwise `||` / `|` is not one) in a `&self` method, and a `direct_owner_call` test
   with a strong assertion: an `assert_eq!` with a literal (number, string,
@@ -1353,6 +1379,43 @@ real producer's named summary into a controlled concrete-stage consumer pair.
 The marked seam is withheld while the otherwise identical, unmarked
 `ReachableUnrevealed` seam remains selectable.
 
+Repository field-snapshot selection (#13278):
+`crates/ripr/src/analysis/test_grip_evidence/tests/framework_snapshot.rs`
+covers the shared external snapshot, unread settings, inline configuration,
+constant selector and literal redaction decisions in both full and compact
+evidence. Its late-witness control requires the directly related snapshot
+test to rank beyond the compact cap before checking the marker. Wrong-owner
+and shadowed values, ordinary inline snapshots, non-code configuration words,
+weak assertions and an independent exact field assertion keep their semantics.
+`crates/ripr/src/output/pilot/tests/framework_snapshot.rs` compares identical
+classes and stages with and without the producer's named summary; only the
+marked entry is withheld. It checks repair eligibility, category, reason,
+route and inspection preservation as well as pilot and brief selection.
+`crates/ripr/tests/task_first_facade/field_snapshot.rs` requires real field
+seams, the exact marker and five concrete stages before checking native pilot
+and brief behavior, with literal-redacted, weak, exact, unrelated and inline
+controls. A weak test whose name equals the marker must retain all three
+actionable seams and exact field briefs. Full/compact and consumer controls
+also reject source mentions in other stage summaries. A warm-cache read must
+preserve the evidence and selected count.
+
+Producer-owned panic markers (#13291):
+`crates/ripr/src/analysis/test_grip_evidence/tests/panic_marker.rs` follows
+ordinary test-name collisions, genuine panic uncertainty, a weak asserting
+control and combined panic/snapshot uncertainty through full and compact
+evidence. The combined control first requires the framework reader's own
+uncertainty witness, then requires preservation of the established panic
+marker. `source_mentions_do_not_manufacture_a_panic_limitation` checks
+selection, repair, brief and projection with otherwise unchanged concrete
+evidence and with an independently unknown stage. The public controls in
+`crates/ripr/tests/task_first_facade/panic_marker.rs` require exact seam
+identities, classes, all five states, pilot counts, field briefs and a warm
+cache hit for the name-only pair. Three independent corpus cases pin absent
+panic/framework markers for ordinary names and the genuine panic marker's
+precedence over a competing field-snapshot witness. The existing genuine
+`pilot_and_brief_withhold_the_should_panic_limitation` stimuli and expected
+selection remain unchanged, including its all-concrete-stage case.
+
 `crates/ripr/tests/indirect_owner_limit.rs` (function value, pointer binding,
 local and known executors, item macro, inert-macro, `cfg_attr` and
 trailing-comment controls) and `cfg_predicates::tests::cfg_attr_introduces_test_only_under_a_predicate_known_true`.
@@ -1392,6 +1455,12 @@ and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_cl
 - `crates/ripr/src/analysis/classifier/evidence.rs` computes the refusal
   scope; `crates/ripr/src/analysis/classifier/finding.rs` marks the finding.
 - `crates/ripr/src/analysis/classify/gap_admission.rs` owns the decision.
+- `crates/ripr/src/analysis/classify/framework_oracle.rs` owns the field
+  snapshot reader; `test_grip_evidence/framework_snapshot.rs` adapts that
+  decision to full and compact repository evidence without changing stages.
+- `crates/ripr/src/output/evidence_record.rs` owns the shared recommendation
+  filter and limitation projection; `analysis/repair_route.rs` honors the
+  same typed marker for repair admission.
 - `crates/ripr/src/analysis/classify/implicit_call.rs` owns the implicit-call
   rule (#9441).
 - `crates/ripr/src/analysis/classify/indirect_owner.rs` owns the

@@ -1827,9 +1827,12 @@ impl ClassifiedProbeEvidence {
                         context.index,
                     )
                     .is_some_and(|path| {
+                        // #11870: every test that runs the owner, not those
+                        // related by file or name proximity alone.
                         let tests: Vec<&TestSummary> = context
                             .related_tests
                             .iter()
+                            .filter(|(_, reason)| reason.establishes_reach(true))
                             .map(|(test, _)| *test)
                             .collect();
                         crate::analysis::classify::assigned_field_weak_read_start(

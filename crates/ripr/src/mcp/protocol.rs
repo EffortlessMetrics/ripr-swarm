@@ -712,7 +712,9 @@ pub(super) fn unavailable_recovery(status: &WorkspaceStatus) -> Option<String> {
 /// bare status projection, but the restart route is no longer tool-only.
 /// The entry rides inside `contents` because the read path round-trips the
 /// payload through the SDK's typed resource result, which drops unknown
-/// top-level fields.
+/// top-level fields. The document text is the compact serialization, like
+/// every tool result and resource payload: a resource is LLM-facing text,
+/// and pretty-print inflation buys nothing a JSON parser can use.
 pub(super) fn status_resource_result(
     status: &WorkspaceStatus,
     session: &WorkspaceSession,
@@ -727,7 +729,7 @@ pub(super) fn status_resource_result(
         max_message_bytes,
         max_response_bytes,
     );
-    let text = serde_json::to_string_pretty(&document)
+    let text = serde_json::to_string(&document)
         .map_err(|error| format!("render workspace status: {error}"))?;
     let mut contents = vec![json!({
         "uri": STATUS_RESOURCE_URI,

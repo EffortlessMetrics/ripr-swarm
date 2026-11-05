@@ -693,7 +693,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// assertion oracle; real opposite-kind wrappers retain reach uncertainty (#12234).
 /// `1.162`: compose successor 1.161 with main callback/call-kind semantics.
 /// `1.163`: collection observers require importer-bound crate identities.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.163";
+/// `1.161`: owner-bound field snapshots carry the shared framework limit
+/// through full and compact evidence before recommendation admission (#13278).
+/// Panic markers also use the producer-owned discrimination prefix (#13291).
+/// `1.164`: compose importer identity with main field-snapshot and panic-marker semantics.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.164";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -901,7 +905,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.163";
 /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
 /// `0.164`: composed successor and main semantics, matching full 1.162.
 /// `0.165`: same importer-bound observer semantics as full 1.163.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.165";
+/// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+/// `0.166`: same composed semantics as full `1.164`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.166";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1111,7 +1117,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.165";
 /// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
 /// `0.164`: composed successor and main semantics, matching full 1.162.
 /// `0.165`: same importer-bound observer semantics as full 1.163.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.165";
+/// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+/// `0.166`: same composed semantics as full `1.164`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.166";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5266,7 +5274,8 @@ mod tests {
         // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
         // Composed main and successor invalidate both predecessor branches.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.163");
+        // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.164");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5411,8 +5420,9 @@ mod tests {
         // 0.162 -> 0.163: same external-observer refusal as full 1.161.
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.165");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.165");
+        // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.166");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.166");
     }
 
     #[test]
@@ -5740,6 +5750,7 @@ mod tests {
             ("external-observer-interception", "1.160", "0.162"),
             ("pre-main-composition", "1.161", "0.163"),
             ("crate-alias-interception", "1.162", "0.164"),
+            ("pre-field-snapshot-composition", "1.163", "0.165"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -5813,7 +5824,7 @@ mod tests {
     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
         for previous in [
             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
-            "0.161", "0.162", "0.163", "0.164",
+            "0.161", "0.162", "0.163", "0.164", "0.165",
         ] {
             for compact in [false, true] {
                 let scratch = integrity_scratch("property-shard-generation")?;

@@ -287,11 +287,19 @@ rejected alternative. Any can be reversed later without touching the rest.
    `field_written_in_method`); when the receiver mode is not recorded they name
    neither value. Repository
    scope resolves no `self` methods, so a later `self.m()` call counts as a
-   possible write and the write gets no seam. Only a field this file declares
-   plain `pub` gets the seam: a private or `pub(crate)` field is observed
+   possible write and the write gets no seam. A field this file declares
+   plain `pub` gets the seam. A private or `pub(crate)` field is observed
    through a getter or `Display`, so a missing direct read is not a gap a test
    can close and the pilot ranking would recommend a well-observed setter
-   (bytesize's `format` setters displaced confirmed picks). A builder's tail `self` hands the
+   (bytesize's `format` setters displaced confirmed picks); its write gets a
+   seam only when the start policy below holds over the owner's related tests
+   (#11870), so a getter-only or unread write stays ungraded. The owner's file
+   must declare the field on the owner's impl type, once, and every related
+   test that reads it weakly must be able to name it: a private (or scoped
+   `pub(super)` / `pub(in ..)`) field from the declaring file, a `pub(crate)`
+   field from any file under the same library `src/` (never `tests/`,
+   `benches/`, `examples/`, `src/bin/` or `main.rs`, which are other crates).
+   An undeclared or ambiguous declaration withholds. A builder's tail `self` hands the
    value to the caller; it is not a later write, for the diff probe and the
    seam alike. A field write starts a repair from a weak read only
    (#11870); otherwise `ripr check` and `ripr repair` both refuse with "a
@@ -309,7 +317,18 @@ rejected alternative. Any can be reversed later without touching the rest.
    the exact check these rules do not place: no other statement, assertion or
    not, names the field or uses the binding except as the owner call or its
    `let` (an alias, a helper call, a destructure, a move, an `if`/`panic!`
-   check withholds); the owner's `Self` type is also not a non-plain `Drop`
+   check withholds); every related test that establishes reach is itself a placed weak
+   read (a direct caller; an observer through a getter, `Display` or `Debug`,
+   a helper-held assertion, an `if`/`panic!` or `Err` check, an aliased,
+   iterated or closure receiver, a call through a helper or a test with no
+   assertion withholds), and the owner's name is mentioned nowhere else in the
+   index: the identifier occurs, outside a `fn <name>` definition, exactly as
+   often in the raw text of every indexed file as in the placed weak-read test
+   bodies. Another test or helper in any file, a `macro_rules!` body, a
+   doctest, an alias path (`C::bump`), a method value (`for_each(C::bump)`), a
+   turbofish call, an ignored or `should_panic` test, or production code that
+   mentions the name withholds; a name shared with another type only
+   over-withholds. This also tightens the plain `pub` field start; the owner's `Self` type is also not a non-plain `Drop`
    type. A strong read stays "nothing to do"; no read, a
    sibling field, another binding, a later write, a by-value owner, an
    equality, a bare boolean, a getter and a private field start nothing.
@@ -463,6 +482,27 @@ changes `self.count += 2` to `self.count += 1`.
   (including the non-assertion checks above) and the real-binary `repair_check_recommended_start.rs`
   `a_weak_read_of_a_written_field_starts_the_repair_check_recommends`
   (positive start, the strong read as "nothing to do", and the negatives).
+- Non-public fields (#11870): `classify/field_reach/tests.rs`
+  (`a_declared_field_reads_its_own_visibility`,
+  `an_undeclared_ambiguous_or_tuple_field_has_no_reach`,
+  `a_test_names_a_field_only_where_its_visibility_reaches`), `seam_inventory.rs`
+  `a_private_field_write_is_graded_only_when_declared_here_and_read_weakly`
+  (declared here and read weakly; struct declared in another file, unread field
+  and a same-named second struct are ungraded), and the real-binary
+  `repair_check_recommended_start.rs`
+  `a_weak_read_of_a_private_or_crate_field_starts_only_where_the_test_can_name_it`
+  and `a_second_test_that_observes_the_write_another_way_withholds_the_start`
+  (a getter, `to_string`, `format!("{c}")` or `Debug` read in a second test of
+  the owner withholds, for private and plain `pub` fields),
+  `every_test_that_runs_the_owner_must_be_a_placed_weak_read` (a helper-held
+  assertion, an `if`/`panic!` or `Err` check, an aliased, iterated or closure
+  receiver, a non-direct call through a helper, an alias UFCS path, an
+  inferred-type runner, a turbofish call, a method value, a four-hop helper
+  chain and a `macro_rules!` body each withhold, for private and plain `pub`
+  fields), and `seam_inventory.rs`
+  `any_other_mention_of_the_owner_name_withholds_a_private_field_seam`, `field_reach/tests.rs`
+  `mentions_count_every_use_of_the_name_but_not_its_definition` and
+  `a_cancelled_inventory_reports_the_cancellation_from_field_admission`.
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.
 - Probe boundary (#6676, #6675): `lexical.rs`
   `let_binding_type_annotations_are_not_field_construction` and

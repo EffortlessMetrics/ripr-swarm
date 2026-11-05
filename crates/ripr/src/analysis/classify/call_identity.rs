@@ -141,6 +141,10 @@ pub(crate) struct CallIdentityMemos {
     /// #10701: every indexed source with comments and strings masked, built
     /// once per index for the repair-start Drop-type gate.
     masked_sources: std::sync::OnceLock<Vec<String>>,
+    /// #11870: how many times each identifier appears in the raw text of every
+    /// indexed source, a `fn <name>` definition not counted. Built once per
+    /// index for the weak-read start's "no other mention of the owner" gate.
+    identifier_mentions: std::sync::OnceLock<BTreeMap<String, usize>>,
     /// #10701: per type name, whether a `type` alias declares it and which
     /// further type names its renames and definitions mention, so each name is
     /// read from the corpus once per run instead of once per seam.
@@ -224,6 +228,14 @@ impl CallIdentityMemos {
     #[cfg(test)]
     pub(in crate::analysis) fn receiver_scan_passes(&self) -> u32 {
         self.receiver_pin_syntax.workspace_scan_passes()
+    }
+
+    /// The memoized identifier mention counts, built by `build` on first use.
+    pub(in crate::analysis) fn identifier_mentions(
+        &self,
+        build: impl FnOnce() -> BTreeMap<String, usize>,
+    ) -> &BTreeMap<String, usize> {
+        self.identifier_mentions.get_or_init(build)
     }
 
     /// The memoized masked sources, built by `build` on first use.

@@ -1,7 +1,7 @@
 use super::*;
 use crate::analysis::classify_seam;
 use crate::analysis::repair_route::{RepairPacketIneligibility, repair_packet_eligibility};
-use crate::analysis::test_grip_evidence::evidence_for_seams;
+use crate::analysis::test_grip_evidence::{evidence_for_seams, panic_marker_test_entries};
 use crate::app::agent_brief::{
     AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
 };
@@ -273,5 +273,90 @@ fn weak_asserting_should_panic_control_stays_actionable() -> Result<(), String> 
     assert_eq!(brief.top_seams.len(), 1);
     assert_eq!(brief.top_seams[0].seam.seam.id(), entries[0].seam.id());
     assert_eq!(brief.omitted_by_policy, 0);
+    Ok(())
+}
+
+#[test]
+fn source_mentions_do_not_manufacture_a_panic_limitation() -> Result<(), String> {
+    let limit = StaticLimitKind::RustPanicOutcomeUnresolved;
+    let mut ordinary = panic_predicate("#[test] fn ok() { assert!(div(4, 2) > 0); }")?;
+    assert_eq!(ordinary.class, SeamGripClass::WeaklyGripped);
+    let config = RiprConfig::default();
+    let working_set = AgentBriefResolvedWorkingSet::seam_id(ordinary.seam.id().as_str());
+    for summary in [
+        limit.as_str().to_string(),
+        format!("{}: source text in another stage", limit.as_str()),
+    ] {
+        for stage in [
+            &mut ordinary.evidence.reach,
+            &mut ordinary.evidence.activate,
+            &mut ordinary.evidence.propagate,
+            &mut ordinary.evidence.observe,
+        ] {
+            stage.summary.clone_from(&summary);
+        }
+        for discrimination in [
+            "a weak assertion".to_string(),
+            format!("source identifier `{}`", limit.as_str()),
+            format!("source text mentions {}: text", limit.as_str()),
+        ] {
+            ordinary.evidence.discriminate.summary = discrimination;
+            assert!(!ordinary.evidence.names_static_limit(limit));
+            assert!(!is_static_limited(&ordinary));
+            assert!(
+                static_limitations_for(&ordinary)
+                    .iter()
+                    .all(|row| row.category != limit.as_str())
+            );
+            assert_ne!(
+                repair_packet_eligibility(&ordinary).ineligibility,
+                Some(RepairPacketIneligibility::NamedStaticLimitation)
+            );
+            let entries = [ordinary.clone()];
+            assert_eq!(top_actionable_seams(&entries, 5, None).len(), 1);
+            let brief = select_agent_brief_seams(
+                &entries,
+                &working_set,
+                3,
+                AgentBriefPolicy::from_config(&config),
+            );
+            assert_eq!(brief.top_seams.len(), 1);
+            assert!(
+                brief
+                    .warnings
+                    .iter()
+                    .all(|warning| !warning.contains("expected panic"))
+            );
+        }
+    }
+    // An independently unknown stage still has a limitation, but an incidental
+    // source mention cannot give that row the panic producer's category.
+    ordinary.evidence.reach.state = StageState::Unknown;
+    assert!(is_static_limited(&ordinary));
+    assert!(
+        static_limitations_for(&ordinary)
+            .iter()
+            .all(|row| row.category != limit.as_str())
+    );
+    let entries = panic_marker_test_entries()?;
+    assert_eq!(entries.len(), 16, "all real full and compact marker cases");
+    for (entry, expected) in entries {
+        let named: Vec<_> = static_limitations_for(&entry)
+            .into_iter()
+            .filter(|row| row.category == limit.as_str())
+            .collect();
+        assert_eq!(named.len(), usize::from(expected));
+        if expected {
+            assert_eq!(named[0].stage, "discriminate");
+            assert_eq!(named[0].state, "no");
+            assert_eq!(named[0].reason, entry.evidence.discriminate.summary);
+            assert!(
+                named[0]
+                    .reason
+                    .starts_with(&format!("{}: ", limit.as_str()))
+            );
+            assert!(named[0].reason.contains("passes only if something panics"));
+        }
+    }
     Ok(())
 }

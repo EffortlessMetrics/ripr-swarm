@@ -478,8 +478,8 @@ the default and the token saver is an explicit opt-in per server process:
 | `RIPR_MCP_TEXT_CONTENT` | `content[0].text` on a successful result |
 |---|---|
 | unset, `full`, or any unrecognized value | the compact JSON copy of the document (default) |
-| `summary` (ASCII case-insensitive) | a digest, not a copy |
-| `brief` (ASCII case-insensitive) | for `ripr_list_gaps`, one line per gap; every other tool falls back to the `summary` digest (#11621) |
+| `summary` (ASCII case-insensitive, surrounding whitespace ignored) | a digest, not a copy |
+| `brief` (ASCII case-insensitive, surrounding whitespace ignored) | for `ripr_list_gaps`, one line per gap; every other tool falls back to the `summary` digest (#11621) |
 
 `brief` exists because `summary` shows only counts and identities for a list, so
 a text-only host cannot tell which gap is which. A `brief` list is a header
@@ -538,11 +538,13 @@ The field set and meanings are in
 `tools/list` is paid at every session start. About two thirds of it is the nine
 `outputSchema` documents, which most coding agents never read. By default they
 stay, because a host that validates results against them would lose its
-contract. `RIPR_MCP_TOOLS_LIST=slim` (ASCII case-insensitive; any other value
-keeps the default) omits every `outputSchema` and changes nothing else: results
-still carry `structuredContent` with a `schema_version`, and the document shapes
-are the ones this page and `docs/OUTPUT_SCHEMA.md` describe. Set it in the host's
-server `env` beside `RIPR_MCP_TEXT_CONTENT`. Independent of the mode, the
+contract. `RIPR_MCP_TOOLS_LIST=slim` (ASCII case-insensitive, surrounding whitespace
+ignored; any other value keeps the default) omits every `outputSchema` and
+changes nothing else: results still carry `structuredContent` with a
+`schema_version`, and the document shapes are the ones this page and
+`docs/OUTPUT_SCHEMA.md` describe. Set it in the host's server `env` beside
+`RIPR_MCP_TEXT_CONTENT` — for example
+`"env": {"RIPR_MCP_TOOLS_LIST": "slim"}`. Independent of the mode, the
 repair-card description no longer repeats the failure-code list that the
 failure `code` enum already carries.
 
