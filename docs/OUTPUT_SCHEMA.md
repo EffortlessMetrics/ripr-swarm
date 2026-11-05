@@ -103,6 +103,7 @@ map is:
 | Output | Field | Current value |
 | --- | --- | --- |
 | `ripr check --format json` | `schema_version` | `0.2` |
+| `ripr check --format json-compact` | `schema_version` | `0.2` (the `json` document minified; parsed values identical, #13103) |
 | `ripr context --json` (`context_packet`; versions via top-level `version` key) | `version` | `1.1` |
 | `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
 | `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
@@ -162,7 +163,7 @@ records that distinction.
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
 | `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
-| `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
+| `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
 | `schemas/ripr/pr-evidence.schema.json` | `0.1` | `crates/ripr/src/app/pr_evidence.rs` (installed `ripr pr-evidence`) and `xtask/src/reports/pr_evidence.rs` (xtask compatibility); PR evidence envelope |
 | `schemas/ripr/repair-assurance.schema.json` | `1` | `crates/ripr/src/domain/verification_result.rs`; reserved assurance vocabulary and execution result |
@@ -173,7 +174,7 @@ records that distinction.
 | `schemas/ripr/ripr-agent-request.schema.json` | `0.2` | `crates/ripr/src/lsp/agent_protocol.rs`; route readiness fields |
 | `schemas/ripr/ripr-agent-success.schema.json` | `0.2` | `crates/ripr/src/lsp/agent_protocol.rs`; route readiness fields |
 | `schemas/ripr/rust-repair-trust-corpus.schema.json` | `0.1` | `xtask/src/reports/rust_repair_trust.rs`; trust corpus input, including optional observation `route` ladder facts |
-| `schemas/ripr/ripr-intervention-study.schema.json` | `ripr_intervention_study.v1` | `crates/ripr/src/domain/intervention_study.rs` plus `crates/ripr/src/output/intervention_study.rs`; preregistration-only matched intervention-study protocol |
+| `schemas/ripr/ripr-intervention-study.schema.json` | `ripr_intervention_study.v1` | `crates/ripr-contract/src/domain/intervention_study.rs` plus `crates/ripr/src/output/intervention_study.rs`; preregistration-only matched intervention-study protocol |
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
@@ -286,7 +287,7 @@ The budget-version constant lives in
 
 Every refusal already names its next step in prose (#11539). Machine
 consumers get the same step as a `remedy` object, derived from that prose by
-one owner (`RefusalRemedy::from_prose` in `crates/ripr/src/domain/`); the
+one owner (`RefusalRemedy::from_prose` in `crates/ripr-contract/src/domain/`); the
 renderers only serialize it. The prose is the source of truth, so the
 derivation is fail-closed: it copies what the message states and never
 composes, completes or guesses a command.
@@ -820,7 +821,7 @@ The live cache is unchanged. See [RIPR-SPEC-0257](specs/RIPR-SPEC-0257-current-c
 `schemas/ripr/ripr-intervention-study.schema.json` describes one frozen
 `ripr_intervention_study.v1` protocol. `schema_version`, `kind`, and
 `implementation_state` (`preregistration_only`) are pinned. The semantic
-object in `crates/ripr/src/domain/intervention_study.rs` owns study identity
+object in `crates/ripr-contract/src/domain/intervention_study.rs` owns study identity
 (`study_id`), `assignment`, `shared_budget`, `intervention_surface`,
 `leakage_controls`, `outcome_axes`, `stopping_rule`, and `non_claims`.
 `crates/ripr/src/output/intervention_study.rs` seals `protocol_digest` and
@@ -930,8 +931,10 @@ next=COMMAND
   every test-side gap (candidate-current, `weakly_exposed` or
   `reachable_unrevealed`, not static-limited, not preview-only), and the class
   counts cover every non-suppressed finding in the run.
-- At most 5 gap lines are printed, top triage gap first, then the remaining gaps
-  in finding order; `+M more gaps not shown` states the exact remainder.
+- 5 gap lines are printed, plus one more per 8 gaps, up to 10 (#13081): top
+  triage gap first, then the remaining gaps in finding order; `+M more gaps not
+  shown` states the exact remainder. The `open=` form (unconfirmed findings)
+  stays at 5 lines with `+M more open findings not shown`.
   Fields are whitespace-collapsed, the changed expression and oracle text are
   clipped to 80 characters, and a literal `|` inside a field is written `\|`.
   `missing=` is the first missing discriminator value, or `-`.
@@ -1180,6 +1183,16 @@ carry findings of more than one exposure class. It is emitted only when it is
 greater than `0`, and the per-class counts above still count every finding.
 Selecting one of those findings by location stays ambiguous by design; this
 member is the signal that the same expression was classified two ways.
+
+`summary.proof_harness_only` (additive, no `schema_version` bump, #12921)
+counts findings whose only reaching code is a proof harness ripr does not
+evaluate (`static_limit_kind` `proof_harness_not_evaluated`). It is a subset of
+`no_static_path`, emitted only when greater than `0`; the class buckets are
+unchanged and the proof earns no test credit, so a consumer can tell "covered
+only by an unevaluated proof" from "no guard found". It does not rank a strong
+harness against a vacuous one (#12596). The MCP `ripr_list_gaps` document
+carries the same count as top-level `proof_harness_only` over the filtered items,
+and each such item summary carries `"proof_harness_only": true`.
 
 `language_completeness` (additive, no `schema_version` bump, #11272) is the
 per-language projection of the shared completeness view that the editor, MCP
@@ -3559,6 +3572,15 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_assertion_context_unresolved` -- (RIPR-SPEC-0240, additive) Every related `assert_eq!` ripr refused was refused for a limit of its own reading (an unparsed or unplaced file, an unidentified test, a feature `cfg`, a binding that only may rebind the macro). The `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 - `rust_log_capture_unresolved` -- (#7133, additive) A changed `log::` record is checked by a related test that installs a capturing logger before calling the owner and asserts exactly on the captured store, against a string literal that carries the record's static template text. `tracing::` events and count or status assertions (`lines.len()`) keep their gap. ripr does not resolve the logger or the format template, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 - `rust_panic_outcome_unresolved` -- (RIPR-SPEC-0240, additive) A related, non-ignored test with no assertion carries `#[should_panic]` (bare, `expected = ""`, or an `expected` message found in a literal argument of a panicking macro on or after the changed line), calls the owner directly, and the owner invokes a panicking macro on or after the changed line. ripr does not resolve whether the changed code decides that panic, so the `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
+  Repository seam evidence carries the same named limitation without changing
+  its raw grip class or stage states. Pilot ranking and agent brief selection
+  withhold that seam even when every stage remains `yes` or `no`; pilot includes
+  it in `withheld_static_limitations_total`. Its evidence record and canonical
+  item retain a `static_limitations[]` row with the original stage, state and
+  reason, category `rust_panic_outcome_unresolved`, and repair route
+  `analysis/oracle-semantics-audit-fixes`. The row is analyzer work and provides
+  no focused repair command. Ordinary gaps without the limitation remain
+  eligible for selection (#12977).
 - `rust_debug_assertion_profile_unresolved` -- (RIPR-SPEC-0240, additive, #8051) A related, non-ignored test calls the owner directly and pins its result with a bare `debug_assert_eq!` that the owner-return pin admits under every gate it applies to `assert_eq!`. Debug assertions run under the default `cargo test` profile and are compiled out under `--release`, and ripr does not resolve which profile runs the tests, so the `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
 - `rust_call_fact_budget` -- (#8600, additive) A related test has a source line holding 256 distinct callees, the per-line call-fact budget, so further calls on that line may have been omitted (exactly 256 is treated as possibly truncated, not as proof a call was dropped). A negative claim that depends on the test's calls (`reachable_unrevealed` or `weakly_exposed`) is withheld as `static_unknown` with stop reason `gap_evidence_unresolved`; an already-unknown finding keeps its class, gains the named reason, and drops its call-derived absence lines, missing discriminators and next-step prescription. Saturation is read over every matched related test before the eight-row render cap, and a saturated test's `no_call_path`, `no_assertion`, `missing_input` and `assertion_not_observing` row misses read `observation_unconfirmed`. Findings with no related saturated test are unchanged, and the reason never raises a class. The `repo-exposure-json` and `repo-exposure-summary-json` seam readings apply the same decision to their stage evidence: a stage that read `no` or `weak` becomes `unknown`, the seam's missing boundary values are dropped, and the evidence record carries a `static_limitations[]` row whose `category` is `rust_call_fact_budget`, a `static_limitation` actionability and a `limitation` canonical item with no repair command; an already-unknown seam keeps its class and gains the reason. A named limitation, not a missing-test, coverage, or repair claim.
 - `rust_framework_oracle_unresolved` -- (RIPR-SPEC-0240, additive) A related test checks the owner through an environment variable it sets or removes, a mockall `returning` closure that reads its arguments, an expect-test `assert_debug_eq` literal, an insta snapshot whose redactions do not name the changed field, a literal pin on a receiver a test helper builds under a changed closure tail, or a field of a hand-written recording double the test passes as `&mut`. ripr does not evaluate that oracle, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
@@ -5206,6 +5228,14 @@ Field contract:
   `activation_overlap` is a static tie-breaker from already observed call
   values, such as a predicate-boundary equality call. `related_tests_total` is
   unaffected by ranking.
+- A related test whose only assertion on a returned-value seam is an exact
+  error-variant pin that does not name the `Err(..)` that seam constructs (this
+  includes a seam that constructs no `Err` at all, such as an `Ok(n)` arm
+  paired with an `Err(Fault::Even)` pin) is
+  published as `oracle_kind: exact_error_variant`, `oracle_strength: none`,
+  with a summary saying it pins a different arm; the same assertion is skipped
+  by the seam's discriminate stage and is not offered as the nearest test to
+  imitate (#12733, #12734).
 - `seams[].observed_values` — statically resolved scalar values seen in
   owner-call arguments across related tests. In addition to direct literals,
   Rust predicate boundaries may carry exact values from source-ordered direct
@@ -5307,10 +5337,13 @@ Field contract:
   confidence context. `no_runtime_data` means no imported runtime
   calibration was supplied; it does not imply runtime confirmation.
 - `seams[].evidence_record.static_limitations` - unknown or opaque static
-  evidence stages that should be treated as analyzer limitations rather than
-  focused-test instructions. Each entry carries the original `stage`, `state`,
-  and `reason` plus a normalized `category` and `repair_route` so Lane 1 can
-  group analyzer limits without treating them as user test gaps.
+  evidence stages and authoritative producer-named limitations, including
+  `rust_panic_outcome_unresolved` when its stage remains `yes` or `no`. Each
+  entry carries the original `stage`, `state`, and `reason` plus a normalized
+  `category` and `repair_route` so Lane 1 can group analyzer limits without
+  treating them as user test gaps. The panic limitation retains its typed
+  category and routes to `analysis/oracle-semantics-audit-fixes`; the raw grip
+  class and stage states remain unchanged.
   Predicate boundaries whose activation operand is local, member-access,
   iterator-derived, or computed use category
   `activation_boundary_input_unresolved`. Iterator-derived operands route to
@@ -19627,7 +19660,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.153",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.158",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20399,7 +20432,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.56",
+    "schema_version": "1.57",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -20412,7 +20445,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.153",
+      "schema_version": "1.158",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

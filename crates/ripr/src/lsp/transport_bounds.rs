@@ -955,7 +955,7 @@ mod tests {
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
         let root = std::env::temp_dir();
         let server = tokio::spawn(async move {
-            super::super::serve_streams(server_read, server_write, root, &e2e_bounds()).await
+            super::super::serve_streams(server_read, server_write, root, &e2e_bounds(), None).await
         });
         // Declared length 1025 exceeds the 1024-byte test cap; no body ever
         // arrives. The bound must trip at the header, before any body wait.
@@ -990,7 +990,7 @@ mod tests {
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
         let root = std::env::temp_dir();
         let server = tokio::spawn(async move {
-            super::super::serve_streams(server_read, server_write, root, &e2e_bounds()).await
+            super::super::serve_streams(server_read, server_write, root, &e2e_bounds(), None).await
         });
         client_write
             .write_all(&initialize_frame())
@@ -1063,7 +1063,7 @@ mod tests {
         let root = std::env::temp_dir();
         let initialize = initialize_pull_mode_frame(&root)?;
         let server = tokio::spawn(async move {
-            super::super::serve_streams(server_read, server_write, root, &e2e_bounds()).await
+            super::super::serve_streams(server_read, server_write, root, &e2e_bounds(), None).await
         });
         client_write
             .write_all(&initialize)

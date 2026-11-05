@@ -193,6 +193,22 @@ WSL cannot prove Windows behavior (see [Environment and
 shell](#environment-and-shell)); it exists here to produce Linux bytes from a
 Windows machine.
 
+The hosted decision is also automated: `goldens-rebless.yml` (#11736,
+Proposal A, documented in [CI](../CI.md), "Golden Re-bless") dispatches a
+hosted Linux job that judges a PR's golden drift with workflow-layer gates
+(drain `golden-drift.json` for status `warn`, zero `check.json`-surface
+entries, empty semantic arrays, plus a byte-identity `git diff --no-index`
+witness stricter than the classifier's `formatting_only` label), blesses
+all-or-nothing per fixture with reasons derived from each fixture's own
+`SPEC.md` id, requires a clean second `goldens check`, and pushes one
+bot-authored commit on the PR head, then comments the command to re-arm
+`merge-ready` (a `GITHUB_TOKEN` push starts no workflows, so the route cannot
+re-arm it itself). Use it when the drift is renderer-prose formatting-only
+and a human has decided the flip is intended; a refused dispatch pushes
+nothing and the manual WSL route above remains the local fallback. Semantic
+drift (`check.json` or any non-empty semantic array) is never auto-blessed;
+it keeps the human route.
+
 Formatting-only versus semantic drift. After a renderer merge (for example
 #9657, #10886), prose lines drift across many fixtures at once; the re-bless
 keeps `check.json` unchanged and cites the landed renderer change as the

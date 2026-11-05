@@ -2452,7 +2452,9 @@ impl Backend {
                 .send_notification::<ShowMessage>(ShowMessageParams {
                     typ: MessageType::WARNING,
                     message: bounded_failure_message(&unavailable_language_notice(
-                        &language, file_count,
+                        self.analysis_config().as_ref(),
+                        &language,
+                        file_count,
                     )),
                 })
                 .await;
@@ -2770,11 +2772,7 @@ impl Backend {
             "unavailable_languages": self
                 .unavailable_language_rows()
                 .into_iter()
-                .map(|(language, file_count)| serde_json::json!({
-                    "language": language,
-                    "file_count": file_count,
-                    "recovery": unavailable_language_recovery(&language),
-                }))
+                .map(|(language, file_count)| self.unavailable_language_status_row(language, file_count))
                 .collect::<Vec<_>>(),
             // Profile-withholding disclosure (#5276): when the actionable
             // profile withholds live `*_unknown` findings from every
@@ -5579,18 +5577,15 @@ fn config_failure_notice(error: &str) -> String {
 /// On-screen notice for changed files of a language whose adapter is not
 /// enabled (#8585): the count, the fact that they were not analyzed, and the
 /// shared recovery route.
-fn unavailable_language_notice(language: &str, file_count: usize) -> String {
+fn unavailable_language_notice(
+    config: Option<&crate::lsp::config::LspAnalysisConfig>,
+    language: &str,
+    file_count: usize,
+) -> String {
     format!(
         "ripr did not analyze {file_count} changed {language} file(s): the {language} adapter is not enabled; {}",
-        unavailable_language_recovery(language)
+        unavailable_language_recovery(config, language, file_count)
     )
-}
-
-fn unavailable_language_recovery(language: &str) -> String {
-    match crate::domain::LanguageId::from_wire(language) {
-        Some(id) => language_adapter_not_enabled_recovery(id),
-        None => format!("enable the {language} adapter in [languages] enabled in ripr.toml"),
-    }
 }
 
 fn bounded_failure_message(message: &str) -> String {
@@ -7953,7 +7948,12 @@ impl Backend {
                             })
                             .unwrap_or(serde_json::Value::Null)
                     } else if let (false, Some(language)) = (quarantined, adapter_language) {
-                        serde_json::Value::String(language_adapter_not_enabled_recovery(language))
+                        let config = self.analysis_config();
+                        serde_json::Value::String(language_adapter_not_enabled_recovery(
+                            language,
+                            config.as_ref(),
+                            1,
+                        ))
                     } else {
                         serde_json::Value::Null
                     },
@@ -9021,6 +9021,140 @@ fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDif
     )
 }
 
+/// #7205 / #2962: project one shared [`LanguageAvailabilityReport`] per
+/// skipped language for LSP status and editor recovery.
+fn unavailable_language_availability_input(
+    language: crate::domain::LanguageId,
+    file_count: usize,
+    config: Option<&crate::lsp::config::LspAnalysisConfig>,
+) -> (
+    crate::domain::language_availability::LanguageAvailabilityInput,
+    Option<bool>,
+) {
+    use crate::domain::language_availability::{
+        AutoDetectionPolicy, ConfiguredIntent, LanguageAvailabilityInput,
+    };
+    let repo = config.map(|value| value.repo_config());
+    let auto_defaulted = repo.is_none_or(|value| value.source_path().is_none());
+    let enabled = repo.map(|value| {
+        value
+            .languages()
+            .enabled()
+            .contains(&unavailable_language_config_entry(language))
+    });
+    let auto_enabled = auto_defaulted
+        && enabled == Some(true)
+        && matches!(
+            unavailable_language_config_entry(language),
+            crate::domain::LanguageId::Python | crate::domain::LanguageId::TypeScript
+        );
+    let input = LanguageAvailabilityInput {
+        project_detected: true,
+        file_count,
+        configured: match enabled {
+            Some(true) if !auto_enabled => ConfiguredIntent::Enabled,
+            Some(false) => ConfiguredIntent::Disabled,
+            _ => ConfiguredIntent::Unspecified,
+        },
+        auto_policy: if auto_enabled {
+            AutoDetectionPolicy::WhenDetected
+        } else {
+            AutoDetectionPolicy::Never
+        },
+        ..LanguageAvailabilityInput::for_language(language)
+    };
+    (input, enabled)
+}
+
+fn unavailable_language_config_entry(id: crate::domain::LanguageId) -> crate::domain::LanguageId {
+    match id {
+        crate::domain::LanguageId::JavaScript => crate::domain::LanguageId::TypeScript,
+        other => other,
+    }
+}
+
+fn resolve_unavailable_language_report(
+    language: crate::domain::LanguageId,
+    file_count: usize,
+    config: Option<&crate::lsp::config::LspAnalysisConfig>,
+) -> (
+    crate::domain::language_availability::LanguageAvailabilityReport,
+    Option<bool>,
+) {
+    use crate::domain::language_availability::resolve_language_availability;
+    let (input, enabled) = unavailable_language_availability_input(language, file_count, config);
+    (resolve_language_availability(&input), enabled)
+}
+
+fn lsp_recovery_from_availability_report(
+    report: &crate::domain::language_availability::LanguageAvailabilityReport,
+) -> String {
+    use crate::domain::language_availability::unavailable_recovery;
+    if let Some(recovery) = unavailable_recovery(report) {
+        return recovery.to_string();
+    }
+    let language = report.language;
+    // An adapter that is not compiled into this binary cannot be enabled by
+    // configuration (config parsing rejects it), whatever the configured
+    // intent resolved to; the only route is the build prerequisite.
+    if !report.compiled_available {
+        return language.unavailable_adapter_recovery();
+    }
+    let mut recovery = format!(
+        "add \"{}\" to [languages] enabled in ripr.toml, then restart the language server \
+         so the enabled adapter is read",
+        language.as_str()
+    );
+    if let Some(prerequisite) = language.enable_prerequisite() {
+        recovery.push_str("; ");
+        recovery.push_str(&prerequisite);
+    }
+    recovery
+}
+
+fn unavailable_language_recovery(
+    config: Option<&crate::lsp::config::LspAnalysisConfig>,
+    language: &str,
+    file_count: usize,
+) -> String {
+    match crate::domain::LanguageId::from_wire(language) {
+        Some(id) => language_adapter_not_enabled_recovery(id, config, file_count),
+        None => format!("enable the {language} adapter in [languages] enabled in ripr.toml"),
+    }
+}
+
+impl Backend {
+    fn unavailable_language_status_row(
+        &self,
+        language: String,
+        file_count: usize,
+    ) -> serde_json::Value {
+        let config = self.analysis_config();
+        let Some(id) = crate::domain::LanguageId::from_wire(&language) else {
+            return serde_json::json!({
+                "language": language,
+                "file_count": file_count,
+                "availability_state": serde_json::Value::Null,
+                "remediation": [],
+                "recovery": unavailable_language_recovery(config.as_ref(), &language, file_count),
+            });
+        };
+        let (report, enabled) =
+            resolve_unavailable_language_report(id, file_count, config.as_ref());
+        serde_json::json!({
+            "language": language,
+            "file_count": file_count,
+            "availability_state": enabled.map(|_| report.state.as_str()),
+            "remediation": if enabled.is_some() {
+                report.remediation.clone()
+            } else {
+                Vec::<String>::new()
+            },
+            "recovery": lsp_recovery_from_availability_report(&report),
+        })
+    }
+}
+
 /// #7205: recovery for a changed document whose adapter was not enabled.
 /// Refreshing the session cannot enable a language the process did not
 /// load. When the adapter is compiled in, the route names `[languages]
@@ -9028,21 +9162,15 @@ fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDif
 /// [`crate::domain::LanguageId::enable_prerequisite`] so compiled-in Perl
 /// does not claim enablement plus restart is sufficient. When it is not
 /// compiled in (Perl on the default build), enablement is not enough —
-/// reuse the shared
-/// [`crate::domain::LanguageId::unavailable_adapter_recovery`] text.
-pub(super) fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
-    if !language.is_available() {
-        return language.unavailable_adapter_recovery();
-    }
-    let enablement = format!(
-        "add \"{}\" to [languages] enabled in ripr.toml, then restart the language server \
-         so the enabled adapter is read",
-        language.as_str()
-    );
-    match language.enable_prerequisite() {
-        Some(prerequisite) => format!("{enablement}; {prerequisite}"),
-        None => enablement,
-    }
+/// the shared [`LanguageAvailabilityReport`] resolver names the build route
+/// (#2962).
+pub(super) fn language_adapter_not_enabled_recovery(
+    language: crate::domain::LanguageId,
+    config: Option<&crate::lsp::config::LspAnalysisConfig>,
+    file_count: usize,
+) -> String {
+    let (report, _) = resolve_unavailable_language_report(language, file_count, config);
+    lsp_recovery_from_availability_report(&report)
 }
 
 #[cfg(test)]
@@ -9060,7 +9188,7 @@ mod language_adapter_recovery_tests {
         else {
             return Ok(());
         };
-        let recovery = language_adapter_not_enabled_recovery(language);
+        let recovery = language_adapter_not_enabled_recovery(language, None, 1);
         for needle in ["[languages] enabled", "restart", language.as_str()] {
             if !recovery.contains(needle) {
                 return Err(format!(
@@ -9086,7 +9214,7 @@ mod language_adapter_recovery_tests {
         if !LanguageId::Perl.is_available() {
             return Ok(());
         }
-        let recovery = language_adapter_not_enabled_recovery(LanguageId::Perl);
+        let recovery = language_adapter_not_enabled_recovery(LanguageId::Perl, None, 1);
         let Some(prerequisite) = LanguageId::Perl.enable_prerequisite() else {
             return Err(
                 "compiled-in Perl must own enable_prerequisite so LSP recovery can reuse it"
@@ -9109,6 +9237,50 @@ mod language_adapter_recovery_tests {
     }
 
     #[test]
+    fn unavailable_language_report_state_matches_compiled_fact() -> Result<(), String> {
+        use super::resolve_unavailable_language_report;
+        use crate::domain::language_availability::AvailabilityState;
+        let (report, _) = resolve_unavailable_language_report(LanguageId::Python, 2, None);
+        if LanguageId::Python.is_available() {
+            if report.state == AvailabilityState::DetectedNotCompiled {
+                return Err(format!(
+                    "compiled-in python must not read as not_compiled: {:?}",
+                    report.state
+                ));
+            }
+        } else if report.state != AvailabilityState::DetectedNotCompiled {
+            return Err(format!(
+                "uncompiled python must read as detected_not_compiled: {:?}",
+                report.state
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn uncompiled_adapter_recovery_ignores_default_disabled_intent() -> Result<(), String> {
+        // With a loaded default configuration the language is not in
+        // `[languages] enabled`, so the resolver reads the intent as disabled
+        // and returns `NotEnabled` with no remediation. The recovery must
+        // still be the build route, never "add the language to ripr.toml".
+        let Some(language) = LanguageId::ALL
+            .into_iter()
+            .find(|language| *language != LanguageId::Rust && !language.is_available())
+        else {
+            return Ok(());
+        };
+        let config = crate::lsp::config::LspAnalysisConfig::default();
+        let recovery = language_adapter_not_enabled_recovery(language, Some(&config), 1);
+        let expected = language.unavailable_adapter_recovery();
+        if recovery != expected {
+            return Err(format!(
+                "uncompiled {language:?} with default config must name the build route, got {recovery:?} expected {expected:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn uncompiled_adapter_recovery_reuses_language_owner_text() -> Result<(), String> {
         // `--all-features` compiles every adapter, so there is no uncompiled
         // preview language to prove here; the compiled-in sibling covers that
@@ -9119,7 +9291,7 @@ mod language_adapter_recovery_tests {
         else {
             return Ok(());
         };
-        let recovery = language_adapter_not_enabled_recovery(language);
+        let recovery = language_adapter_not_enabled_recovery(language, None, 1);
         let expected = language.unavailable_adapter_recovery();
         if recovery != expected {
             return Err(format!(

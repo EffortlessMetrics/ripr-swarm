@@ -1662,7 +1662,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                         options,
                         oracle_policy,
                         preview_changed_files,
-                        &language_config.typescript.handwritten_files,
+                        &language_config.typescript,
                     )
                 })
             }
@@ -1687,7 +1687,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                     options,
                     oracle_policy,
                     preview_changed_files,
-                    &language_config.python.handwritten_files,
+                    &language_config.python,
                 )
             }),
             LanguageId::Perl => contain_adapter_panic(options, *language, || {
@@ -1994,6 +1994,15 @@ fn run_pipeline_for_diff_text_with_language_config(
                      override — declaring the path in `[{config_section}] handwritten_files` \
                      cannot admit it; if it is actually hand-written, rename it so the name \
                      no longer marks it generated and re-run the analysis."
+                ),
+            ),
+            PreviewSkipClass::ConfiguredPattern => (
+                AnalysisRecoveryKind::DeclarePreviewExcludedPatterns,
+                format!(
+                    "Not analyzed by the {name} preview adapter: {listed}. These paths match \
+                     `[{config_section}] excluded_file_patterns`; remove or narrow a pattern if \
+                     that skip is inaccurate, or keep the pattern to omit fixture or data files \
+                     from preview-language indexing."
                 ),
             ),
         };
@@ -2569,11 +2578,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         let attempted = match language {
             LanguageId::TypeScript | LanguageId::JavaScript => {
                 contain_adapter_panic(options, *language, || {
-                    analyze_typescript_repo(
-                        options,
-                        oracle_policy,
-                        &language_config.typescript.handwritten_files,
-                    )
+                    analyze_typescript_repo(options, oracle_policy, &language_config.typescript)
                 })
             }
             LanguageId::Python => contain_adapter_panic(options, *language, || {
@@ -2898,6 +2903,7 @@ where
 enum PreviewSkipClass {
     GeneratedName,
     ExcludedDirectory,
+    ConfiguredPattern,
 }
 
 fn detect_preview_skipped_paths<'a, I>(
@@ -2923,6 +2929,8 @@ where
         let generated_name = preview_skip_generated_name(language, &changed.path);
         let skip_class = if generated_name {
             PreviewSkipClass::GeneratedName
+        } else if preview_skip_configured_pattern(language, &changed.path, language_config) {
+            PreviewSkipClass::ConfiguredPattern
         } else {
             PreviewSkipClass::ExcludedDirectory
         };
@@ -2966,6 +2974,26 @@ fn preview_skip_generated_name(language: LanguageId, path: &std::path::Path) -> 
         LanguageId::Rust | LanguageId::Perl | LanguageId::TypeScript | LanguageId::JavaScript => {
             false
         }
+    }
+}
+
+fn preview_skip_configured_pattern(
+    language: LanguageId,
+    path: &std::path::Path,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
+    match language {
+        LanguageId::Python => crate::config::path_matches_preview_excluded_patterns(
+            &language_config.python.excluded_file_patterns,
+            path,
+        ),
+        LanguageId::TypeScript | LanguageId::JavaScript => {
+            crate::config::path_matches_preview_excluded_patterns(
+                &language_config.typescript.excluded_file_patterns,
+                path,
+            )
+        }
+        LanguageId::Rust | LanguageId::Perl => false,
     }
 }
 
@@ -3104,13 +3132,14 @@ fn is_excluded_from_preview_analysis(
 ) -> bool {
     match language {
         LanguageId::TypeScript | LanguageId::JavaScript => {
-            is_excluded_from_typescript_preview_analysis(
-                path,
-                &language_config.typescript.handwritten_files,
-            )
+            is_excluded_from_typescript_preview_analysis(path, language_config)
         }
         LanguageId::Python => {
             crate::config::is_detectable_generated_python_path(path)
+                || crate::config::path_matches_preview_excluded_patterns(
+                    &language_config.python.excluded_file_patterns,
+                    path,
+                )
                 || (crate::config::is_detectable_excluded_python_path(path)
                     && !crate::config::is_declared_handwritten_python_path(
                         &language_config.python.handwritten_files,
@@ -3127,11 +3156,19 @@ fn is_excluded_from_preview_analysis(
 /// diff in a rust-only build as in a full build (#10730).
 fn is_excluded_from_typescript_preview_analysis(
     path: &std::path::Path,
-    handwritten: &[String],
+    language_config: &crate::config::LanguagesConfig,
 ) -> bool {
     crate::config::is_detectable_generated_typescript_path(path)
-        || (crate::config::is_detectable_excluded_typescript_path(path)
-            && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
+        || crate::config::path_matches_preview_excluded_patterns(
+            &language_config.typescript.excluded_file_patterns,
+            path,
+        )
+        || ((crate::config::is_detectable_excluded_typescript_path(path)
+            || crate::config::is_typescript_docs_site_path(path))
+            && !crate::config::is_declared_handwritten_typescript_path(
+                &language_config.typescript.handwritten_files,
+                path,
+            ))
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -3139,10 +3176,10 @@ fn analyze_typescript_diff(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     changed_files: &[diff::ChangedFile],
-    handwritten: &[String],
+    typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     let _ = oracle_policy;
-    TypeScriptAdapter::analyze_diff_with_handwritten_env(options, changed_files, handwritten)
+    TypeScriptAdapter::analyze_diff_with_handwritten_env(options, changed_files, typescript_config)
 }
 
 #[cfg(not(feature = "lang-typescript"))]
@@ -3150,7 +3187,7 @@ fn analyze_typescript_diff(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
     _changed_files: &[diff::ChangedFile],
-    _handwritten: &[String],
+    _typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::TypeScript)
 }
@@ -3181,10 +3218,10 @@ fn analyze_python_diff(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
     changed_files: &[diff::ChangedFile],
-    handwritten: &[String],
+    python_config: &crate::config::PythonLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     let _ = oracle_policy;
-    PythonAdapter::analyze_diff_with_handwritten_env(options, changed_files, handwritten)
+    PythonAdapter::analyze_diff_with_handwritten_env(options, changed_files, python_config)
 }
 
 #[cfg(not(feature = "lang-python"))]
@@ -3192,7 +3229,7 @@ fn analyze_python_diff(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
     _changed_files: &[diff::ChangedFile],
-    _handwritten: &[String],
+    _python_config: &crate::config::PythonLanguageConfig,
 ) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::Python)
 }
@@ -3201,17 +3238,17 @@ fn analyze_python_diff(
 fn analyze_typescript_repo(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
-    handwritten: &[String],
+    typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageRepoResult, String> {
     let _ = oracle_policy;
-    TypeScriptAdapter::analyze_repo_with_handwritten_env(options, handwritten)
+    TypeScriptAdapter::analyze_repo_with_handwritten_env(options, typescript_config)
 }
 
 #[cfg(not(feature = "lang-typescript"))]
 fn analyze_typescript_repo(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
-    _handwritten: &[String],
+    _typescript_config: &crate::config::TypescriptLanguageConfig,
 ) -> Result<LanguageRepoResult, String> {
     unavailable_language(LanguageId::TypeScript)
 }
@@ -9441,6 +9478,41 @@ index 0000000..1111111 100644
         if count != 3 {
             return Err(format!(
                 "expected only admitted TypeScript lines to count, got {count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_typescript_line_count_excludes_docs_site_unless_declared_handwritten()
+    -> Result<(), String> {
+        // The pipeline exclusion site (not just the adapter predicate) must
+        // refuse docs-site components, and a declared handwritten path under
+        // `docs/` must be admitted again; a near-miss name stays source.
+        let files = vec![
+            changed_line_file("web/app.ts", 2, 1),
+            changed_line_file("packages/docs/components/ecosystem.tsx", 2_001, 0),
+            changed_line_file("packages/docsify/index.ts", 4, 0),
+        ];
+
+        let default_count = changed_language_line_count(
+            &files,
+            LanguageId::TypeScript,
+            &crate::config::LanguagesConfig::default(),
+        );
+        if default_count != 7 {
+            return Err(format!(
+                "expected docs-site lines excluded and the near miss counted, got {default_count}"
+            ));
+        }
+
+        let mut declared = crate::config::LanguagesConfig::default();
+        declared.typescript.handwritten_files =
+            vec!["packages/docs/components/ecosystem.tsx".to_string()];
+        let declared_count = changed_language_line_count(&files, LanguageId::TypeScript, &declared);
+        if declared_count != 2_008 {
+            return Err(format!(
+                "expected the declared handwritten docs path to count again, got {declared_count}"
             ));
         }
         Ok(())

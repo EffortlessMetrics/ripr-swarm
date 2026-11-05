@@ -599,7 +599,14 @@ pub(crate) fn actionability_for(
     let (class, reason) = if static_limited {
         (
             "static_limitation",
-            "static evidence is opaque or unknown for this seam",
+            if entry
+                .evidence
+                .names_static_limit(StaticLimitKind::RustPanicOutcomeUnresolved)
+            {
+                "the changed code's role in the expected panic is unresolved"
+            } else {
+                "static evidence is opaque or unknown for this seam"
+            },
         )
     } else {
         match route_readiness.state {
@@ -992,9 +999,43 @@ fn alignment_confidence_for(
     }
 }
 
+/// Activation cannot be established for a seam no test reaches. That
+/// `activate: unknown` follows from `reach: no`; it is the missing-test gap
+/// itself, not evidence the analyzer failed to establish, so it must not read
+/// as a static limitation (#5497: the pilot answer key confirms these
+/// `ungripped` seams by mutation).
+///
+/// Only the producer's generic "no value / no owner call observed" summary
+/// follows from absent reach. It is matched on the summary's leading words,
+/// not on keywords anywhere in it, because the summary quotes the seam
+/// expression (an expression naming `snapshot_count` is not a snapshot
+/// limitation). A producer-named activation limit (unresolved boundary
+/// constant or operand, ambiguous constructor owner, unresolved field
+/// assignment, withheld activation credit) stays a limitation even when no
+/// test reaches the seam. Eligibility and the limitation projection share
+/// this one decision.
+fn activation_follows_absent_reach(entry: &ClassifiedSeam) -> bool {
+    matches!(entry.evidence.reach.state, StageState::No)
+        && matches!(entry.evidence.activate.state, StageState::Unknown)
+        && (entry
+            .evidence
+            .activate
+            .summary
+            .starts_with("No concrete activation values observed for seam")
+            || entry
+                .evidence
+                .activate
+                .summary
+                .starts_with("No direct owner call observed for value-insensitive seam"))
+}
+
 pub(crate) fn is_static_limited(entry: &ClassifiedSeam) -> bool {
+    let activation_follows_absent_reach = activation_follows_absent_reach(entry);
     cross_language_oracle_visibility_unresolved(entry)
         || cross_language_test_target_unresolved(entry)
+        || entry
+            .evidence
+            .names_static_limit(StaticLimitKind::RustPanicOutcomeUnresolved)
         || matches!(entry.class, SeamGripClass::Opaque)
         || [
             &entry.evidence.reach,
@@ -1004,7 +1045,11 @@ pub(crate) fn is_static_limited(entry: &ClassifiedSeam) -> bool {
             &entry.evidence.discriminate,
         ]
         .iter()
-        .any(|stage| matches!(stage.state, StageState::Opaque | StageState::Unknown))
+        .enumerate()
+        .any(|(index, stage)| {
+            let skipped = activation_follows_absent_reach && index == 1;
+            !skipped && matches!(stage.state, StageState::Opaque | StageState::Unknown)
+        })
 }
 
 fn weak_related_oracle(entry: &ClassifiedSeam) -> bool {
@@ -1049,7 +1094,21 @@ fn recommendation_for(
     };
     let nearest_test_to_imitate =
         nearest_strong_test_to_imitate(entry.seam.kind(), &entry.evidence)
-            .or_else(|| entry.evidence.related_tests.first().map(AsRef::as_ref))
+            .or_else(|| {
+                // A test whose only assertion pins a different arm shows the
+                // reader nothing to imitate for this seam (#12734).
+                entry
+                    .evidence
+                    .related_tests
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .find(|test| {
+                        !crate::analysis::test_grip_evidence::pins_other_arm(
+                            &test.oracle_kind,
+                            &test.oracle_strength,
+                        )
+                    })
+            })
             .map(|test| related_test_record(test, entry.seam.kind()));
 
     EvidenceRecordRecommendation {
@@ -1209,12 +1268,14 @@ pub(crate) fn static_limitations_for(
         });
     }
     push_stage_limitation(&mut limitations, "reach", &entry.evidence.reach, entry);
-    push_stage_limitation(
-        &mut limitations,
-        "activate",
-        &entry.evidence.activate,
-        entry,
-    );
+    if !activation_follows_absent_reach(entry) {
+        push_stage_limitation(
+            &mut limitations,
+            "activate",
+            &entry.evidence.activate,
+            entry,
+        );
+    }
     push_stage_limitation(
         &mut limitations,
         "propagate",
@@ -1332,7 +1393,11 @@ fn push_stage_limitation(
     evidence: &StageEvidence,
     entry: &ClassifiedSeam,
 ) {
-    if matches!(evidence.state, StageState::Unknown | StageState::Opaque) {
+    if matches!(evidence.state, StageState::Unknown | StageState::Opaque)
+        || evidence
+            .summary
+            .contains(StaticLimitKind::RustPanicOutcomeUnresolved.as_str())
+    {
         let state = evidence.state.as_str();
         // RIPR-SPEC-0236 example 23: a reach limitation that already names a
         // rust-macro-reach limit kind is opaque static evidence, not a
@@ -1367,7 +1432,9 @@ fn rust_macro_reach_limitation_reason(reason: &str) -> bool {
 
 fn static_limitation_category(stage: &str, state: &str, reason: &str) -> &'static str {
     let reason = reason.to_ascii_lowercase();
-    if reason.contains(StaticLimitKind::RustCallFactBudget.as_str()) {
+    if reason.contains(StaticLimitKind::RustPanicOutcomeUnresolved.as_str()) {
+        StaticLimitKind::RustPanicOutcomeUnresolved.as_str()
+    } else if reason.contains(StaticLimitKind::RustCallFactBudget.as_str()) {
         // #8600: the producer named the typed call-fact budget limit; the
         // substring classifier below must not rename it from its prose.
         StaticLimitKind::RustCallFactBudget.as_str()
@@ -1451,6 +1518,7 @@ fn static_limitation_repair_route(category: &str) -> &'static str {
         "cross_file_constant_unresolved" => "analysis/cross-file-constant-resolution",
         "macro_generated_value" => "analysis/macro-generated-value-fixtures",
         "opaque_helper_call" => "analysis/oracle-semantics-audit-fixes",
+        "rust_panic_outcome_unresolved" => "analysis/oracle-semantics-audit-fixes",
         "dynamic_dispatch" => "calibration/runtime-fixtures-v3",
         "unsupported_mock_shape" => "analysis/oracle-semantics-audit-fixes",
         "snapshot_field_unknown" => "analysis/oracle-semantics-audit-fixes",
@@ -3410,6 +3478,45 @@ mod tests {
         assert_eq!(
             json["static_limitations"][0]["repair_route"],
             "analysis/static-limitation-taxonomy"
+        );
+    }
+
+    #[test]
+    fn a_test_pinning_a_different_arm_is_not_offered_to_imitate() {
+        // #12734: an exact error-variant assertion that cannot see this seam's
+        // returned value shows the reader nothing to imitate for the seam.
+        let mut entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
+        let template = (*entry.evidence.related_tests[0]).clone();
+        let mut other_arm = template.clone();
+        other_arm.test_name = "pins_the_err_arm".to_string();
+        other_arm.oracle_kind = crate::domain::OracleKind::ExactErrorVariant;
+        other_arm.oracle_strength = crate::domain::OracleStrength::None;
+        let mut weak = template;
+        weak.test_name = "reads_the_value_loosely".to_string();
+        weak.oracle_kind = crate::domain::OracleKind::RelationalCheck;
+        weak.oracle_strength = crate::domain::OracleStrength::Weak;
+
+        entry.evidence.related_tests = vec![
+            std::sync::Arc::new(other_arm.clone()),
+            std::sync::Arc::new(weak),
+        ];
+        let record = evidence_record_for(&entry, None);
+        assert_eq!(
+            record
+                .recommendation
+                .nearest_test_to_imitate
+                .as_ref()
+                .map(|test| test.name.as_str()),
+            Some("reads_the_value_loosely"),
+            "the different-arm pin is skipped for the next related test"
+        );
+
+        entry.evidence.related_tests = vec![std::sync::Arc::new(other_arm)];
+        let record = evidence_record_for(&entry, None);
+        assert!(
+            record.recommendation.nearest_test_to_imitate.is_none(),
+            "a lone different-arm pin is not offered: {:?}",
+            record.recommendation.nearest_test_to_imitate
         );
     }
 

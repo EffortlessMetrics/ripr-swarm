@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0320"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0320-guarded-test-edit-precondition.md"
+status = "proposed"
+owner = "product / lsp"
+standalone_reason = "Types the fail-closed guarded test-only assertion replacement precondition and reject vocabulary (#1902) without emitting or applying LSP edits."

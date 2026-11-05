@@ -51,6 +51,37 @@ The procedure may run twice on the same candidate lifecycle:
 Publication does not erase a valid candidate review. It adds remote evidence
 that must be inspected before the disposition can advance.
 
+# Source attestation and final review
+
+Keep the source conclusion separate from the final integration conclusion.
+When source, oracle and contract review is complete on the exact head, with
+applicable source proof and no unresolved material finding, its conclusion may
+be `SOURCE_REVIEW_READY` while the overall merge review is `REVIEW_INCOMPLETE`
+for outstanding hosted or integration evidence. Missing claim-essential source
+proof, a material negative finding or stale source review prevents that source
+conclusion. `SOURCE_REVIEW_READY` never authorizes landing: final published-head
+`REVIEW_READY`, actual required native checks and current integration judgment
+remain necessary.
+
+For the installed #8157 source-attestation consumer, publish a native `COMMENT`
+review on that exact head with the bare first nonblank line `SOURCE_REVIEW_READY`
+when that conclusion is earned. A legitimate same-account review is supported;
+it is not a native GitHub approval. Keep the attestation body scoped to source
+evidence without contradictory state text or later prose containing the word
+`disposition`. Put the full inspection record (including its `disposition:`
+field) and pending final-review evidence in the PR body or a Conversation
+comment, linking it from the source attestation. See [CI source-review semantics](../../../docs/CI.md#merge-queue-request-cutover).
+
+The installed consumer selects the latest native review per login: a later
+same-account `COMMENT`, including a source-only follow-up marked
+`REVIEW_INCOMPLETE`, can replace the earlier positive attestation and refuse
+qualification. Use Conversation comments for additional evidence that does not
+change the source judgment. If source readiness actually changes, publish that
+negative judgment promptly and repair/review the affected dimensions before
+restoring it; do not preserve a positive marker over a material finding.
+These are instructions for the installed marker-based consumer, not completion
+of #8157's remaining structured-record contract.
+
 # Inspection workspace
 
 Reviewing means reading a committed Git object. Binding an exact head must never
@@ -149,7 +180,7 @@ Advisory providers such as `ub-review` and other documented bots (see `docs/CI.m
 7. **Post a current-head inspection record.** A clean review is not `LGTM`. Name the inspected surfaces, risks, invariants, validation signals, residual assumptions, missing evidence, and exact disposition.
 8. **Respect GitHub's author-review limitation.** On the author's own PR, submit a `COMMENT` review with an explicit blocking or non-blocking disposition. GitHub's refusal to let an author request changes is a platform constraint, not approval and not evidence that the PR is ready.
 9. **Repair through the same candidate.** Route valid findings back to `build-candidate`. Reply to incorrect automated findings with source-backed evidence. Resolve a thread only after repair or reply exists. Re-run `review-pr` for the affected currentness dimensions after the head changes.
-10. **Hand off only an earned disposition.** `REVIEW_READY` may proceed to `finish-pr`. All other non-terminal results keep the candidate draft/in repair or durably in flight.
+10. **Hand off only an earned disposition.** `REVIEW_READY` may proceed to merge convergence under `finish-pr`. `SOURCE_REVIEW_READY` may support the applicable qualification request while final review remains in flight; follow the source-attestation guidance above. All other non-terminal results keep the candidate draft/in repair or durably in flight.
 
 # False-confidence prohibitions
 
@@ -203,6 +234,7 @@ Golden drift inherited from a main change has one mainline repair owner. Do not 
 
 # Valid exits
 
+- `SOURCE_REVIEW_READY` (source scope only; final review remains separate)
 - `REVIEW_READY`
 - `REPAIR_REQUIRED`
 - `REVIEW_INCOMPLETE`

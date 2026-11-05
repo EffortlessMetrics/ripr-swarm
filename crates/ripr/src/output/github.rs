@@ -53,7 +53,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             continue;
         }
         let Some(annotation_level) = config
-            .severity()
+            .severity_for_file(&finding.probe.location.file)
             .for_exposure(&finding.class)
             .github_annotation_level()
         else {
@@ -663,7 +663,7 @@ mod tests {
         // and repair route, never zero bytes.
         let notice =
             crate::core_error::CoreError::repository_root_unusable("not inside a Git work tree")
-                .refusal_notice();
+                .refusal_notice(&crate::config::config_error_summary);
         let rendered = super::render_refusal(&notice);
         assert!(
             rendered.starts_with("::error title=ripr refusal::"),

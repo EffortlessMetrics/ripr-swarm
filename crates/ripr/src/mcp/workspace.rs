@@ -219,6 +219,8 @@ struct GapListScope<'a> {
     requested: Option<&'a str>,
     filter: &'a GapListFilter,
     filtered: usize,
+    /// Filtered items reached only by an unevaluated proof harness (#12921).
+    proof_harness_only: usize,
 }
 
 /// The disclosed page window inside a gap-list document: what the caller
@@ -876,6 +878,10 @@ impl WorkspaceSession {
         // `selected` count stays the full stored selection so the document
         // never lies about what filtering removed.
         let filtered = selected_items.len();
+        let proof_harness_only = selected_items
+            .iter()
+            .filter(|item| item.is_proof_harness_only())
+            .count();
 
         // The document shell carries every disclosure except the page of
         // item summaries; its measured size sets the page budget. The
@@ -891,6 +897,7 @@ impl WorkspaceSession {
                 requested,
                 filter,
                 filtered,
+                proof_harness_only,
             };
             self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
@@ -907,6 +914,7 @@ impl WorkspaceSession {
                 requested,
                 filter: &GapListFilter::default(),
                 filtered,
+                proof_harness_only,
             };
             self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
@@ -995,6 +1003,7 @@ impl WorkspaceSession {
                 requested,
                 filter,
                 filtered,
+                proof_harness_only,
             };
             let probe = self.gap_list_document(
                 snapshot,
@@ -1054,6 +1063,7 @@ impl WorkspaceSession {
             requested,
             filter,
             filtered,
+            proof_harness_only,
         };
         let document = self.gap_list_document(snapshot, &scope, items, &page)?;
         // A listing whose non-pageable shell (for example an omission
@@ -1155,7 +1165,7 @@ impl WorkspaceSession {
                 "arguments": arguments,
             });
         }
-        Ok(json!({
+        let mut document = json!({
             "schema_version": GAP_LIST_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
             "requested_snapshot_id": scope.requested,
@@ -1212,7 +1222,14 @@ impl WorkspaceSession {
                 "summaries carry identity, location, and the commit-time repair-readiness projection only; read one item with ripr_get_gap or ripr://gap/{canonical_id} for complete evidence",
                 "the list is deterministic for its snapshot identity; a refresh replaces the snapshot and its identities",
             ],
-        }))
+        });
+        // Additive (#12921): the filtered items reached only by a proof harness
+        // ripr does not evaluate. A subset of the `no_static_path` items and
+        // never test coverage; absent when zero.
+        if scope.proof_harness_only > 0 {
+            document["proof_harness_only"] = json!(scope.proof_harness_only);
+        }
+        Ok(document)
     }
 
     /// One canonical item's complete bounded evidence.

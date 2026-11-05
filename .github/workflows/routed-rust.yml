@@ -175,7 +175,7 @@ jobs:
             while IFS= read -r -d '' path; do
               case "$path" in
                 CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) reason=release_surface; return 0 ;;
-                docs/specs/*|docs/handoffs/*|*.md) ;;
+                docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
                 *) return 0 ;;
               esac
             done < "$changed"
@@ -193,6 +193,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      # The history-sync route reads who last applied its label (#12437).
+      issues: read
       pull-requests: read
     outputs:
       status: ${{ steps.candidate.outputs.status }}
@@ -207,7 +209,14 @@ jobs:
       concurrent_claims: ${{ steps.candidate.outputs.concurrent_claims }}
       changed_files: ${{ steps.candidate.outputs.changed_files }}
       changed_lines: ${{ steps.candidate.outputs.changed_lines }}
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+      history_sync_digest: ${{ steps.sync-live.outputs.digest }}
+      history_sync_status: ${{ steps.candidate.outputs.history_sync_status }}
+      history_sync_detail: ${{ steps.candidate.outputs.history_sync_detail }}
+      history_sync_source: ${{ steps.candidate.outputs.history_sync_source }}
+      history_sync_destination_base: ${{ steps.candidate.outputs.history_sync_destination_base }}
       labels: ${{ steps.entry.outputs.labels }}
+      trusted_sha: ${{ steps.trusted.outputs.sha }}
       pr: ${{ steps.entry.outputs.pr }}
       head: ${{ steps.entry.outputs.head }}
       queue_entry: ${{ steps.entry.outputs.queue_entry }}
@@ -253,7 +262,7 @@ jobs:
           trusted="$GITHUB_WORKSPACE/.admission-trusted"
           [[ "$TRUSTED_ADMISSION_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse
           [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] || refuse
-          for name in action.yml candidate_admission.py release_cut_admission.py; do
+          for name in action.yml candidate_admission.py release_cut_admission.py review_disposition.py; do
             path=".github/actions/pr-candidate-admission/$name"
             [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] || refuse
             expected="$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" || refuse
@@ -326,6 +335,59 @@ jobs:
           docs-only: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}
           max-changed-files: '160'
           max-changed-lines: '3000'
+      - name: Select admitted qualification scope
+        id: scope
+        shell: bash
+        env:
+          DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}
+          ADMISSION_STATUS: ${{ steps.candidate.outputs.status }}
+          ADMISSION_REASON: ${{ steps.candidate.outputs.reason }}
+          HISTORY_SYNC_STATUS: ${{ steps.candidate.outputs.history_sync_status }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          case "$DOCS_ONLY" in true|false) ;; *) echo "::error::docs-only scope is unavailable"; exit 1 ;; esac
+          # Importing history is a composition transaction even if its net diff
+          # is Markdown-only. Only trusted admission can select this profile.
+          if [ "$ADMISSION_REASON" = history_sync_admitted ] || [ "$HISTORY_SYNC_STATUS" = validated ]; then
+            [ "$EVENT_NAME:$ADMISSION_STATUS:$ADMISSION_REASON:$HISTORY_SYNC_STATUS" = pull_request:admitted:history_sync_admitted:validated ] || { echo "::error::history-sync admission is contradictory"; exit 1; }
+            DOCS_ONLY=false
+          fi
+          echo "docs_only=$DOCS_ONLY" >> "$GITHUB_OUTPUT"
+      - name: Capture history-sync authorization and composition
+        id: sync-live
+        if: steps.candidate.outputs.reason == 'history_sync_admitted'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.entry.outputs.pr }}
+          EXPECTED_HEAD: ${{ steps.entry.outputs.head }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_G: ${{ github.sha }}
+          SYNC_SOURCE: ${{ steps.candidate.outputs.history_sync_source }}
+          SYNC_BASE: ${{ steps.candidate.outputs.history_sync_destination_base }}
+        run: |
+          set -euo pipefail
+          trusted="$GITHUB_WORKSPACE/.admission-trusted"
+          path=.github/actions/pr-candidate-admission/history_sync_live.py
+          [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ]
+          [ "$(git -C "$trusted" rev-parse "HEAD:$path")" = "$(git hash-object --no-filters "$trusted/$path")" ]
+          python3 "$trusted/$path" --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$EXPECTED_HEAD" --base "$EXPECTED_BASE" --integration "$EXPECTED_G" --source "$SYNC_SOURCE" --destination-base "$SYNC_BASE" >> "$GITHUB_OUTPUT"
+      # #8157: a source review of record must attest the exact head. Refuse at
+      # request time so a missing attestation does not cost a full test run; the
+      # Result job repeats the read from the same trusted bundle after the tests.
+      - name: Require source review disposition at request time
+        if: github.event_name == 'pull_request' && steps.candidate.outputs.status == 'admitted'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.entry.outputs.pr }}
+          PR_HEAD: ${{ steps.entry.outputs.head }}
+        run: |
+          set -euo pipefail
+          python3 -I .admission-trusted/.github/actions/pr-candidate-admission/review_disposition.py --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$PR_HEAD"
       # Unresolved review threads fail the end-of-run eligibility recheck about an
       # hour later, after every test shard went green. Refuse at request time
       # instead, naming the threads. A read failure is only a warning: the final
@@ -367,7 +429,7 @@ jobs:
   rust-cx43:
     name: Ripr Rust Small on CX43
     needs: [admission, route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cx43' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: needs.route.outputs.router_target == 'cx43' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx43","rust-medium","trusted-pr"]}'
@@ -375,6 +437,10 @@ jobs:
       disk-guard-threshold: 35
       use-scratch: true
       pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
       artifact-name: ripr-rust-small-cx43
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
@@ -385,7 +451,7 @@ jobs:
   rust-cpx42:
     name: Ripr Rust Small on CPX42
     needs: [admission, route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cpx42' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: needs.route.outputs.router_target == 'cpx42' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cpx42","rust-medium","rust-16gb","trusted-pr"]}'
@@ -393,6 +459,10 @@ jobs:
       disk-guard-threshold: 35
       use-scratch: true
       pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
       artifact-name: ripr-rust-small-cpx42
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
@@ -403,7 +473,7 @@ jobs:
   rust-cx53:
     name: Ripr Rust Small on CX53
     needs: [admission, route, detect-docs-only]
-    if: needs.route.outputs.router_target == 'cx53' && needs.admission.result == 'success' && needs.detect-docs-only.outputs.docs_only != 'true'
+    if: needs.route.outputs.router_target == 'cx53' && needs.admission.result == 'success' && needs.admission.outputs.docs_only != 'true'
     uses: ./.github/workflows/rust-gates.yml
     with:
       runner-config: '{"group":"em-ci-small","labels":["self-hosted","linux","x64","em-ci","cx53","rust-large","trusted-pr"]}'
@@ -411,6 +481,10 @@ jobs:
       disk-guard-threshold: 50
       use-scratch: true
       pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
       artifact-name: ripr-rust-small-cx53
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
@@ -430,7 +504,7 @@ jobs:
       !cancelled() &&
       needs.admission.result == 'success' &&
       needs.detect-docs-only.result == 'success' &&
-      needs.detect-docs-only.outputs.docs_only != 'true' &&
+      needs.admission.outputs.docs_only != 'true' &&
       (needs.route.outputs.router_target == 'github' ||
       (needs.route.outputs.router_target == 'cx43' && needs.rust-cx43.outputs.scratch_status == 'tempfail') ||
       (needs.route.outputs.router_target == 'cpx42' && needs.rust-cpx42.outputs.scratch_status == 'tempfail') ||
@@ -444,6 +518,10 @@ jobs:
       # The hosted gates leave the nextest step to rust-github-tests (#10507).
       test-shards: 4
       pr-labels: ${{ needs.admission.outputs.labels }}
+      admission-reason: ${{ needs.admission.outputs.reason }}
+      admission-head: ${{ needs.admission.outputs.head }}
+      history-sync-source: ${{ needs.admission.outputs.history_sync_source }}
+      history-sync-base: ${{ needs.admission.outputs.history_sync_destination_base }}
       artifact-name: ripr-rust-small-github
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
@@ -537,7 +615,7 @@ jobs:
   docs-gate:
     name: Ripr Docs Gate
     needs: [admission, detect-docs-only]
-    if: needs.admission.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.detect-docs-only.outputs.docs_only == 'true'
+    if: needs.admission.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.admission.outputs.docs_only == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -601,11 +679,43 @@ jobs:
     # merge-ready request. Any other pull_request label event is a nonrequest
     # under a different name so the required context is never satisfied by it.
     name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
     needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate, vscode-select, vscode-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Check out trusted admission bundle for the review recheck
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.admission.outputs.trusted_sha }}
+          path: .admission-trusted
+          sparse-checkout: .github/actions/pr-candidate-admission
+          persist-credentials: false
+      - name: Recheck source review disposition for the admitted head
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.admission.outputs.pr }}
+          EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
+          TRUSTED_ADMISSION_SHA: ${{ needs.admission.outputs.trusted_sha }}
+        run: |
+          set -euo pipefail
+          trusted="$GITHUB_WORKSPACE/.admission-trusted"
+          path=.github/actions/pr-candidate-admission/review_disposition.py
+          # Same immutable-source binding as the admission job's bundle check.
+          [[ "$TRUSTED_ADMISSION_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::trusted admission SHA is missing"; exit 1; }
+          [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] && [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] \
+            && [ "$(git hash-object --no-filters "$trusted/$path")" = "$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" ] \
+            || { echo "::error::trusted review-disposition verifier differs from the immutable source"; exit 1; }
+          python3 -I "$trusted/$path" --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$EXPECTED_HEAD"
       - name: Recheck initially admitted eligibility
         id: eligibility
         if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
@@ -616,6 +726,7 @@ jobs:
           EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
           EXPECTED_REQUEST: ${{ needs.admission.outputs.request }}
           EXPECTED_QUEUE_ENTRY: ${{ needs.admission.outputs.queue_entry }}
+          ADMISSION_REASON: ${{ needs.admission.outputs.reason }}
           EVENT_NAME: ${{ github.event_name }}
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
@@ -631,11 +742,13 @@ jobs:
             [[ "$EXPECTED_REQUEST" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]] || return 1
             read_pr() {
               pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER") || return
-              jq -e --arg repo "$REPOSITORY" --arg head "$EXPECTED_HEAD" --argjson number "$PR_NUMBER" --arg event "$EVENT_NAME" '
+              # A history-sync admission (#12437) also needs its label to still be present.
+              jq -e --arg repo "$REPOSITORY" --arg head "$EXPECTED_HEAD" --argjson number "$PR_NUMBER" --arg event "$EVENT_NAME" --arg reason "${ADMISSION_REASON:-}" '
                 .number == $number and .state == "open" and .draft == false and
                 .head.sha == $head and .head.repo.full_name == $repo and
                 .base.ref == "main" and .base.repo.full_name == $repo and
-                ($event != "pull_request" or (.labels | type == "array" and any(.name == "merge-ready")))
+                ($event != "pull_request" or (.labels | type == "array" and any(.name == "merge-ready"))) and
+                ($reason != "history_sync_admitted" or ($event == "pull_request" and (.labels | type == "array" and any(.name == "history-sync"))))
               ' <<<"$pr" >/dev/null
             }
             # Same-head succession (#4986, #8082): a newer run of this workflow for
@@ -727,6 +840,32 @@ jobs:
             false:skipped) echo "The extension e2e was not selected for the admitted head." ;;
             *) echo "::error::extension e2e selected=$SELECTED result=$E2E_RESULT for the admitted head"; exit 1 ;;
           esac
+      - name: Recheck history-sync authorization and composition
+        id: sync-live
+        if: needs.admission.outputs.reason == 'history_sync_admitted'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.admission.outputs.pr }}
+          EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_TRUSTED: ${{ needs.admission.outputs.trusted_sha }}
+          EXPECTED_G: ${{ github.sha }}
+          EXPECTED_DIGEST: ${{ needs.admission.outputs.history_sync_digest }}
+          SYNC_SOURCE: ${{ needs.admission.outputs.history_sync_source }}
+          SYNC_BASE: ${{ needs.admission.outputs.history_sync_destination_base }}
+        run: |
+          set -euo pipefail
+          trusted="$GITHUB_WORKSPACE/.admission-trusted"
+          [[ "$EXPECTED_TRUSTED" =~ ^[0-9a-f]{40}$ ]] && [ "$EXPECTED_TRUSTED" = "$EXPECTED_BASE" ]
+          [ "$(git -C "$trusted" rev-parse HEAD)" = "$EXPECTED_TRUSTED" ]
+          for name in history_sync_live.py candidate_admission.py release_cut_admission.py; do
+            path=".github/actions/pr-candidate-admission/$name"
+            [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ]
+            [ "$(git -C "$trusted" rev-parse "HEAD:$path")" = "$(git hash-object --no-filters "$trusted/$path")" ]
+          done
+          python3 "$trusted/.github/actions/pr-candidate-admission/history_sync_live.py" --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$EXPECTED_HEAD" --base "$EXPECTED_BASE" --integration "$EXPECTED_G" --source "$SYNC_SOURCE" --destination-base "$SYNC_BASE" --expect-digest "$EXPECTED_DIGEST"
       - name: Summarize routed result
         if: always()
         env:
@@ -743,6 +882,16 @@ jobs:
           ADMISSION_CONCURRENT_CLAIMS: ${{ needs.admission.outputs.concurrent_claims }}
           ADMISSION_CHANGED_FILES: ${{ needs.admission.outputs.changed_files }}
           ADMISSION_CHANGED_LINES: ${{ needs.admission.outputs.changed_lines }}
+          ADMISSION_HEAD: ${{ needs.admission.outputs.head }}
+          ADMISSION_HISTORY_SYNC: ${{ needs.admission.outputs.history_sync_status }}
+          HISTORY_SYNC_LIVE_RESULT: ${{ steps.sync-live.outcome }}
+          ADMISSION_HISTORY_SYNC_DETAIL: ${{ needs.admission.outputs.history_sync_detail }}
+          ADMISSION_HISTORY_SYNC_SOURCE: ${{ needs.admission.outputs.history_sync_source }}
+          ADMISSION_HISTORY_SYNC_BASE: ${{ needs.admission.outputs.history_sync_destination_base }}
+          CX43_PR_EVIDENCE: ${{ needs.rust-cx43.outputs.pr_evidence }}
+          CPX42_PR_EVIDENCE: ${{ needs.rust-cpx42.outputs.pr_evidence }}
+          CX53_PR_EVIDENCE: ${{ needs.rust-cx53.outputs.pr_evidence }}
+          GITHUB_PR_EVIDENCE: ${{ needs.rust-github.outputs.pr_evidence }}
           TARGET: ${{ needs.route.outputs.router_target }}
           REASON: ${{ needs.route.outputs.router_reason }}
           ROUTE_RESULT: ${{ needs.route.result }}
@@ -771,7 +920,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           LABEL_NAME: ${{ github.event.label.name }}
           DOCS_DETECT_RESULT: ${{ needs.detect-docs-only.result }}
-          DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}
+          DOCS_ONLY: ${{ needs.admission.outputs.docs_only }}
           DOCS_GATE_RESULT: ${{ needs.docs-gate.result }}
           WORKFLOW_REF: ${{ github.ref }}
           ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
@@ -839,9 +988,31 @@ jobs:
               *) status=fail; message="unknown routed target: $TARGET" ;;
             esac
           fi
+          # #12437: PR evidence may be recorded not_applicable only for a history-sync
+          # admission of this exact pull_request head. Every succeeded implementation
+          # job must then carry exactly that record, and no other run may carry any.
+          sync_record=""
+          if [ "$ADMISSION_REASON" = history_sync_admitted ] || [ "$ADMISSION_HISTORY_SYNC" = validated ]; then
+            if [ "$EVENT_NAME:$ADMISSION_STATUS:$ADMISSION_REASON:$ADMISSION_HISTORY_SYNC" != pull_request:admitted:history_sync_admitted:validated ] || ! [[ "$ADMISSION_HEAD" =~ ^[0-9a-f]{40}$ ]] || [ "$DOCS_ONLY" != false ]; then
+              status=fail; message="history-sync requires consistent exact-head admission and full product scope"
+            elif [ "$HISTORY_SYNC_LIVE_RESULT" != success ]; then
+              status=fail; message="history-sync authorization or composition continuity is not established"
+            elif [ "$CX43_RESULT" != success ] && [ "$CPX42_RESULT" != success ] && [ "$CX53_RESULT" != success ] && [ "$GITHUB_RESULT" != success ]; then
+              status=fail; message="history-sync requires a succeeded implementation lane; docs-only or missing execution is not qualification"
+            else
+              sync_record="not_applicable:history_sync:$ADMISSION_HEAD"
+            fi
+          fi
+          for lane in "cx43:$CX43_RESULT:$CX43_PR_EVIDENCE" "cpx42:$CPX42_RESULT:$CPX42_PR_EVIDENCE" "cx53:$CX53_RESULT:$CX53_PR_EVIDENCE" "github:$GITHUB_RESULT:$GITHUB_PR_EVIDENCE"; do
+            IFS=: read -r name result evidence <<<"$lane"
+            [ "$status" = pass ] && [ "$result" = success ] || continue
+            if [ -n "$sync_record" ] && [ "$evidence" != "$sync_record" ]; then status=fail; message="history-sync admission of $ADMISSION_HEAD requires $name to record PR evidence $sync_record, got ${evidence:-nothing}"
+            elif [ -z "$sync_record" ] && [[ "$evidence" == not_applicable:* ]]; then status=fail; message="$name recorded PR evidence $evidence without a history-sync admission of this pull_request head"
+            fi
+          done
           echo "### Ripr Rust Small Result" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "concurrent claims:$ADMISSION_CONCURRENT_CLAIMS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "runner query attempts:$RUNNER_QUERY_ATTEMPTS" "runner query last HTTP status:$RUNNER_QUERY_HTTP" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
+          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "concurrent claims:$ADMISSION_CONCURRENT_CLAIMS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "admission head:$ADMISSION_HEAD" "history-sync:$ADMISSION_HISTORY_SYNC" "history-sync detail:$ADMISSION_HISTORY_SYNC_DETAIL" "history-sync source:$ADMISSION_HISTORY_SYNC_SOURCE" "history-sync destination base:$ADMISSION_HISTORY_SYNC_BASE" "cx43 pr evidence:$CX43_PR_EVIDENCE" "cpx42 pr evidence:$CPX42_PR_EVIDENCE" "cx53 pr evidence:$CX53_PR_EVIDENCE" "github pr evidence:$GITHUB_PR_EVIDENCE" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "runner query attempts:$RUNNER_QUERY_ATTEMPTS" "runner query last HTTP status:$RUNNER_QUERY_HTTP" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
             echo "- ${row%%:*}: \`${row#*:}\`" >> "$GITHUB_STEP_SUMMARY"
           done
           [ "$status" = "pass" ]

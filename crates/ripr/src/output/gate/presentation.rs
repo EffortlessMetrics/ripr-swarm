@@ -203,10 +203,12 @@ pub(crate) fn gate_decision_should_fail(report: &GateDecisionReport) -> bool {
     status_fails_gate(&report.status)
 }
 
-/// The closed fail set: only `blocked` and `config_error` fail the gate
-/// (exit 3 and exit 2). Every other token, known or not, does not.
+/// Fail closed: only the known non-failing statuses (`pass`, `advisory`,
+/// `acknowledged`) pass the gate. `blocked` and `config_error` fail, and so
+/// does any unknown token — a future or corrupt producer status must never
+/// silently exit 0.
 pub(super) fn status_fails_gate(status: &str) -> bool {
-    status == super::GATE_STATUS_BLOCKED || status == super::GATE_STATUS_CONFIG_ERROR
+    !matches!(status, "pass" | "advisory" | "acknowledged")
 }
 
 pub(crate) fn gate_decision_status(report: &GateDecisionReport) -> &str {

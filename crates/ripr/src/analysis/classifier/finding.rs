@@ -1258,6 +1258,7 @@ mod tests {
             observe: yes.clone(),
             discriminate: yes,
             reach_ruled_out: true,
+            assigned_field_weakly_read: false,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
             mixed_refusal_is_analyzer_limit: false,
@@ -1280,6 +1281,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
