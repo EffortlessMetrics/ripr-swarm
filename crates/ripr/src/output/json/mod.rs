@@ -32,22 +32,6 @@ where
         .map_err(|err| format!("failed to render {context} JSON: {err}"))
 }
 
-/// Minifies an already-rendered JSON document (`json-compact`, #13103):
-/// parses and re-serializes without insignificant whitespace, so the parsed
-/// value is identical to the pretty document. A document that does not
-/// parse is returned unchanged, so this step can never corrupt output.
-pub(crate) fn render_compact(rendered: &str) -> String {
-    match serde_json::from_str::<serde_json::Value>(rendered) {
-        Ok(value) => {
-            let mut minified =
-                serde_json::to_string(&value).unwrap_or_else(|_| rendered.to_string());
-            minified.push('\n');
-            minified
-        }
-        Err(_) => rendered.to_string(),
-    }
-}
-
 /// Renders pretty JSON and appends the trailing newline expected by artifact
 /// writers that are consumed as line-oriented files.
 pub(crate) fn render_pretty_with_newline<T>(value: &T, context: &str) -> Result<String, String>
@@ -78,22 +62,6 @@ mod tests {
     };
     use proptest::prelude::*;
     use std::path::{Path, PathBuf};
-
-    #[test]
-    fn render_compact_minifies_without_changing_the_parsed_value() -> Result<(), String> {
-        let pretty = "{\n  \"a\": 1,\n  \"b\": [\n    1,\n    2\n  ]\n}\n";
-        let compact = super::render_compact(pretty);
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&compact)
-                .map_err(|error| error.to_string())?,
-            serde_json::from_str::<serde_json::Value>(pretty).map_err(|error| error.to_string())?
-        );
-        assert!(compact.len() < pretty.len(), "{compact}");
-        assert!(!compact.contains("\n  "), "{compact}");
-        // A document that does not parse passes through unchanged.
-        assert_eq!(super::render_compact("not json"), "not json");
-        Ok(())
-    }
 
     #[test]
     fn typed_incomplete_outcome_matches_human_and_json_projection() -> Result<(), String> {
