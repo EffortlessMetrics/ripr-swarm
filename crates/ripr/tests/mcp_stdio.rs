@@ -4205,7 +4205,9 @@ fn unknown_method_names_stay_bounded_and_recover() -> Result<(), String> {
                 || reply.get("result").is_some()
                 || reply.pointer("/error/code") != Some(&json!(-32601))
                 || reply.pointer("/error/message")
-                    != Some(&json!(format!("Method not found: {preview} (name truncated)")))
+                    != Some(&json!(format!(
+                        "Method not found: {preview} (name truncated)"
+                    )))
                 || reply.pointer("/error/data")
                     != Some(&json!({
                         "method": preview,
@@ -4233,7 +4235,9 @@ fn unknown_method_names_stay_bounded_and_recover() -> Result<(), String> {
             if recovered.get("id") != Some(&recovery_id)
                 || document.pointer("/session/attempt_state") != Some(&json!("no_snapshot"))
             {
-                return Err(format!("unknown method must not start analysis: {recovered}"));
+                return Err(format!(
+                    "unknown method must not start analysis: {recovered}"
+                ));
             }
         }
         if !legacy {
@@ -4276,7 +4280,9 @@ fn unknown_method_names_stay_bounded_and_recover() -> Result<(), String> {
                         .and_then(Value::as_array)
                         .is_none_or(|tools| tools.len() != 10)
                 {
-                    return Err(format!("session did not recover after {label}: {recovered}"));
+                    return Err(format!(
+                        "session did not recover after {label}: {recovered}"
+                    ));
                 }
             }
         }
