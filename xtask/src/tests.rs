@@ -6579,14 +6579,18 @@ fn editor_setup_node_bootstrap_retention_is_exact() -> Result<(), String> {
         "tools/developerSetup.cjs",
     ] {
         assert!(is_non_rust_programming_candidate(path), "{path}");
-        assert!(non_rust_programming_retention_reason(path).is_none(), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
         let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
-            return Err(format!("Unapproved neighboring path should be assessed: {path}"));
+            return Err(format!(
+                "Unapproved neighboring path should be assessed: {path}"
+            ));
         };
         assert_eq!(candidate.priority, "high", "{path}");
         assert_eq!(
-            candidate.kind,
-            "non_rust_programming_without_retention_rule",
+            candidate.kind, "non_rust_programming_without_retention_rule",
             "{path}"
         );
     }
