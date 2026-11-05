@@ -4,3 +4,5 @@
 - Refuse child-helper reach from uncalled closures, async bodies, nested functions, compile-time item/const-block initializers, type/const-generic arguments, array-repeat lengths and unsupported macro token trees; retain parsed eager qualified delegation. (#4681)
 
 - Require build-independent enabled `cfg`/`cfg_attr` ancestry for qualified child-helper reach, preserving constant-enabled calls and separate eager siblings without assuming a library was compiled with `cfg(test)`; refuse source-replacing proc attributes through the shared preservation authority. (#4681)
+
+- Preserve the resolved inline module in delegation keys when another package owner has the same helper name, so an inline rival cannot credit an unrelated file-backed child. (#4681)

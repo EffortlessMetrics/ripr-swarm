@@ -406,3 +406,31 @@ fn enclosing_module_proc_attributes_cannot_manufacture_child_helper_reach() -> R
     }
     Ok(())
 }
+
+#[test]
+fn same_named_inline_rival_does_not_reach_a_different_child_owner() -> Result<(), String> {
+    for placement in [Placement::InlineChild, Placement::FileChild] {
+        for calls_target in [false, true] {
+            let body = if calls_target {
+                "HELPER"
+            } else {
+                "rival::compute_value()"
+            };
+            let fixture = Fixture::new(placement, 9, body, 9)?;
+            let path = fixture.root.join("src/lib.rs");
+            let source = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+            std::fs::write(
+                &path,
+                format!("mod rival {{ pub(super) fn compute_value() -> i32 {{ 9 }} }}\n{source}"),
+            )
+            .map_err(|error| error.to_string())?;
+            let seam = fixture.seam()?;
+            if calls_target {
+                assert_eq!(contradictions(&seam)?, 0, "{placement:?}: {seam}");
+            } else {
+                assert_no_helper_reach(&seam)?;
+            }
+        }
+    }
+    Ok(())
+}

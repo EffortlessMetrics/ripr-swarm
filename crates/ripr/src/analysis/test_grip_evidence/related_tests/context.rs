@@ -1790,9 +1790,20 @@ fn same_file_nested_module_delegation_owner_calls(
             .insert(candidate.name.clone());
     }
     let mut delegated = BTreeSet::new();
-    for owners in by_module.values() {
+    for (module, owners) in &by_module {
         if owners.len() == 1 {
-            delegated.extend(owners.iter().cloned());
+            for owner in owners {
+                // Keep the resolved module when a same-named owner exists
+                // elsewhere in the package, just as ordinary module edges do.
+                let globally_unique = package_scope(&function.file).is_some_and(|package| {
+                    production_owner_name_is_unique_in_package(index, &package, owner)
+                });
+                delegated.insert(if globally_unique {
+                    owner.clone()
+                } else {
+                    format!("{module}::{owner}")
+                });
+            }
         }
     }
     let mut bare_sibling = BTreeSet::new();

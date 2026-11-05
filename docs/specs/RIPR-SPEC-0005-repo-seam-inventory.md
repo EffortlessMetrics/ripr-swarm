@@ -198,7 +198,10 @@ constant-false proc-attribute introduction preserves the ordinary eager call.
 The retained fn-keyword body is rebound uniquely to the original indexed file
 source before this proof, preserving function/impl/module/crate ancestors.
 Missing, duplicate or unparseable source does not grant qualified reach; the
-analysis does not re-read live files or change cached source spans.
+analysis does not re-read live files or change cached source spans. A qualified
+inline delegation retains its module key when a same-named production owner
+exists elsewhere in the package; calling an inline rival must not credit an
+unrelated file-backed child.
 
 Full evidence carries the indexed test target. Compact evidence intentionally
 omits target details and preserves the five stage states and contradiction count.
