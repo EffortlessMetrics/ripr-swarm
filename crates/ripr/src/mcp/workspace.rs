@@ -1843,7 +1843,15 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             json!(snapshot.source == RefreshSource::Worktree || !snapshot.scope.uncommitted_edits)
         }
     };
-    document["verify"] = super::repair::verify_after_editing_tests();
+    // The re-check follows the analysed subject: the retained snapshot's base,
+    // else the caller's latest request (#13196).
+    document["verify"] = super::repair::verify_after_editing_tests(
+        session
+            .last_good
+            .as_ref()
+            .and_then(|snapshot| snapshot.base.as_deref())
+            .or(session.desired_base.as_deref()),
+    );
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
     }
@@ -5342,6 +5350,18 @@ mod tests {
             if !named.contains("origin/main") {
                 return Err(format!("requested base must be named: {named}"));
             }
+            // #13196: the post-edit re-check keeps the requested base, and a
+            // base-less session keeps the base-less route.
+            let verify = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            if verify != json!({ "source": "worktree", "base": "origin/main" }) {
+                return Err(format!("verify route lost the requested base: {verify}"));
+            }
+            session.desired_base = None;
+            let base_less = refresh_document(&session)["verify"]["mcp"]["arguments"].clone();
+            if base_less != json!({ "source": "worktree" }) {
+                return Err(format!("default-base verify route changed: {base_less}"));
+            }
+            session.desired_base = Some("origin/main".to_string());
         }
         for (kind, findings) in [
             (AnalysisOutcomeKind::CompleteNoFindings, 0),
