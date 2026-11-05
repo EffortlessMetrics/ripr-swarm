@@ -6156,11 +6156,11 @@ fn check_local_context_impl() -> Result<(), String> {
                 "Delete committed runtime/session artifacts.",
                 "Move durable repo knowledge to docs/LEARNINGS.md or campaign/capability metadata.",
                 "Move generated state to target/ripr/reports, target/ripr/receipts, or target/ripr/learning.",
-                "Use policy/local_context_allowlist.txt only for narrow generic examples with a reason.",
+                "Use policy/local_context_allowlist.txt for narrow generic examples or exact-digest public CI receipt fields.",
             ],
             rerun_command: "cargo xtask check-local-context",
             exception_template: Some(
-                "policy/local_context_allowlist.txt entry:\npath|pattern|max_count|reason",
+                "policy/local_context_allowlist.txt entry:\npath|pattern|max_count|reason[|receipt_sha256]",
             ),
         },
         &violations,
@@ -22683,9 +22683,9 @@ fn read_local_context_allowlist(path: &str) -> Result<Vec<LocalContextAllow>, St
             continue;
         }
         let parts = trimmed.split('|').collect::<Vec<_>>();
-        if parts.len() != 4 {
+        if !matches!(parts.len(), 4 | 5) {
             return Err(format!(
-                "{path}:{} expected path|pattern|max_count|reason",
+                "{path}:{} expected path|pattern|max_count|reason[|receipt_sha256]",
                 line_number + 1
             ));
         }
@@ -22703,6 +22703,7 @@ fn read_local_context_allowlist(path: &str) -> Result<Vec<LocalContextAllow>, St
             pattern: parts[1].trim().to_string(),
             max_count,
             line: line_number + 1,
+            receipt_sha256: parts.get(4).map(|value| value.trim().to_string()),
         });
     }
     Ok(allowed)
@@ -22717,14 +22718,104 @@ fn validate_local_context_allowlist(allowlist: &[LocalContextAllow]) -> Vec<Stri
                 entry.pattern, entry.line
             ));
         }
-        if forbidden_local_context_allowlist_pattern(&entry.pattern) {
+        let retained = entry.receipt_sha256.is_some() && retained_local_context_allowance(entry);
+        if (entry.receipt_sha256.is_some() && !retained)
+            || (forbidden_local_context_allowlist_pattern(&entry.pattern) && !retained)
+        {
             violations.push(format!(
-                "Path: policy/local_context_allowlist.txt\nProblem: local context allowlist tries to permit real machine or session state\nPattern: {}\nCount: 1, allowed: 0\nLines: {}\nWhy this matters: Real machine paths, Codex memory paths, and sandbox paths must be removed, not allowlisted.\nRecommended fixes:\n1. Delete the local context from the committed file.\n2. Keep only generic examples in durable docs.",
+                "Path: policy/local_context_allowlist.txt\nProblem: local context allowlist tries to permit real machine or session state, or has an invalid retained public CI pin\nPattern: {}\nCount: 1, allowed: 0\nLines: {}\nWhy this matters: Real machine paths, Codex memory paths, and sandbox paths must be removed, not allowlisted.\nRecommended fixes:\n1. Delete the local context from the committed file.\n2. Keep only generic examples or exact original public CI receipt fields with reviewed digest/count pins.",
                 entry.pattern, entry.line
             ));
         }
     }
     violations
+}
+
+fn retained_local_context_identity(
+    entry: &LocalContextAllow,
+    manifest_bytes: &[u8],
+    actual_sha: &str,
+    actual_count: usize,
+) -> bool {
+    use sha2::{Digest, Sha256};
+    if format!("{:x}", Sha256::digest(manifest_bytes))
+        != "312f7ea65c43ebf4ffac256c3ab4a5f257bbc6a65de30123024526ffb149448a"
+    {
+        return false;
+    }
+    let Ok(manifest) = serde_json::from_slice::<Value>(manifest_bytes) else {
+        return false;
+    };
+    let Some(expected) = entry.receipt_sha256.as_deref() else {
+        return false;
+    };
+    let Some(name) = entry
+        .path
+        .strip_prefix("fixtures/repair_funnel/installed-41383028929/")
+    else {
+        return false;
+    };
+    let runner = concat!("/home/", "runner/");
+    name.ends_with(".json")
+        && Path::new(name)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        && expected
+            .strip_prefix("sha256:")
+            .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+        && entry.pattern.starts_with(runner)
+        && !entry.pattern.contains('\\')
+        && !forbidden_local_context_allowlist_pattern(
+            &entry.pattern.replace(runner, "retained-ci/"),
+        )
+        && entry
+            .pattern
+            .match_indices(concat!("/", "home/"))
+            .all(|(at, _)| entry.pattern[at..].starts_with(runner))
+        && !entry.pattern.contains(concat!("/", "Users/"))
+        && local_context_line_findings(&entry.pattern)
+            .iter()
+            .all(|(_, problem)| problem == "local absolute Unix home path")
+        && manifest.get("schema_version").and_then(Value::as_str)
+            == Some("retained_installed_ordinary_manifest.v1")
+        && manifest
+            .pointer("/bundles/0/directory")
+            .and_then(Value::as_str)
+            == Some("installed-41383028929")
+        && manifest
+            .pointer("/bundles/0/files")
+            .and_then(|files| files.get(name))
+            .and_then(Value::as_str)
+            == Some(expected)
+        && actual_sha == expected
+        && actual_count > 0
+        && actual_count == entry.max_count
+}
+
+fn retained_local_context_allowance(entry: &LocalContextAllow) -> bool {
+    let Ok(manifest) = fs::read("fixtures/repair_funnel/installed-41383028929.json") else {
+        return false;
+    };
+    let Some(expected) = entry.receipt_sha256.as_deref() else {
+        return false;
+    };
+    if !retained_local_context_identity(entry, &manifest, expected, entry.max_count)
+        || !fs::symlink_metadata(&entry.path).is_ok_and(|m| m.is_file())
+    {
+        return false;
+    }
+    let Ok(hash) = crate::reports::release_server::sha256_file(Path::new(&entry.path)) else {
+        return false;
+    };
+    let Ok(text) = read_text_lossy(Path::new(&entry.path)) else {
+        return false;
+    };
+    let count = text
+        .lines()
+        .flat_map(local_context_line_findings)
+        .filter(|(pattern, _)| pattern == &entry.pattern)
+        .count();
+    retained_local_context_identity(entry, &manifest, &format!("sha256:{hash}"), count)
 }
 
 fn forbidden_local_context_allowlist_pattern(pattern: &str) -> bool {

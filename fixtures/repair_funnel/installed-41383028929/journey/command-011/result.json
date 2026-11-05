@@ -1,0 +1,12 @@
+{
+  "capture_error": null,
+  "cleanup_error": null,
+  "elapsed_ms": 40,
+  "harness_stop": null,
+  "native_exit_code": 0,
+  "native_success": true,
+  "primary_pid": 3449,
+  "stderr_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout_sha256": "sha256:3564df4d5b324f6593fcd5ae4c776b5358cbf4c81f85800d14e777da00e337fb",
+  "wait_error": null
+}

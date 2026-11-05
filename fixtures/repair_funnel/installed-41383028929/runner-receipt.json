@@ -1,0 +1,8 @@
+{
+  "candidate_sha": "a3847eed4c4c89d3b9c5ff21ccbbc9dd7ad44965",
+  "candidate_tree": "68015793efe98797a2f0b151abd7073e5bc72e8e",
+  "runner_sha256": "9f0bc1f286a53eff6de94b380304dc1ee214a65cffce1bf815e479cd70b9bd4c",
+  "compiler_artifact": "/home/runner/work/ripr-swarm/ripr-swarm/target/debug/deps/boundary_gap_closure-c170091b0bef0669",
+  "test_selector": "ordinary_daily_loop::ordinary_loop_preserves_production_subject_and_native_outcome",
+  "claim": "test runner only; the analyzer must come from the installed wheel"
+}

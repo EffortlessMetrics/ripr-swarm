@@ -7627,12 +7627,97 @@ fn local_context_allowlist_rejects_real_machine_paths() {
         pattern: concat!("H:", "\\Code\\Rust\\ripr").to_string(),
         max_count: 1,
         line: 7,
+        receipt_sha256: None,
     }];
 
     let violations = validate_local_context_allowlist(&allowlist);
 
     assert_eq!(violations.len(), 1);
     assert!(violations[0].contains("real machine or session state"));
+}
+
+#[test]
+fn local_context_retained_receipts_are_exact_and_do_not_admit_neighbors() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let entries = super::read_local_context_allowlist("policy/local_context_allowlist.txt")?;
+        let entry = entries
+            .iter()
+            .find(|e| e.receipt_sha256.is_some())
+            .ok_or("retained row")?;
+        let manifest = std::fs::read("fixtures/repair_funnel/installed-41383028929.json")
+            .map_err(|e| e.to_string())?;
+        let hash = entry.receipt_sha256.as_deref().ok_or("retained digest")?;
+        let admits = |row: &LocalContextAllow, actual: &str, count| {
+            super::retained_local_context_identity(row, &manifest, actual, count)
+        };
+        assert!(super::retained_local_context_allowance(entry));
+        assert!(admits(entry, hash, entry.max_count));
+        assert!(
+            !admits(
+                entry,
+                &format!("sha256:{}", "0".repeat(64)),
+                entry.max_count
+            ),
+            "changed bytes"
+        );
+        assert!(!admits(entry, hash, entry.max_count + 1), "overcount");
+        let mut neighbor = entry.clone();
+        neighbor.path = "fixtures/repair_funnel/installed-41383028929/neighbor.json".into();
+        assert!(
+            !admits(&neighbor, hash, entry.max_count),
+            "unregistered neighboring path"
+        );
+        use sha2::{Digest, Sha256};
+        let new_receipt = serde_json::to_vec(&serde_json::json!({"path": entry.pattern}))
+            .map_err(|e| e.to_string())?;
+        let replacement = format!("sha256:{:x}", Sha256::digest(&new_receipt));
+        neighbor.max_count =
+            super::local_context_line_findings(&String::from_utf8_lossy(&new_receipt))
+                .iter()
+                .filter(|(pattern, _)| pattern == &neighbor.pattern)
+                .count();
+        assert!(
+            neighbor.max_count > 0,
+            "new receipt must contain the retained runner pattern"
+        );
+        neighbor.receipt_sha256 = Some(replacement.clone());
+        let mut repinned: serde_json::Value =
+            serde_json::from_slice(&manifest).map_err(|e| e.to_string())?;
+        repinned["bundles"][0]["files"]["neighbor.json"] = serde_json::json!(replacement);
+        let repinned_bytes = serde_json::to_vec(&repinned).map_err(|e| e.to_string())?;
+        assert!(
+            !super::retained_local_context_identity(
+                &neighbor,
+                &repinned_bytes,
+                &replacement,
+                neighbor.max_count
+            ),
+            "co-edited manifest, allowlist and new receipt cannot enroll another artifact"
+        );
+        neighbor = entry.clone();
+        neighbor.receipt_sha256 = None;
+        assert!(!admits(&neighbor, hash, entry.max_count), "missing pin");
+        for suffix in [
+            concat!("/home/", "private/person"),
+            concat!("/Users/", "private/file"),
+            concat!(".", "codex/memory"),
+            concat!("sandbox:", "/mnt", "/data/file"),
+            concat!("/mnt", "/data"),
+            concat!("/MNT", "/DATA"),
+            concat!(".", "CODEX/memory"),
+            concat!("MEMORY", ".MD"),
+            concat!("H:", "\\Code\\Private"),
+        ] {
+            neighbor = entry.clone();
+            neighbor.pattern = format!("{}:{suffix}", entry.pattern);
+            assert!(
+                !admits(&neighbor, hash, entry.max_count),
+                "private/session token inside a PATH-like pattern"
+            );
+        }
+        assert!(super::validate_local_context_allowlist(&entries).is_empty());
+        Ok(())
+    })
 }
 
 #[test]
@@ -25401,6 +25486,7 @@ fn local_context_allow_entries_track_path_pattern_and_max_count() {
         pattern: "unwrap()".to_string(),
         max_count: 3,
         line: 42,
+        receipt_sha256: None,
     };
     assert_eq!(entry.path, "crates/ripr/src/analysis/classifier.rs");
     assert_eq!(entry.pattern, "unwrap()");
