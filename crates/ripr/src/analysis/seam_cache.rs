@@ -4213,6 +4213,20 @@ pub(crate) fn semantic_body_digest<T: serde::Serialize>(
     });
     Ok(format!("sha256:{:x}", writer.0.finalize()))
 }
+/// Digest of an already-serialized body. Byte-identical to
+/// [`semantic_body_digest`] of the value that produced `bytes` when `bytes`
+/// is that value's compact serialization, so a reader can verify integrity
+/// over the stored bytes it already read instead of re-serializing the
+/// decoded body on every warm read.
+pub(crate) fn semantic_digest_for_bytes(domain: &str, bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(domain.as_bytes());
+    hasher.update([0]);
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
 pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
