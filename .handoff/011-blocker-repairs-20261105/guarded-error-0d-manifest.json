@@ -1,0 +1,19 @@
+{
+  "base": "b2ee66a10760e9765ef246de69ec1471b2a3789a",
+  "candidate": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+  "tree": "30eb94904991ca16a521643efd9acfb8e74bc145",
+  "patch_bytes": 37323,
+  "patch_sha256": "b4706f50f47d5a80a9f14250a93afffd3cc6e74feb30f250ec571f8167b6e937",
+  "result": {
+    "production": 19,
+    "native_paths": 4,
+    "failed": 0,
+    "native_exit": 0
+  },
+  "cause_and_repair": "FunctionFact.body deliberately starts at the fn token, excluding pub; initial whole-node comparison failed. The corrected query uses name, exact indexed fn-token line and end line, retaining unique-function refusal. No test expectations were weakened.",
+  "prior": "0c compile failed missing HasArgList; transport handle was lost and exact native exit unavailable; fatal compiler diagnostics retained. b287 compiled,18production pass/1newlimit failed+4native. b2 whole library18,214/1/2 remains prior-tree failed fixture evidence, not current proof.",
+  "next": "25actual0d artifacts regenerated; guarded xtask build active before guard golden refresh, full golden and honesty checks; no duplicate compile. Later exact final-data full library/consumers/policy/current review/native protected qualification remain.",
+  "cache": "full1.174/sharded+compact0.176; predecessor1.173/0.175 explicitly refused",
+  "scope": "Publicripr1579 is not swarm1579. The public error contract is being repaired, not deferred via the unrelated swarm0.13policy. No unfulfilled guard golden was blessed.",
+  "public_predecessor": "652e0adf refs/parent/tree independently verified, isolated source checkout clean; own shellsyntax+35realGit controls passed. #1889 stays f38978fb Draft under trust hold. No source PR/CI/settings/merge/promotion/release action."
+}

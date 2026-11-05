@@ -1,0 +1,33 @@
+{
+  "candidate": "652e0adf9695028791c53e48c78d7d8ecb25829c",
+  "rows": [
+    {
+      "stage": "shell-syntax",
+      "candidate": "652e0adf9695028791c53e48c78d7d8ecb25829c",
+      "tree": "b6351236848af33b64e627c694b23ab1e4288d6f",
+      "command": [
+        "bash",
+        "-n",
+        ".github/scripts/source-promotion-composition.sh"
+      ],
+      "native_exit": 0,
+      "seconds": 0.004,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "stage": "real-git-controls",
+      "candidate": "652e0adf9695028791c53e48c78d7d8ecb25829c",
+      "tree": "b6351236848af33b64e627c694b23ab1e4288d6f",
+      "command": [
+        "python3",
+        "xtask/tests/source_promotion_composition.py",
+        "-q"
+      ],
+      "native_exit": 0,
+      "seconds": 5.312,
+      "log_sha256": "6ebcc118d4d431ac5c96eb93ff85ff5de430e4bdb132330aa9045625729ab485"
+    }
+  ],
+  "observed_controls": 35,
+  "not_claimed": "No actual Rust wrapper/full workspace/hosted or trusted required canary execution here. No PR, carrier, CI, event/protection/security setting or release mutation."
+}

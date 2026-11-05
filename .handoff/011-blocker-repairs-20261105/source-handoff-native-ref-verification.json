@@ -16,5 +16,12 @@
     }
   ],
   "live_public_main": "d731a19bf13e5a5c2257d3c320f734f65ccd9894",
-  "status": "Fetched native Git objects and verified supplied source refs/parents/trees. No apply, checkout, carrier mutation or qualification claimed; Library not required for this alternative handoff."
+  "status": "Fetched native Git objects and verified supplied source refs/parents/trees. No apply, checkout, carrier mutation or qualification claimed; Library not required for this alternative handoff.",
+  "local_predecessor_admission": {
+    "tracked_source_bytes": 47319293,
+    "source_and_git_growth_budget_bytes": 268435456,
+    "workspace_free_bytes": 20956581888,
+    "workspace_reserve_bytes": 4294967296,
+    "proof_scope": "Isolated source checkout, source review and bounded35PythonGitcontrols only; no second Cargo build, no PR/CI/security activation. Preserve handoff refs; publish no carrier mutation."
+  }
 }

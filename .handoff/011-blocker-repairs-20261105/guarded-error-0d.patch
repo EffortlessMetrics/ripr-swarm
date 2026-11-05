@@ -1,0 +1,798 @@
+diff --git a/.ripr/traceability.d/12010-sink-identity.toml b/.ripr/traceability.d/12010-sink-identity.toml
+index 9c4f6a7fd..9c2bdf8cd 100644
+--- a/.ripr/traceability.d/12010-sink-identity.toml
++++ b/.ripr/traceability.d/12010-sink-identity.toml
+@@ -22,3 +22,7 @@ tests = [
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::tuple_iterator_identity_cannot_borrow_an_inherent_override",
+   "crates/ripr/src/analysis/classify/owner_pin/tests/tuple_projection.rs::iterator_option_tuple_projection_establishes_and_pins_its_actual_component",
+ ]
++
++[[extend]]
++id = "RIPR-SPEC-0158"
++tests = ["crates/ripr/tests/return_diagnostic_confirmation.rs::guarded_error_constructor_change_names_its_limit_without_inventing_a_test_gap"]
+diff --git a/changelog.d/12010-sink-identity.md b/changelog.d/12010-sink-identity.md
+index 077027a51..b13149bbc 100644
+--- a/changelog.d/12010-sink-identity.md
++++ b/changelog.d/12010-sink-identity.md
+@@ -1,2 +1,4 @@
+ <!-- section: Fixed -->
+ - Keep strong Rust discrimination tied to the assertion that observes the changed result or effect; keep returned comparisons paired to the same boundary call, reject proximity-only oracles, unchanged return tokens, stale results and intercepted collection reads (including unread external trait dispatch and rebound crate-name imports) while retaining validated wrapper, array, async and error observers (#12010).
++- Retain the imported precise guarded-error-return limitation when only the return changes: name the unresolved producer edge and withhold an unverifiable test prescription (public `EffortlessMetrics/ripr#1579`, distinct from swarm #1579).
++- Keep the split-test returned-comparison honesty control non-promoting: the unasserted boundary calls cannot borrow the far-input test oracle.
+diff --git a/crates/ripr/src/analysis/classifier/evidence.rs b/crates/ripr/src/analysis/classifier/evidence.rs
+index da3ebd234..5be2933cb 100644
+--- a/crates/ripr/src/analysis/classifier/evidence.rs
++++ b/crates/ripr/src/analysis/classifier/evidence.rs
+@@ -408,6 +408,12 @@ impl ClassifiedProbeEvidence {
+             &mut gathered,
+             &mut flow_sinks,
+         );
++        if context.probe.family != ProbeFamily::Predicate
++            && let Some(reason) =
++                super::finding::bounded_error_guard_limitation(context, &flow_sinks, pin_syntax)
++        {
++            gathered.unresolved_boundary = Some(reason);
++        }
+         let mut activation = gathered.activation;
+         // #3731 review (F11, G1): the changed owner's package scope, computed
+         // once — the cross-package same-name defeats compare each related
+diff --git a/crates/ripr/src/analysis/classifier/finding.rs b/crates/ripr/src/analysis/classifier/finding.rs
+index b9ef6d83b..19601c165 100644
+--- a/crates/ripr/src/analysis/classifier/finding.rs
++++ b/crates/ripr/src/analysis/classifier/finding.rs
+@@ -182,23 +182,12 @@ pub(in crate::analysis) fn build_finding_with_origins(
+     // contains, so the typed static limitation replaces the
+     // prescription. The class stays `InfectionUnknown`: the gap is
+     // still visible, only the impossible repair assignment is withheld.
+-    let error_guard_unresolved: Option<String> = if class == ExposureClass::InfectionUnknown
+-        && matches!(context.probe.family, ProbeFamily::Predicate)
+-    {
+-        unresolved_guard_error_edge(
+-            context.probe,
+-            context.owner_fn,
+-            &test_summaries,
++    let error_guard_unresolved: Option<String> = if class == ExposureClass::InfectionUnknown {
++        bounded_error_guard_limitation(
++            context,
+             &evidence.flow_sinks,
+-            context.helper_chain.as_ref(),
+-            context.index,
++            context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax),
+         )
+-        .filter(|_| {
+-            strong_assertion_observes_owner_result(
+-                &context.related_tests,
+-                context.owner_fn.map(|owner| owner.name.as_str()),
+-            )
+-        })
+     } else {
+         None
+     };
+@@ -645,6 +634,45 @@ fn exact_oracle_aligns_with_sink(
+ /// applies to value sinks), so only an observer of the owner result
+ /// withholds the prescription. A directly asserted owner call with no
+ /// `let` binding stays fail-closed and keeps its repair.
++pub(super) fn bounded_error_guard_limitation(
++    context: &ProbeContext<'_>,
++    sinks: &[FlowSinkFact],
++    syntax: &OwnerPinSyntax,
++) -> Option<String> {
++    let owner = context.owner_fn?;
++    let observes = if context.probe.family == ProbeFamily::Predicate {
++        strong_assertion_observes_owner_result(&context.related_tests, Some(&owner.name))
++    } else {
++        context.related_tests.iter().any(|(test, relation)| {
++            relation.establishes_reach(true)
++                && bound_identifiers_from_owner_calls(&test.body, &owner.name)
++                    .iter()
++                    .any(|binding| {
++                        test.assertions.iter().any(|assertion| {
++                            assertion.strength == OracleStrength::Strong
++                                && contains_identifier(&assertion.text, binding)
++                        }) && crate::analysis::classify::current_unwrapped_error_binding(
++                            test,
++                            binding,
++                            owner,
++                            context.index,
++                            syntax,
++                        )
++                    })
++        })
++    };
++    observes.then(|| {
++        unresolved_guard_error_edge(
++            context.probe,
++            Some(owner),
++            &context.related_test_summaries(),
++            sinks,
++            context.helper_chain.as_ref(),
++            context.index,
++        )
++    })?
++}
++
+ fn strong_assertion_observes_owner_result(
+     related_tests: &[(&TestSummary, RelationReason)],
+     owner_name: Option<&str>,
+diff --git a/crates/ripr/src/analysis/classify/activation.rs b/crates/ripr/src/analysis/classify/activation.rs
+index 1ebd0d201..70e59cc07 100644
+--- a/crates/ripr/src/analysis/classify/activation.rs
++++ b/crates/ripr/src/analysis/classify/activation.rs
+@@ -2583,11 +2583,19 @@ pub(in crate::analysis) fn unresolved_guard_error_edge(
+     helper_chain: Option<&super::helper_transfer::HelperChain>,
+     index: &crate::analysis::rust_index::RustIndex,
+ ) -> Option<String> {
+-    let guard = probe.expression.trim();
++    let owner = owner_fn?;
++    let (guard, error) = if probe.family == ProbeFamily::Predicate {
++        let sink = flow_sinks.iter().find(|sink| {
++            sink.kind == FlowSinkKind::ErrorVariant && sink.line > probe.location.line
++        })?;
++        (probe.expression.trim().to_string(), sink.text.clone())
++    } else {
++        guarded_struct_error_return(probe, owner, index)?
++    };
++    let guard = guard.as_str();
+     if !super::value_transfer::is_identifier(guard) || !extract_literals(guard).is_empty() {
+         return None;
+     }
+-    let owner = owner_fn?;
+     // #1726 review: `function_parameters` preserves `mut`, so a
+     // mutable guard (`mut cancelled: bool`) must match the bare probe
+     // guard. Only the comparison is normalized; call-row and helper
+@@ -2599,9 +2607,6 @@ pub(in crate::analysis) fn unresolved_guard_error_edge(
+     {
+         return None;
+     }
+-    let sink = flow_sinks
+-        .iter()
+-        .find(|sink| sink.kind == FlowSinkKind::ErrorVariant && sink.line > probe.location.line)?;
+     let exact_observer = related_tests.iter().any(|test| {
+         test.assertions
+             .iter()
+@@ -2628,7 +2633,12 @@ pub(in crate::analysis) fn unresolved_guard_error_edge(
+             .iter()
+             .map(|cell| (cell.parameter.clone(), cell.value.clone()))
+             .collect();
+-        match super::value_transfer::evaluate_initializer(&sink.text, &inputs) {
++        if probe.family != ProbeFamily::Predicate
++            && inputs.get(guard).is_none_or(|value| value != "true")
++        {
++            return None;
++        }
++        match super::value_transfer::evaluate_initializer(&error, &inputs) {
+             super::value_transfer::EvalOutcome::Unsupported { earliest_edge } => {
+                 if earliest_unsupported.is_none() {
+                     earliest_unsupported = Some(earliest_edge);
+@@ -2640,10 +2650,104 @@ pub(in crate::analysis) fn unresolved_guard_error_edge(
+     let earliest_edge = earliest_unsupported?;
+     Some(format!(
+         "{ERROR_RETURN_GUARD_UNRESOLVED_MARKER}: `{guard}` guards the changed `{}` (earliest unsupported edge: {earliest_edge})",
+-        sink.text
++        error
+     ))
+ }
+ 
++/// The actual guarded record-valued error return, not a synthetic flow
++/// witness. The first statement is one bare-parameter `if`, its sole statement
++/// returns the record, and the remaining tail is `Ok`. Shared parser and source
++/// coordinates keep this independent of formatting; enums retain their pins.
++fn guarded_struct_error_return(
++    probe: &Probe,
++    owner: &FunctionSummary,
++    index: &crate::analysis::rust_index::RustIndex,
++) -> Option<(String, String)> {
++    use ra_ap_syntax::{AstNode, ast, ast::HasArgList, ast::HasAttrs, ast::HasName};
++    if !matches!(
++        probe.family,
++        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
++    ) {
++        return None;
++    }
++    let facts = index.files().get(&owner.file)?;
++    if facts.used_lexical_fallback {
++        return None;
++    }
++    let parsed = crate::analysis::syntax::parse_clean_source_file_memoized(&facts.source)?;
++    let lines = crate::analysis::syntax::ra::LineIndex::new(&facts.source);
++    let tree = parsed.tree();
++    let mut functions = tree
++        .syntax()
++        .descendants()
++        .filter_map(ast::Fn::cast)
++        .filter(|function| {
++            function
++                .name()
++                .is_some_and(|name| name.text() == owner.name)
++                && function
++                    .fn_token()
++                    .is_some_and(|token| lines.line(token.text_range().start()) == owner.start_line)
++                && lines.line_for_range_end(function.syntax().text_range().end()) == owner.end_line
++        });
++    let function = functions.next()?;
++    if functions.next().is_some() || function.attrs().next().is_some() {
++        return None;
++    }
++    let body = function.body()?;
++    let mut statements = body.statements();
++    let ast::Stmt::ExprStmt(statement) = statements.next()? else {
++        return None;
++    };
++    let ast::Expr::IfExpr(guarded) = statement.expr()? else {
++        return None;
++    };
++    if statements.next().is_some() || guarded.else_branch().is_some() {
++        return None;
++    }
++    let ast::Expr::CallExpr(tail) = body.tail_expr()? else {
++        return None;
++    };
++    if tail.expr()?.syntax().text().to_string().trim() != "Ok"
++        || tail.arg_list()?.args().count() != 1
++    {
++        return None;
++    }
++    let arm = guarded.then_branch()?;
++    let mut statements = arm.statements();
++    let ast::Stmt::ExprStmt(statement) = statements.next()? else {
++        return None;
++    };
++    let ast::Expr::ReturnExpr(returned) = statement.expr()? else {
++        return None;
++    };
++    if statements.next().is_some()
++        || arm.tail_expr().is_some()
++        || !(lines.line(returned.syntax().text_range().start())
++            ..=lines.line_for_range_end(returned.syntax().text_range().end()))
++            .contains(&probe.location.line)
++    {
++        return None;
++    }
++    let ast::Expr::CallExpr(error_call) = returned.expr()? else {
++        return None;
++    };
++    if error_call.expr()?.syntax().text().to_string().trim() != "Err" {
++        return None;
++    }
++    let arguments = error_call.arg_list()?;
++    let mut arguments = arguments.args();
++    if !matches!(arguments.next()?, ast::Expr::RecordExpr(_)) || arguments.next().is_some() {
++        return None;
++    }
++    let error = error_call.syntax().text().to_string();
++    // A record with a bare type name is not a supported enum variant pin.
++    if exact_error_variant(&error).is_some() {
++        return None;
++    }
++    Some((guarded.condition()?.syntax().text().to_string(), error))
++}
++
+ /// The shared evidence a boundary reading draws on, bundled so the reading takes the probe,
+ /// its owner and the unresolved-reason slot without a long positional list.
+ #[derive(Clone, Copy)]
+diff --git a/crates/ripr/src/analysis/classify/infection.rs b/crates/ripr/src/analysis/classify/infection.rs
+index 8e0f4cf0a..6c94bbd6e 100644
+--- a/crates/ripr/src/analysis/classify/infection.rs
++++ b/crates/ripr/src/analysis/classify/infection.rs
+@@ -721,6 +721,13 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
+         owner,
+         literal_length_boundary,
+     } = owner_inputs;
++    if !matches!(probe.family, ProbeFamily::Predicate)
++        && let Some(reason) = unresolved_boundary.filter(|reason| {
++            reason.starts_with(super::activation::ERROR_RETURN_GUARD_UNRESOLVED_MARKER)
++        })
++    {
++        return StageEvidence::new(StageState::Unknown, Confidence::Low, reason.to_string());
++    }
+     // A returned bare comparison with a resolved missing boundary
+     // discriminator reads the predicate lens's gap, never a better reading:
+     // Weak or unresolved boundary evidence also applies to the returned
+diff --git a/crates/ripr/src/analysis/classify/mod.rs b/crates/ripr/src/analysis/classify/mod.rs
+index 4a7e47610..a3dc39467 100644
+--- a/crates/ripr/src/analysis/classify/mod.rs
++++ b/crates/ripr/src/analysis/classify/mod.rs
+@@ -150,11 +150,11 @@ pub(in crate::analysis) use out_parameter::{
+ };
+ pub(in crate::analysis) use owner_pin::{
+     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings,
+-    claims_payload_eq_candidates, direct_call_name, equality_condition_operands,
+-    expected_operand_value, function_declaration_is_async, helper_pins_owner_call,
+-    owner_builds_declared_error_variant, pin_scope_needs, returned_closure_pin_required,
+-    targeted_free_call_reaches_owner, targeted_name_is_alias, targeted_type_name_is_unresolved,
+-    trait_impl_self_type_names,
++    claims_payload_eq_candidates, current_unwrapped_error_binding, direct_call_name,
++    equality_condition_operands, expected_operand_value, function_declaration_is_async,
++    helper_pins_owner_call, owner_builds_declared_error_variant, pin_scope_needs,
++    returned_closure_pin_required, targeted_free_call_reaches_owner, targeted_name_is_alias,
++    targeted_type_name_is_unresolved, trait_impl_self_type_names,
+ };
+ pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
+ #[cfg(test)]
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 038338133..847995eaa 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -6228,7 +6228,7 @@ impl OwnerReturnPin {
+                             operands[at],
+                             projection,
+                             &self.name,
+-                            self.returns_scalar,
++                            LetObservation::from(self.returns_scalar),
+                             false,
+                         )
+                         .and_then(|text| {
+@@ -6355,7 +6355,7 @@ impl OwnerReturnPin {
+                         &matches_operands[0],
+                         "",
+                         &self.name,
+-                        true,
++                        LetObservation::Scalar,
+                         false,
+                     )
+                 })
+@@ -6440,7 +6440,7 @@ impl OwnerReturnPin {
+                     operand,
+                     "",
+                     &self.name,
+-                    self.returns_scalar,
++                    LetObservation::from(self.returns_scalar),
+                     true,
+                 )
+                 && let Some(call) = self.awaited_call_shape(poll_context, text, &self.name)
+@@ -8839,6 +8839,36 @@ fn unwrapped_err_call(operand: &str) -> Option<&str> {
+     literal.then(|| call.trim_end())
+ }
+ 
++/// Association for a typed limitation only. Reuse the existing current-let
++/// and canonical free-call authorities; this does not pin an error variant.
++pub(in crate::analysis) fn current_unwrapped_error_binding(
++    test: &TestSummary,
++    binding: &str,
++    owner: &FunctionSummary,
++    index: &RustIndex,
++    syntax: &OwnerPinSyntax,
++) -> bool {
++    test.assertions.iter().any(|assertion| {
++        syntax.targeted_macro_binding_is_unambiguous(test, assertion.line, "assert_eq", index)
++            && let_bound_owner_call(
++                test,
++                assertion,
++                binding,
++                "",
++                &owner.name,
++                LetObservation::LimitationAssociation,
++                false,
++            )
++            .and_then(unwrapped_err_call)
++            .is_some_and(|call| {
++                is_whole_free_owner_call(call, &owner.name)
++                    && super::call_identity::bound_free_owner_calls(
++                        index, owner, test, call, syntax,
++                    )
++            })
++    })
++}
++
+ /// #6974: whether `test`'s crate (or the workspace) may bind `root` before
+ /// the extern prelude does: a rename to it, a raw twin, or a `mod`, `use`,
+ /// type or glob in the test's crate. An unplaced test crate binds.
+@@ -14406,6 +14436,24 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
+     Some(bindings)
+ }
+ 
++#[derive(Clone, Copy)]
++enum LetObservation {
++    WholeValue,
++    Scalar,
++    // Association for a limitation does not assert primitive type or value identity.
++    LimitationAssociation,
++}
++
++impl From<bool> for LetObservation {
++    fn from(scalar: bool) -> Self {
++        if scalar {
++            Self::Scalar
++        } else {
++            Self::WholeValue
++        }
++    }
++}
++
+ /// #6974: the initializer of `operand` when it is a plain identifier the
+ /// test binds exactly once, by an immutable `let operand [: T] = <init>;`,
+ /// and uses nowhere else but as a whole operand of its own `assert_eq!`
+@@ -14416,21 +14464,24 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
+ /// `bare_condition`: the reviewed assertion is a bool owner's `assert!(operand)`
+ /// / `assert!(!operand)`, whose condition is the operand itself.
+ ///
+-/// `scalar` (cell-0094): the owner returns a primitive scalar, so the
++/// `Scalar` (cell-0094): the owner returns a primitive scalar, so the
+ /// binding is `Copy` with no interior mutability and nothing can change
+ /// it. Its other uses may then also sit in any other std assertion macro
+ /// after the `let` (`assert!(b > 3); assert_eq!(b, 12);`), and statements
+ /// may stand between the `let` and the assertion. Every use still lies in
+ /// an assertion, so no item, pattern or macro outside one can rebind it.
++/// `LimitationAssociation` uses that same statement/use discipline only to
++/// withhold an unverified repair assignment; it grants no scalar or value pin.
+ fn let_bound_owner_call<'a>(
+     test: &'a TestSummary,
+     assertion: &OracleFact,
+     operand: &str,
+     projection: &str,
+     name: &str,
+-    scalar: bool,
++    observation: LetObservation,
+     bare_condition: bool,
+ ) -> Option<&'a str> {
++    let read_only_assertions = !matches!(observation, LetObservation::WholeValue);
+     let operand = operand.trim();
+     if !is_plain_identifier(operand) || operand == name || operand == "self" {
+         return None;
+@@ -14457,6 +14508,19 @@ fn let_bound_owner_call<'a>(
+         if !(test.start_line..=test.end_line).contains(&other.line) {
+             continue;
+         }
++        if matches!(observation, LetObservation::LimitationAssociation)
++            && other.line == let_line
++            && test
++                .body
++                .get(let_at..binding_at + binding.len() + 1)
++                .is_some_and(|statement| {
++                    collapse_whitespace(&other.text) == collapse_whitespace(statement)
++                })
++        {
++            // `expect_err` itself is an oracle fact on the initializer. The
++            // written let is already counted once outside the assertions.
++            continue;
++        }
+         let text = mask_comments_and_strings(&other.text);
+         let in_text = whole_word_offsets(&text, operand).len();
+         if in_text == 0 {
+@@ -14478,14 +14542,14 @@ fn let_bound_owner_call<'a>(
+         let reviewed = other.line == assertion.line && other.text == assertion.text;
+         // A bare `assert!(operand)` / `assert!(!operand)` reads the operand
+         // as the whole condition, which is the `assert_eq!(operand, bool)`
+-        // operand once; the scalar check below bounds it to one mention.
++        // operand once; the read_only_assertions check below bounds it to one mention.
+         let whole_operand = whole_operand
+             || (reviewed && bare_condition)
+             || (reviewed
+-                && scalar
++                && read_only_assertions
+                 && projection.is_empty()
+                 && literal_matches_binding_uses(&other.text, operand) == Some(in_text));
+-        let read_only = scalar
++        let read_only = read_only_assertions
+             && !reviewed
+             && READ_ONLY_ASSERTION_MACROS
+                 .iter()
+@@ -14493,7 +14557,8 @@ fn let_bound_owner_call<'a>(
+         if !(whole_operand || read_only)
+             || other.line < let_line
+             || (other.line == let_line
+-                && (!scalar || !same_line_scalar_binding_precedes(test, binding_at, other)))
++                && (!read_only_assertions
++                    || !same_line_scalar_binding_precedes(test, binding_at, other)))
+         {
+             return None;
+         }
+@@ -14503,7 +14568,7 @@ fn let_bound_owner_call<'a>(
+     if uses != asserted + 1 {
+         return None;
+     }
+-    if scalar {
++    if read_only_assertions {
+         let reviewed = mask_comments_and_strings(&assertion.text);
+         let admitted_uses = literal_matches_binding_uses(&assertion.text, operand).unwrap_or(1);
+         return (whole_word_offsets(&reviewed, operand).len() == admitted_uses
+@@ -14543,7 +14608,7 @@ fn let_bound_owner_call<'a>(
+     let_initializer(binding)
+ }
+ 
+-/// A scalar's once-bound initializer may precede an assertion on the same
++/// A once-bound initializer may precede an assertion on the same
+ /// line. Bind the exact parser invocation and enclosing statement list;
+ /// line equality alone cannot establish order or scope.
+ fn same_line_scalar_binding_precedes(
+diff --git a/crates/ripr/src/analysis/classify/owner_pin/tests.rs b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+index 673fa529a..163c143e3 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin/tests.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin/tests.rs
+@@ -2048,7 +2048,7 @@ fn an_early_return_pin_admits_only_the_value_that_return_produces() {
+     let shadowed_index = index(&[(LIB, &shadowed)]);
+     assert!(establish(&shadowed_index, "parse", "return Ok(k + 2);").is_none());
+ 
+-    let lib = "pub enum E { Negative }\n\npub fn checked(x: i32) -> Result<i32, E> {\n    if x < 0 { return Err(E::Negative); }\n    Ok(x * 2)\n}\n";
++    let lib = "#[derive(Debug, PartialEq)]\npub enum E { Negative }\n\npub fn checked(x: i32) -> Result<i32, E> {\n    if x < 0 { return Err(E::Negative); }\n    Ok(x * 2)\n}\n";
+     let tests = "use demo::{checked, E};\n\n#[test]\nfn checks() {\n    assert_eq!(checked(-1), Err(E::Negative));\n    assert_eq!(checked(2), Ok(4));\n}\n";
+     let err_index = index(&[(LIB, lib), (TESTS, tests)]);
+     let pin = establish(&err_index, "checked", "return Err(E::Negative);");
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index f0b0fb25f..0b609aa16 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -705,7 +705,9 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// `1.170`: complete workspace context is required for tuple Iterator dispatch.
+ /// `1.171`: tuple field-type queries bind the exact indexed owner location.
+ /// `1.172`: compose importer-aware tuple pins with current module-glob ancestry.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.172";
++/// `1.173`: retain the typed unresolved guarded-error-return limitation.
++/// `1.174`: guarded-return lookup uses the indexed fn token, not visibility text.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.174";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -923,7 +925,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.172";
+ /// `0.172`: same complete-context tuple dispatch as full `1.170`.
+ /// `0.173`: same exact-owner field-type query as full `1.171`.
+ /// `0.174`: same composed module-glob ancestry as full `1.172`.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.174";
++/// `0.175`: same guarded-error-return limitation as full `1.173`.
++/// `0.176`: same fn-token guarded-return identity as full `1.174`.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1143,7 +1147,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.174";
+ /// `0.172`: same complete-context tuple dispatch as full `1.170`.
+ /// `0.173`: same exact-owner field-type query as full `1.171`.
+ /// `0.174`: same composed module-glob ancestry as full `1.172`.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.174";
++/// `0.175`: same guarded-error-return limitation as full `1.173`.
++/// `0.176`: same fn-token guarded-return identity as full `1.174`.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5299,7 +5305,7 @@ mod tests {
+         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+         // Composed main and successor invalidate both predecessor branches.
+         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.172");
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.174");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5445,8 +5451,8 @@ mod tests {
+         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.174");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.174");
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.176");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.176");
+     }
+ 
+     #[test]
+@@ -5783,6 +5789,8 @@ mod tests {
+             ("pre-complete-tuple-dispatch-context", "1.169", "0.171"),
+             ("pre-exact-tuple-field-owner", "1.170", "0.172"),
+             ("pre-main-glob-composition", "1.171", "0.173"),
++            ("pre-guarded-error-limitation", "1.172", "0.174"),
++            ("pre-guard-fn-token-lookup", "1.173", "0.175"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+diff --git a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+index 18e5601da..fe0ea54c7 100644
+--- a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
++++ b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.172";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.174";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index 84b06de79..0f798d280 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -13,6 +13,76 @@ fn check(test: &str) -> Result<String, String> {
+     check_source(SOURCE, test)
+ }
+ 
++#[test]
++fn guarded_error_constructor_change_names_its_limit_without_inventing_a_test_gap()
++-> Result<(), String> {
++    let source = include_str!("../../../fixtures/error_return_unresolved_guard/input/src/lib.rs");
++    let test = include_str!("../../../fixtures/error_return_unresolved_guard/input/tests/q.rs");
++    let manifest = include_str!("../../../fixtures/error_return_unresolved_guard/input/Cargo.toml");
++    let diff = include_str!("../../../fixtures/error_return_unresolved_guard/diff.patch");
++    let report = check_report(source, test, manifest, diff)?;
++    let findings = report["findings"].as_array().ok_or("findings missing")?;
++    assert_eq!(findings.len(), 3);
++    for finding in findings {
++        assert_eq!(finding["classification"], "infection_unknown");
++        assert_eq!(
++            finding["static_limit_kind"],
++            "rust_value_propagation_unresolved"
++        );
++        let next = finding["recommended_next_step"]
++            .as_str()
++            .ok_or("next step missing")?;
++        assert!(next.contains("boolean guard"), "{next}");
++        assert!(
++            !next.starts_with("Add ") && !next.starts_with("Strengthen "),
++            "{next}"
++        );
++        assert!(
++            finding["ripr"]["infect"]["summary"]
++                .as_str()
++                .is_some_and(|s| s.contains("cancelled"))
++        );
++    }
++    let overwritten = test.replace("let err =", "let mut err =").replace(
++        "    assert_eq!(err,",
++        "    err = cancelled_error();\n    assert_eq!(err,",
++    );
++    let shadowed = test.replace(
++        "    assert_eq!(err,",
++        "    let err = cancelled_error();\n    assert_eq!(err,",
++    );
++    let discarded = test
++        .replace("let err =", "let _ =")
++        .replace(
++            "    assert_eq!(err, cancelled_error());",
++            "    assert_eq!(1, 1);",
++        )
++        .replace("    assert_eq!(err.message, \"operation cancelled\");", "");
++    for (label, body) in [
++        ("overwritten", overwritten),
++        ("shadowed", shadowed),
++        ("discarded", discarded),
++        (
++            "unentered",
++            test.replace("run_slow(true)", "run_slow(false)"),
++        ),
++    ] {
++        let report = check_report(source, &body, manifest, diff)?;
++        let findings = report["findings"]
++            .as_array()
++            .ok_or("negative findings missing")?;
++        assert!(!findings.is_empty());
++        for finding in findings {
++            assert_ne!(finding["classification"], "exposed", "{label}: {finding}");
++            assert_ne!(
++                finding["static_limit_kind"], "rust_value_propagation_unresolved",
++                "{label}: {finding}"
++            );
++        }
++    }
++    Ok(())
++}
++
+ fn check_report(
+     source: &str,
+     test: &str,
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index b1e08e5c9..ae26ab923 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -19795,7 +19795,7 @@ top-level `source_subject`:
+ 
+ - `digest_algorithm`: always `"sha256"`.
+ - `corpus` (additive, full Rust inventory only): the analysis-owned
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.172",
++  `{ "scope": "rust_workspace", "cache_schema_version": "1.174",
+   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+   classified inventory cache key, including both production and test Rust
+   files after the existing generated-file exclusions. Repo-exposure producers
+@@ -20580,7 +20580,7 @@ targeted-rerun receipt shape:
+     "recomputation_reasons": ["selected_test_scope_recomputed"],
+     "invalidation_status": "not_available",
+     "input_fingerprint": {
+-      "schema_version": "1.172",
++      "schema_version": "1.174",
+       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+       "workspace_root_hash": "…",
+       "files_content_hash": "…",
+diff --git a/fixtures/evidence-promotion-honesty-corpus/corpus.json b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+index 3a3ec505b..396892ccc 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/corpus.json
++++ b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+@@ -44,6 +44,66 @@
+     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-neutral.json"
+   ],
+   "cases": [
++    {
++      "id": "rust_guarded_error_return_limitation_error_path",
++      "language": "rust",
++      "tier": "pure",
++      "source_fixture": "fixtures/error_return_unresolved_guard",
++      "vector": "constructor_to_literal_change_keeps_guarded_error_producer_unresolved",
++      "probe_family": "error_path",
++      "assertions": [
++        {
++          "type": "must_not_report_clean"
++        },
++        {
++          "type": "must_not_promote"
++        },
++        {
++          "type": "must_emit_limitation",
++          "expected_limit_kind": "rust_value_propagation_unresolved"
++        }
++      ]
++    },
++    {
++      "id": "rust_guarded_error_return_limitation_return_value",
++      "language": "rust",
++      "tier": "pure",
++      "source_fixture": "fixtures/error_return_unresolved_guard",
++      "vector": "constructor_to_literal_change_keeps_guarded_error_producer_unresolved",
++      "probe_family": "return_value",
++      "assertions": [
++        {
++          "type": "must_not_report_clean"
++        },
++        {
++          "type": "must_not_promote"
++        },
++        {
++          "type": "must_emit_limitation",
++          "expected_limit_kind": "rust_value_propagation_unresolved"
++        }
++      ]
++    },
++    {
++      "id": "rust_guarded_error_return_limitation_field_construction",
++      "language": "rust",
++      "tier": "pure",
++      "source_fixture": "fixtures/error_return_unresolved_guard",
++      "vector": "constructor_to_literal_change_keeps_guarded_error_producer_unresolved",
++      "probe_family": "field_construction",
++      "assertions": [
++        {
++          "type": "must_not_report_clean"
++        },
++        {
++          "type": "must_not_promote"
++        },
++        {
++          "type": "must_emit_limitation",
++          "expected_limit_kind": "rust_value_propagation_unresolved"
++        }
++      ]
++    },
+     {
+       "id": "rust_effect_receiver_intercepted_first_side_effect",
+       "language": "rust",
+@@ -5001,18 +5061,18 @@
+       "language": "rust",
+       "tier": "pure",
+       "source_fixture": "fixtures/split_test_boundary_oracle",
+-      "vector": "owner_return_pin_confirms_return_value_through_owner_naming_call",
++      "vector": "returned_comparison_cannot_join_boundary_input_with_another_tests_oracle",
+       "probe_family": "return_value",
+       "assertions": [
+         {
+           "type": "must_not_report_clean"
+         },
+         {
+-          "type": "must_promote"
++          "type": "must_not_promote"
+         },
+         {
+           "type": "maximum_class",
+-          "class": "exposed"
++          "class": "weakly_exposed"
+         }
+       ]
+     },
+diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
+index b90bce651..734534021 100644
+--- a/xtask/src/tests/rust_corpus_projection.rs
++++ b/xtask/src/tests/rust_corpus_projection.rs
+@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.172";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.174";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
