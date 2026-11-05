@@ -366,7 +366,9 @@ pub(crate) fn current_state_command(args: &[String]) -> Result<(), String> {
 pub(crate) type CurrentStateInputSnapshot = Vec<(String, Option<Vec<u8>>)>;
 
 #[cfg(test)]
-pub(crate) fn current_state_input_snapshot(root: &Path) -> Result<CurrentStateInputSnapshot, String> {
+pub(crate) fn current_state_input_snapshot(
+    root: &Path,
+) -> Result<CurrentStateInputSnapshot, String> {
     let mut paths = BTreeSet::from([
         "docs/ROADMAP.md".to_string(),
         "Cargo.toml".to_string(),

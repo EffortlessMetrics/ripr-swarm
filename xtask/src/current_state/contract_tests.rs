@@ -43,7 +43,10 @@ impl Fixture {
         )?;
         fixture.write(
             "policy/doc-artifacts.toml",
-            &format!("schema_version = \"1.0\"\n{}", artifact(1, "main", "accepted")),
+            &format!(
+                "schema_version = \"1.0\"\n{}",
+                artifact(1, "main", "accepted")
+            ),
         )?;
         fixture.write(
             "policy/doc-artifacts.d/current-state.toml",
@@ -115,9 +118,7 @@ fn current_state_counts_main_and_fragment_records_and_recorded_tiers() -> Result
         changed.registered_artifacts_by_kind_and_status["proposal"]["accepted"],
         2
     );
-    assert!(
-        !changed.registered_artifacts_by_kind_and_status["proposal"].contains_key("proposed")
-    );
+    assert!(!changed.registered_artifacts_by_kind_and_status["proposal"].contains_key("proposed"));
     Ok(())
 }
 
@@ -254,14 +255,19 @@ fn current_state_read_only_snapshot_covers_added_inputs_and_membership() -> Resu
         "README.md",
         "metrics/rust-repair-trust/corpus.json",
     ] {
-        assert!(before.iter().any(|(path, _)| path == expected), "{expected}");
+        assert!(
+            before.iter().any(|(path, _)| path == expected),
+            "{expected}"
+        );
     }
     fixture.write("docs/specs/RIPR-SPEC-0001-new.md", "# RIPR-SPEC-0001\n")?;
     let after = current_state_input_snapshot(&fixture.0)?;
     assert_ne!(before, after);
-    assert!(after.iter().any(|(path, bytes)| {
-        path == "docs/specs/RIPR-SPEC-0001-new.md" && bytes.is_some()
-    }));
+    assert!(
+        after
+            .iter()
+            .any(|(path, bytes)| { path == "docs/specs/RIPR-SPEC-0001-new.md" && bytes.is_some() })
+    );
     fixture.write(
         "docs/proposals/RIPR-PROP-0002-fragment.md",
         "# RIPR-PROP-0002\nChanged bytes.\n",
