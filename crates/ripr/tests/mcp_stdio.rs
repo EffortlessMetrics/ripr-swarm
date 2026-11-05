@@ -1187,7 +1187,9 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
             "otherwise withheld with the cause",
         ] {
             if !text.contains(required) {
-                failures.push(format!("{surface} omitted conditional custody: {required:?}"));
+                failures.push(format!(
+                    "{surface} omitted conditional custody: {required:?}"
+                ));
             }
         }
         for forbidden in [
@@ -1200,7 +1202,9 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
             "always established",
         ] {
             if text.contains(forbidden) {
-                failures.push(format!("{surface} overclaims worktree custody: {forbidden:?}"));
+                failures.push(format!(
+                    "{surface} overclaims worktree custody: {forbidden:?}"
+                ));
             }
         }
     }
