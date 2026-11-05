@@ -163,6 +163,11 @@ _ripr_activate_rust() {
         printf '%s\n' 'activate-rust: rustc, Cargo and sysroot do not identify the same installed toolchain.' >&2
         return 1
     fi
+    if ! CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" RUSTUP_TOOLCHAIN="$exact" \
+        RUSTUP_AUTO_INSTALL=0 RUSTC="$exact_compiler" "$cargo_bin" -vV >/dev/null; then
+        printf 'activate-rust: selected Cargo at %q is not runnable; repair the installed toolchain before activation. No activation was applied.\n' "$cargo_bin" >&2
+        return 1
+    fi
 
     llvm_bin=$sysroot/lib/rustlib/$host/bin
     llvm_cov=$llvm_bin/llvm-cov

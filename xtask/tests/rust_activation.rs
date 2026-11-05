@@ -29,7 +29,7 @@ fn sourced_rust_activation_preserves_identity_and_parent_shell() -> Result<(), S
             .ok()
     });
     // Case-transform and nameref controls additionally run when Bash supports them.
-    if cases.is_none_or(|count| count < 46)
+    if cases.is_none_or(|count| count < 47)
         || !stdout.contains("Bash activation cases with controlled tool fixtures.")
     {
         return Err(format!(

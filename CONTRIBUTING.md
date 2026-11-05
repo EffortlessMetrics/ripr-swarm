@@ -131,6 +131,8 @@ configuration files can also define wrappers; review those separately when
 using a custom build environment.
 
 Every tool probe finishes before activation changes the parent environment.
+The selected absolute Cargo must also complete `cargo -vV`; an executable path
+whose native version command fails is refused before any activation exports.
 Repeated activation does not grow `PATH` or change shell options or the current
 directory. Relative sourcing preserves an exported or readonly `CDPATH` and
 does not use it to find the repository. Running `bash tools/activate-rust.sh` is

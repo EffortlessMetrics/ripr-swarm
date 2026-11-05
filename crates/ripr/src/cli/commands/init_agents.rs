@@ -32,6 +32,7 @@ tests or mutants; "exposed" is static evidence only. It does not edit files.
 
 Before you start: commit the source change; `/target/` must be in .gitignore.
 Only edit tests. Never change production code to make a gap go away.
+Keep the same --base and source options for every check below.
 
 Loop (max 3 rounds per gap):
 1. FIND    `ripr check --quiet`   (add `--base <branch>` if there is no origin/main|master)
@@ -46,11 +47,15 @@ Loop (max 3 rounds per gap):
            whole-struct equality.
 4. VERIFY  `cargo test <your_test_name>` must pass. Then `ripr check --quiet` again
            (a dirty tree is analyzed automatically; new files need `git add -N PATH`).
-5. DONE    when `ripr check --quiet --json | jq '[.findings[]|select(.classification!="exposed")]|length'`
-           prints 0 (human form: "State: no gap selected for repair").
-           Report what you added; ripr's pass is static, not proof that tests catch real bugs.
+5. DONE    Read `ripr check --quiet --json` separately; require exit 0 and these fields:
+           `analysis_outcome.outcome.kind`: `complete_no_findings` or `complete_with_findings`;
+           `analysis_outcome.analysis_complete`: true; `summary.findings` = `summary.exposed`.
+           Missing required fields, `analysis_outcome.document_complete: false`, or
+           `unanalyzed_working_tree: true` mean STOP. Empty `.findings` alone is never enough.
+           Report tests added and the static result; this does not establish runtime bug detection.
 
 STOP and report instead of looping when:
+- the outcome names empty scope, no changed behavior, partial analysis, unsupported input or failed analysis;
 - the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
 - the same gap remains after 3 exact-assert tests (it may be an equivalent change, e.g. `>` vs
   `>=` where both branches return the same value); or `ripr check` exits 2 or 3.

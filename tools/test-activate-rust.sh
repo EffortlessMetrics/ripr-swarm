@@ -74,6 +74,11 @@ SH
     cat > "$selected_root/bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ $* == -vV ]]; then
+    [[ ${TEST_CARGO_FAIL-0} != 1 ]] || exit 78
+    printf '%s\n' 'cargo 1.95.0 (fixture)'
+    exit 0
+fi
 [[ ${RUSTUP_TOOLCHAIN-} == 1.95.0-x86_64-unknown-linux-gnu ]]
 [[ ${RUSTUP_AUTO_INSTALL-} == 0 ]]
 [[ $CARGO_HOME == "$TEST_CARGO_HOME" && $RUSTUP_HOME == "$TEST_RUSTUP_HOME" ]]
@@ -266,6 +271,7 @@ run_case 'stable requires exact release installed once' 'export TEST_MISSING_EXA
 run_case 'stable identity drift leaves parent unchanged' 'export TEST_ALIAS_DRIFT=1; selector=stable; '"$failure_check"
 run_case 'explicit compiler release drift leaves parent unchanged' 'export TEST_RELEASE_DRIFT=1; '"$failure_check"
 run_case 'native compiler failure leaves parent unchanged' 'export TEST_COMPILER_FAIL=1; '"$failure_check"
+run_case 'unusable selected Cargo leaves parent unchanged' 'export TEST_CARGO_FAIL=1; '"$failure_check"
 run_case 'sysroot mismatch leaves parent unchanged' 'export TEST_SYSROOT_DRIFT=1; '"$failure_check"
 run_case 'existing RUSTC drift requires explicit removal' 'export RUSTC=/different/compiler; '"$failure_check"
 run_case 'Cargo-config compiler env drift requires explicit removal' 'export CARGO_BUILD_RUSTC=/different/compiler; '"$failure_check"
