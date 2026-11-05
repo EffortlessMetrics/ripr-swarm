@@ -2472,6 +2472,8 @@ mod tests;
 #[cfg(test)]
 mod loop_walk_tests;
 #[cfg(test)]
+mod unemitted_stage_unknown_tests;
+#[cfg(test)]
 mod verdict_corpus_tests;
 
 #[cfg(test)]
