@@ -433,8 +433,21 @@ async function runFullDevelopment(options = {}) {
     await stage('profile_diagnostic', async () => {
       const output = await command('cargo', ['test', '--locked', '-p', 'repo-policy', '--lib', PROFILE_TEST,
         '--', '--exact', '--nocapture'], root);
-      const association = /^real LLVM association: raw_version=(\d{1,20}), layout=([^,\r\n]{1,128}), build-id=([a-f0-9]{2,128}), retained=(\d{1,20}), mapping="matched", original=failure, replay=1$/m.exec(output);
-      if (!output.includes(`test ${PROFILE_TEST} ... ok`) || !/^(?:test result: ok\. )?1 passed; 0 failed; 0 ignored(?:;[^\r\n]*)?$/m.test(output)
+      const lines = output.split(/\r?\n/);
+      const announcement = `test ${PROFILE_TEST} ... `;
+      const testLines = lines.filter(line => /^test .+ \.\.\. /.test(line));
+      const associations = lines.filter(line => line.includes('real LLVM association:'));
+      const summaries = lines.filter(line => line.startsWith('test result:'));
+      const profileLine = associations[0] ?? '';
+      // Serial libtest prints the name before the test's uncaptured stderr,
+      // then `ok` on the next line. Parallel libtest prints the name with `ok`.
+      const serial = profileLine.startsWith(announcement);
+      const association = /^real LLVM association: raw_version=(\d{1,20}), layout=([^,\r\n]{1,128}), build-id=([a-f0-9]{2,128}), retained=(\d{1,20}), mapping="matched", original=failure, replay=1$/.exec(
+        serial ? profileLine.slice(announcement.length) : profileLine);
+      const namedPass = serial ? testLines[0] === profileLine && lines[lines.indexOf(profileLine) + 1] === 'ok'
+        : testLines[0] === announcement + 'ok';
+      if (testLines.length !== 1 || associations.length !== 1 || summaries.length !== 1 || !namedPass
+        || !/^test result: ok\. 1 passed; 0 failed; 0 ignored(?:;[^\r\n]*)?$/.test(summaries[0])
         || !association) throw new Error('The selected real-profile diagnostic did not establish its one intended case and native association');
       current.counts = { passed: 1, failed: 0, ignored: 0 };
       current.profile_association = { raw_version: association[1], layout: association[2], build_id: association[3],

@@ -19,8 +19,9 @@ interface FullResult {
   source: { head: string; cleanliness: string };
   compiler_selection: { selector: string; source: string };
   failure?: { stage_id: string; kind: string; native_status: number | null; native_signal: string | null };
-  stages: Array<{ stage_id: string; status: string; commands: Array<{ argv: string[]; cwd: string }>;
-    log?: string; counts?: unknown; canonical_invocations?: number }>;
+  stages: Array<{ stage_id: string; status: string; commands: Array<{ argv: string[]; cwd: string; native_status: number | null }>;
+    log?: string; counts?: unknown; canonical_invocations?: number;
+    profile_association?: { raw_version: string; layout: string; build_id: string; retained_bytes: string } }>;
 }
 interface Call { tool: string; args: string[]; cwd: string; selected: boolean; proxy_preserved: boolean; cargo_target: string }
 
@@ -104,8 +105,23 @@ else if (tool === 'compiler') {
   else if (args[0] === 'test') {
     if (process.env.RIPR_FULL_CONTROL_FAIL === 'profile') process.stdout.write('0 passed; 0 failed; 0 ignored\\n');
     else {
-      process.stdout.write('test ${profileTest} ... ok\\n1 passed; 0 failed; 0 ignored\\n');
-      process.stderr.write('real LLVM association: raw_version=11, layout=llvm_v11, build-id=1234abcd, retained=128, mapping="matched", original=failure, replay=1\\n');
+      const shape = process.env.RIPR_FULL_CONTROL_PROFILE;
+      const name = shape === 'wrong-case' || shape === 'serial-wrong-case' ? 'unrelated::test' : '${profileTest}';
+      const association = shape === 'missing-association' ? ''
+        : 'real LLVM association: raw_version=11, layout=llvm_raw64_le_v11, build-id=1234abcd, retained=184, mapping="'
+          + (shape === 'wrong-association' ? 'unmatched' : 'matched') + '", original=failure, replay=1\\n';
+      const summary = 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 104 filtered out; finished in 0.01s\\n';
+      if (shape?.startsWith('serial')) {
+        // Rust 1.95 libtest pretty output writes the test name before execution
+        // when RUST_TEST_THREADS=1 (also the default on one available CPU).
+        process.stdout.write('test ' + name + ' ... ', () => process.stderr.write(association,
+          () => process.stdout.write((shape === 'serial-missing-ok' ? '' : 'ok\\n') + summary)));
+      } else {
+        process.stderr.write(association + (shape === 'duplicate-association' ? association : ''),
+          () => process.stdout.write('test ' + name + ' ... ok\\n'
+            + (shape === 'duplicate-case' ? 'test ' + name + ' ... ok\\n' : '')
+            + summary + (shape === 'duplicate-summary' ? summary : '')));
+      }
     }
   } else if (args.join(' ') === 'xtask ci-full') {
     if (process.env.RIPR_FULL_CONTROL_FAIL === 'log-write') {
@@ -354,6 +370,32 @@ else if (tool === 'compiler') {
     assert.strictEqual(report.failure?.stage_id, 'profile_diagnostic');
     assert.ok(!calls().some(call => call.tool === 'compiler' || call.args[0] === 'xtask'));
   });
+
+  test('accepts a successful serial libtest profile transcript without losing its native association', async () => {
+    const { report, status } = await invoke({ RUST_TEST_THREADS: '1', RIPR_FULL_CONTROL_PROFILE: 'serial' });
+    const profile = report.stages.find(stage => stage.stage_id === 'profile_diagnostic');
+    assert.strictEqual(profile?.commands[0]?.native_status, 0);
+    assert.strictEqual(status, 0, JSON.stringify(report.failure) + '\n'
+      + (profile?.log ? fs.readFileSync(profile.log, 'utf8') : 'missing profile transcript'));
+    assert.strictEqual(report.full_development_ready, true);
+    assert.strictEqual(profile?.status, 'pass');
+    assert.deepStrictEqual(profile?.counts, { passed: 1, failed: 0, ignored: 0 });
+    assert.deepStrictEqual(profile?.profile_association, { raw_version: '11', layout: 'llvm_raw64_le_v11',
+      build_id: '1234abcd', retained_bytes: '184', expected_truncated_replay_exit: 1 });
+    assert.ok(calls().some(call => call.args.join(' ') === 'xtask vscode-package'));
+  });
+
+  for (const shape of ['wrong-case', 'serial-wrong-case', 'missing-association', 'wrong-association',
+    'duplicate-association', 'duplicate-case', 'duplicate-summary', 'serial-missing-ok']) {
+    test('refuses ' + shape + ' profile evidence despite the native command succeeding', async () => {
+      const { report, status } = await invoke({ RIPR_FULL_CONTROL_PROFILE: shape });
+      assert.strictEqual(report.stages.find(stage => stage.stage_id === 'profile_diagnostic')?.commands[0]?.native_status, 0);
+      assert.strictEqual(status, 1);
+      assert.strictEqual(report.full_development_ready, false);
+      assert.strictEqual(report.failure?.stage_id, 'profile_diagnostic');
+      assert.ok(!calls().some(call => call.tool === 'compiler' || call.args[0] === 'xtask'));
+    });
+  }
 
   test('canonical editor success cannot reuse the earlier host receipt', async () => {
     const { report, status } = await invoke({ RIPR_FULL_CONTROL_FAIL: 'stale_host' });
