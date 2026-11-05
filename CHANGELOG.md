@@ -6874,9 +6874,6 @@ are scoped or reviewed.
 - **Docs:** add proposed [RIPR-SPEC-0414](docs/specs/RIPR-SPEC-0414-go-preview-static-facts.md) Go preview static-facts contract (build and module law, control-flow oracle model, focused `-count=1` routes, fail-closed limitations); register capability and doc-artifact indexes; no adapter shipped (#5533).
 - **Docs:** add proposed [RIPR-SPEC-0391](docs/specs/RIPR-SPEC-0391-ruby-preview-static-facts.md) Ruby preview static-facts contract (RSpec/Minitest activation, oracle law, probe spans, fail-closed dynamism limits); register capability and doc-artifact indexes; no adapter shipped (#5606).
 - Accepted [RIPR-SPEC-0393](docs/specs/RIPR-SPEC-0393-dotnet-shared-project-and-language-evidence-contracts.md)
-- **Docs:** add proposed [RIPR-SPEC-0414](docs/specs/RIPR-SPEC-0414-go-preview-static-facts.md) Go preview static-facts contract (build and module law, control-flow oracle model, focused `-count=1` routes, fail-closed limitations); register capability and doc-artifact indexes; no adapter shipped (#5533).
-- **Docs:** add proposed [RIPR-SPEC-0391](docs/specs/RIPR-SPEC-0391-ruby-preview-static-facts.md) Ruby preview static-facts contract (RSpec/Minitest activation, oracle law, probe spans, fail-closed dynamism limits); register capability and doc-artifact indexes; no adapter shipped (#5606).
-- Accepted [RIPR-SPEC-0393](docs/specs/RIPR-SPEC-0393-dotnet-shared-project-and-language-evidence-contracts.md)
   defines shared .NET project facts and separate C#, F#, and Visual Basic
   evidence contracts (#5632, #5585); preview/advisory only, no adapter enablement.
 - Added RIPR-SPEC-0394, a normative spec-only contract for JVM shared
@@ -6896,7 +6893,6 @@ are scoped or reviewed.
   `package:test` and `flutter_test` capability cells, async/widget fact families,
   and typed platform/generated limits (#5839).
 - Add proposed RIPR-SPEC-0401 R preview package/testthat/numerical/data boundary contract and register it in traceability, capabilities, and doc artifacts (#5850).
-- **Docs:** add proposed [RIPR-SPEC-0405](docs/specs/RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md) Julia preview contract (package roles, method-signature identity, standard `Test` activation, numerical/array/native/GPU boundaries); register capability and doc-artifact indexes; no adapter shipped (#5862).
 - **Docs:** add proposed [RIPR-SPEC-0405](docs/specs/RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md) Julia preview contract (package roles, method-signature identity, standard `Test` activation, numerical/array/native/GPU boundaries); register capability and doc-artifact indexes; no adapter shipped (#5862).
 - Added RIPR-SPEC-0398, the normative Lua preview contract for dialect/Busted/table/metatable/host/native boundaries (#5899, #5597). Documentation and registration only; no adapter enablement.
 - Registered RIPR-SPEC-0398 as out-of-scope in all per-language verdict-corpus spec-scopes ledgers so acceptance examples do not fail verdict-corpus check-all (#5899).
