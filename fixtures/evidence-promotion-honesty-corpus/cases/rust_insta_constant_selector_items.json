@@ -1,0 +1,34 @@
+{
+  "id": "rust_insta_constant_selector_items",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-insta-constant-selector-items.json",
+  "vector": "unread_insta_configuration_cannot_manufacture_a_gap_with_exact_owner_and_preservation_controls",
+  "probe_family": "field_construction",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "static_unknown"
+    },
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_emit_limitation",
+      "expected_limit_kind": "rust_framework_oracle_unresolved"
+    },
+    {
+      "type": "must_disclose_limitation_detail"
+    },
+    {
+      "type": "must_not_emit_repair_packet"
+    }
+  ]
+}
