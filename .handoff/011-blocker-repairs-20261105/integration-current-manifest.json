@@ -1,10 +1,11 @@
 {
-  "candidate": "0f518bf51755f9a1ad4306cea5087b5162ce343c",
-  "tree": "30d0c5cfb8c883578f4369fedef177e5cef7d29b",
+  "candidate": "2ed9a70d5dcfe9e396d126c5a5e27cacac969dc1",
+  "tree": "bdb5e6f6e0450824f4fa5e4269ce860a2b339c1a",
   "branch": "successor/011-integration-20261105",
   "product_source_review": {
-    "candidate": "2de3449b72eb51f5c4976bad86213b104f8356f2",
-    "result": "coordinator confirmed accumulated affected-source review clean; new qualified-wrapper delta pending review"
+    "candidate": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+    "tree": "ca975841fd261a4e4e7e274c86a718ffe10ecd30",
+    "result": "coordinator confirmed exact qualified-wrapper delta review clean; accumulated cdbb-to-current observer delta pending affected review"
   },
   "product_controls": {
     "candidate": "c0287c53f83aee5db1b74862ff10701612303bc6",
@@ -16,9 +17,9 @@
   },
   "current_delta": {
     "base": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
-    "path": "0f518-observer-preservation.patch",
-    "bytes": 17263,
-    "sha256": "0edea5d0d3be4b3ec1ae90b390a782308f961c0bb7fa036714e5d7baa5228a32"
+    "path": "2ed9-observer-complete.patch",
+    "bytes": 38521,
+    "sha256": "05563047c55da918bf06c9e13b699883d52dd2882a0f62f48e6237f95ca5b34a"
   },
   "retained_policy_leaves": {
     "allow_attributes": 0,
@@ -28,8 +29,8 @@
   },
   "qualification": {
     "status": "current guarded compatibility-first pipeline running",
-    "tool_session": 18058,
-    "prior_exact_candidate": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
+    "tool_session": 24700,
+    "prior_exact_candidate": "0f518bf51755f9a1ad4306cea5087b5162ce343c",
     "prior_full_library": {
       "passed": 18087,
       "failed": 0,
@@ -42,7 +43,7 @@
       "receipt": "2de344-owner-call-compatibility-receipt.json",
       "cause": "valid qualified wrapper boundary assertions rejected by bare-call-only identity pin"
     },
-    "current_repairs": "effect-specific execution admission; exact owner error-kind projection identity; canonical awaited scalar result identity with discarded/overwrite/block-tail negatives; unrelated nested item binding scoped correctly; boundary refusal diagnostics retained",
+    "current_repairs": "bool exact-value canonical pin; parser-bound same-line scalar order/scope; resolved same-file relative unit-value imports; concrete fresh empty RefCell<Vec<String>> element observation with preserving std map; seeded/constant/shadowed map runtime negatives",
     "pending": [
       "current compatibility",
       "affected library",
@@ -68,7 +69,7 @@
       "receipt": "cdbb570-owner-call-compatibility-receipt.json",
       "native_exit": 101
     },
-    "current_phase": "owner compatibility compile on 0f518; trait-return pin control follows",
+    "current_phase": "owner-call compatibility compile; focused pin/import controls then affected scoped/full library and native aggregate pipeline",
     "previous_consumer_results": {
       "lsp": [
         21,
@@ -84,6 +85,29 @@
       "guard_stop": "15_GiB_memory_budget",
       "scope": "selected library test compile stopped; not a pass or source failure",
       "receipt": "cdbb570-fresh-check-fast-receipt.json"
+    },
+    "previous_observer_results": {
+      "qualified_entry": [
+        44,
+        0
+      ],
+      "glob_identity": [
+        6,
+        0
+      ],
+      "owner_pin_execution": [
+        62,
+        4
+      ],
+      "canonical_trait_pin": [
+        0,
+        1
+      ],
+      "receipts": [
+        "0f518-owner-call-compatibility-receipt.json",
+        "0f518-trait-return-pin-control-receipt.json"
+      ],
+      "diagnosis": "six original failures fixed; remaining qualified-bool exact-value pin gate, unit-value redundant relative import, collection projection observer; new control exposed same-line scalar binding refusal"
     }
   },
   "history": {
@@ -99,7 +123,7 @@
     "release selection scope_pending"
   ],
   "status": "not fully qualified; no remote CI request, protected merge, settings change or release performed",
-  "subsequent_delta_review": "cdbb qualified wrapper and 0f518 observer deltas pending affected review; clean accumulated review through2de",
+  "subsequent_delta_review": "cdbb-to-2ed9 cumulative observer delta published for narrow affected review",
   "clippy_diagnostic": {
     "base": "b135d8cf382821bcd6deafff8ca50dc02547d852",
     "frozen_patch_sha256": "75deb16a077b004d5d53f8353b85599532e39afc17cf0902c5f2a4fcd235622d",

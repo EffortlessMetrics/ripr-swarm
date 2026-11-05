@@ -1,0 +1,19 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-integration/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 6m 38s
+     Running unittests src/lib.rs (/workspace/12010-proof/target/debug/deps/ripr-7f72c4b83423df9b)
+
+running 1 test
+test analysis::classify::owner_pin::tests::same_file_trait_empty_string_return_keeps_its_owner_pin ... 
+thread 'analysis::classify::owner_pin::tests::same_file_trait_empty_string_return_keeps_its_owner_pin' (400491) panicked at crates/ripr/src/analysis/classify/owner_pin/tests.rs:14353:5:
+trait scope=true, syntax refusal=None
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    analysis::classify::owner_pin::tests::same_file_trait_empty_string_return_keeps_its_owner_pin
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 18089 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p ripr --lib`
