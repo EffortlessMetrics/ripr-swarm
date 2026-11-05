@@ -11,6 +11,8 @@ use super::measure::{
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
 
+mod partial;
+
 /// The committed config, resolved from the crate root so a test that moves
 /// the working directory cannot break the lookup.
 fn committed_config() -> PathBuf {

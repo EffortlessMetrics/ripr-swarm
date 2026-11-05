@@ -225,6 +225,27 @@ status (a manifest re-pin, or a fail-closed refusal that is now intended),
 replace the baseline with the new `dx-scoreboard.json` in the same PR, which
 puts the change in front of a reviewer.
 
+## Partial measurements
+
+A numeric metric with `partial: true` has intended samples that were not
+measured. Its existing `status` still describes the measured values, and its
+number remains the worst observed sample. The rollup and each board's counts
+place otherwise-qualifying partial metrics in `partial`, separate from
+`meets_target`; a board with only those metrics reads `partial`, not fully met
+or unmeasured. Below-target and failed metrics retain their own counts and
+status, with partial coverage disclosed beside the metric.
+
+The Markdown summary adds a Partial column when qualifying partial metrics
+exist. The public proof page preserves the same distinction using the evidence
+source that supplies each bar, including a lane baseline. Independently derived
+evidence does not inherit the partial flag of an unused scoreboard row.
+
+The optional metric flag remains compatible with older receipts, and the new
+`partial` count is additive in the v1 report. Renderers treat absent flags and
+counts as false and zero. Reports without partial measurements keep their
+existing Markdown layout. Coverage disclosure does not change a target,
+regression comparison, or gate decision.
+
 ## Targets versus the regression gate
 
 A **target** is the bar a developer would feel. Missing it is a gap to close

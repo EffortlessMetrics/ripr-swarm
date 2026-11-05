@@ -2827,6 +2827,7 @@ fn missing_repos(row: &Value, base_row: &Value) -> Vec<String> {
 fn status_counts(rows: &[&Value]) -> Value {
     let mut counts = BTreeMap::from([
         ("meets_target", 0_u64),
+        ("partial", 0),
         ("below_target", 0),
         ("not_measured", 0),
         ("failed", 0),
@@ -2834,7 +2835,14 @@ fn status_counts(rows: &[&Value]) -> Value {
         ("comparison_failed", 0),
     ]);
     for row in rows {
-        if let Some(status) = row["status"].as_str()
+        // Keep the metric's target judgment, but do not advertise an
+        // incompletely measured cohort as wholly meeting its target.
+        let status = if row["status"] == "meets_target" && partially_measured(row) {
+            Some("partial")
+        } else {
+            row["status"].as_str()
+        };
+        if let Some(status) = status
             && let Some(slot) = counts.get_mut(status)
         {
             *slot += 1;
@@ -2859,6 +2867,8 @@ fn board_status(counts: &Value) -> &'static str {
         "attention"
     } else if get("below_target") > 0 {
         "gaps"
+    } else if get("partial") > 0 {
+        "partial"
     } else if get("meets_target") == 0 {
         "not_measured"
     } else if get("not_measured") > 0 {
@@ -2866,6 +2876,12 @@ fn board_status(counts: &Value) -> &'static str {
     } else {
         "meets_target"
     }
+}
+
+/// Completeness of the selected numeric measurement, independent of its target
+/// or regression judgment. Older receipts may omit the optional partial flag.
+pub(crate) fn partially_measured(metric: &Value) -> bool {
+    metric["partial"] == true && metric["value"].as_f64().is_some()
 }
 
 fn gate_failure_message(report: &Value) -> String {
@@ -2946,6 +2962,12 @@ pub(crate) fn render_markdown(report: &Value) -> String {
     let mut out = String::new();
     out.push_str("# ripr developer-experience scoreboards\n\n");
     let rollup = &report["rollup"];
+    let partial_count = rollup["partial"].as_u64().unwrap_or(0);
+    let partial_note = if partial_count == 0 {
+        String::new()
+    } else {
+        format!(", {partial_count} partially measured")
+    };
     out.push_str(&format!(
         "Revision `{}` · {} · runner `{}`\n\n",
         report["revision"].as_str().unwrap_or("unknown"),
@@ -2953,7 +2975,7 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         report["runner_class"].as_str().unwrap_or("unknown"),
     ));
     out.push_str(&format!(
-        "**Rollup:** {} meet target, {} below target, {} not measured, {} failed, {} regressed. Gate: `{}`.\n\n",
+        "**Rollup:** {} meet target{partial_note}, {} below target, {} not measured, {} failed, {} regressed. Gate: `{}`.\n\n",
         rollup["meets_target"],
         rollup["below_target"],
         rollup["not_measured"],
@@ -3020,10 +3042,19 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         }
         out.push('\n');
     }
-    out.push_str("| Board | Status | Meets | Below | Not measured |\n|---|---|---:|---:|---:|\n");
+    if partial_count > 0 {
+        out.push_str("| Board | Status | Meets | Partial | Below | Not measured |\n|---|---|---:|---:|---:|---:|\n");
+    } else {
+        out.push_str("| Board | Status | Meets | Below | Not measured |\n|---|---|---:|---:|---:|\n");
+    }
     for board in report["boards"].as_array().into_iter().flatten() {
+        let partial_cell = if partial_count > 0 {
+            format!(" {} |", board["counts"]["partial"].as_u64().unwrap_or(0))
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} |{partial_cell} {} | {} |\n",
             board["id"].as_str().unwrap_or("?"),
             board["status"].as_str().unwrap_or("?"),
             board["counts"]["meets_target"],
@@ -3069,7 +3100,7 @@ pub(crate) fn render_markdown(report: &Value) -> String {
                 display_value(&metric["value"]),
                 comparator(metric),
                 display_value(&metric["target"]),
-                metric["status"].as_str().unwrap_or("?"),
+                display_status(metric),
                 baseline_cell(&metric["baseline"]),
             ));
         }
@@ -3120,6 +3151,15 @@ fn comparator(metric: &Value) -> &'static str {
         "≥"
     } else {
         "≤"
+    }
+}
+
+fn display_status(metric: &Value) -> String {
+    let status = metric["status"].as_str().unwrap_or("?");
+    if partially_measured(metric) {
+        format!("{status} (partially measured)")
+    } else {
+        status.to_string()
     }
 }
 
