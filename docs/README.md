@@ -15,7 +15,8 @@ result means.
 | Work in VS Code | [Editor extension](EDITOR_EXTENSION.md) · [First run to first receipt](EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md) | Install the extension, inspect saved-workspace diagnostics, and complete one repair receipt. |
 | Add advisory CI or review a PR | [CI strategy](CI.md) · [PR review guidance](PR_REVIEW_GUIDANCE.md) | Generate advisory GitHub Actions, read summaries and artifacts, and keep gate authority explicit. |
 | Wire ripr into your coding agent | [Agent quickstart](AGENT_QUICKSTART.md) | One command writes the find-gap, write-test, verify loop with a done and stop rule for Claude Code, Codex, or Cursor, plus optional MCP registration. |
-| Hand work to a coding agent | [LLM operator guide](LLM_OPERATOR_GUIDE.md) · [Agent workflows](AGENT_WORKFLOWS.md) | Give an agent a bounded packet with evidence, edit limits, verification, and stop conditions. |
+| Hand work to a coding agent | [Agent dispatch playbook](AGENT_DISPATCH_WORKFLOW.md) | Use the installed CLI, inspect compact context, prepare one repair, verify the test separately, and retain a recoverable handoff. |
+| Debug agent artifacts or build an integration | [LLM operator guide](LLM_OPERATOR_GUIDE.md) · [Repair attempt identity](REPAIR_ATTEMPT.md) | Manual artifact plumbing, attempt-bound receipts, source identity and recovery; not required reading for every focused test. |
 | Configure RIPR or consume its output | [Configuration](CONFIGURATION.md) · [Output schema](OUTPUT_SCHEMA.md) · [Stability policy](SEMVER.md) | Repository policy, CLI and editor settings, JSON contracts, machine-readable states, and compatibility promises. |
 | Decide whether to adopt RIPR | [Proof and limits](PUBLIC_PROOF.md) | Scoreboard numbers with trends, mutation agreement, verdict-corpus rates, and where RIPR falls short. |
 | Check language and workflow maturity | [Support tiers](status/SUPPORT_TIERS.md) · [Language adapter preview](LANGUAGE_ADAPTER_PREVIEW.md) | What is usable, preview, advisory, unavailable, or explicitly limited. |
@@ -45,6 +46,7 @@ result means.
 ## Contributing and repository operation
 
 - [Contributing](../CONTRIBUTING.md) — development setup and validation.
+- [Agent instructions](../AGENTS.md) and [repository agent workflows](AGENT_WORKFLOWS.md) — skill routing, bounded claims, review and delivery for agents developing RIPR itself; distinct from using RIPR in another project.
 - [Scoped PR contract](SCOPED_PR_CONTRACT.md) — keep one coherent change and evidence denominator.
 - [PR automation](PR_AUTOMATION.md) — repository review and integration mechanics.
 - Agent context: [repository map](agent-context/repo-map.md), [review invariants](agent-context/review-invariants.md), [validation](agent-context/validation.md), and the [PR convergence runbook](agent-context/convergence-runbook.md).
