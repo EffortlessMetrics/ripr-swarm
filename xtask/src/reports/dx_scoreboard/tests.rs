@@ -351,7 +351,7 @@ fn a_ceilinged_row_fails_the_gate_above_its_ceiling_whatever_the_baseline() -> R
     );
     assert_eq!(
         under["gate"]["status"].as_str(),
-        Some("pass"),
+        Some("pass_with_gaps"),
         "{}",
         under["gate"]
     );
@@ -587,6 +587,102 @@ fn gate_fails_when_no_selected_metric_is_comparable() -> Result<(), String> {
     let ungated = build_report(&config, &boards, &[], &context("r"), Some(&baseline), false);
     assert_eq!(ungated["gate"]["status"].as_str(), Some("not_run"));
     assert_eq!(ungated["gate"]["zero_evidence_boards"], json!([]));
+    Ok(())
+}
+
+#[test]
+fn gate_pass_with_gaps_when_missing_evidence_exceeds_half() -> Result<(), String> {
+    // Threshold boundary: at or below half stays a plain pass.
+    assert_eq!(gate_pass_status(66, 20, 13), "pass");
+    assert_eq!(gate_pass_status(66, 37, 17), "pass_with_gaps");
+    assert_eq!(gate_pass_status(0, 0, 0), "pass");
+
+    let config = parse_config(MINIMAL)?;
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &[
+            sample(
+                "speed.warm_check_ms",
+                Some("a"),
+                SampleOutcome::Value(1000.0),
+            ),
+            sample("ci.workflow_lines", None, SampleOutcome::Value(100.0)),
+            sample("first_run.friction_events", None, SampleOutcome::Value(0.0)),
+        ],
+        &context("runner-a"),
+        None,
+        false,
+    );
+    // Only one of three metrics is measured this run: the other two are
+    // not_measured and, holding baseline values, also uncompared, so the
+    // regression gate passes only with gaps named in the headline.
+    let report = build_report(
+        &config,
+        &all_boards(),
+        &[sample(
+            "ci.workflow_lines",
+            None,
+            SampleOutcome::Value(100.0),
+        )],
+        &context("runner-a"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(
+        report["gate"]["status"].as_str(),
+        Some("pass_with_gaps"),
+        "{}",
+        report["gate"]
+    );
+    assert_eq!(
+        report["gate"]["counts"],
+        json!({
+            "meets_target": 1,
+            "below_target": 0,
+            "not_measured": 2,
+            "failed": 0,
+            "uncompared": 2,
+            "total": 3,
+        })
+    );
+    let markdown = render_markdown(&report);
+    assert!(
+        markdown.contains("1 meet target")
+            && markdown.contains("0 below target")
+            && markdown.contains("2 not measured")
+            && markdown.contains("0 failed")
+            && markdown.contains("2 not compared")
+            && markdown.contains("Gate: `pass_with_gaps`"),
+        "{markdown}"
+    );
+    Ok(())
+}
+
+#[test]
+fn committed_baseline_rollup_would_not_read_as_plain_pass() -> Result<(), String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("metrics/dx-scoreboard/baseline.json");
+    let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let baseline: Value = serde_json::from_str(&text).map_err(|err| err.to_string())?;
+    // The committed baseline is the dishonest headline this fixes: it says
+    // `pass` while most of its metrics carry no measured comparison.
+    assert_eq!(baseline["gate"]["status"].as_str(), Some("pass"));
+    let total = baseline["metrics"].as_array().map_or(0, Vec::len) as u64;
+    let not_measured = baseline["metrics"].as_array().map_or(0, |rows| {
+        rows.iter()
+            .filter(|row| row["status"].as_str() == Some("not_measured"))
+            .count()
+    }) as u64;
+    let uncompared = baseline["gate"]["uncompared"]
+        .as_array()
+        .map_or(0, Vec::len) as u64;
+    assert_eq!(
+        gate_pass_status(total, not_measured, uncompared),
+        "pass_with_gaps",
+        "committed baseline: {total} metrics, {not_measured} not_measured, {uncompared} uncompared"
+    );
     Ok(())
 }
 
@@ -1451,7 +1547,7 @@ fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<()
     // A different runner class is never compared for a wall-time metric.
     assert_eq!(
         gate(outside, "runner-b")?["gate"]["status"].as_str(),
-        Some("pass")
+        Some("pass_with_gaps")
     );
     Ok(())
 }
@@ -1607,7 +1703,7 @@ fn the_nightly_row_receipt_gates_a_slower_install() -> Result<(), String> {
     // A different runner class is never compared for a wall-time metric.
     assert_eq!(
         gate(outside, "runner-b")?["gate"]["status"].as_str(),
-        Some("pass")
+        Some("pass_with_gaps")
     );
     Ok(())
 }
@@ -1930,7 +2026,7 @@ source = "ingest:first-run"
     assert_eq!(row["baseline"]["comparable"].as_bool(), Some(false));
     let reason = row["baseline"]["reason"].as_str().unwrap_or_default();
     assert!(reason.contains("step-occurrences-v1"), "{reason}");
-    assert_eq!(report["gate"]["status"].as_str(), Some("pass"));
+    assert_eq!(report["gate"]["status"].as_str(), Some("pass_with_gaps"));
     assert!(
         report["gate"]["uncompared"]
             .as_array()
@@ -2088,7 +2184,7 @@ fn a_repo_new_to_the_corpus_is_listed_not_gated_unless_it_stops_short() -> Resul
     };
     // A heavier new repository is slower than the old worst but regressed nothing.
     let slower = run(SampleOutcome::Value(9000.0));
-    assert_eq!(slower["gate"]["status"].as_str(), Some("pass"));
+    assert_eq!(slower["gate"]["status"].as_str(), Some("pass_with_gaps"));
     let row = slower["metrics"]
         .as_array()
         .and_then(|rows| rows.iter().find(|r| r["id"] == "speed.warm_check_ms"))
@@ -2128,7 +2224,7 @@ fn gate_lists_baseline_metrics_it_could_not_compare() -> Result<(), String> {
         Some(&baseline),
         true,
     );
-    assert_eq!(report["gate"]["status"].as_str(), Some("pass"));
+    assert_eq!(report["gate"]["status"].as_str(), Some("pass_with_gaps"));
     let uncompared = report["gate"]["uncompared"]
         .as_array()
         .ok_or("uncompared list missing")?;
@@ -2734,7 +2830,7 @@ fn a_review_only_count_that_moves_with_unchanged_evidence_is_listed() -> Result<
     );
     assert_eq!(
         report["gate"]["status"].as_str(),
-        Some("pass"),
+        Some("pass_with_gaps"),
         "{}",
         report["gate"]
     );
@@ -4694,7 +4790,12 @@ fn committed_agent_receipt() -> Result<Value, String> {
 /// uncompared.
 fn agent_receipt_check(receipt: &Value) -> Result<(), String> {
     let report = agent_gate_report(receipt)?;
-    if report["gate"]["status"].as_str() != Some("pass") {
+    // Both passing statuses are passes for this check; `pass_with_gaps`
+    // names missing evidence in the headline without failing the gate.
+    if !matches!(
+        report["gate"]["status"].as_str(),
+        Some("pass" | "pass_with_gaps")
+    ) {
         return Err(gate_failure_message(&report));
     }
     let gaps = agent_coverage_gaps(&report, &agent_baseline()?);

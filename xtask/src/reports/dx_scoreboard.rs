@@ -21,6 +21,14 @@
 //! `ripr-dx-scoreboard-input-v1` shape. A metric with no instrument is
 //! `not_measured` with its reason; absence is never reported as a pass.
 //! Cloning the real-repository corpus is opt-in (`--clone`).
+//!
+//! The gate is a regression gate, not a completeness gate, so a run with
+//! some missing evidence can still pass. The headline stays honest about
+//! how much evidence that pass rests on: when `not_measured + uncompared`
+//! exceeds half of the selected metrics, the gate status is
+//! `pass_with_gaps` instead of plain `pass`, and the headline prints the
+//! meets / below / not-measured / failed / uncompared counts.
+//! `pass_with_gaps` does not exit nonzero; only `fail` does.
 
 mod input;
 mod measure;
@@ -311,6 +319,16 @@ pub(crate) fn dx_scoreboard(args: &[String]) -> Result<(), String> {
     crate::write_report("dx-scoreboard.md", &markdown)?;
     println!("Wrote target/ripr/reports/dx-scoreboard.json");
     println!("Wrote target/ripr/reports/dx-scoreboard.md");
+    let counts = &report["gate"]["counts"];
+    println!(
+        "Rollup: {} meet target, {} below target, {} not measured, {} failed, {} not compared. Gate: {}.",
+        counts["meets_target"],
+        counts["below_target"],
+        counts["not_measured"],
+        counts["failed"],
+        counts["uncompared"],
+        report["gate"]["status"].as_str().unwrap_or("not_run"),
+    );
     publish_to_actions(&json_text, &markdown);
     if options.gate && report["gate"]["status"].as_str() == Some("fail") {
         return Err(gate_failure_message(&report));
@@ -2305,6 +2323,20 @@ pub(crate) fn build_report(
     } else {
         Vec::new()
     };
+    // Headline honesty: a passing regression gate whose evidence is mostly
+    // missing must not read as a plain pass. The gap count is the sum the
+    // headline prints (`not_measured` from the rollup plus the gate's
+    // `uncompared` list; a metric can appear in both, which is why the
+    // headline prints each count rather than a distinct-metric gap total).
+    let not_measured = rollup["not_measured"].as_u64().unwrap_or(0);
+    let gate_counts = json!({
+        "meets_target": rollup["meets_target"],
+        "below_target": rollup["below_target"],
+        "not_measured": not_measured,
+        "failed": failed.len() as u64,
+        "uncompared": uncompared.len() as u64,
+        "total": metrics.len() as u64,
+    });
     let gate_status = if !gate {
         "not_run"
     } else if !ceiling_breaches.is_empty() {
@@ -2318,7 +2350,7 @@ pub(crate) fn build_report(
     } else if no_comparable_evidence {
         "fail"
     } else if regressions.is_empty() && failed.is_empty() && comparison_failures.is_empty() {
-        "pass"
+        gate_pass_status(metrics.len() as u64, not_measured, uncompared.len() as u64)
     } else {
         "fail"
     };
@@ -2340,6 +2372,7 @@ pub(crate) fn build_report(
         "gate": {
             "enabled": gate,
             "status": gate_status,
+            "counts": gate_counts,
             "baseline_revision": baseline.map(|b| b["revision"].clone()).unwrap_or(Value::Null),
             "baseline_runner_class": baseline.map(|b| b["runner_class"].clone()).unwrap_or(Value::Null),
             "regressions": regressions,
@@ -2998,6 +3031,21 @@ fn status_counts(rows: &[&Value]) -> Value {
     json!(counts)
 }
 
+/// The passing gate status for a run with no regression, failure or
+/// ceiling breach. Plain `pass` requires the missing-evidence counts the
+/// headline prints (`not_measured + uncompared`) to stay at or below half
+/// of the selected metrics; past that threshold the pass rests on a
+/// minority of the board and reads `pass_with_gaps`. Either status exits
+/// zero: this names the evidence, it does not turn the regression gate
+/// into a completeness gate.
+pub(crate) fn gate_pass_status(total: u64, not_measured: u64, uncompared: u64) -> &'static str {
+    if total > 0 && (not_measured + uncompared) * 2 > total {
+        "pass_with_gaps"
+    } else {
+        "pass"
+    }
+}
+
 fn board_status(counts: &Value) -> &'static str {
     let get = |key: &str| counts[key].as_u64().unwrap_or(0);
     if get("failed") > 0 || get("regressed") > 0 || get("comparison_failed") > 0 {
@@ -3122,12 +3170,13 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         report["runner_class"].as_str().unwrap_or("unknown"),
     ));
     out.push_str(&format!(
-        "**Rollup:** {} meet target{partial_note}, {} below target, {} not measured, {} failed, {} regressed. Gate: `{}`.\n\n",
+        "**Rollup:** {} meet target{partial_note}, {} below target, {} not measured, {} failed, {} regressed, {} not compared. Gate: `{}`.\n\n",
         rollup["meets_target"],
         rollup["below_target"],
         rollup["not_measured"],
         rollup["failed"],
         rollup["regressed"],
+        report["gate"]["counts"]["uncompared"],
         report["gate"]["status"].as_str().unwrap_or("not_run"),
     ));
     let review = report["gate"]["review"]
