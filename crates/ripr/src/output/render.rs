@@ -64,6 +64,13 @@ pub(crate) fn render_check_with_config_and_progress(
                 &output.root,
             ))
         }
+        OutputFormat::JsonCompact => {
+            let findings_budget = json::check_findings_byte_budget()?;
+            Ok(json::render_compact(&stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            )))
+        }
         OutputFormat::CheckFindingsJson => {
             let inputs = output
                 .analysis_outcome
@@ -334,6 +341,16 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
             Ok(attach_canonical_next_action(
                 rendered, output, config, drill_in, provenance,
             ))
+        }
+        OutputFormat::JsonCompact => {
+            let findings_budget = json::check_findings_byte_budget()?;
+            let rendered = stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            );
+            Ok(json::render_compact(&attach_canonical_next_action(
+                rendered, output, config, drill_in, provenance,
+            )))
         }
         _ => render_check_with_config_and_progress(output, format, config, progress),
     }
