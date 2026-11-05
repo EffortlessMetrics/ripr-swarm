@@ -32,6 +32,7 @@ pub(crate) fn review_summary_is_fresh_early_state(
 ) -> bool {
     review_summary_before_analysis_artifact(surfaces, analysis_outcome)
         && movement.state == "missing_artifact"
+        && movement.evidence_artifact.is_none()
 }
 
 pub(crate) fn review_summary_before_analysis_artifact(

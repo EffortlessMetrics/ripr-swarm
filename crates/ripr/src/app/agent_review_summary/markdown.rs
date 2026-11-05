@@ -34,7 +34,9 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
     } else {
         rendered.push_str(&format!("Movement: {}\n", report.static_movement.state));
     }
-    if report.static_movement.state == "missing_artifact" {
+    if report.static_movement.state == "missing_artifact"
+        && report.static_movement.evidence_artifact.is_none()
+    {
         if report
             .surfaces
             .iter()

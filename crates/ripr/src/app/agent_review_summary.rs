@@ -765,6 +765,38 @@ mod tests {
     }
 
     #[test]
+    fn present_receipt_with_missing_movement_is_not_unavailable() -> Result<(), String> {
+        let root = unique_agent_review_summary_test_dir("present-missing-movement")?;
+        write_file(
+            &root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
+            r#"{"seam":{"seam_id":"s","change":"missing_artifact"}}"#,
+        )?;
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let value: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        let markdown = render_agent_review_summary_markdown(&report);
+        assert_eq!(value["static_movement"]["state"], "missing_artifact");
+        assert_eq!(
+            value["static_movement"]["evidence_artifact"],
+            WORKFLOW_AGENT_RECEIPT_ARTIFACT
+        );
+        assert_ne!(
+            value["reviewer_summary"]["headline"],
+            "Review incomplete: analysis outcome and repair receipt are unavailable."
+        );
+        assert!(
+            !markdown.contains("repair receipt are unavailable"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("Receipt: unavailable or invalid"),
+            "{markdown}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn agent_review_summary_markdown_names_review_focus_and_limits() -> Result<(), String> {
         let root = unique_agent_review_summary_test_dir("markdown")?;
         write_complete_artifacts(&root)?;
