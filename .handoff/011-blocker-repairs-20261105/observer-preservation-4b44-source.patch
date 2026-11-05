@@ -1,0 +1,864 @@
+diff --git a/.ripr/traceability.d/12010-sink-identity.toml b/.ripr/traceability.d/12010-sink-identity.toml
+index 9c2bdf8cd..de6281883 100644
+--- a/.ripr/traceability.d/12010-sink-identity.toml
++++ b/.ripr/traceability.d/12010-sink-identity.toml
+@@ -1,6 +1,8 @@
+ [[extend]]
+ id = "RIPR-SPEC-0108"
+ tests = [
++  "crates/ripr/tests/return_diagnostic_confirmation.rs::unit_error_pattern_pins_the_selected_return_without_lending_it_to_its_sibling",
++  "crates/ripr/tests/return_diagnostic_confirmation.rs::borrowed_boolean_helpers_pair_only_the_result_their_assertion_reads",
+   "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can",
+   "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_equal_strength_bound_oracle_wins_in_either_order",
+   "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_before_controls",
+diff --git a/changelog.d/12010-sink-identity.md b/changelog.d/12010-sink-identity.md
+index b13149bbc..8f7f62c45 100644
+--- a/changelog.d/12010-sink-identity.md
++++ b/changelog.d/12010-sink-identity.md
+@@ -2,3 +2,5 @@
+ - Keep strong Rust discrimination tied to the assertion that observes the changed result or effect; keep returned comparisons paired to the same boundary call, reject proximity-only oracles, unchanged return tokens, stale results and intercepted collection reads (including unread external trait dispatch and rebound crate-name imports) while retaining validated wrapper, array, async and error observers (#12010).
+ - Retain the imported precise guarded-error-return limitation when only the return changes: name the unresolved producer edge and withhold an unverifiable test prescription (public `EffortlessMetrics/ripr#1579`, distinct from swarm #1579).
+ - Keep the split-test returned-comparison honesty control non-promoting: the unasserted boundary calls cannot borrow the far-input test oracle.
++- Preserve primitive boolean helper and eager-callback boundary observers only when the helper compares the exact returned value (#12010).
++- Bind a unit-error pattern to the first guarded return selected by its literal input, without lending that witness to a later identical return (#12010).
+diff --git a/crates/ripr/src/analysis/classifier/evidence.rs b/crates/ripr/src/analysis/classifier/evidence.rs
+index 5be2933cb..9011d3e02 100644
+--- a/crates/ripr/src/analysis/classifier/evidence.rs
++++ b/crates/ripr/src/analysis/classifier/evidence.rs
+@@ -1072,6 +1072,11 @@ impl ClassifiedProbeEvidence {
+                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
+                 })
+                 || direct_owner_pin_admits(test, assertion)
++                || context.owner_fn.is_some_and(|owner| {
++                    crate::analysis::classify::selected_unit_error_return(
++                        context.probe, owner, test, assertion, context.index, pin_syntax,
++                    )
++                })
+         };
+         // #9766: the per-assertion fact that the fixture-receiver owner gate
+         // itself admitted this assertion. Another owner-pin route (chain
+@@ -1697,19 +1702,11 @@ impl ClassifiedProbeEvidence {
+                 // helper identity gates: the helper binds the owner's name
+                 // nowhere and the test never names it.
+                 &|test, assertion| {
+-                    let owner = context.owner_fn.filter(|owner| {
++                    context.owner_fn.filter(|owner| {
+                         !import_defeats(test, &owner.name)
+                             && !cross_package_defeats(test, &owner.name)
+                     })?;
+-                    pin_syntax
+-                        .helper_loan(test, assertion, context.index)
+-                        .filter(|loan| {
+-                            helper_pins_owner_call(
+-                                &loan.helper,
+-                                &mask_comments_and_strings(&test.body),
+-                                &owner.name,
+-                            )
+-                        })
++                    pin_syntax.helper_loan(test, assertion, context.index)
+                 },
+                 context
+                     .helper_chain
+diff --git a/crates/ripr/src/analysis/classify/boundary_pairing.rs b/crates/ripr/src/analysis/classify/boundary_pairing.rs
+index e25db18c7..0072618de 100644
+--- a/crates/ripr/src/analysis/classify/boundary_pairing.rs
++++ b/crates/ripr/src/analysis/classify/boundary_pairing.rs
+@@ -26,6 +26,7 @@ use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
+ use crate::value_origins::LocatedValueFact as ValueFact;
+ use ra_ap_syntax::{AstNode, ast};
+ 
++mod borrowed_result;
+ mod bound_result;
+ 
+ /// Token carried in the discriminate summary when a predicate would otherwise
+@@ -378,7 +379,12 @@ fn test_pairs_boundary_input_with_oracle(
+         // through the owner-pin-approved loan's exact mapping (#6482).
+         if !(test.start_line..=test.end_line).contains(&assertion.line) {
+             return helper_loan(test, assertion).is_some_and(|loan| {
+-                loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation)
++                borrowed_result::pairs(probe, owner, test, &loan, assertion, index)
++                    || (super::owner_pin::helper_pins_owner_call(
++                        &loan.helper,
++                        &crate::analysis::extract::mask_comments_and_strings(&test.body),
++                        &owner.name,
++                    ) && loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation))
+             }) || (assertion_is_discriminating(assertion)
+                 && asserting_entry.is_some_and(|(helper, entry)| {
+                     (entry.entry_loan)(test, assertion).is_some_and(|loan| {
+diff --git a/crates/ripr/src/analysis/classify/boundary_pairing/borrowed_result.rs b/crates/ripr/src/analysis/classify/boundary_pairing/borrowed_result.rs
+new file mode 100644
+index 000000000..cbb90d331
+--- /dev/null
++++ b/crates/ripr/src/analysis/classify/boundary_pairing/borrowed_result.rs
+@@ -0,0 +1,160 @@
++//! Pair a borrowed boolean comparison with the exact argument it observes.
++//!
++//! HelperLoan supplies execution, macro binding and helper identity. This
++//! module supplies the missing value edge, never generic helper reach.
++use super::*;
++use crate::analysis::syntax::{
++    parse_clean_source_file_memoized as parse_clean_source_file, ra::LineIndex,
++};
++use ra_ap_syntax::ast::{HasArgList, HasGenericArgs, HasName};
++
++pub(super) fn pairs(
++    probe: &Probe,
++    owner: &FunctionSummary,
++    test: &TestSummary,
++    loan: &HelperLoan,
++    assertion: &OracleFact,
++    index: &RustIndex,
++) -> bool {
++    let Some(pin) = super::super::owner_pin::OwnerReturnPin::establish(probe, owner, index) else {
++        return false;
++    };
++    if !pin.is_unconditional_boolean_tail()
++        || super::super::owner_pin::wrapper_may_be_rebound("bool", index)
++    {
++        return false;
++    }
++    let Some((result_slot, expected_slot, callback)) = slots(loan, assertion) else {
++        return false;
++    };
++    let Some(parsed) = parse_clean_source_file(&test.body) else {
++        return false;
++    };
++    let Some(function) = parsed.tree().syntax().children().find_map(ast::Fn::cast) else {
++        return false;
++    };
++    let Some(body) = function.body() else {
++        return false;
++    };
++    let lines = LineIndex::new(&test.body);
++    let scope = super::super::argument_fold::FoldScope::of_test(test, index);
++    body.statements().any(|statement| {
++        let ast::Stmt::ExprStmt(statement) = statement else { return false };
++        let Some(ast::Expr::CallExpr(call)) = statement.expr() else { return false };
++        let line = test.start_line + lines.line(call.syntax().text_range().start()) - 1;
++        if !loan.eager_call_lines.contains(&line)
++            || call.expr().is_none_or(|callee| callee.syntax().text() != loan.name.as_str())
++        { return false; }
++        let arguments = call.arg_list().map(|list| list.args().collect::<Vec<_>>()).unwrap_or_default();
++        if arguments.len() != 2 { return false; }
++        let expected = arguments[expected_slot].syntax().text().to_string();
++        if !matches!(expected.trim(), "true" | "false") { return false; }
++        let mut result = arguments[result_slot].clone();
++        if callback {
++            let ast::Expr::ClosureExpr(closure) = result else { return false };
++            if closure.async_token().is_some()
++                || closure.param_list().is_none_or(|list| list.params().next().is_some())
++            { return false; }
++            let Some(value) = closure.body() else { return false };
++            result = value;
++        } else if let ast::Expr::MethodCallExpr(clone) = &result {
++            // The established owner returns primitive bool, whose std Clone
++            // preserves the value. A disabled prelude has different dispatch.
++            if clone.name_ref().is_none_or(|name| name.text() != "clone")
++                || clone.generic_arg_list().is_some()
++                || clone.arg_list().is_none_or(|list| list.args().next().is_some())
++                || index.files().values().any(|file| file.source.contains("no_implicit_prelude"))
++            { return false; }
++            let Some(receiver) = clone.receiver() else { return false };
++            result = receiver;
++        }
++        let ast::Expr::CallExpr(owner_call) = result else { return false };
++        let text = owner_call.syntax().text().to_string();
++        if !super::super::call_identity::boundary_owner_calls_resolve(index, owner, test, &text, line) {
++            return false;
++        }
++        let sites = owner_call_sites(&text, owner);
++        matches!(sites.as_slice(), [arguments] if argument_list_activates_boundary(probe, owner, test, arguments, scope))
++    })
++}
++
++/// Exactly one bool equality, optionally preceded by `let got = f();`.
++/// No statements can overwrite the result or substitute an unrelated observer.
++fn slots(loan: &HelperLoan, assertion: &OracleFact) -> Option<(usize, usize, bool)> {
++    if loan.parameters.len() != 2 {
++        return None;
++    }
++    let parsed = parse_clean_source_file(&loan.helper)?;
++    let helper = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
++    let params = helper.param_list()?.params().collect::<Vec<_>>();
++    let body = helper.body()?.stmt_list()?;
++    if body.tail_expr().is_some() {
++        return None;
++    }
++    let statements = body.statements().collect::<Vec<_>>();
++    let (binding, oracle) = match statements.as_slice() {
++        [ast::Stmt::ExprStmt(oracle)] => (None, oracle),
++        [ast::Stmt::LetStmt(binding), ast::Stmt::ExprStmt(oracle)] => (Some(binding), oracle),
++        _ => return None,
++    };
++    let ast::Expr::MacroExpr(oracle) = oracle.expr()? else {
++        return None;
++    };
++    let oracle = oracle.macro_call()?;
++    if oracle.syntax().text().to_string().trim_end_matches(';')
++        != assertion.text.trim().trim_end_matches(';')
++    {
++        return None;
++    }
++    let compared = assertion_comparison_operands(&assertion.text)?;
++    let compact_type = |slot: usize| -> Option<String> {
++        Some(
++            params
++                .get(slot)?
++                .ty()?
++                .syntax()
++                .text()
++                .to_string()
++                .split_whitespace()
++                .collect(),
++        )
++    };
++    for expected in 0..2 {
++        let result = 1 - expected;
++        if compact_type(expected).as_deref() != Some("bool") {
++            continue;
++        }
++        let Some(other) = compared
++            .iter()
++            .position(|operand| operand.trim() == loan.parameters[expected])
++        else {
++            continue;
++        };
++        let result_operand = compared[1 - other].trim();
++        if let Some(binding) = binding {
++            let ast::Pat::IdentPat(name) = binding.pat()? else {
++                continue;
++            };
++            if name.mut_token().is_some()
++                || name.ref_token().is_some()
++                || name.name()?.text() != result_operand
++                || compact_type(result).as_deref() != Some("implFnOnce()->bool")
++            {
++                continue;
++            }
++            let ast::Expr::CallExpr(call) = binding.initializer()? else {
++                continue;
++            };
++            if call.expr()?.syntax().text() == loan.parameters[result].as_str()
++                && call.arg_list()?.args().next().is_none()
++            {
++                return Some((result, expected, true));
++            }
++        } else if result_operand == loan.parameters[result]
++            && compact_type(result).as_deref() == Some("bool")
++        {
++            return Some((result, expected, false));
++        }
++    }
++    None
++}
+diff --git a/crates/ripr/src/analysis/classify/mod.rs b/crates/ripr/src/analysis/classify/mod.rs
+index a3dc39467..8931328a9 100644
+--- a/crates/ripr/src/analysis/classify/mod.rs
++++ b/crates/ripr/src/analysis/classify/mod.rs
+@@ -151,6 +151,7 @@ pub(in crate::analysis) use out_parameter::{
+ pub(in crate::analysis) use owner_pin::{
+     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings,
+     claims_payload_eq_candidates, current_unwrapped_error_binding, direct_call_name,
++    selected_unit_error_return,
+     equality_condition_operands, expected_operand_value, function_declaration_is_async,
+     helper_pins_owner_call, owner_builds_declared_error_variant, pin_scope_needs,
+     returned_closure_pin_required, targeted_free_call_reaches_owner, targeted_name_is_alias,
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 847995eaa..0e4d7b1a0 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -47,6 +47,8 @@ mod expected_binding;
+ mod fallible_check;
+ mod fixture_receiver;
+ mod helper_arguments;
++mod selected_error;
++pub(in crate::analysis) use selected_error::selected_unit_error_return;
+ pub(in crate::analysis::classify) mod path_value;
+ pub(super) mod result_map;
+ pub(super) mod returned_closure;
+@@ -14440,6 +14442,8 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
+ enum LetObservation {
+     WholeValue,
+     Scalar,
++    // The caller establishes a unit-error pattern; no primitive/equality claim.
++    UnitPattern,
+     // Association for a limitation does not assert primitive type or value identity.
+     LimitationAssociation,
+ }
+@@ -14461,8 +14465,8 @@ impl From<bool> for LetObservation {
+ /// a method call, an argument, a second binding, a use before the `let`)
+ /// could change or replace the value, so it fails closed.
+ ///
+-/// `bare_condition`: the reviewed assertion is a bool owner's `assert!(operand)`
+-/// / `assert!(!operand)`, whose condition is the operand itself.
++/// `bare_condition`: the caller established that the reviewed condition reads
++/// the whole binding (a bool condition or a validated unit-error pattern).
+ ///
+ /// `Scalar` (cell-0094): the owner returns a primitive scalar, so the
+ /// binding is `Copy` with no interior mutability and nothing can change
+@@ -14470,6 +14474,9 @@ impl From<bool> for LetObservation {
+ /// after the `let` (`assert!(b > 3); assert_eq!(b, 12);`), and statements
+ /// may stand between the `let` and the assertion. Every use still lies in
+ /// an assertion, so no item, pattern or macro outside one can rebind it.
++/// `UnitPattern` uses the same immutable use discipline after its caller has
++/// established a pattern on a declared unit error, without claiming scalar type
++/// or equality semantics.
+ /// `LimitationAssociation` uses that same statement/use discipline only to
+ /// withhold an unverified repair assignment; it grants no scalar or value pin.
+ fn let_bound_owner_call<'a>(
+diff --git a/crates/ripr/src/analysis/classify/owner_pin/selected_error.rs b/crates/ripr/src/analysis/classify/owner_pin/selected_error.rs
+new file mode 100644
+index 000000000..0c6cf136a
+--- /dev/null
++++ b/crates/ripr/src/analysis/classify/owner_pin/selected_error.rs
+@@ -0,0 +1,209 @@
++//! A unit-error pattern observes the first return only on its literal guard row.
++//!
++//! This is not an owner-wide variant pin: a later identical return does not
++//! borrow the first branch's input. Reuse binding, call and value authorities.
++use super::super::value_transfer::{EvalOutcome, ExactInputs, TypedValue, evaluate_initializer};
++use super::*;
++use crate::analysis::syntax::parse_clean_source_file_memoized as parse_clean_source_file;
++
++pub(in crate::analysis) fn selected_unit_error_return(
++    probe: &Probe,
++    owner: &FunctionSummary,
++    test: &TestSummary,
++    assertion: &OracleFact,
++    index: &RustIndex,
++    syntax: &OwnerPinSyntax,
++) -> bool {
++    selected(probe, owner, test, assertion, index, syntax).is_some()
++}
++
++fn selected(
++    probe: &Probe,
++    owner: &FunctionSummary,
++    test: &TestSummary,
++    assertion: &OracleFact,
++    index: &RustIndex,
++    syntax: &OwnerPinSyntax,
++) -> Option<()> {
++    if !matches!(
++        probe.family,
++        ProbeFamily::ReturnValue | ProbeFamily::ErrorPath
++    ) || owner.item.container != FunctionContainer::Free
++        || !owner.attrs.is_empty()
++        || !syntax.admits_equality_assertion(probe, test, assertion, index)
++    {
++        return None;
++    }
++    let condition = matches_pin_condition(&assertion.text)?;
++    let args = condition
++        .trim()
++        .strip_prefix("matches!")?
++        .trim()
++        .strip_prefix('(')?
++        .strip_suffix(')')?;
++    let args = split_top_level_arguments(args)?;
++    let [subject, pattern] = args.as_slice() else {
++        return None;
++    };
++    let (qualifier, variant) = error_variant_key(pattern)?;
++    let compact = |text: &str| text.split_whitespace().collect::<String>();
++    if compact(pattern) != format!("Err({qualifier}::{variant})")
++        || !owner_file_names_enum(&qualifier, owner, index)
++        || declaring_file_rebinds(
++            &index.files().get(&test.file)?.source,
++            &qualifier,
++            true,
++            index,
++        )
++        || source_binds_value_name(&index.files().get(&owner.file)?.source, "Err")
++        || source_binds_value_name(&index.files().get(&test.file)?.source, "Err")
++        || !super::super::element_field_pin::drop_is_plain(index, &qualifier)
++    {
++        return None;
++    }
++    // Pattern matching needs the actual unit variant, not PartialEq metadata.
++    let declaring = index
++        .files()
++        .values()
++        .filter(|file| declares_type(&mask_comments_and_strings(&file.source), &qualifier))
++        .collect::<Vec<_>>();
++    let [declaring] = declaring.as_slice() else {
++        return None;
++    };
++    let parsed = parse_clean_source_file(&declaring.source)?;
++    let mut enums = parsed
++        .tree()
++        .syntax()
++        .descendants()
++        .filter_map(ast::Enum::cast)
++        .filter(|item| {
++            item.name()
++                .is_some_and(|name| name.text() == qualifier.as_str())
++        });
++    let (Some(item), None) = (enums.next(), enums.next()) else {
++        return None;
++    };
++    if !item.variant_list()?.variants().any(|value| {
++        value
++            .name()
++            .is_some_and(|name| name.text() == variant.as_str())
++            && value.field_list().is_none()
++            && value.attrs().next().is_none()
++    }) {
++        return None;
++    }
++    let call_text = if is_plain_identifier(subject.trim()) {
++        let_bound_owner_call(
++            test,
++            assertion,
++            subject.trim(),
++            "",
++            &owner.name,
++            LetObservation::UnitPattern,
++            true,
++        )?
++    } else {
++        subject.trim()
++    };
++    if !is_whole_free_owner_call(call_text, &owner.name)
++        || !super::super::call_identity::bound_free_owner_calls(
++            index, owner, test, call_text, syntax,
++        )
++    {
++        return None;
++    }
++    let parsed_call = parse_clean_source_file(&format!("fn t() {{ {call_text} }}"))?;
++    let call = parsed_call
++        .tree()
++        .syntax()
++        .descendants()
++        .find_map(ast::CallExpr::cast)?;
++    let arguments = call.arg_list()?.args().collect::<Vec<_>>();
++    let parsed = parse_clean_source_file(&owner.body)?;
++    let function = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
++    if function.async_token().is_some()
++        || function.generic_param_list().is_some()
++        || function.attrs().next().is_some()
++    {
++        return None;
++    }
++    let params = function.param_list()?.params().collect::<Vec<_>>();
++    if params.len() != arguments.len() || params.is_empty() {
++        return None;
++    }
++    let mut inputs = ExactInputs::new();
++    for (param, argument) in params.iter().zip(&arguments) {
++        let ast::Pat::IdentPat(name) = param.pat()? else {
++            return None;
++        };
++        if name.mut_token().is_some()
++            || name.ref_token().is_some()
++            || name.pat().is_some()
++            || compact(&param.ty()?.syntax().text().to_string()) != "&str"
++            || !matches!(argument, ast::Expr::Literal(value) if matches!(value.kind(), ast::LiteralKind::String(_)))
++        {
++            return None;
++        }
++        inputs.insert(
++            name.name()?.text().to_string(),
++            argument.syntax().text().to_string(),
++        );
++    }
++    let body = function.body()?.stmt_list()?;
++    let ast::Stmt::ExprStmt(statement) = body.statements().next()? else {
++        return None;
++    };
++    let ast::Expr::IfExpr(branch) = statement.expr()? else {
++        return None;
++    };
++    if branch.else_branch().is_some()
++        || branch
++            .syntax()
++            .descendants()
++            .any(|node| ast::Attr::can_cast(node.kind()))
++    {
++        return None;
++    }
++    let returned = branch.then_branch()?.stmt_list()?;
++    if returned.tail_expr().is_some() {
++        return None;
++    }
++    let statements = returned.statements().collect::<Vec<_>>();
++    let [ast::Stmt::ExprStmt(statement)] = statements.as_slice() else {
++        return None;
++    };
++    let ast::Expr::ReturnExpr(returned) = statement.expr()? else {
++        return None;
++    };
++    let line = owner.start_line
++        + LineIndex::new(&owner.body).line(returned.syntax().text_range().start())
++        - 1;
++    if probe.location.line != line
++        || error_variant_key(&returned.expr()?.syntax().text().to_string())
++            != Some((qualifier, variant))
++        || compact(&returned.syntax().text().to_string())
++            != compact(probe.expression.trim_end_matches(';'))
++    {
++        return None;
++    }
++    if wrapper_may_be_rebound("str", index)
++        || !super::super::call_identity::closed_method_dispatch_imports(index)
++        || index.files().values().any(|file| {
++            file.source.contains("no_implicit_prelude")
++                || super::super::macro_item_names::macro_may_define_item_named(&file.source, "str")
++                || super::super::macro_item_names::file_has_non_local_defining_macro_invocation(
++                    &file.source,
++                )
++        })
++    {
++        return None;
++    }
++    matches!(
++        evaluate_initializer(&branch.condition()?.syntax().text().to_string(), &inputs),
++        EvalOutcome::Exact {
++            value: TypedValue::Bool(true),
++            ..
++        }
++    )
++    .then_some(())
++}
+diff --git a/crates/ripr/src/analysis/classify/value_transfer.rs b/crates/ripr/src/analysis/classify/value_transfer.rs
+index dc8dd7c59..ab68516c1 100644
+--- a/crates/ripr/src/analysis/classify/value_transfer.rs
++++ b/crates/ripr/src/analysis/classify/value_transfer.rs
+@@ -515,6 +515,9 @@ fn apply_method(
+         (TypedValue::Str(value), "contains", Some(TypedValue::Str(needle))) => {
+             TypedValue::Bool(value.contains(&needle))
+         }
++        (TypedValue::Str(value), "contains", Some(TypedValue::Char(needle))) => {
++            TypedValue::Bool(value.contains(needle))
++        }
+         (TypedValue::Str(value), "strip_prefix", Some(TypedValue::Str(prefix))) => {
+             TypedValue::OptStr(value.strip_prefix(&prefix).map(str::to_string))
+         }
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index 0b609aa16..2f5bc3e44 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -707,7 +707,9 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// `1.172`: compose importer-aware tuple pins with current module-glob ancestry.
+ /// `1.173`: retain the typed unresolved guarded-error-return limitation.
+ /// `1.174`: guarded-return lookup uses the indexed fn token, not visibility text.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.174";
++/// `1.175`: borrowed bool observers pair only through their exact result argument.
++/// `1.176`: unit-error pattern identity is tied to the selected literal guard row.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.176";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -927,7 +929,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.174";
+ /// `0.174`: same composed module-glob ancestry as full `1.172`.
+ /// `0.175`: same guarded-error-return limitation as full `1.173`.
+ /// `0.176`: same fn-token guarded-return identity as full `1.174`.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
++/// `0.177`: same exact borrowed-bool pairing as full `1.175`.
++/// `0.178`: same selected unit-error row identity as full `1.176`.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1149,7 +1153,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
+ /// `0.174`: same composed module-glob ancestry as full `1.172`.
+ /// `0.175`: same guarded-error-return limitation as full `1.173`.
+ /// `0.176`: same fn-token guarded-return identity as full `1.174`.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.176";
++/// `0.177`: same exact borrowed-bool pairing as full `1.175`.
++/// `0.178`: same selected unit-error row identity as full `1.176`.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5305,7 +5311,7 @@ mod tests {
+         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+         // Composed main and successor invalidate both predecessor branches.
+         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.174");
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.176");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5451,8 +5457,8 @@ mod tests {
+         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.176");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.176");
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.178");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.178");
+     }
+ 
+     #[test]
+@@ -5791,6 +5797,8 @@ mod tests {
+             ("pre-main-glob-composition", "1.171", "0.173"),
+             ("pre-guarded-error-limitation", "1.172", "0.174"),
+             ("pre-guard-fn-token-lookup", "1.173", "0.175"),
++            ("pre-borrowed-bool-pairing", "1.174", "0.176"),
++            ("pre-selected-unit-error-row", "1.175", "0.177"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+diff --git a/crates/ripr/src/analysis/test_grip_evidence/boundary_oracle_pairing.rs b/crates/ripr/src/analysis/test_grip_evidence/boundary_oracle_pairing.rs
+index 62273ec16..9daa5edcc 100644
+--- a/crates/ripr/src/analysis/test_grip_evidence/boundary_oracle_pairing.rs
++++ b/crates/ripr/src/analysis/test_grip_evidence/boundary_oracle_pairing.rs
+@@ -3,7 +3,7 @@ use super::{CompactGripContext, FunctionSummary, RepoSeam, TestSummary};
+ use crate::analysis::classify::{
+     OwnerPinSyntax, OwnerReturnPin, ProbeContext, WrapperEntryPairing,
+     activation_and_boundary_input, has_same_test_boundary_oracle_pairing,
+-    has_wrapper_boundary_oracle_pairing, helper_pins_owner_call, targeted_free_call_reaches_owner,
++    has_wrapper_boundary_oracle_pairing, targeted_free_call_reaches_owner,
+ };
+ use crate::domain::{DeltaKind, Probe, ProbeFamily, ProbeId, SourceLocation};
+ 
+@@ -135,13 +135,7 @@ pub(super) fn missing(
+         {
+             return None;
+         }
+-        syntax.helper_loan(test, assertion, index).filter(|loan| {
+-            helper_pins_owner_call(
+-                &loan.helper,
+-                &super::strip_comments_and_strings(&test.body),
+-                &owner.name,
+-            )
+-        })
++        syntax.helper_loan(test, assertion, index)
+     };
+ 
+     if unresolved {
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index 0f798d280..6c4808959 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -1022,3 +1022,162 @@ fn tuple_iterator_identity_cannot_borrow_an_inherent_override() -> Result<(), St
+     assert_ne!(findings[0]["classification"], "exposed", "{report}");
+     Ok(())
+ }
++
++#[test]
++fn borrowed_boolean_helpers_pair_only_the_result_their_assertion_reads() -> Result<(), String> {
++    let cases = [
++        (
++            "plain clone",
++            "fn run_test(want:bool,got:bool) { assert_eq!(got,want); }",
++            "run_test(true,gate(10).clone());",
++            true,
++        ),
++        (
++            "callback",
++            "fn run_test(want:bool,f:impl FnOnce()->bool) { let got=f(); assert_eq!(got,want); }",
++            "run_test(true,|| gate(10));",
++            true,
++        ),
++        (
++            "different boundary call",
++            "fn run_test(want:bool,got:bool) { assert_eq!(got,want); }",
++            "let _=gate(10); run_test(true,gate(11).clone());",
++            false,
++        ),
++        (
++            "discarded callback",
++            "fn run_test(want:bool,f:impl FnOnce()->bool) { let _=f(); assert_eq!(want,true); }",
++            "run_test(true,|| gate(10));",
++            false,
++        ),
++        (
++            "overwritten callback result",
++            "fn run_test(want:bool,f:impl FnOnce()->bool) { let mut got=f(); got=true; assert_eq!(got,want); }",
++            "run_test(true,|| gate(10));",
++            false,
++        ),
++        (
++            "unrelated callback result",
++            "fn run_test(want:bool,f:impl FnOnce()->bool) { let got=f(); assert_eq!(want,true); }",
++            "run_test(true,|| gate(10));",
++            false,
++        ),
++        (
++            "unused callback",
++            "fn run_test(want:bool,f:impl FnOnce()->bool) { assert_eq!(want,true); }",
++            "run_test(true,|| gate(10));",
++            false,
++        ),
++        (
++            "discarded call inside callback",
++            "fn run_test(want:bool,f:impl FnOnce()->bool) { let got=f(); assert_eq!(got,want); }",
++            "run_test(true,|| { let _=gate(10); true });",
++            false,
++        ),
++        (
++            "unrelated compared value",
++            "fn run_test(want:bool,got:bool) { assert_eq!(want,true); }",
++            "run_test(true,gate(10).clone());",
++            false,
++        ),
++    ];
++    let scratch = std::env::temp_dir().join(format!("ripr-borrowed-bool-{}", std::process::id()));
++    struct Cleanup(std::path::PathBuf);
++    impl Drop for Cleanup {
++        fn drop(&mut self) {
++            let _ = std::fs::remove_dir_all(&self.0);
++        }
++    }
++    std::fs::create_dir(&scratch).map_err(|e| e.to_string())?;
++    let _cleanup = Cleanup(scratch.clone());
++    for (at, (label, helper, body, positive)) in cases.into_iter().enumerate() {
++        let root = scratch.join(at.to_string());
++        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
++        std::fs::write(
++            root.join("Cargo.toml"),
++            "[package]\nname=\"borrowed_bool\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
++        )
++        .map_err(|e| e.to_string())?;
++        std::fs::write(root.join("src/lib.rs"),format!("pub fn gate(n:u32)->bool {{ n>=10 }}\n#[cfg(test)] mod tests {{\nuse super::*;\n{helper}\n#[test] fn boundary() {{\n{body}\n}}\n}}\n")).map_err(|e|e.to_string())?;
++        let output = ripr::app::repo_seam_inventory_input(CheckInput {
++            root,
++            mode: Mode::Draft,
++            format: OutputFormat::RepoExposureJson,
++            ..CheckInput::default()
++        });
++        let report: serde_json::Value =
++            serde_json::from_str(&render_check(&output, &OutputFormat::RepoExposureJson)?)
++                .map_err(|e| e.to_string())?;
++        let seams = report["seams"].as_array().ok_or("seams missing")?;
++        let predicate = seams
++            .iter()
++            .find(|s| s["expression"] == "n>=10")
++            .ok_or_else(|| format!("{label}: predicate missing: {report}"))?;
++        assert_eq!(
++            predicate["grip_class"] == "strongly_gripped",
++            positive,
++            "{label}: {predicate}"
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn unit_error_pattern_pins_the_selected_return_without_lending_it_to_its_sibling()
++-> Result<(), String> {
++    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
++        .join("../../fixtures/error_variant_boxed_wrapper_downcast_witness");
++    let read = |path: &str| std::fs::read_to_string(fixture.join(path)).map_err(|e| e.to_string());
++    let source = read("input/src/lib.rs")?;
++    let manifest = read("input/Cargo.toml")?;
++    let diff = read("diff.patch")?;
++    let test = "use boxed_wrapper_downcast_witness_fixture::try_parse_summary;\nuse boxed_wrapper_downcast_witness_fixture::ParseSummaryError;\n#[test]\nfn observes()->Result<(),Box<dyn std::error::Error>> {\n    let result = try_parse_summary(\"@bad;\");\n    if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\n        return Err(\"wrong variant\".into());\n    }\n    Ok(())\n}\n";
++    let overwritten = test.replace("let result", "let mut result").replace(
++        "    if !matches!",
++        "    result = Err(ParseSummaryError::MalformedSource);\n    if !matches!",
++    );
++    let shadowed = test.replace("    if !matches!", "    let result = Err::<boxed_wrapper_downcast_witness_fixture::ParseSummary,ParseSummaryError>(ParseSummaryError::MalformedSource);\n    if !matches!");
++    let unrelated = test.replace("let result = try_parse_summary(\"@bad;\");", "let _ = try_parse_summary(\"@bad;\");\n    let result = Err::<(),_>(ParseSummaryError::MalformedSource);");
++    for (label, body, positive) in [
++        ("selected", test.to_string(), true),
++        ("unentered", test.replace("@bad;", "ordinary"), false),
++        ("later identical return", test.replace("@bad;", ""), false),
++        ("overwritten", overwritten, false),
++        ("shadowed", shadowed, false),
++        ("unrelated", unrelated, false),
++        (
++            "sibling variant",
++            test.replace(
++                "Err(ParseSummaryError::MalformedSource)",
++                "Err(ParseSummaryError::ParserInit)",
++            ),
++            false,
++        ),
++    ] {
++        let report = check_report(&source, &body, &manifest, &diff)?;
++        let findings = report["findings"].as_array().ok_or("findings missing")?;
++        for line in [45, 48] {
++            let rows = findings
++                .iter()
++                .filter(|f| {
++                    f["probe"]["line"] == line
++                        && f["probe"]["expression"]
++                            == "return Err(ParseSummaryError::MalformedSource)"
++                })
++                .collect::<Vec<_>>();
++            assert_eq!(
++                rows.len(),
++                2,
++                "{label} expected error+return findings on {line}: {report}"
++            );
++            for row in rows {
++                assert_eq!(
++                    row["classification"] == "exposed",
++                    positive && line == 45,
++                    "{label}, {line}: {row}"
++                );
++            }
++        }
++    }
++    Ok(())
++}
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index ae26ab923..e73c20cd6 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -19795,7 +19795,7 @@ top-level `source_subject`:
+ 
+ - `digest_algorithm`: always `"sha256"`.
+ - `corpus` (additive, full Rust inventory only): the analysis-owned
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.174",
++  `{ "scope": "rust_workspace", "cache_schema_version": "1.176",
+   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+   classified inventory cache key, including both production and test Rust
+   files after the existing generated-file exclusions. Repo-exposure producers
+@@ -20580,7 +20580,7 @@ targeted-rerun receipt shape:
+     "recomputation_reasons": ["selected_test_scope_recomputed"],
+     "invalidation_status": "not_available",
+     "input_fingerprint": {
+-      "schema_version": "1.174",
++      "schema_version": "1.176",
+       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+       "workspace_root_hash": "…",
+       "files_content_hash": "…",
+diff --git a/fixtures/error_variant_boxed_wrapper_downcast_witness/SPEC.md b/fixtures/error_variant_boxed_wrapper_downcast_witness/SPEC.md
+index eff11b37f..3a5855d1b 100644
+--- a/fixtures/error_variant_boxed_wrapper_downcast_witness/SPEC.md
++++ b/fixtures/error_variant_boxed_wrapper_downcast_witness/SPEC.md
+@@ -45,19 +45,18 @@ ripr check --root fixtures/error_variant_boxed_wrapper_downcast_witness/input
+ 
+ ## Then
+ 
+-The two typed parseable-variant return sites remain `weakly_exposed` when
+-this bound-result witness does not establish which early return produced the
+-asserted value. An exact variant category and an owner call alone cannot lend
+-sink identity to both sites (RIPR-SPEC-0106 / RIPR-SPEC-0197).
++The first typed parseable-variant return is `exposed` when the admitted
++current result binding, unit-error pattern and literal input select its first
++guard. The later identical return remains `weakly_exposed`: a variant category
++and an owner call alone cannot lend sink identity to both sites.
+ 
+ Native per-return controls distinguish this from missing test execution:
+ changing only the first return makes both existing parse witnesses fail;
+ changing only the second return leaves their outcomes unchanged. The complete
+ fixture harness also contains deliberately wrong companion assertions, so its
+-whole exit is not a passing-suite claim. Static analysis remains conservative
+-for both typed sites until it can bind the selected observer to the particular
+-return. The directly bound unique unit-variant positives remain covered by
+-`unwrap_err_variant_positive` and the production return-confirmation controls.
++whole exit is not a passing-suite claim. Production controls retain unentered,
++shadowed, overwritten and unrelated-result negatives, and the directly bound
++unique unit-variant positives remain covered by `unwrap_err_variant_positive`.
+ 
+ The `map_err(Into::into)` wrapper seams with asserting observers — including
+ the one the downcast witness reaches — classify `weakly_exposed` and carry
+diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
+index 734534021..051bd6177 100644
+--- a/xtask/src/tests/rust_corpus_projection.rs
++++ b/xtask/src/tests/rust_corpus_projection.rs
+@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.174";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.176";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";

@@ -1,0 +1,22 @@
+{
+  "candidate": "4b44bda159e7c6b1326bab00ea14b3b7ba27dff9",
+  "tree": "8433062d94585a2e5ef1a5fd856555031089d619",
+  "base": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+  "patch_bytes": 41588,
+  "patch_sha256": "7810125d0a998ae6eb1d383f780b408fa7efe705a03f36206e96541b674c080c",
+  "patch_scope": "source/tests/schema/docs/changelog/traceability and boxed fixture contract only; raw retained captures remain0d producer evidence, require regeneration after focused proof",
+  "carried_focused": {
+    "candidate": "a43795f5f25c26b1f5cd55d8b2d39f87cf938f54",
+    "passed": 20,
+    "native_path_passed": 4,
+    "exit": 0
+  },
+  "current_focused": "Compiling21production+4native on4b44, terminal not yet observed",
+  "review_focus": [
+    "HelperLoan retains canonical execution/macro/helper identity; borrowed argument flow must match exact two-bool comparison or one invoked FnOnce bool result. Original helper-owned call identity gate moved to its existing path, not removed.",
+    "Selected error witness reads first guarded return only, same fn-token line/expression, exact literal string row via shared value transfer, current once-bound result via shared let/call identity, unit variant pattern independent of equality. Later identical return must remain weak.",
+    "Non-local item macro, unread imports, disabled preludes and str rebinding fail closed for guard literal fold; hidden full language semantics outside bounded reader not claimed.",
+    "Current full suite/schema predecessor controls/golden+honesty/policy/hosted integration remain pending. No release readiness claim."
+  ],
+  "comment_update": "Initial update denied by automatic review; newly recovered verified user upload-for-review directive supported one normal-review retry. Retry succeeded; fetched back exact updated#13325 comment6669558758. No outstanding comment denial."
+}
