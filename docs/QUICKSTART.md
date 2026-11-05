@@ -398,8 +398,12 @@ TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. A
 TypeScript project needs no `ripr.toml` — when the repository root has a
 `tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
 `tests/`), or a package one level down or under `packages/*`, `apps/*`,
-`libs/*` or `libraries/*` has one, the CLI auto-enables the preview. Work from a TypeScript repository on
-a branch with a change to inspect.
+`libs/*` or `libraries/*` has one, the CLI auto-enables the preview.
+JavaScript-led repositories can also qualify through a root `package.json`
+with eligible JavaScript or TypeScript source. See
+[language configuration](CONFIGURATION.md#languages) for the full detection
+rules, including mixed Rust repositories and compiled-adapter requirements.
+Work from a TypeScript repository on a branch with a change to inspect.
 
 Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
 ripr writes its artifacts under `target/ripr`, and `check`, `pilot` and
