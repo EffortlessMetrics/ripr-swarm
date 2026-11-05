@@ -777,6 +777,15 @@ names one. Still JSON-RPC errors: an unknown tool name, a `tools/call` whose
 `arguments` is not an object or whose `name` is missing, a missing `_meta`, a
 catalog `cursor`, and resource-read errors, because in those cases no tool ran.
 
+Unknown argument names are echoed exactly up to 128 Unicode scalar values.
+Longer names use that prefix in `failure.data.argument`, with
+`failure.data.argument_truncated: true` and `failure.data.argument_bytes`
+giving the original UTF-8 byte length before JSON escaping. Validation still
+compares the complete original key; `failure.data.allowed` remains the full
+list of accepted names. The human detail marks truncation and names the
+allowed arguments before the preview. This bounds the diagnostic even when
+an admitted request contains a key larger than the response limit (#13154).
+
 ### Reading errors: the JSON-RPC code is coarse by contract
 
 A `tools/call` typed failure is a successful JSON-RPC response whose result has
