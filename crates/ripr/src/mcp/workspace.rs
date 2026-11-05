@@ -1843,7 +1843,15 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             json!(snapshot.source == RefreshSource::Worktree || !snapshot.scope.uncommitted_edits)
         }
     };
-    document["verify"] = super::repair::verify_after_editing_tests();
+    // The re-check follows the analysed subject: the retained snapshot's base,
+    // else the caller's latest request (#13196).
+    document["verify"] = super::repair::verify_after_editing_tests(
+        session
+            .last_good
+            .as_ref()
+            .and_then(|snapshot| snapshot.base.as_deref())
+            .or(session.desired_base.as_deref()),
+    );
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
     }
