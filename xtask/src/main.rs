@@ -2328,10 +2328,21 @@ fn vscode_test_e2e() -> Result<(), String> {
     };
     vscode_compile()?;
     let workspace_path = vscode_test_workspace_path()?;
-    let mut envs = vec![(
-        "RIPR_TEST_WORKSPACE_PATH",
-        path_to_utf8(&workspace_path, "VS Code test workspace path")?,
-    )];
+    // The catalog contract test must invoke this owning Rust producer, not
+    // rebuild through nested Cargo or discover an unrelated binary on PATH.
+    let xtask_path = std::env::current_exe()
+        .map_err(|err| format!("failed to resolve VS Code test catalog producer: {err}"))?;
+    let mut envs = vec![
+        (
+            "RIPR_TEST_WORKSPACE_PATH",
+            path_to_utf8(&workspace_path, "VS Code test workspace path")?,
+        ),
+        (
+            "RIPR_TEST_XTASK_PATH",
+            path_to_utf8(&xtask_path, "VS Code test catalog producer path")?,
+        ),
+    ];
+
     if provided_server.is_none() {
         let packaged = packaged_server.as_ref().ok_or_else(|| {
             "default VS Code test server was not staged through the release archive shape"
@@ -24050,6 +24061,18 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     {
         return Some(
             "Fixture workspaces may contain TypeScript / JavaScript / Python source as analyzed inputs for the Campaign 27 preview adapters (RIPR-SPEC-0027 / RIPR-SPEC-0028).",
+        );
+    }
+
+    if path.starts_with("benchmarks/muse-plugin/fixtures/")
+        && (path.ends_with(".ts")
+            || path.ends_with(".tsx")
+            || path.ends_with(".js")
+            || path.ends_with(".jsx")
+            || path.ends_with(".py"))
+    {
+        return Some(
+            "Muse plugin evaluation fixtures are analyzed inputs for the plugin scenarios (#13106); the TypeScript weak-assertion fixture must stay TypeScript to exercise the analyzer honestly.",
         );
     }
 

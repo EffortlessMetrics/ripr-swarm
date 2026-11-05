@@ -2330,11 +2330,22 @@ pub(crate) fn diff_only_rust_files(
 
 /// A bounded consumer of classified windows. Implementations retain their
 /// result payloads independently from the complete evaluation denominator.
+/// Predicate over remaining seams; `false` means the consumer provably
+/// discards the seam whatever its evidence says (#12940).
+pub(crate) type SecondStageFilter<'s> = Box<dyn Fn(&RepoSeam) -> bool + 's>;
+
 pub(crate) trait ScopedEvidenceConsumer {
     fn in_first_stage(&self, seam: &RepoSeam) -> bool;
     fn observe(&mut self, ordinal: usize, entry: ClassifiedSeam) -> Result<(), String>;
     fn first_stage_sufficient(&self) -> bool;
     fn retained_payloads(&self) -> usize;
+    /// Narrows the second stage after the first stage ran and was not
+    /// sufficient. Returns a predicate over the remaining seams that must be
+    /// `false` only for a seam the consumer will provably discard whatever its
+    /// evidence says. `None` evaluates every remaining seam.
+    fn second_stage_filter<'s>(&'s self, _index: &RustIndex) -> Option<SecondStageFilter<'s>> {
+        None
+    }
 }
 
 const DEFAULT_REVIEW_EVIDENCE_WINDOW: usize = 32;
@@ -2435,6 +2446,11 @@ fn classify_scoped_seams_streamed(
             Duration::ZERO,
         );
         return Ok((evaluated, rest.len()));
+    }
+    // Skipped seams are not counted as unevaluated: the consumer proved it
+    // would discard them, so no scoped result can depend on them.
+    if let Some(keep) = consumer.second_stage_filter(index) {
+        rest.retain(|ordinal| keep(&seams[*ordinal]));
     }
     evaluated = evaluated
         .checked_add(classify_evidence_windows(

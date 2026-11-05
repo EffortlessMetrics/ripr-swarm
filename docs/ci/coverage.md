@@ -106,26 +106,74 @@ selected compiler; a system `llvm-profdata` from another LLVM release is not a
 substitute for the tool in that compiler's sysroot.
 
 ```bash
-rustup component add --toolchain 1.95.0 clippy llvm-tools-preview
-rustup update stable
-rustup component add --toolchain stable clippy llvm-tools-preview
-rustc +stable -vV
-ripr_stable_sysroot="$(rustc +stable --print sysroot)"
-ripr_stable_host="$(rustc +stable -vV | sed -n 's/^host: //p')"
-"$ripr_stable_sysroot/lib/rustlib/$ripr_stable_host/bin/llvm-profdata" --version
-RUSTUP_TOOLCHAIN=1.95.0 cargo test --locked -p repo-policy --lib coverage_diagnostics
-RUSTUP_TOOLCHAIN=stable cargo test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
-RUSTUP_TOOLCHAIN=stable cargo test --locked -p repo-policy --test frontdoor
-RUSTUP_TOOLCHAIN=stable cargo clippy --locked -p repo-policy --all-targets -- -D warnings
+(
+    set -e
+    rustup component add --toolchain 1.95.0 clippy llvm-tools-preview
+    rustup update stable
+    rustup component add --toolchain stable clippy llvm-tools-preview
+
+    ripr_cargo_for() (
+        if (( $# < 2 )); then
+            printf '%s\n' 'usage: ripr_cargo_for TOOLCHAIN CARGO_ARGUMENTS...' >&2
+            exit 2
+        fi
+        ripr_channel=$1
+        shift
+        export RUSTUP_AUTO_INSTALL=0
+        ripr_rustc=$(command rustup which --toolchain "$ripr_channel" rustc) || exit $?
+        ripr_cargo=$(command rustup which --toolchain "$ripr_channel" cargo) || exit $?
+        if [[ $ripr_rustc != /* || $ripr_cargo != /* || ! -x $ripr_rustc || ! -x $ripr_cargo ]]; then
+            printf '%s\n' 'The selected toolchain must provide executable absolute rustc and cargo paths.' >&2
+            exit 1
+        fi
+        if [[ $1 == clippy ]]; then
+            ripr_clippy=$(command rustup which --toolchain "$ripr_channel" cargo-clippy) || exit $?
+            if [[ $ripr_clippy != "${ripr_rustc%/*}/cargo-clippy" || ! -x $ripr_clippy ]]; then
+                printf '%s\n' 'The selected compiler directory must provide executable cargo-clippy.' >&2
+                exit 1
+            fi
+        fi
+        ripr_identity=$("$ripr_rustc" -vV) || exit $?
+        ripr_sysroot=$("$ripr_rustc" --print sysroot) || exit $?
+        ripr_host=$(printf '%s\n' "$ripr_identity" | sed -n 's/^host: //p') || exit $?
+        if [[ $ripr_sysroot != /* || -z $ripr_host ]]; then
+            printf '%s\n' 'The selected rustc did not identify its sysroot and host.' >&2
+            exit 1
+        fi
+        ripr_llvm_bin=$ripr_sysroot/lib/rustlib/$ripr_host/bin
+        export RUSTUP_TOOLCHAIN="$ripr_channel" RUSTC="$ripr_rustc" \
+            PATH="${ripr_rustc%/*}:$ripr_llvm_bin:$PATH" \
+            LLVM_COV="$ripr_llvm_bin/llvm-cov" LLVM_PROFDATA="$ripr_llvm_bin/llvm-profdata"
+        printf 'Selected toolchain: %s\n%s\n' "$ripr_channel" "$ripr_identity"
+        "$LLVM_COV" --version >/dev/null || exit $?
+        "$LLVM_PROFDATA" --version || exit $?
+        exec "$ripr_cargo" "$@"
+    )
+
+    ripr_cargo_for 1.95.0 test --locked -p repo-policy --lib coverage_diagnostics
+    ripr_cargo_for stable test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
+    ripr_cargo_for stable test --locked -p repo-policy --test frontdoor
+    ripr_cargo_for stable clippy --locked -p repo-policy --all-targets -- -D warnings
+)
 ```
 
 `rustup update stable` refreshes an already installed channel; adding components
 alone does not establish that its compiler is current. Retain the compiler and
 LLVM identities and the test's reported raw version/layout with the results.
-Use rustup's command proxies on `PATH` and keep any explicit `RUSTC` setting
-consistent with the selected toolchain. `RUSTUP_TOOLCHAIN` follows subprocesses
-into temporary fixture repositories, where a directory-local override alone
-does not apply. This keeps the policy helper's build-time and runtime compiler
+The subshell resolves the requested compiler and Cargo with `rustup which`, invokes
+Cargo by its absolute path, and selects the same compiler for both `RUSTC` and
+literal `rustc` subprocesses through `PATH`. The LLVM paths come from that compiler's
+sysroot. This supports a shell that already activated either the pin or stable,
+including activation that prepends SDK binaries and exports an absolute `RUSTC`.
+Each command leaves the caller's activation unchanged. Missing tools and failed
+version probes stop before Cargo runs; Cargo failures stop the remaining checks.
+
+`RUSTUP_TOOLCHAIN` also follows subprocesses into temporary fixture repositories,
+where a directory-local override alone does not apply. Setting it alone does not
+replace an explicit `RUSTC` or a direct SDK binary already ahead of the Rustup
+proxies on `PATH`; see [Rustup toolchain overrides](https://rust-lang.github.io/rustup/overrides.html)
+and [Cargo's environment variables](https://doc.rust-lang.org/cargo/reference/environment-variables.html).
+Selecting these together keeps the policy helper's build-time and runtime compiler
 identities aligned. The checks retain their compiler-identity refusals.
 
 The `stable-repo-policy` job in the existing advisory Future Clippy workflow
