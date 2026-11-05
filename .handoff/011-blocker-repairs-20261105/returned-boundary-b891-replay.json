@@ -1,0 +1,135 @@
+{
+  "candidate": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+  "binary_sha256": "d393758b22ccc61dae1afdf2f00feaf6ffd9f025caac7f628d877eac7683d48f",
+  "rows": [
+    {
+      "case": "boundary_pairing_sibling_owner-reverse0-positive0",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "weakly_exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "expected": "weakly_exposed",
+      "passed": true
+    },
+    {
+      "case": "boundary_pairing_sibling_owner-reverse0-positive1",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "exposed"
+        }
+      ],
+      "expected": "exposed",
+      "passed": true
+    },
+    {
+      "case": "boundary_pairing_sibling_owner-reverse1-positive0",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "weakly_exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "expected": "weakly_exposed",
+      "passed": true
+    },
+    {
+      "case": "boundary_pairing_sibling_owner-reverse1-positive1",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "exposed"
+        }
+      ],
+      "expected": "exposed",
+      "passed": true
+    },
+    {
+      "case": "boundary_pairing_sibling_element-reverse0-positive0",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "weakly_exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "expected": "weakly_exposed",
+      "passed": true
+    },
+    {
+      "case": "boundary_pairing_sibling_element-reverse0-positive1",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "exposed"
+        }
+      ],
+      "expected": "exposed",
+      "passed": true
+    },
+    {
+      "case": "boundary_pairing_sibling_element-reverse1-positive0",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "weakly_exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "weakly_exposed"
+        }
+      ],
+      "expected": "weakly_exposed",
+      "passed": true
+    },
+    {
+      "case": "boundary_pairing_sibling_element-reverse1-positive1",
+      "exit": 0,
+      "findings": [
+        {
+          "family": "predicate",
+          "classification": "exposed"
+        },
+        {
+          "family": "return_value",
+          "classification": "exposed"
+        }
+      ],
+      "expected": "exposed",
+      "passed": true
+    }
+  ],
+  "passed": true
+}

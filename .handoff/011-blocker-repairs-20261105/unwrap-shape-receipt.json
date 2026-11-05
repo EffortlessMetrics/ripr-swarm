@@ -1,0 +1,53 @@
+{
+  "producer_sha256": "f0abc8388eb0fd76f99918872b43d34924ed5c597e58e83d8afe936293b3cb29",
+  "rows": [
+    {
+      "case": "bound",
+      "exit": 0,
+      "findings": [
+        [
+          "error_path",
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ],
+        [
+          "return_value",
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ]
+      ]
+    },
+    {
+      "case": "direct",
+      "exit": 0,
+      "findings": [
+        [
+          "error_path",
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ],
+        [
+          "return_value",
+          "weakly_exposed",
+          "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"
+        ]
+      ]
+    },
+    {
+      "case": "whole_result",
+      "exit": 0,
+      "findings": [
+        [
+          "error_path",
+          "exposed",
+          "Strong oracle found: exact error variant assertion"
+        ],
+        [
+          "return_value",
+          "exposed",
+          "Strong oracle found: exact error variant assertion"
+        ]
+      ]
+    }
+  ]
+}

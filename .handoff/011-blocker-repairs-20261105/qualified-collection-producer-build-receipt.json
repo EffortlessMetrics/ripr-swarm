@@ -1,0 +1,324 @@
+{
+  "stage": "qualified-collection-producer-build",
+  "candidate": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+  "tree": "8146e25811471fb9ebb8de7ab4d3de0ba10ac5d0",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "build",
+    "--locked",
+    "-p",
+    "ripr",
+    "--bin",
+    "ripr"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 290.17,
+  "counts": null,
+  "log_sha256": "6b70bf452f80c85fa691f55964699236837fc2dd3beb4067fa86040a1b1fac53",
+  "peak_cgroup_memory_bytes": 7525253120,
+  "samples": [
+    {
+      "utc": "2026-11-05T19:20:14.724058+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 1938661376,
+      "workspace_free_bytes": 20958019584,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:20:24.725664+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 2493526016,
+      "workspace_free_bytes": 21426720768,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:20:34.728070+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 20.0,
+      "cgroup_memory_bytes": 3009970176,
+      "workspace_free_bytes": 21426720768,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:20:44.729412+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 30.01,
+      "cgroup_memory_bytes": 3426283520,
+      "workspace_free_bytes": 21426692096,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:20:54.730292+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 40.01,
+      "cgroup_memory_bytes": 3315228672,
+      "workspace_free_bytes": 21426307072,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:21:04.731533+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 50.01,
+      "cgroup_memory_bytes": 3548659712,
+      "workspace_free_bytes": 21426307072,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:21:14.733869+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 60.01,
+      "cgroup_memory_bytes": 3755405312,
+      "workspace_free_bytes": 21426307072,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:21:24.737094+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 70.01,
+      "cgroup_memory_bytes": 3980857344,
+      "workspace_free_bytes": 21426307072,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:21:34.738876+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 80.02,
+      "cgroup_memory_bytes": 4313600000,
+      "workspace_free_bytes": 21426307072,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:21:44.740023+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 90.02,
+      "cgroup_memory_bytes": 4844429312,
+      "workspace_free_bytes": 21426307072,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:21:54.752035+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 100.03,
+      "cgroup_memory_bytes": 4837556224,
+      "workspace_free_bytes": 21426302976,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:22:04.753869+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 110.03,
+      "cgroup_memory_bytes": 5136973824,
+      "workspace_free_bytes": 21426302976,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:22:14.762106+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 120.04,
+      "cgroup_memory_bytes": 5397884928,
+      "workspace_free_bytes": 21426302976,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:22:24.765510+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 130.04,
+      "cgroup_memory_bytes": 5604487168,
+      "workspace_free_bytes": 21426302976,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:22:34.767576+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 140.04,
+      "cgroup_memory_bytes": 5825339392,
+      "workspace_free_bytes": 21408161792,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:22:44.769021+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 150.05,
+      "cgroup_memory_bytes": 6268477440,
+      "workspace_free_bytes": 21357510656,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:22:54.769764+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 160.05,
+      "cgroup_memory_bytes": 6632525824,
+      "workspace_free_bytes": 21357510656,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:23:04.770853+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 170.05,
+      "cgroup_memory_bytes": 7000649728,
+      "workspace_free_bytes": 21357510656,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:23:14.771833+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 180.05,
+      "cgroup_memory_bytes": 7267897344,
+      "workspace_free_bytes": 21426302976,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:23:24.773168+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 190.05,
+      "cgroup_memory_bytes": 7163281408,
+      "workspace_free_bytes": 21374722048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:23:34.780429+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 200.06,
+      "cgroup_memory_bytes": 7226556416,
+      "workspace_free_bytes": 21347196928,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:23:44.797714+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 210.08,
+      "cgroup_memory_bytes": 7256055808,
+      "workspace_free_bytes": 21313236992,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:23:54.815269+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 220.09,
+      "cgroup_memory_bytes": 7249600512,
+      "workspace_free_bytes": 21268774912,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:24:04.822336+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 230.1,
+      "cgroup_memory_bytes": 7287562240,
+      "workspace_free_bytes": 21242392576,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:24:14.823393+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 240.1,
+      "cgroup_memory_bytes": 7346851840,
+      "workspace_free_bytes": 21219565568,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:24:24.827295+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 250.1,
+      "cgroup_memory_bytes": 7525253120,
+      "workspace_free_bytes": 21185744896,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:24:34.828941+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 260.11,
+      "cgroup_memory_bytes": 7403347968,
+      "workspace_free_bytes": 21140279296,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:24:44.834267+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 270.11,
+      "cgroup_memory_bytes": 7401877504,
+      "workspace_free_bytes": 21117935616,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T19:24:54.836722+00:00",
+      "stage": "qualified-collection-producer-build",
+      "head": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+      "pid": 1082275,
+      "elapsed": 280.11,
+      "cgroup_memory_bytes": 7322116096,
+      "workspace_free_bytes": 21083078656,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}
