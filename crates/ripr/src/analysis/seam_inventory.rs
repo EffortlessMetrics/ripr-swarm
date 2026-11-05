@@ -6802,12 +6802,14 @@ pub fn discount(amount: i32, threshold: i32) -> i32 { amount - threshold }
 }
 "#,
             )?;
+            // A numeric return keeps this policy control independent of
+            // comparison-boundary pairing. Keep its separate arithmetic seam.
             // The committed expected file is what lets the file-backed
             // snapshot discriminate at all (#12189); this test varies only
             // the configured strength.
             write_file(
                 &root.join("src/snapshots/krate__tests__snapshots_discount.snap"),
-                "---\nsource: src/lib.rs\nexpression: discount(12, 10)\n---\ntrue\n",
+                "---\nsource: src/lib.rs\nexpression: discount(12, 10)\n---\n2\n",
             )?;
             let medium = if loaded {
                 write_file(
