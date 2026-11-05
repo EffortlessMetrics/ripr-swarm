@@ -13,7 +13,7 @@ target, margin, or corpus pin is a reviewed edit to that file.
 
 | Board | What a developer feels | Metrics |
 |---|---|---|
-| `speed` | How long until ripr says something useful, and whether the edit-check loop stays interactive | cold `ripr pilot` time and peak memory, warm `ripr check` time and peak memory, and the time of an edited-save refresh through `ripr lsp --stdio` (with the client answering progress creation, and with it never answering), per corpus repository |
+| `speed` | How long until ripr says something useful, and whether the edit-check loop stays interactive | cold `ripr pilot` time and peak memory, warm `ripr check` p50 and p95 time over repeated samples and peak memory (the maximum over them), and the time of an edited-save refresh through `ripr lsp --stdio` (with the client answering progress creation, and with it never answering), per corpus repository |
 | `ci` | What it costs to adopt ripr in CI | lines in the workflow `ripr init --ci github` writes, whether compiling ripr is its only install route, prebuilt install time (ingested from the install harness) |
 | `trust` | Whether ripr is ever confidently wrong | commands that exit 0 on a missing repository, hostile-repository journeys (`crates/ripr/tests/hostile_repos.rs`) that neither find nor refuse cleanly, self-contradicting findings, false-verdict, false-actionable, false-exposed, false-silent and abstention rates (kept separate: fewer abstentions or false gaps are not evidence that credited verdicts are right) on the hand-checked verdict corpus (derived from the committed rows under `fixtures/rust-verdict-corpus/expected/rows/` by the `verdict-corpus:` source), false-actionable, false-exposed and false-silent rates on the authored TypeScript verdict corpus (derived the same way from `fixtures/typescript-verdict-corpus/expected/rows/`), the same three rates on the authored Python verdict corpus (derived from `fixtures/python-verdict-corpus/expected/rows/`), the oracle accuracy and overclaim rate on Rust corpus cases labeled with a spec-adopted related-test oracle kind and strength (targets 1.0 and 0; kept apart from the verdict rates, derived from the same rows), and the share of in-scope numbered spec acceptance examples (minus waived) that a verdict-corpus case cites (target 1.0; coverage, not correctness), mutation spot-check agreement on discriminator and gap claims plus join coverage (ingested), judged-panel false actionable rate |
 | `paste` | Whether a printed command works when pasted | printed commands that break or run injected code under a hostile repository path, printed commands that drop the repository root |
@@ -50,6 +50,40 @@ cargo xtask dx-scoreboard --boards ci,paste        # seconds, no corpus
 `--ripr-bin <path>` measures an existing binary; otherwise the command builds
 release ripr first, because developers run release builds.
 
+### Size tiers and memory budgets
+
+`[[size_tier]]` tables in `scoreboards.toml` give each repository-size tier
+its warm-check peak-memory bar from the release ladder (docs/METRICS.md, R1).
+A corpus entry names its tier in `size_tier`; the tier bar becomes that
+entry's hard `speed.warm_check_peak_rss_mb` ceiling unless the entry sets its
+own, and `--gate` enforces it like any other ceiling. The report carries
+`size_tier` on each repository row.
+
+| Tier | Bar | Source |
+|---|---|---|
+| `small` (Rust, up to 800 files) | 150 MB | ladder: under 150 MB for 100 to 800 Rust files |
+| `medium` (Rust, about 800 to 3,000 files) | 1,024 MB | ladder hard cap; no tighter bar is accepted yet |
+| `large` (Rust, more than 3,000 files) | 1,024 MB | ladder hard cap; no tighter bar is accepted yet |
+| `python_ts` (Python/TypeScript) | 512 MB | ladder: under 512 MB for 3,000-file Python/TypeScript repositories |
+
+An explicit ceiling tighter than its bar stands. One looser than the bar is a
+ratchet toward it and must carry a `memory_ratchet` note with the current
+ceiling and a `YYYY-MM-DD` date; a note on a row that meets its bar is
+refused as stale. File counts are approximate descriptions of the pinned
+trees. Current ratchets, all to be lowered in the PR that earns the gain and
+never raised:
+
+| Row | Tier | Ceiling now | Ladder bar | Set |
+|---|---|---|---|---|
+| `ripr-swarm-2026-10` | `medium` | 1,536 MB | 1,024 MB | 2026-11-04 |
+| `vscode-typescript` | `python_ts` | 1,024 MB | 512 MB | 2026-11-04 |
+
+Latency is not tiered: the ladder's 1 s p50 and 3 s p95 apply up to about
+1,000 Rust files and are the targets of `speed.warm_check_p50_ms` and
+`speed.warm_check_p95_ms`; rows above that size are held by their per-row
+latency ceilings until a bar is accepted. Today's measured position against
+those bars is in docs/METRICS.md.
+
 ## How each instrument works
 
 - **Cold pilot.** Fresh `RIPR_CACHE_DIR`, no `target/ripr` in the checkout,
@@ -57,12 +91,28 @@ release ripr first, because developers run release builds.
   `ripr pilot --root <repo> --out <dir> --mode ready --max-seams 5`. The
   sample counts only when pilot exits 0 and `pilot-summary.json` says
   `complete`; otherwise it is `incomplete` and cannot meet its target.
-- **Warm check.** `ripr check --root <repo> --base HEAD~1 --format json` twice
-  on the cache pilot left behind; the second run is measured. Both runs set
+- **Warm check.** `ripr check --root <repo> --base HEAD~1 --format json` once
+  on the cache pilot left behind as a warm-up, then `--samples N` measured runs
+  (default 3, at most 50; the cold pilot stays one run). All runs set
   `RIPR_CHECK_FINDINGS_BYTES=0`: the contradiction scan reads every finding,
-  and a byte-bounded prefix would make a large-diff row `incomplete`.
+  and a byte-bounded prefix would make a large-diff row `incomplete`. The
+  series gives `speed.warm_check_p50_ms` and `speed.warm_check_p95_ms`,
+  nearest-rank over the measured runs (value at rank `ceil(p/100 * N)` of the
+  ascending series). With fewer than 20 samples the p95 rank is N, so **p95 is
+  the maximum**; the sample detail says so and lists the sorted series. The
+  original `speed.warm_check_ms` is kept as the p50 under its old id so
+  existing ceilings and baselines keep their meaning (its target stays the
+  earlier 2 s proposal; the ladder bars are 1 s p50 and 3 s p95 on the new
+  ids). Every run must be admitted for the intended subject; one rejected,
+  failed or timed-out run ends the series and makes all warm-check metrics of
+  that row `incomplete`, so a fast median cannot hide a bad run. The first
+  run's document feeds the contradiction scan. Baselines taken before this
+  change hold a single-sample `speed.warm_check_ms`; the two new ids are
+  absent from them and read as "absent from baseline" until a nightly refresh.
 - **Peak memory.** `VmHWM` from `/proc/<pid>/status`, sampled in the same
-  10 ms loop that enforces the deadline. Linux only; a lower bound.
+  10 ms loop that enforces the deadline. Linux only; a lower bound. For the
+  warm check, `speed.warm_check_peak_rss_mb` is the maximum over the measured
+  samples (the warm-up is not a sample).
 - **Workflow size.** `ripr init --root <tiny crate> --ci github`, then the
   line count of `.github/workflows/ripr.yml`. The source-build flag is 1 only
   when `cargo install ripr` is the workflow's sole route; a fallback behind a
@@ -224,6 +274,27 @@ fails the lane; one that failed closed in both does not. To accept a changed
 status (a manifest re-pin, or a fail-closed refusal that is now intended),
 replace the baseline with the new `dx-scoreboard.json` in the same PR, which
 puts the change in front of a reviewer.
+
+## Partial measurements
+
+A numeric metric with `partial: true` has intended samples that were not
+measured. Its existing `status` still describes the measured values, and its
+number remains the worst observed sample. The rollup and each board's counts
+place otherwise-qualifying partial metrics in `partial`, separate from
+`meets_target`; a board with only those metrics reads `partial`, not fully met
+or unmeasured. Below-target and failed metrics retain their own counts and
+status, with partial coverage disclosed beside the metric.
+
+The Markdown summary adds a Partial column when qualifying partial metrics
+exist. The public proof page preserves the same distinction using the evidence
+source that supplies each bar, including a lane baseline. Independently derived
+evidence does not inherit the partial flag of an unused scoreboard row.
+
+The optional metric flag remains compatible with older receipts, and the new
+`partial` count is additive in the v1 report. Renderers treat absent flags and
+counts as false and zero. Reports without partial measurements keep their
+existing Markdown layout. Coverage disclosure does not change a target,
+regression comparison, or gate decision.
 
 ## Targets versus the regression gate
 

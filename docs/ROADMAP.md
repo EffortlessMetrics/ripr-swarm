@@ -80,6 +80,13 @@ both primary repositories represented, and at least two independently accepted
 test improvements. Steven's choice to keep using RIPR is a separate condition.
 These are adoption targets, not release gates or permission to manufacture work.
 
+The [installed-use milestones](roadmap/experience.md#milestones-for-installed-ordinary-use)
+spell out the existing 2026 checkpoints, required inputs, and review evidence.
+For a governed repair, use the [current Rust plan](../plans/rust-one-shot-evidence-to-repair.md#current-resumption-and-acceptance);
+for another language or client, start with the [plan index](../plans/README.md#current-outcome-routes).
+Keep ordinary adoption, one repair, the usability pilot, support promotion, and
+measured agent benefit under their own acceptance owners.
+
 ## Next and blocked work
 
 A route observation precedes its governed repair attempt. If the producer cannot

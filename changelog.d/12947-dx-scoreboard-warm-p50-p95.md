@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `cargo xtask dx-scoreboard` now takes `--samples N` (default 3) measured warm-check runs after the warm-up and reports `speed.warm_check_p50_ms` and `speed.warm_check_p95_ms` (nearest rank; p95 is the maximum below 20 samples), keeps `speed.warm_check_ms` as the p50, and reports `speed.warm_check_peak_rss_mb` as the maximum over the samples. Corpus entries name a `size_tier` whose release-ladder peak-memory bar becomes their ceiling, with dated `memory_ratchet` notes for the two rows still above it (#12947).

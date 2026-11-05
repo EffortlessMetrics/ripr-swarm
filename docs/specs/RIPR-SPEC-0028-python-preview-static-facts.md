@@ -585,7 +585,17 @@ source read, not a complete import or reflective-execution graph. The assertion
 reads `NAME` itself or calls a module function with literal arguments whose
 body is one `return` expression over its parameters, literals and `NAME`; a
 name, call, operator or value kind outside that bounded evaluator decides
-nothing and the edit keeps the `missing_import_graph` abstention. A body-only edit of
+nothing and the edit keeps the `missing_import_graph` abstention. A module
+reader may use an f-string whose literal segments and interpolated
+expressions all evaluate to strings under the same bounded evaluator (#12950).
+Interpolation has no conversion (`!s`, `!r`, `!a`) or format specification,
+including an empty specification, and the resulting UTF-8 string is at most
+65,536 bytes on each evaluated side. Non-string values and custom formatting
+remain unresolved. This extends exact old-true/new-false credit only; a weak
+substring check, an old-failing/new-passing pin, or an unresolved consumer does
+not gain credit or a repair route. F-string text that merely spells the constant
+name is not a read. All existing binding, import, writer and activation guards
+remain required. A body-only edit of
 a top-level `NAME = lambda a, b: <body>` binding (#9619) credits the same way:
 the parameters are unchanged positional ones without defaults, `*args` or
 keywords, `NAME` is bound once in the old and new module, no file writes or

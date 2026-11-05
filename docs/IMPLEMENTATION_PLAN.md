@@ -33,6 +33,52 @@ formal-verification contract must not become a prerequisite for an otherwise
 useful ordinary Rust/native-test workflow. Release selection remains in the
 [release execution index](releases/0.11.0-roadmap.md) and its governing issues.
 
+## Recover the current state and next milestone
+
+Start from the [installed-use checkpoints](roadmap/experience.md#milestones-for-installed-ordinary-use)
+for ordinary adoption, or the [Rust repair acceptance path](../plans/rust-one-shot-evidence-to-repair.md#current-resumption-and-acceptance)
+for a governed route, attempt, pilot, or corpus. The
+[plan index](../plans/README.md#current-outcome-routes) routes language, client,
+and property/formal work to existing owners. A larger programme's incomplete
+acceptance does not prevent an independently useful bounded outcome.
+
+Recover three kinds of evidence before selecting the next change:
+
+1. **Authored direction and acceptance.** Read the controlling issue's current
+   decisions, the relevant plan/spec, and the support claim. A dated campaign
+   checkbox or a merged implementation is evidence for its own subject; the
+   parent still needs each required outcome.
+2. **Repository facts and structural health.** Use the existing collectors in
+   [Metrics](METRICS.md#current-baseline). `cargo xtask current-state --json`
+   supplies the bootstrap identity/version/catalog/retired-marker inventory;
+   `cargo xtask repo-contract-report` supplies the registered artifact and
+   support graph. Their check commands cover their declared scopes. A pass
+   does not establish semantic lifecycle completion or live GitHub state.
+3. **Live execution and available inputs.** Read the issue, all-state equivalent
+   PRs, current heads, reviews, checks, and applicable receipts. A complete
+   source change can still lack installed execution or independent acceptance.
+   If GitHub, the generated inventory, or the required artifact is unavailable,
+   state that limitation and the evidence needed to resume; do not infer a
+   clean board or invent an unowned task.
+
+For each milestone, record its exact unmet predicate and the smallest change
+that can satisfy it, the existing owner/candidate, required input, strongest
+wrong-result control, and consumer that will accept the result. Keep the record
+on that issue or PR. The roadmap links it instead of copying a moving queue.
+The experience roadmap describes the evidence retained per ordinary task;
+the Rust plan and corpus contract define counted governed opportunities.
+
+Inventory coverage and checked-drift gaps remain with
+[#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330), using the
+existing artifact/support collectors. Authored lifecycle and support decisions
+remain with [#2328](https://github.com/EffortlessMetrics/ripr-swarm/issues/2328).
+The closed synthetic orientation proof [#2331](https://github.com/EffortlessMetrics/ripr-swarm/issues/2331)
+and its oracle follow-up [#13074](https://github.com/EffortlessMetrics/ripr-swarm/issues/13074)
+retain their boundaries; neither establishes the integrated cold-start outcome
+under [#2324](https://github.com/EffortlessMetrics/ripr-swarm/issues/2324).
+Consume their existing candidates rather than starting another orientation
+implementation from this planning page.
+
 ## Choose and finish one slice
 
 1. **Select the unmet user predicate.** Read the current issue and substantive

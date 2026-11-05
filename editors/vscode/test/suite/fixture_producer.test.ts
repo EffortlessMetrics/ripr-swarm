@@ -175,6 +175,11 @@ suite('Genuine fixture producer process boundary', function () {
       const descendant = Number(fs.readFileSync(path.join(root, 'descendant.pid'), 'utf8'));
       ownedPids.add(parent); ownedPids.add(descendant);
       assert.ok(running(descendant), 'the descendant must actually be alive before the control');
+      if (process.platform !== 'win32') {
+        process.kill(descendant, 'SIGTERM');
+        await new Promise(resolve => setTimeout(resolve, 50));
+        assert.ok(running(descendant), 'the descendant did not resist graceful termination');
+      }
       if (mode === 'timeout-after-primary-exit') {
         await waitFor(() => !running(parent), 'the primary did not exit before the pipe-holding control');
         assert.strictEqual(settled, false, 'the producer settled before exercising inherited pipes');

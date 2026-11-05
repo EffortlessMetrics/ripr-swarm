@@ -36,6 +36,92 @@ accuracy. Verdict follow-ups remain with
 [#12981](https://github.com/EffortlessMetrics/ripr-swarm/issues/12981) and
 [#11884](https://github.com/EffortlessMetrics/ripr-swarm/issues/11884).
 
+## Milestones for installed ordinary use
+
+[#1693](https://github.com/EffortlessMetrics/ripr-swarm/issues/1693) owns the
+personal-adoption outcome and its existing 2026 checkpoints. The milestones
+below make its dependency and exit evidence explicit; the dates are review
+checkpoints, not claims of completion or new release deadlines. Continue the
+next unmet predicate on actual work rather than manufacturing tasks to fill a
+target.
+
+The [accepted checkpoint handoff](https://github.com/EffortlessMetrics/ripr-swarm/issues/1693#issuecomment-6436189709)
+and [November 2 correction](https://github.com/EffortlessMetrics/ripr-swarm/issues/1693#issuecomment-6576618626)
+define the dates, denominator, and still-unmet installed-use outcome.
+
+| Checkpoint and user outcome | Required input and existing owner | Exit evidence |
+| --- | --- | --- |
+| **November 6: finish one installed ordinary task.** | Identified installed analyzer, authorized small real Rust change, and the public recipe; #1693 with #10690 and #4508/#4516. | A complete check/explanation loop on the same root/base/source, ending in a useful finding, correct no-action result, or precise limitation. Appropriate test improvements additionally need independent justification, actual native execution and current refresh. |
+| **November 20: return on ordinary work in both primary repositories.** | Subsequent actual behavior-changing tasks in `ripr-swarm` and `perl-lsp-swarm`; existing performance owners #12947/#12906/#10809 and repeat-attempt owner #13079. | Distinct tasks and dates, retained failures/assistance, successful refresh/repeat without discarding prior evidence, and the reason to return or stop. Rust analysis in perl-lsp-swarm does not require promoting Perl support. |
+| **December 4: reconcile two active weeks and the five-opportunity pilot.** | Ordinary observations feed #1693. The separate #1702 pilot consumes its installed/package and shared-attempt prerequisites; #1601 supplies the selected real route to #3075 when admitted. | Report ordinary participation and pilot acceptance separately. The pilot retains five unique real opportunities, three authorized repositories, installed CLI/packaged VS Code, and the shared-candidate parity observation. Record missing prerequisites; ordinary CLI use can proceed independently. |
+| **December 18: assess four active weeks of repeat value and edit-loop cost.** | Actual tasks and usefulness judgments under #1693/#1619; receipt projection under #6308. | Reconcile participation, repository coverage and independently accepted improvements. Compare cost only with matched binary, host, workload and cache regime, alongside completed semantic work. Missing joined stages remain unmeasured. |
+| **December 31: decide achieved, partial, or not established.** | Accumulated actual-use evidence and Steven's own choice to continue. | Reconcile eight distinct real behavior-changing tasks, at least four active work weeks, both primary repositories and two independently accepted test improvements, targeting one per repository. Record unmet predicates explicitly. Fixtures, replays, CI totals and merged PRs do not establish voluntary adoption. |
+
+### Evidence to retain for each ordinary task
+
+Keep these facts with the existing issue and applicable receipts; this checklist
+adds no new schema or collection service:
+
+- **Subject:** installed artifact/executable digest and source/version,
+  repository/root/base/head, and relevant worktree identity.
+- **Observed journey:** actual check, explanation and offered action, terminal
+  finding/no-action/limitation, stops, assistance, and abandonment.
+- **Test improvement, when appropriate:** independent expected-result basis,
+  exact test-only edit, focused native command, selected/executed test identities
+  and nonzero count, exit/result, and refresh against the original production
+  subject/base. Native green and current static movement remain separate facts.
+- **Repeat and cost:** distinct task and observation date, retained prior
+  evidence, time/attention/commands, and the reason to return or stop. Reopening
+  one opportunity or observing it through another channel does not add a task.
+- **Acceptance:** the actual usefulness judgment and accepted improvement, or
+  the precise missing predicate and existing owner. A controlled installed
+  fixture proves composition; it does not fill the real-task denominator.
+
+### Dependency paths and work that can proceed independently
+
+The ordinary path is installed artifact → honest ordinary result → public
+explanation or useful next action → native test work when appropriate → current
+refresh and terminal outcome → voluntary return on another actual task. A
+limitation or correct no-action result can be useful without a governed repair.
+
+The governed repair branch has stronger entry conditions:
+[#1601](https://github.com/EffortlessMetrics/ripr-swarm/issues/1601) must supply
+an exact producer-owned discriminator, safe target/edit boundary, focused
+verification and before/after/receipt authorities before
+[#3075](https://github.com/EffortlessMetrics/ripr-swarm/issues/3075) counts a real
+attempt. Its November 4 handoff records a canonical-analysis timeout and missing
+independent receipt transfer; the named phase-cost/reusable-input owners are
+#1604/#11107. That observed blocker does not block ordinary inspection, justify
+another replay by itself, or authorize guessing a test target. Keep #3075's
+per-attempt consumer-edit authorization and negative controls.
+
+[#1702](https://github.com/EffortlessMetrics/ripr-swarm/issues/1702)'s pilot and
+the [Rust support promotion contract](../status/SUPPORT_TIERS.md#rust-gap-repair-promotion-contract)
+retain their separate denominators. A personal task, a governed opportunity,
+a parity observation and a support-promotion case may refer to the same source,
+but each must meet its own acceptance and must not inflate another count.
+
+### Measure benefit as a separate claim
+
+[#12902](https://github.com/EffortlessMetrics/ripr-swarm/issues/12902) and
+[#12912](https://github.com/EffortlessMetrics/ripr-swarm/issues/12912) own the
+matched with/without evaluation. Accept valid collection, input/task admission,
+independent quality scoring and complete denominators before interpreting
+cost deltas. Match task/source, model/client/protocol, budget and replicate;
+retain failures, unknown token usage, intervention and variance. Report
+completion and test quality alongside tool calls, tokens and wall time.
+A null result, regression or insufficiently discriminating task suite is an
+honest result; a positive benefit is not required to accept the instrument.
+
+The first-hour funnel [#6308](https://github.com/EffortlessMetrics/ripr-swarm/issues/6308)
+projects existing receipts; it does not establish repeated use or intervention
+benefit. Its verified-improvement metric requires both actual declared native
+verification and current static improvement or closure. A useful limitation
+remains its own outcome. The provisional R0–R3 numbers in
+[Metrics](../METRICS.md#release-ladder) and existing support tiers remain under
+their own authorities; these adoption checkpoints do not ratify thresholds,
+promote support, add required CI, or select a release.
+
 ## Historical experience snapshots
 
 The following gap dispositions, release columns, and "met" assessments belong
