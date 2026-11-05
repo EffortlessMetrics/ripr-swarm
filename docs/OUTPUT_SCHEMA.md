@@ -5243,6 +5243,12 @@ Field contract:
   `activation_overlap` is a static tie-breaker from already observed call
   values, such as a predicate-boundary equality call. `related_tests_total` is
   unaffected by ranking.
+- On applicable returned-value seams, an assertion on an established
+  same-named function of the opposite call kind supplies no oracle credit only
+  when its complete value is closed: literal invocation inputs, an independent
+  primitive/enum body, and established comparison/drop behavior. Unresolved
+  receivers, wrappers, global/local/field values, rewriting attributes and
+  unsupported assertion expressions preserve their prior evidence (#12234).
 - A related test whose only assertion on a returned-value seam is an exact
   error-variant pin that does not name the `Err(..)` that seam constructs (this
   includes a seam that constructs no `Err` at all, such as an `Ok(n)` arm
@@ -19696,7 +19702,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.159",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.160",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20481,7 +20487,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.159",
+      "schema_version": "1.160",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
