@@ -1,0 +1,166 @@
+{
+  "schema": 1,
+  "filename": "ripr-7490-qualified-9639.tar.gz",
+  "bytes": 75677,
+  "sha256": "f695622206f6041e0ded7d432ed378179260365b3db2991ec05999452e06a9f8",
+  "git_blob_sha": "4876903fe906fc16b2843cd850f22e2701fa5d84",
+  "base_commit": "90cd49ff051aafdb7ac16b4f5eb2087ab80530fd",
+  "candidate_tree": "9639eca69ec36fb5ca153d713eb2253f2b15d339",
+  "patch": {
+    "path": "candidate.patch",
+    "bytes": 392887,
+    "sha256": "d8b50dbb44f7b9ae2538cb7c1d11894db474cc5ef0b5e30b6a95b7d16eaea3ab"
+  },
+  "status": "LOCAL_REPOSITORY_CHECKS_PASSED_SOURCE_REVIEWED",
+  "proof_counts": {
+    "passed": 17971,
+    "failed": 0,
+    "ignored": 1,
+    "measured": 0,
+    "filtered": 0
+  },
+  "scope": "Local default-feature lib harness and refreshed existing repository checks; downstream integration/hosted/release qualification remains separate.",
+  "archive_path": ".handoff/ripr-7490-review-20261104/ripr-7490-qualified-9639.tar.gz",
+  "archive_entries": [
+    "candidate.patch",
+    "manifest.json",
+    "qualification.json"
+  ],
+  "focused_subjects_passed": 96,
+  "full_harness": {
+    "command": [
+      "cargo",
+      "--config",
+      "env.TMPDIR.value=\"/dev/shm/ripr-qualification-hb6zem9n\"",
+      "--config",
+      "env.TMPDIR.relative=false",
+      "--config",
+      "env.TMP.value=\"/dev/shm/ripr-qualification-hb6zem9n\"",
+      "--config",
+      "env.TMP.relative=false",
+      "--config",
+      "env.TEMP.value=\"/dev/shm/ripr-qualification-hb6zem9n\"",
+      "--config",
+      "env.TEMP.relative=false",
+      "test",
+      "--locked",
+      "-p",
+      "ripr",
+      "--lib",
+      "--",
+      "--test-threads=1"
+    ],
+    "native_exit": 0,
+    "guard_stop": null,
+    "counts": {
+      "passed": 17971,
+      "failed": 0,
+      "ignored": 1,
+      "measured": 0,
+      "filtered": 0
+    },
+    "harness_seconds": 787.03,
+    "command_seconds": 787.8346784114838,
+    "peak_memory_bytes": 4351848448,
+    "min_workspace_free_bytes": 23501729792,
+    "min_temp_free_bytes": 9265750016,
+    "log_sha256": "a10e454bf7a121fba4dbbb95486a9c3cdb7af568434656cbe0103b5dab9d0c32",
+    "ignored_tests": [
+      "output::executed_control::tests::write_executed_control_contract_fixtures"
+    ]
+  },
+  "checks": [
+    {
+      "label": "fixture_fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "duration_seconds": 51.62330079078674,
+      "peak_memory_bytes": 3431145472,
+      "min_workspace_free_bytes": 23501688832,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "fixture_traceability",
+      "command": [
+        "cargo",
+        "xtask",
+        "check-traceability"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "duration_seconds": 465.6935760974884,
+      "peak_memory_bytes": 8787218432,
+      "min_workspace_free_bytes": 22635429888,
+      "log_sha256": "1891b167d05820491a3f1458aebf3532cad0ca6f3b95d30e1fb6ef44406b0026"
+    },
+    {
+      "label": "fixture_honesty",
+      "command": [
+        "cargo",
+        "xtask",
+        "check-evidence-promotion-honesty"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "duration_seconds": 22.211929082870483,
+      "peak_memory_bytes": 4271333376,
+      "min_workspace_free_bytes": 23038595072,
+      "log_sha256": "34f9263ba4c8196d5a880c2381ba87ccf094d443459a16fdde9a8ff77cd8c6d1"
+    },
+    {
+      "label": "fixture_changelog",
+      "command": [
+        "cargo",
+        "xtask",
+        "check-changelog-fragments"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "duration_seconds": 0.6691391468048096,
+      "peak_memory_bytes": 3746025472,
+      "min_workspace_free_bytes": 23499968512,
+      "log_sha256": "50554cf8d58259fb8885857a241f1a06b101d496d01c9365f420874e4ca67c68"
+    }
+  ],
+  "binary": {
+    "sha256": "150ec3fbdb935a8edeeb6c022a7e0c47455e3f2443a9116a02b78d2e293702d2",
+    "bytes": 368182072,
+    "build_tree": "9639eca69ec36fb5ca153d713eb2253f2b15d339",
+    "features": [
+      "default",
+      "lang-python",
+      "lang-rust",
+      "lang-typescript"
+    ],
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": 0,
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": true
+    }
+  },
+  "source_review": "Existing implementation owner reviewed exact9639 tree and accepted both substantive1df review controls and the9639 fixture-only repair; no new actionable source finding. Not a formal hosted approval.",
+  "materialization": [
+    "In an isolated checkout with exactbase90 present, check out base_commit.",
+    "Verify extracted candidate.patch size and SHA256.",
+    "git apply --index candidate.patch",
+    "Require git write-tree == candidate_tree before building or committing."
+  ],
+  "integration": "The successor owns existing#12994/#12009/#12010 composition. Existing#12994 advanced head is not overwritten or qualified by this frozen old-base tree. Reconcile unique residuals on the existing carrier and refresh material combined-head evidence under protected checks. No draft/ready CI, PR-state, settings, protected-main, tag, registry, marketplace or release action performed by this qualifier.",
+  "nonclaims": [
+    "Prior failing full runs remain retained as historical receipts; no failed run was rewritten as passed.",
+    "No separate new zero-path cancellation result; existing cancellation controls remain.",
+    "Framed proof is weak LSP evidence, stale editor response, and separate positive production inventory, not a positive LSP packet.",
+    "This packet is local repository lib-harness/check qualification, not whole-release/package/channel/platform qualification or a current-main composition result."
+  ],
+  "counting_note": "Focused selections overlap the full suite; do not sum the populations."
+}
+
