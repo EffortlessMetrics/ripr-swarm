@@ -442,8 +442,15 @@ fn returned_fields_and_builders_keep_real_identity_and_reject_replaced_values() 
         let diff = format!(
             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-{previous}\n+{actual}\n"
         );
+        let imports = if source.contains("struct Builder") {
+            "Builder"
+        } else if source.contains("make_item") {
+            "{make_item, Item}"
+        } else {
+            "tax"
+        };
         let test = format!(
-            "use rust_catalog_description_structural_oracle::*;\n#[test]\nfn observes() {{\n    {body}\n}}\n"
+            "use rust_catalog_description_structural_oracle::{imports};\n#[test]\nfn observes() {{\n    {body}\n}}\n"
         );
         let report = check_report(source, &test, MANIFEST, &diff)?;
         let findings = report["findings"].as_array().ok_or("findings missing")?;
@@ -454,6 +461,28 @@ fn returned_fields_and_builders_keep_real_identity_and_reject_replaced_values() 
             } else {
                 assert_ne!(finding["classification"], "exposed", "{report}");
             }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn returned_field_constructor_identity_respects_namespace() -> Result<(), String> {
+    let source = "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,1 +4,1 @@\n-  Self { attempts:3 }\n+  Self { attempts:4 }\n";
+    let foreign = "mod foreign { pub struct Builder { pub attempts:u32 } impl Builder { pub fn new()->Self { Self { attempts:4 } } } }";
+    for (constructor, exposed) in [
+        ("rust_catalog_description_structural_oracle::Builder", true),
+        ("foreign::Builder", false),
+    ] {
+        let test = format!(
+            "{foreign}\n#[test]\nfn observes() {{\n let _=rust_catalog_description_structural_oracle::Builder::new();\n let item={constructor}::new();\n assert_eq!(item.attempts,4);\n}}\n"
+        );
+        let report = check_report(source, &test, MANIFEST, diff)?;
+        let findings = report["findings"].as_array().ok_or("findings missing")?;
+        assert!(!findings.is_empty(), "{report}");
+        for finding in findings {
+            assert_eq!(finding["classification"] == "exposed", exposed, "{report}");
         }
     }
     Ok(())

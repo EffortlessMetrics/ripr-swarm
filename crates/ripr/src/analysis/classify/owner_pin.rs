@@ -6421,6 +6421,81 @@ impl OwnerReturnPin {
         index: &RustIndex,
         syntax: &OwnerPinSyntax,
     ) -> bool {
+        Self::associated_type_binding_reaches_owner(
+            self.binding(),
+            type_name,
+            test,
+            test_source,
+            index,
+            syntax,
+        )
+    }
+
+    pub(in crate::analysis) fn field_call_binds_owner(
+        owner: &FunctionSummary,
+        index: &RustIndex,
+        test: &TestSummary,
+        text: &str,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        if owner.item.container == FunctionContainer::Free {
+            return super::call_identity::bound_free_owner_calls(index, owner, test, text, syntax);
+        }
+        let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
+            return false;
+        };
+        if owner.item.has_self_param
+            || !indexed_item_nesting(index, &owner.file, &owner.name, owner.start_line, true)
+                .is_some_and(|item| !item.cfg_gated)
+            || syntax.file_cfg_gated(index, &owner.file)
+        {
+            return false;
+        }
+        let Some(mut paths) = super::call_identity::call_qualifiers(text, &owner.name)
+            .into_iter()
+            .next()
+            .flatten()
+        else {
+            return false;
+        };
+        if paths.len() > 1 {
+            if test_crate_binds_root(test, &paths[0], index, syntax) {
+                return false;
+            }
+            return super::call_identity::rooted_associated_call_names_owner(
+                index, owner, test, &paths,
+            );
+        }
+        if paths.pop().as_deref() != Some(self_ty.as_str())
+            || associated_owner_type(self_ty, index).is_none()
+        {
+            return false;
+        }
+        let Some(source) = index.files().get(&test.file) else {
+            return false;
+        };
+        Self::associated_type_binding_reaches_owner(
+            FreeOwnerBinding {
+                name: &owner.name,
+                owner_file: &owner.file,
+                owner_start_line: owner.start_line,
+            },
+            self_ty,
+            test,
+            &source.source,
+            index,
+            syntax,
+        )
+    }
+
+    fn associated_type_binding_reaches_owner(
+        binding: FreeOwnerBinding<'_>,
+        type_name: &str,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
         // Only file-level imports reach a test at the file's top level.
         if syntax
             .item_nesting(index, &test.file, &test.name, test.start_line)
@@ -6451,7 +6526,6 @@ impl OwnerReturnPin {
         {
             return false;
         }
-        let binding = self.binding();
         let imports_owner_type = |statement: &String| {
             let Some(path) = statement.trim_start().strip_prefix("use") else {
                 return false;
@@ -6482,7 +6556,7 @@ impl OwnerReturnPin {
         }
         syntax
             .target_roots(index)
-            .root(&self.owner_file, index)
+            .root(binding.owner_file, index)
             .is_some_and(|owner_root| !library_may_export_other(index, &owner_root, type_name))
     }
 

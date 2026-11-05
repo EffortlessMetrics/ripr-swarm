@@ -1236,6 +1236,7 @@ impl ClassifiedProbeEvidence {
                             context.index,
                             test,
                             assertion,
+                            pin_syntax,
                         )
                 },
                 setter_writes_field: &|impl_type, setter, field| {

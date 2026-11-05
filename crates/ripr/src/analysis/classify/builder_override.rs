@@ -307,17 +307,24 @@ pub(in crate::analysis) fn owner_field_read_identity(
     index: &RustIndex,
     test: &TestSummary,
     assertion: &OracleFact,
+    syntax: &super::OwnerPinSyntax,
 ) -> bool {
-    field_identity(probe, index, test, assertion).is_some()
+    field_identity(probe, index, test, assertion, syntax).is_some()
 }
 fn field_identity(
     probe: &crate::domain::Probe,
     index: &RustIndex,
     test: &TestSummary,
     assertion: &OracleFact,
+    syntax: &super::OwnerPinSyntax,
 ) -> Option<()> {
     use crate::domain::ProbeFamily;
-    let owner = OwnerCall::from_symbol(&probe.owner.as_ref()?.0)?;
+    let owner_id = probe.owner.as_ref()?;
+    let function = index
+        .functions()
+        .iter()
+        .find(|function| function.id == *owner_id)?;
+    let owner = OwnerCall::from_symbol(&owner_id.0)?;
     let fields = match probe.family {
         ProbeFamily::FieldConstruction => {
             vec![super::reveal::constructed_field_name(&probe.expression)?.to_string()]
@@ -347,10 +354,15 @@ fn field_identity(
             && field_origin(
                 &read.expr()?,
                 &visible,
-                owner,
                 &field,
-                index,
                 MAX_BINDING_HOPS,
+                &FieldOrigin {
+                    owner,
+                    function,
+                    index,
+                    test,
+                    syntax,
+                },
             )
         {
             return Some(());
@@ -367,14 +379,28 @@ fn parsed_operand(text: &str) -> Option<ast::Expr> {
     };
     statement.expr()
 }
+struct FieldOrigin<'a> {
+    owner: OwnerCall<'a>,
+    function: &'a super::super::rust_index::FunctionSummary,
+    index: &'a RustIndex,
+    test: &'a TestSummary,
+    syntax: &'a super::OwnerPinSyntax,
+}
+
 fn field_origin(
     expression: &ast::Expr,
     visible: &[ast::Stmt],
-    owner: OwnerCall<'_>,
     field: &str,
-    index: &RustIndex,
     hops: usize,
+    context: &FieldOrigin<'_>,
 ) -> bool {
+    let FieldOrigin {
+        owner,
+        function,
+        index,
+        test,
+        syntax,
+    } = context;
     if hops == 0 {
         return false;
     }
@@ -404,7 +430,13 @@ fn field_origin(
         root = next;
     }
     match &root {
-        ast::Expr::CallExpr(call) => owner.is_called_by(call),
+        ast::Expr::CallExpr(call) => super::OwnerReturnPin::field_call_binds_owner(
+            function,
+            index,
+            test,
+            &call.syntax().text().to_string(),
+            syntax,
+        ),
         ast::Expr::PathExpr(path) => {
             let Some(binding) = single_identifier(path) else {
                 return false;
@@ -418,10 +450,9 @@ fn field_origin(
             if !field_origin(
                 &initializer,
                 &visible_statements_before(definition.syntax()),
-                owner,
                 field,
-                index,
                 hops - 1,
+                context,
             ) {
                 return false;
             }

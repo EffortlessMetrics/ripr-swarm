@@ -2324,7 +2324,7 @@ fn file_module_segments(file: &Path) -> Option<Vec<String>> {
 /// for a bare call, `Some([a, b])` for `a::b::name(..)`, `None` for a
 /// qualifier this scan cannot read (`<T as Tr>::name`, a generic segment).
 /// Method calls (`x.name(..)`) and the `fn name` definition are skipped.
-fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
+pub(super) fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
     call_sites(body, name, false)
         .into_iter()
         .map(|(qualifier, _)| qualifier)
@@ -2395,6 +2395,26 @@ fn anchored_rest<'a>(
         .contains(first)
     };
     anchored.then_some(rest)
+}
+
+/// An explicitly crate-rooted associated call names this owner's module
+/// and self type. Unlike reach's no-rival fallback, identity requires the
+/// namespace to settle even when no rival definition is indexed.
+pub(super) fn rooted_associated_call_names_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    qualifier: &[String],
+) -> bool {
+    let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
+        return false;
+    };
+    let Some((named, module)) = qualifier.split_last() else {
+        return false;
+    };
+    named == self_type
+        && module_path_of(owner, true)
+            .is_some_and(|path| anchored_rest(index, owner, test, module) == Some(path.as_slice()))
 }
 
 /// Whether the test's file defines a rival `fn <owner name>` (any scope).

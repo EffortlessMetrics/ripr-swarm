@@ -8548,8 +8548,11 @@ mod tests {
                 OracleStrength::Strong,
             )],
         );
-        if reveal(&deletion, &names_method).state != StageState::Yes {
-            return Err("the target's method token must still confirm".to_string());
+        let method = reveal(&deletion, &names_method);
+        if method.state != StageState::Weak || !method.summary.contains("identity_unresolved") {
+            return Err(format!(
+                "a method token without bound identity stays weak: {method:?}"
+            ));
         }
         let parameter = probe(ProbeFamily::CallDeletion, "cache.insert(\"k\", value);");
         let parameter_observer = test_with_assertions(
@@ -8560,8 +8563,12 @@ mod tests {
                 OracleStrength::Strong,
             )],
         );
-        if reveal(&parameter, &parameter_observer).state != StageState::Yes {
-            return Err("a receiver that is not an owner local must still confirm".to_string());
+        let parameter = reveal(&parameter, &parameter_observer);
+        if parameter.state != StageState::Weak || !parameter.summary.contains("identity_unresolved")
+        {
+            return Err(format!(
+                "a parameter token without bound identity stays weak: {parameter:?}"
+            ));
         }
         Ok(())
     }
@@ -11614,23 +11621,28 @@ return Err(\"typed pin\".into());
     ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
         let source = "#[derive(Clone)] pub struct RetryBuilder { attempts: u32, delay_ms: u64 }
 impl RetryBuilder { pub fn new()->Self { Self { attempts: 4, delay_ms: 100 } } pub fn build(self)->Self { self } pub fn attempts(mut self, n:u32)->Self { self.attempts=n; self } pub fn delay_ms(mut self,n:u64)->Self { self.delay_ms=n; self } pub fn with_attempts(&self,n:u32)->Self { Self { attempts:n, ..self.clone() } } pub fn with_other(self,_other:Self)->Self { self } }";
-        let path = PathBuf::from("src/settings.rs");
+        let path = PathBuf::from("src/lib.rs");
         let facts = crate::analysis::rust_index::summarize_file(path.clone(), source.to_string());
         let mut index = crate::analysis::rust_index::RustIndex::default();
         index.extend_functions(facts.functions.iter().cloned());
         index.insert_file_only(path, facts);
+        index.package_names.insert("fixture".to_string());
+        for (test, _) in related {
+            let source = format!("use fixture::RetryBuilder; {}", test.body);
+            let facts = crate::analysis::rust_index::summarize_file(test.file.clone(), source);
+            index.insert_file_only(test.file.clone(), facts);
+        }
+        let syntax = super::OwnerPinSyntax::default();
         reveal_evidence_with_value_identity(probe, related, &|test, assertion| {
             crate::analysis::classify::builder_override::owner_field_read_identity(
-                probe, &index, test, assertion,
+                probe, &index, test, assertion, &syntax,
             )
         })
     }
 
     fn builder_override_probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
-            owner: Some(SymbolId(
-                "src/settings.rs::impl RetryBuilder::new".to_string(),
-            )),
+            owner: Some(SymbolId("src/lib.rs::impl RetryBuilder::new".to_string())),
             ..probe(family, expression)
         }
     }
