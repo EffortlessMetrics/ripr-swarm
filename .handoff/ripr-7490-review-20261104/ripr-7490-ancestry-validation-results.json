@@ -1,0 +1,154 @@
+{
+  "schema": 1,
+  "candidate_tree": "1b5f9252f7e2ee212ea5e39c1cbd7efaa1e3688d",
+  "binary_sha256": "e0ebc1d943e5addb41713239b5f5d93ddbb0660c3d072bda05d1a0989e359ca3",
+  "features": [
+    "default",
+    "lang-python",
+    "lang-rust",
+    "lang-typescript"
+  ],
+  "profile": "test unoptimized debuginfo0 incremental0",
+  "environment": {
+    "time": 1793841952.6328604,
+    "canonical_root": "<owned-clean-temp>",
+    "ancestry": [
+      {
+        "path": "<owned-clean-temp>",
+        "markers": []
+      },
+      {
+        "path": "/dev/shm",
+        "markers": []
+      },
+      {
+        "path": "/dev",
+        "markers": []
+      },
+      {
+        "path": "/",
+        "markers": []
+      }
+    ],
+    "git_version": "git version 2.52.0",
+    "git_unanchored_exit": 128,
+    "git_unanchored_stderr": "fatal: not a git repository (or any parent up to mount point /dev)\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).",
+    "tmp_free_bytes": 9441325056,
+    "memory_max": "17179869184",
+    "permission_context": "ordinary reviewed require_escalated execution; same context as all following native tests",
+    "process_temp_variables": {
+      "TMPDIR": "<owned-clean-temp>",
+      "TMP": "<owned-clean-temp>",
+      "TEMP": "<owned-clean-temp>"
+    }
+  },
+  "ancestry_results": [
+    {
+      "label": "ancestry_git_markers",
+      "selector": "git::missing_git_marker_tests::",
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": [
+        5,
+        0,
+        0
+      ],
+      "duration_seconds": 0.21069002151489258,
+      "peak_cgroup_memory_bytes": 3662761984,
+      "min_free_disk_bytes": 24246435840,
+      "log_sha256": "438e8edfbda8898ff4ebc35ba9e967ef42ea2acbc24f8901b35e48b6e4504622"
+    },
+    {
+      "label": "ancestry_unanchored_gate",
+      "selector": "cli::commands::check::argv_refusal_tests::unanchored_gate_refuses_while_the_plain_walk_retains_and_explicit_root_skips",
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": [
+        1,
+        0,
+        0
+      ],
+      "duration_seconds": 0.2026042938232422,
+      "peak_cgroup_memory_bytes": 3663245312,
+      "min_free_disk_bytes": 24246415360,
+      "log_sha256": "49bbd3f1283456e20abb349517cf57cbaa7e8a0490f64c2d4e66f8d0968637fd"
+    },
+    {
+      "label": "ancestry_plain_package",
+      "selector": "cli::commands::check::argv_refusal_tests::a_plain_package_manifest_keeps_the_gate_anchored",
+      "native_exit": 0,
+      "guard_stop": null,
+      "counts": [
+        1,
+        0,
+        0
+      ],
+      "duration_seconds": 0.20315241813659668,
+      "peak_cgroup_memory_bytes": 3663032320,
+      "min_free_disk_bytes": 24246398976,
+      "log_sha256": "05786fd8c8cf709b22aa51716ce4256af6138b90af09e579e3de63a8a19cbb63"
+    }
+  ],
+  "validation": [
+    {
+      "label": "final_fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "duration_seconds": 69.30385088920593,
+      "peak_cgroup_memory_bytes": 3381714944,
+      "min_free_disk_bytes": 24253616128,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final_traceability",
+      "command": [
+        "cargo",
+        "xtask",
+        "check-traceability"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "duration_seconds": 804.0349338054657,
+      "peak_cgroup_memory_bytes": 8568901632,
+      "min_free_disk_bytes": 23387299840,
+      "log_sha256": "0bad19884c8deccf26c1444727caeec4be8adbf5bb177c4454e96216392baa36"
+    },
+    {
+      "label": "final_honesty",
+      "command": [
+        "cargo",
+        "xtask",
+        "check-evidence-promotion-honesty"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "duration_seconds": 12.933829069137573,
+      "peak_cgroup_memory_bytes": 4155129856,
+      "min_free_disk_bytes": 23787126784,
+      "log_sha256": "52da5dc7c210fe4ccf1f553cc49e2f2fb5938656153bfb9ae51adf4dcd311588"
+    },
+    {
+      "label": "final_changelog",
+      "command": [
+        "cargo",
+        "xtask",
+        "check-changelog-fragments"
+      ],
+      "native_exit": 0,
+      "guard_stop": null,
+      "duration_seconds": 0.6087973117828369,
+      "peak_cgroup_memory_bytes": 3712368640,
+      "min_free_disk_bytes": 24246472704,
+      "log_sha256": "0fdb8e4d3eea6cfee98368f13423481bf84297ed94e6c3079c8b735bdc89243c"
+    }
+  ],
+  "interpretation": "All seven previously environment-blocked controls passed unchanged, exact5+1+1 subjects, native0, in ordinarily reviewed clean-root execution. Prior full result remains17962passed7failed1ignored and is not retroactively rewritten. No markers removed, source semantics weakened, settings changed, or tests skipped. Two source-owner review proof gaps are being addressed in a later separately identified candidate."
+}
+
