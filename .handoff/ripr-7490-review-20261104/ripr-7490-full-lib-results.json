@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "candidate_tree": "1b5f9252f7e2ee212ea5e39c1cbd7efaa1e3688d",
+  "candidate_patch_sha256": "cd88ce82499c5172f374d5ba3a4fa30191ee90ac47f8cbfc112835cfc2ffaaa3",
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 101,
+  "guard_stop": null,
+  "counts": {
+    "passed": 17962,
+    "failed": 7,
+    "ignored": 1,
+    "measured": 0,
+    "filtered": 0
+  },
+  "harness_duration_seconds": 809.97,
+  "command_duration_seconds": 811.439211845398,
+  "start_utc": "2026-11-05T00:56:15.914780+00:00",
+  "end_utc": "2026-11-05T01:09:47.353992+00:00",
+  "peak_cgroup_memory_bytes": 4282191872,
+  "min_free_disk_bytes": 24107167744,
+  "log_sha256": "e3f26a8b477115d2fdd4aad6cfd66c88fa92bf8708e014117e4114df6a3cf49a",
+  "binary_sha256": "e0ebc1d943e5addb41713239b5f5d93ddbb0660c3d072bda05d1a0989e359ca3",
+  "original_counts": {
+    "passed": 17953,
+    "failed": 15,
+    "ignored": 1
+  },
+  "interpretation": "Eight feasible original failures resolved, one added reload retry control passed; exactly seven environment-blocked ancestry failures remain. No source relaxation, marker removal, root permission change, or test skip. This is NOT full release qualification.",
+  "failures": [
+    "cli::commands::check::argv_refusal_tests::a_plain_package_manifest_keeps_the_gate_anchored",
+    "cli::commands::check::argv_refusal_tests::unanchored_gate_refuses_while_the_plain_walk_retains_and_explicit_root_skips",
+    "git::missing_git_marker_tests::missing_git_dotgit_directory_above_base_is_a_marker",
+    "git::missing_git_marker_tests::missing_git_gitfile_with_gitdir_prefix_is_a_marker",
+    "git::missing_git_marker_tests::missing_git_plain_directory_without_marker_stays_admitted",
+    "git::missing_git_marker_tests::missing_git_stray_dotgit_file_is_not_authority",
+    "git::missing_git_marker_tests::missing_git_symlinked_base_resolves_to_marked_tree"
+  ],
+  "failure_output": "\nfailures:\n\n---- cli::commands::check::argv_refusal_tests::a_plain_package_manifest_keeps_the_gate_anchored stdout ----\nError: \"no temp directory outside every project was found for the unanchored control\"\n\n---- cli::commands::check::argv_refusal_tests::unanchored_gate_refuses_while_the_plain_walk_retains_and_explicit_root_skips stdout ----\nError: \"no temp directory outside every project was found for the unanchored control\"\n\n---- git::missing_git_marker_tests::missing_git_dotgit_directory_above_base_is_a_marker stdout ----\nError: \"create scratch base /ripr-missing-git-dir-marker-163738/target/ripr/cache: Read-only file system (os error 30)\"\n\n---- git::missing_git_marker_tests::missing_git_gitfile_with_gitdir_prefix_is_a_marker stdout ----\nError: \"create scratch base /ripr-missing-git-gitfile-163738/cache: Read-only file system (os error 30)\"\n\n---- git::missing_git_marker_tests::missing_git_plain_directory_without_marker_stays_admitted stdout ----\nError: \"create scratch base /ripr-missing-git-plain-163738/cache: Read-only file system (os error 30)\"\n\n---- git::missing_git_marker_tests::missing_git_stray_dotgit_file_is_not_authority stdout ----\nError: \"create scratch base /ripr-missing-git-stray-163738/cache: Read-only file system (os error 30)\"\n\n---- git::missing_git_marker_tests::missing_git_symlinked_base_resolves_to_marked_tree stdout ----\nError: \"create scratch base /ripr-missing-git-symlink-163738/tree/cache: Read-only file system (os error 30)\"\n\n\nfailures:\n    cli::commands::check::argv_refusal_tests::a_plain_package_manifest_keeps_the_gate_anchored\n    cli::commands::check::argv_refusal_tests::unanchored_gate_refuses_while_the_plain_walk_retains_and_explicit_root_skips\n    git::missing_git_marker_tests::missing_git_dotgit_directory_above_base_is_a_marker\n    git::missing_git_marker_tests::missing_git_gitfile_with_gitdir_prefix_is_a_marker\n    git::missing_git_marker_tests::missing_git_plain_directory_without_marker_stays_admitted\n    git::missing_git_marker_tests::missing_git_stray_dotgit_file_is_not_authority\n    git::missing_git_marker_tests::missing_git_symlinked_base_resolves_to_marked_tree\n\ntest result: FAILED. 17962 passed; 7 failed; 1 ignored; 0 measured; 0 filtered out; finished in 809.97s\n\nerror: test failed, to rerun pass `-p ripr --lib`\n",
+  "next": "Fresh final format/traceability/honesty/changelog checks are running serially; result pending. Seven ancestry cases require a normally admitted writable marker-free absolute ancestry; current permitted roots have sandbox project markers and root is readonly."
+}
+
