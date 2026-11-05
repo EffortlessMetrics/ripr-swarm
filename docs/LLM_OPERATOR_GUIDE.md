@@ -181,6 +181,13 @@ ripr agent packet --root . --seam-id ID --json
 The second command is an optional expansion, not a mandatory second read. A
 card's typed detail route names the full packet. Read readiness and limitations
 before assigning a writer; do not infer readiness from the existence of an ID.
+A preview/manual card in a check report is not the same as an admitted agent
+packet. Conversely, a missing agent route or compact no-fix terminal does not
+invalidate a source-matched manual discriminator. Expand the selected context,
+retain conflicting projections and inspect the actual test/contract before
+independently authorized ordinary test work. Follow the
+[disagreement recovery](AGENT_DISPATCH_WORKFLOW.md#recovery-not-refusal-as-completion)
+without inventing a durable attempt or overriding its refusal.
 
 For several candidate seams, `agent brief` takes exactly one working-set
 selector, requires `--json`, and defaults to three seams:

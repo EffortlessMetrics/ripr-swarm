@@ -75,6 +75,14 @@ ripr agent card --root . --seam-id ID
 ```
 
 Read the card's readiness, exact blocker, selected target and detail route.
+A preview-language finding can contain useful manual test guidance without a
+supported card or prepared attempt. When compact output contradicts the original
+finding (for example, `missing=-` or a no-fix `stop=` despite a named missing
+input), expand that finding's context with the same root and input selector.
+Retain both responses, inspect the exact test and contract, and report the
+projection mismatch. Do not turn a preview into repair authority; independently
+authorized test work can still proceed without claiming an attempt receipt.
+
 A card is not an active repair attempt. A finding ID or seam ID selects behavior;
 a repair-attempt ID identifies the prepared transaction. Never substitute one
 for the other or reuse an ID against different analysis inputs by guesswork.
@@ -170,6 +178,7 @@ behavior or hide a finding to manufacture a clean result.
 | No scope or no changed behavior analyzed | Verify repository, saved files and intended base/diff. Select the actual change and rerun. | Empty output establishes test quality. |
 | Finding/card is stale or its ID no longer resolves | Refresh the intended analysis and select its current item; retain the old observation with its original identity. | A different run's ID is interchangeable. |
 | Repair route is unavailable or ambiguous | Inspect the named blocker and related test. Correct a reversible setup/input problem, or make an independently authorized focused test without claiming an attempt receipt. | An unavailable guided route makes all useful work impossible. |
+| Compact terminal contradicts a source-matched finding or manual test card | Expand the selected context, compare the actual test with the contract, and retain the mismatch. Continue independently authorized useful work without inventing an attempt. | A missing guided route establishes that no test improvement is possible. |
 | Analyzer limit; an existing exact assertion appears to observe the behavior | Inspect the named test and hidden helper/macro/dispatch path. Preserve the valid test and report a minimal analyzer counterexample with source identity. | Adding duplicate tests or making the finding disappear repairs the analyzer. |
 | After phase says no movement | Check whether the test was edited after preparation, saved, and included in the selected input. Read the attempt's refusal history before retrying. | Rerunning unchanged inputs creates new evidence. |
 | HEAD, configuration, retained inputs or edit cage no longer match | Inspect attempt-specific status and the actual delta. Preserve work and evidence; follow the documented recovery or prepare a new attempt when necessary. | Rewriting retained snapshots, resetting shared work or suppressing the refusal restores comparability. |
@@ -187,8 +196,8 @@ ripr status --root . --attempt ATTEMPT_ID
 With multiple attempts, name the intended one explicitly. For a custom store,
 use the emitted advanced `agent status` / `agent repair` commands with `--store`;
 the task-first `status` and `continue` forms above do not accept that option.
-Stop a repetitive test-writing loop when it yields no new evidence; keep the quickstart's bounded revision
-rule distinct from the tool's own refusal budget. Status and
+Stop a repetitive test-writing loop when it yields no new evidence; keep the
+quickstart's bounded revision rule distinct from the tool's own refusal budget. Status and
 [repair-attempt recovery](REPAIR_ATTEMPT.md) own the exact state-specific next
 command. Report a genuine unavailable capability or out-of-scope decision with
 its evidence, while continuing any independent authorized work.
