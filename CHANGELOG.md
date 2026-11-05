@@ -2131,6 +2131,7 @@ are scoped or reviewed.
   no repair start). The first failing step, or a step that exits 0 without a
   non-empty, parseable JSON artifact, stops it with exit 2 and no packet. The default stays analysis-free with an unchanged disclosure
   (#11720, #11298).
+- `cargo xtask source-promotion verify` now verifies the staged public-to-swarm return preview (a `fast_forward` preflight: ordered parents `[P, S]`, tree equal to S's tree) and records the preflight `mode` in its receipt; `two_parent_join` verification is unchanged (#1627).
 
 - Reconcile 0.11 RC guidance with dated public tag/release state, historical
   conditional RC1 authority and tentative next-cut intent. Require exact
