@@ -369,3 +369,11 @@ intermediate error conversions decline. This retains the grid-bits
 `BadDigit` escape while refusing a `TooLong` fallback.
 Differing asserted return spellings alone do not identify which branch
 supplied a result.
+
+Bare `Ok` and `Err` require an unambiguous prelude-constructor binding before
+specialized counter credit, including owners without a `?` suffix. Retained
+source scope checks reject competing local functions/values/types, imported
+aliases, glob or macro ambiguity. Raw identifier spellings have the same name
+identity. A sibling test-module import does not shadow the production owner.
+A callable named `Ok` can otherwise manufacture the firing error after the loop,
+so differing asserted result spellings do not establish predicate causality.

@@ -351,6 +351,9 @@ fn per_byte_counter_shape(
     {
         return None;
     }
+    if !result_constructors_unshadowed(&function, retained_source) {
+        return None;
+    }
     let body = function.body()?;
     let loops = body
         .syntax()
@@ -619,6 +622,74 @@ fn per_byte_counter_shape(
         return None;
     }
     Some((slice_param, predicate, fire_value))
+}
+
+/// Bare Result constructors have authority only without a competing binding in
+/// the owner's lexical scopes. Unread glob/macro bindings remain conservative.
+fn result_constructors_unshadowed(function: &ast::Fn, retained_source: &str) -> bool {
+    let Some(source) = parse_clean_source_file(retained_source) else {
+        return false;
+    };
+    let Some(name) = function.name() else {
+        return false;
+    };
+    let mut candidates = source
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|candidate| {
+            candidate
+                .name()
+                .is_some_and(|candidate| candidate.text() == name.text())
+        });
+    let Some(owner) = candidates.next() else {
+        return false;
+    };
+    if candidates.next().is_some() {
+        return false;
+    }
+    let constructor = |name: Option<ast::Name>| {
+        name.is_some_and(|name| {
+            matches!(
+                name.text().trim_start_matches("r#"),
+                "Ok" | "Err" | "Result"
+            )
+        })
+    };
+    !source
+        .tree()
+        .syntax()
+        .descendants()
+        .filter(|node| {
+            owner
+                .syntax()
+                .ancestors()
+                .any(|scope| Some(scope) == node.parent())
+                || node.ancestors().any(|ancestor| ancestor == *owner.syntax())
+        })
+        .any(|node| {
+            ast::MacroCall::can_cast(node.kind())
+                || ast::ExternBlock::can_cast(node.kind())
+                || ast::Use::cast(node.clone()).is_some_and(|item| {
+                    item.syntax()
+                        .descendants_with_tokens()
+                        .filter_map(|entry| entry.into_token())
+                        .any(|token| {
+                            matches!(
+                                token.text().trim_start_matches("r#"),
+                                "Ok" | "Err" | "Result" | "*"
+                            )
+                        })
+                })
+                || ast::Fn::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+                || ast::Struct::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+                || ast::Enum::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+                || ast::TypeAlias::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+                || ast::Const::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+                || ast::Static::cast(node.clone()).is_some_and(|item| constructor(item.name()))
+                || ast::IdentPat::cast(node).is_some_and(|item| constructor(item.name()))
+        })
 }
 
 /// `?` is admitted only when it cannot convert an intermediate error into
@@ -1008,6 +1079,41 @@ mod tests {
             );
         }
         assert!(shape(&owner_body(GRID_BITS), "16 < count").is_some());
+    }
+
+    #[test]
+    fn result_constructor_bindings_cannot_mask_the_counter() {
+        for extra in [
+            "fn Ok(n: u64) -> Result<u64, ChunkError> { std::result::Result::Ok(n) }",
+            "fn Err(_: ChunkError) -> Result<u64, ChunkError> { std::result::Result::Ok(0) }",
+            "use crate::masked_ok as Ok;",
+            "use crate::masked_ok as r#Ok;",
+            "fn r#Ok(n: u64) -> Result<u64, ChunkError> { std::result::Result::Ok(n) }",
+            "use crate::masked_err as Err;",
+            "use crate::constructors::*;",
+            "const Ok: fn(u64) -> Result<u64, ChunkError> = masked_ok;",
+        ] {
+            let source = format!("enum ChunkError {{ TooLong, BadDigit }}\n{GRID_BITS}\n{extra}");
+            assert!(
+                per_byte_counter_shape(&owner_body(GRID_BITS), "16 < count", &source).is_none(),
+                "{extra}"
+            );
+        }
+        let no_try = GRID_BITS.replace(
+            "(b as char).to_digit(16).ok_or(ChunkError::BadDigit)?",
+            "0u32",
+        );
+        let source = format!(
+            "enum ChunkError {{ TooLong, BadDigit }}\n{no_try}\nfn Ok(n: u64) -> Result<u64, ChunkError> {{ std::result::Result::Ok(n) }}"
+        );
+        assert!(per_byte_counter_shape(&owner_body(&no_try), "16 < count", &source).is_none());
+        let unrelated = format!(
+            "enum ChunkError {{ TooLong, BadDigit }}\n{GRID_BITS}\n#[cfg(test)] mod other {{ fn masked_ok() {{}} use self::masked_ok as Ok; }}"
+        );
+        assert!(
+            per_byte_counter_shape(&owner_body(GRID_BITS), "16 < count", &unrelated).is_some(),
+            "a sibling test import cannot shadow the production owner"
+        );
     }
 
     #[test]

@@ -17063,6 +17063,19 @@
           "type": "must_not_promote"
         }
       ]
+    },
+    {
+      "id": "rust_slice_counter_shadowed_result_constructor",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_counter_shadowed_result_constructor",
+      "probe_family": "predicate",
+      "vector": "shadowed_success_constructor_supplies_counter_firing_error",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
+      ]
     }
   ]
 }

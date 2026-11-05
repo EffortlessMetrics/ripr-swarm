@@ -278,3 +278,33 @@ fn a_later_fallback_return_keeps_the_boundary_below_exposed() -> Result<(), Stri
     );
     Ok(())
 }
+
+#[test]
+fn a_shadowed_success_constructor_keeps_the_boundary_below_exposed() -> Result<(), String> {
+    let assertions = "        assert_eq!(chunk_size(&[b'f'; 16]), Ok(16));\n        assert_eq!(chunk_size(&[b'f'; 17]), Err(ChunkError::TooLong));";
+    let lib = format!(
+        "{}\nfn Ok(n: u64) -> Result<u64, ChunkError> {{ if n == 17 {{ Err(ChunkError::TooLong) }} else {{ std::result::Result::Ok(n) }} }}\n",
+        source("count >= 17", assertions)
+            .replace("    Ok(size)", "    Ok(count)")
+            .replace(
+                "    use super::*;",
+                "    use super::*;\n    use std::result::Result::{Ok, Err};"
+            )
+    );
+    let line = lib
+        .lines()
+        .position(|line| line.contains("if count >= 17"))
+        .ok_or("missing predicate")?
+        + 1;
+    let patch = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-        if count > 17 {{\n+        if count >= 17 {{\n"
+    );
+    let findings = TempRepo::create(&lib, &patch)?.findings()?;
+    let predicates = findings
+        .iter()
+        .filter(|finding| finding.probe.family == ProbeFamily::Predicate)
+        .collect::<Vec<_>>();
+    assert_eq!(predicates.len(), 1, "{findings:?}");
+    assert_ne!(predicates[0].class, ExposureClass::Exposed, "{findings:?}");
+    Ok(())
+}
