@@ -10188,11 +10188,12 @@ fn mapped_unit_enum_expectation_uncached(
                 });
                 text != "#[test]"
                     && !inert_lint
-                    && !(text == "#[cfg(test)]"
-                        && attr
-                            .syntax()
-                            .parent()
-                            .is_some_and(|parent| ast::Module::can_cast(parent.kind())))
+                    && !(crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(
+                        &attr.syntax().text().to_string(),
+                    ) && attr
+                        .syntax()
+                        .parent()
+                        .is_some_and(|parent| ast::Module::can_cast(parent.kind())))
             })
             || ast::MacroCall::cast(node).is_some_and(|call| {
                 if call.syntax().text_range() == assertion_call.syntax().text_range() {
