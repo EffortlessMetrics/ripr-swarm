@@ -765,6 +765,16 @@ fn evidence_for_seam_with_context(
         })
         .unwrap_or_default();
     let mut missing_discriminators = missing_discriminators;
+    if activate.state == StageState::Yes {
+        let reaching: Vec<&TestSummary> = related_with_reason
+            .iter()
+            .filter(|(_, reason)| reason.establishes_reach(owner_fn.is_some()))
+            .map(|(indexed, _)| indexed.test)
+            .collect();
+        missing_discriminators.extend(owner_result_binding::assigned_field_weak_read_fact(
+            seam, &reaching, context, owner_fn,
+        ));
+    }
     let path_established = [&reach, &activate, &propagate]
         .iter()
         .all(|stage| stage.state == StageState::Yes);
@@ -2513,8 +2523,20 @@ pub(crate) fn compact_evidence_for_seam(
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
 
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
-    let (activate, missing_discriminators) =
+    let (activate, mut missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
+    if activate.state == StageState::Yes {
+        // #11870: the weak-read start is asked over every test that runs the
+        // owner, not the rank-limited slice.
+        let reaching: Vec<&TestSummary> = ranked
+            .iter()
+            .filter(|(_, reason)| reason.establishes_reach(owner_fn.is_some()))
+            .map(|(indexed, _)| indexed.test)
+            .collect();
+        missing_discriminators.extend(owner_result_binding::assigned_field_weak_read_fact(
+            seam, &reaching, context, owner_fn,
+        ));
+    }
     let pin_syntax = context.pin_syntax();
     let limited_reasons: Vec<(&TestSummary, RelationReason)> = ranked
         .iter()

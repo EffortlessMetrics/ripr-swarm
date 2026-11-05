@@ -157,6 +157,7 @@ pub(crate) use seam_classification::classify_seam;
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::file_fact_store_failure_rows;
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
     ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
