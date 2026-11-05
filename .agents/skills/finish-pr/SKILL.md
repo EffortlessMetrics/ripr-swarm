@@ -64,7 +64,18 @@ cause; never bypass enforcement or change settings.
 
 For the audited heavy Rust qualification route, use `scripts/guarded_merge.py`
 for the expected-head squash after completing that final judgment. It does not
-establish substantive review or every other gate. A guard refusal, including
+establish substantive review or every other gate.
+Supply `--squash-title` and `--squash-message-file` with the reviewed final title
+and UTF-8 body. Preserve legitimate contributor credit in that explicit body;
+do not rely on GitHub's generated squash trailers. The guard checks the bounded
+PR commit inventory and final message for known erroneous internal identities;
+it refuses capped/malformed metadata rather than silently dropping credit.
+Repair unpublished bad metadata in the task-owned branch before retrying;
+public history changes require separate authorization. This guard covers the
+legacy protected squash route, not native queue-generated commits or direct
+Git commands. For those routes, inspect the final candidate metadata before
+promotion; do not claim this helper enforces them.
+ A guard refusal, including
 failed or ambiguous evidence, remains blocked until the evidence is reconciled;
 do not treat it as permission to use another merge path. Before invoking, compare the
 `routed-rust.yml`, `rust-gates.yml` and `rust-test-shards.yml` blob ids on the

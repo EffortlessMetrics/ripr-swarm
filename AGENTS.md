@@ -73,6 +73,16 @@ publication. Release-specific merges, package qualification and publication foll
 the user's applicable approval rule; where not expressly requested, obtain approval
 immediately before the action. Continue reversible preparation while pending.
 
+Before creating a commit, inspect the effective author identity; use the verified
+personal identity for personal work rather than inventing an agent identity.
+Never use `x <x@x>`, `ZCode <zcode@users.noreply.github.com>`,
+`steven <steven@users.noreply.github.com>` or
+`ripr-swarm convergence <convergence@users.noreply.github.com>` as internal
+attribution. Preserve legitimate external contributors and intentional
+Claude/Cursor/App bot identities. Do not change global Git configuration.
+Review the final squash message as well as source commits: GitHub can inherit
+incorrect co-author trailers even when the primary squash author is correct.
+
 Ordinary `ripr-swarm` PRs squash merge. A behind-only branch or unrelated main
 movement does not justify restacking or rerunning unaffected proof. Reconcile
 actual conflicts, changed prerequisites, failed combined-tree proof or an

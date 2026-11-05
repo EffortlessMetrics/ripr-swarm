@@ -7,6 +7,7 @@ This is not an approval, an all-check inventory, or an atomic check-and-merge.
 import argparse
 import datetime
 import json
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -194,8 +195,59 @@ def require_result(api, head):
         raise Refusal("Result check does not match the successful request, suite and app")
 
 
+# These are verified erroneous internal identities, not a contributor allowlist.
+BAD_EMAILS = frozenset({"x@x", "zcode@users.noreply.github.com",
+                        "steven@users.noreply.github.com",
+                        "convergence@users.noreply.github.com"})
+COAUTHOR = re.compile(r"^co-authored-by\s*:", re.IGNORECASE | re.MULTILINE)
+IDENTITY = re.compile(r"[^<>\r\n]+<([^<>\s]+@[^<>\s]+)>\s*\Z")
+
+
+def require_message_attribution(message):
+    if not isinstance(message, str):
+        raise Refusal("commit message is missing")
+    # Check every trailer-looking line, including outside the final trailer block:
+    # GitHub's generated squash text can collect trailers from multiple commits.
+    for line in message.splitlines():
+        if COAUTHOR.match(line.strip()):
+            identity = IDENTITY.fullmatch(line.split(":", 1)[1].strip())
+            if not identity or identity[1].casefold() in BAD_EMAILS:
+                raise Refusal("invalid or known erroneous co-author attribution")
+
+
+def require_attribution(commits, head, title, message):
+    if not isinstance(title, str) or not title.strip() or "\n" in title or "\r" in title:
+        raise Refusal("explicit single-line squash title is required")
+    require_message_attribution(message)
+    require_message_attribution(title + "\n" + message)
+    # GitHub's PR commits endpoint is capped at 250. Refuse at the cap rather
+    # than claiming that an incomplete inventory was checked.
+    if not isinstance(commits, list) or not commits or len(commits) >= 250:
+        raise Refusal("PR commit attribution inventory missing or capped")
+    shas = []
+    for item in commits:
+        if (not isinstance(item, dict) or not isinstance(item.get("sha"), str)
+                or not SHA.fullmatch(item["sha"])):
+            raise Refusal("PR commit identity missing")
+        shas.append(item["sha"])
+        commit = item.get("commit")
+        if not isinstance(commit, dict):
+            raise Refusal("PR commit metadata missing")
+        author = commit.get("author")
+        if (not isinstance(author, dict) or not isinstance(author.get("email"), str)
+                or not author["email"].strip()):
+            raise Refusal("PR commit author missing")
+        if author["email"].strip().casefold() in BAD_EMAILS:
+            raise Refusal("known erroneous PR commit author; repair unpublished metadata first")
+        require_message_attribution(commit.get("message"))
+    if shas[-1] != head or len(set(shas)) != len(shas):
+        raise Refusal("PR attribution inventory does not bind the expected head")
+
+
 class Gh:
-    def __init__(self, repo, number):
+    def __init__(self, repo, number, squash_title=None, squash_message=None):
+        self.squash_title = squash_title
+        self.squash_message = squash_message
         self.pr_path = f"repos/{repo}/pulls/{number}"
         self.repo = repo
         self.number = number
@@ -234,8 +286,17 @@ class Gh:
         return self.api(["--paginate", "--slurp", f"repos/{self.repo}/check-suites/{suite}/check-runs?filter=all&per_page=100"])
 
     def merge(self, head):
+        if self.squash_title is None or self.squash_message is None:
+            raise Refusal("explicit reviewed squash title and message are required")
+        pages = self.api(["--paginate", "--slurp", self.pr_path + "/commits?per_page=100"])
+        if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+            raise Refusal("PR attribution inventory is malformed")
+        require_attribution([item for page in pages for item in page], head,
+                            self.squash_title, self.squash_message)
+        require_pr(self.pr(), head)
         try:
-            return self.api(["--method", "PUT", self.pr_path + "/merge", "-f", "merge_method=squash", "-f", f"sha={head}"])
+            return self.api(["--method", "PUT", self.pr_path + "/merge", "-f", "merge_method=squash", "-f", f"sha={head}",
+                             "-f", f"commit_title={self.squash_title}", "-f", f"commit_message={self.squash_message}"])
         except Refusal as error:
             raise Refusal(f"merge outcome may be unknown; read PR state before retry: {error}") from error
 
@@ -258,12 +319,15 @@ def main():
     parser.add_argument("--repo", required=True, help="owner/repository")
     parser.add_argument("--pr", required=True, type=int)
     parser.add_argument("--expected-head", required=True)
+    parser.add_argument("--squash-title", required=True)
+    parser.add_argument("--squash-message-file", required=True, type=Path)
     args = parser.parse_args()
     if not REPO.fullmatch(args.repo) or args.pr <= 0:
         parser.error("invalid repository or PR number")
     try:
-        print(json.dumps(guarded_merge(Gh(args.repo, args.pr), args.expected_head)))
-    except Refusal as error:
+        print(json.dumps(guarded_merge(Gh(args.repo, args.pr, args.squash_title,
+                                          args.squash_message_file.read_text(encoding="utf-8")), args.expected_head)))
+    except (Refusal, OSError, UnicodeError) as error:
         print(f"guarded merge refused: {error}", file=sys.stderr)
         return 1
     return 0

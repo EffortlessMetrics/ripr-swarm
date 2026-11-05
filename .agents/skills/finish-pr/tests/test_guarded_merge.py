@@ -11,6 +11,12 @@ SPEC = importlib.util.spec_from_file_location('guarded_merge', SCRIPT)
 g = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(g)
 HEAD = 'a' * 40
+TITLE = 'Reviewed change (#42)'
+MESSAGE = 'Reviewed body\n\nCo-authored-by: External <external@example.org>'
+
+
+def attribution_commit(email='15812269+EffortlessSteven@users.noreply.github.com', message='change'):
+    return dict(sha=HEAD, commit=dict(author=dict(email=email), message=message))
 
 
 def page(key, *items, total=None):
@@ -79,6 +85,48 @@ class Tests(unittest.TestCase):
     def refuse(self, api):
         with self.assertRaises(g.Refusal): g.guarded_merge(api, HEAD)
         self.assertEqual(api.mutations, [])
+
+    def test_attribution_preserves_external_and_intentional_bots(self):
+        for email in ('external@example.org', 'noreply@anthropic.com',
+                      'cursoragent@cursor.com', '123+app[bot]@users.noreply.github.com'):
+            g.require_attribution([attribution_commit(email)], HEAD, TITLE,
+                                  'Co-authored-by: Contributor <' + email + '>')
+
+    def test_known_bad_authors_and_coauthors_refuse(self):
+        for email in g.BAD_EMAILS:
+            with self.subTest(email=email):
+                with self.assertRaises(g.Refusal):
+                    g.require_attribution([attribution_commit(email.upper())], HEAD, TITLE, '')
+                for where in ('source', 'squash'):
+                    message = 'body\n\nCo-Authored-By: Wrong <' + email.upper() + '>\n'
+                    with self.assertRaises(g.Refusal):
+                        g.require_attribution([attribution_commit(message=message if where == 'source' else 'ok')],
+                                              HEAD, TITLE, message if where == 'squash' else '')
+
+    def test_attribution_inventory_and_message_fail_closed(self):
+        for commits in ([], [attribution_commit()] * 250,
+                        [dict(sha='b'*40, commit=dict(author=dict(email='ok@example.org'), message='ok'))],
+                        [dict(sha=HEAD, commit={})]):
+            with self.assertRaises(g.Refusal):
+                g.require_attribution(commits, HEAD, TITLE, '')
+        for text in ('Co-authored-by: missing email', 'Co-authored-by: X <x@x>'):
+            with self.assertRaises(g.Refusal):
+                g.require_attribution([attribution_commit()], HEAD, TITLE, text)
+
+    def test_missing_explicit_message_never_mutates(self):
+        with patch.object(g.Gh, 'api') as api:
+            with self.assertRaises(g.Refusal):
+                g.Gh(g.AUDITED_REPO, 42).merge(HEAD)
+            api.assert_not_called()
+
+    def test_bad_metadata_never_reaches_merge_transport(self):
+        for commit, message in ((attribution_commit('x@x'), ''),
+                                (attribution_commit(), 'Co-authored-by: x <x@x>')):
+            api = g.Gh(g.AUDITED_REPO, 42, TITLE, message)
+            with patch.object(api, 'api', return_value=[[commit]]) as transport:
+                with self.assertRaises(g.Refusal): api.merge(HEAD)
+                self.assertEqual(transport.call_count, 1)
+                self.assertNotIn('PUT', transport.call_args.args[0])
 
     def test_success_and_unstable_do_not_add_advisory_gate(self):
         for state in ('clean', 'unstable'):
@@ -243,19 +291,20 @@ class Tests(unittest.TestCase):
         evidence = [sample.r, sample.detail, sample.commit_data] + [
             {'sha': blob} for _ in range(2) for blob in sample.blobs.values()
         ] + [sample.j, sample.c]
-        responses = iter([sample.prs[0], *evidence, sample.prs[1], *evidence, {'merged': True}])
+        responses = iter([sample.prs[0], *evidence, sample.prs[1], *evidence, [[attribution_commit()]], sample.prs[1], {'merged': True}])
         calls = []
         def invoke(args, **kwargs):
             calls.append(args)
             return SimpleNamespace(returncode=0, stdout=json.dumps(next(responses)), stderr='')
         with patch.object(g.subprocess, 'run', side_effect=invoke):
-            g.guarded_merge(g.Gh(g.AUDITED_REPO, 42), HEAD)
+            g.guarded_merge(g.Gh(g.AUDITED_REPO, 42, TITLE, MESSAGE), HEAD)
         puts = [args for args in calls if 'PUT' in args]
         self.assertEqual(len(puts), 1)
         self.assertEqual(puts[0], ['gh', 'api', '--method', 'PUT', f'repos/{g.AUDITED_REPO}/pulls/42/merge',
-                                   '-f', 'merge_method=squash', '-f', f'sha={HEAD}'])
+                                   '-f', 'merge_method=squash', '-f', f'sha={HEAD}',
+                                   '-f', f'commit_title={TITLE}', '-f', f'commit_message={MESSAGE}'])
         pages = [args for args in calls if '--paginate' in args]
-        self.assertEqual(len(pages), 6)
+        self.assertEqual(len(pages), 7)
         for args in pages: self.assertIn('--slurp', args)
 
     def test_gh_transport_server_race_rejects_without_successful_mutation(self):
@@ -263,7 +312,7 @@ class Tests(unittest.TestCase):
         evidence = [sample.r, sample.detail, sample.commit_data] + [
             {'sha': blob} for _ in range(2) for blob in sample.blobs.values()
         ] + [sample.j, sample.c]
-        responses = iter([sample.prs[0], *evidence, sample.prs[1], *evidence])
+        responses = iter([sample.prs[0], *evidence, sample.prs[1], *evidence, [[attribution_commit()]], sample.prs[1]])
         calls = []
         def invoke(args, **kwargs):
             calls.append(args)
@@ -272,7 +321,7 @@ class Tests(unittest.TestCase):
             return SimpleNamespace(returncode=0, stdout=json.dumps(next(responses)), stderr='')
         with patch.object(g.subprocess, 'run', side_effect=invoke):
             with self.assertRaisesRegex(g.Refusal, 'read PR state before retry'):
-                g.guarded_merge(g.Gh(g.AUDITED_REPO, 42), HEAD)
+                g.guarded_merge(g.Gh(g.AUDITED_REPO, 42, TITLE, MESSAGE), HEAD)
         self.assertEqual(sum('PUT' in args for args in calls), 1)
         self.assertIn(f'sha={HEAD}', calls[-1])
 
