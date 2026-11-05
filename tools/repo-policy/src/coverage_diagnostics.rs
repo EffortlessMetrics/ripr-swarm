@@ -16,11 +16,25 @@ fn supported_profile_platform(platform: &str) -> bool {
 #[cfg(target_os = "linux")]
 mod linux;
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(target_os = "linux")]
 mod process;
 
 #[cfg(all(test, target_os = "linux"))]
 mod strip_tests;
+
+#[cfg(target_os = "linux")]
+mod storage;
+
+/// Run the fixed coverage command with bounded, metadata-only storage receipts.
+pub fn run_coverage() -> Result<i32> {
+    if std::env::args_os().len() != 2 {
+        return Err("run-coverage accepts no arguments".into());
+    }
+    #[cfg(not(target_os = "linux"))]
+    return Err("coverage storage observation is a Linux workflow adapter".into());
+    #[cfg(target_os = "linux")]
+    storage::run()
+}
 
 pub fn command() -> Result<()> {
     if !supported_profile_platform(std::env::consts::OS) {
