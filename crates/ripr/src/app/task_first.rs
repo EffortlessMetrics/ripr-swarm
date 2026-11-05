@@ -4384,7 +4384,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn task_first_deleted_expression_tail_and_unrelated_adjacent_statement_13098() {
+    fn task_first_deleted_expression_tail_and_unrelated_adjacent_statement_13098()
+    -> Result<(), String> {
         let entry = gate_entry(crate::analysis::seams::SeamGripClass::Ungripped, Vec::new());
         let tail = crate::analysis::parse_unified_diff(
             "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -89 +88,0 @@\n-        && x < 10\n",
@@ -4400,7 +4401,7 @@ pub(crate) mod tests {
             "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -88,0 +89 @@\n+    audit();\n",
         );
         assert!(!seam_has_adjacent_deletion(&entry, &added));
-        assert!(refuse_ambiguous_adjacent_deletions(std::slice::from_ref(&entry), &added).is_ok());
+        refuse_ambiguous_adjacent_deletions(std::slice::from_ref(&entry), &added)?;
         let far = crate::analysis::parse_unified_diff(
             "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -90 +89,0 @@\n-    audit();\n",
         );
@@ -4412,6 +4413,7 @@ pub(crate) mod tests {
             "--- a/src/pricing.rs\n+++ b/src/pricing.rs\n@@ -91 +90,0 @@\n-    tail\n",
         );
         assert!(seam_has_adjacent_deletion(&multiline, &after_multiline));
+        Ok(())
     }
 
     #[test]
