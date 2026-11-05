@@ -929,6 +929,45 @@ impl EffectStateCarrier {
         tokens
     }
 
+    /// A receiver-chain method forwards the same value and does not write
+    /// the selected field. This is affirmative source proof, unlike an
+    /// absent overwrite or an unresolved conventional builder method.
+    pub(in crate::analysis) fn method_preserves_field(
+        index: &RustIndex,
+        ty: &str,
+        name: &str,
+        field: &str,
+    ) -> bool {
+        let Some(body) = super::builder_override::inherent_method_body(index, ty, name) else {
+            return false;
+        };
+        let Some(function) = index.functions().iter().find(|function| {
+            function.body == body
+                && container_self_type(&function.item.container).as_deref() == Some(ty)
+        }) else {
+            return false;
+        };
+        let Some(uses) = function_field_use(function) else {
+            return false;
+        };
+        if uses.opaque || !uses.self_calls.is_empty() || uses.writes.contains(field) {
+            return false;
+        }
+        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(body) else {
+            return false;
+        };
+        use ra_ap_syntax::{AstNode, ast};
+        parse
+            .tree()
+            .syntax()
+            .children()
+            .find_map(ast::Fn::cast)
+            .and_then(|method| method.body())
+            .and_then(|body| body.stmt_list())
+            .and_then(|list| list.tail_expr())
+            .is_some_and(|tail| tail.syntax().text().to_string().trim() == "self")
+    }
+
     /// Affirmative identity requires a compared binding on which the owner
     /// was called. `admits` alone is only a permissive carrier veto.
     pub(in crate::analysis) fn identifies(

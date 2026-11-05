@@ -295,6 +295,209 @@ pub(super) fn overridden_fields_read(
         .collect()
 }
 
+/// Affirmative origin for a literal-pinned field read. Unlike override refusal,
+/// this requires every receiver transformation to be proved field-preserving.
+pub(in crate::analysis) fn owner_field_read_identity(
+    probe: &crate::domain::Probe,
+    index: &RustIndex,
+    test: &TestSummary,
+    assertion: &OracleFact,
+) -> bool {
+    field_identity(probe, index, test, assertion).is_some()
+}
+fn field_identity(
+    probe: &crate::domain::Probe,
+    index: &RustIndex,
+    test: &TestSummary,
+    assertion: &OracleFact,
+) -> Option<()> {
+    use crate::domain::ProbeFamily;
+    let owner = OwnerCall::from_symbol(&probe.owner.as_ref()?.0)?;
+    let fields = match probe.family {
+        ProbeFamily::FieldConstruction => {
+            vec![super::reveal::constructed_field_name(&probe.expression)?.to_string()]
+        }
+        ProbeFamily::ReturnValue if probe.expression.contains('{') => match probe.before.as_deref()
+        {
+            Some(before) => changed_struct_literal_fields(before, &probe.expression)?,
+            None => struct_literal_fields(&probe.expression),
+        },
+        _ => return None,
+    };
+    let tree = parse_clean_source_file(&test.body)?.tree();
+    let call = assertion_macro_at_line(&tree, &test.body, test, assertion)?;
+    let visible = visible_statements_before(call.syntax());
+    let operands = super::reveal::assertion_comparison_operands(&assertion.text)?;
+    for (subject, expected) in [(operands[0], operands[1]), (operands[1], operands[0])] {
+        let subject = parsed_operand(subject)?;
+        let expected = parsed_operand(expected)?;
+        if !matches!(expected, ast::Expr::Literal(_)) {
+            continue;
+        }
+        let ast::Expr::FieldExpr(read) = subject else {
+            continue;
+        };
+        let field = read.name_ref()?.text().to_string();
+        if fields.contains(&field)
+            && field_origin(
+                &read.expr()?,
+                &visible,
+                owner,
+                &field,
+                index,
+                MAX_BINDING_HOPS,
+            )
+        {
+            return Some(());
+        }
+    }
+    None
+}
+fn parsed_operand(text: &str) -> Option<ast::Expr> {
+    let tree = parse_clean_source_file(&format!("fn operand() {{ {text}; }}"))?.tree();
+    let function = tree.syntax().children().find_map(ast::Fn::cast)?;
+    let statements: Vec<_> = function.body()?.stmt_list()?.statements().collect();
+    let [ast::Stmt::ExprStmt(statement)] = statements.as_slice() else {
+        return None;
+    };
+    statement.expr()
+}
+fn field_origin(
+    expression: &ast::Expr,
+    visible: &[ast::Stmt],
+    owner: OwnerCall<'_>,
+    field: &str,
+    index: &RustIndex,
+    hops: usize,
+) -> bool {
+    if hops == 0 {
+        return false;
+    }
+    let mut root = expression.clone();
+    loop {
+        let next = match &root {
+            ast::Expr::ParenExpr(paren) => paren.expr(),
+            ast::Expr::MethodCallExpr(call) => {
+                let preserves = owner.impl_type.is_some_and(|ty| {
+                    call.name_ref().is_some_and(|name| {
+                        super::effect_carrier::EffectStateCarrier::method_preserves_field(
+                            index,
+                            ty,
+                            name.text(),
+                            field,
+                        )
+                    })
+                });
+                if !preserves {
+                    return false;
+                }
+                call.receiver()
+            }
+            _ => break,
+        };
+        let Some(next) = next else { return false };
+        root = next;
+    }
+    match &root {
+        ast::Expr::CallExpr(call) => owner.is_called_by(call),
+        ast::Expr::PathExpr(path) => {
+            let Some(binding) = single_identifier(path) else {
+                return false;
+            };
+            let Some((at, definition)) = binding_let(visible, &binding) else {
+                return false;
+            };
+            let Some(initializer) = definition.initializer() else {
+                return false;
+            };
+            if !field_origin(
+                &initializer,
+                &visible_statements_before(definition.syntax()),
+                owner,
+                field,
+                index,
+                hops - 1,
+            ) {
+                return false;
+            }
+            visible[at + 1..].iter().all(|statement| {
+                if !mentions_identifier(statement.syntax(), &binding) {
+                    return true;
+                }
+                // Reading a binding into another owned value does not mutate it.
+                if let ast::Stmt::LetStmt(statement) = statement {
+                    return !borrows_mutably(statement.syntax(), &binding);
+                }
+                let ast::Stmt::ExprStmt(statement) = statement else {
+                    return false;
+                };
+                let Some(ast::Expr::MethodCallExpr(call)) = statement.expr() else {
+                    return false;
+                };
+                let Some(ast::Expr::PathExpr(receiver)) = call.receiver() else {
+                    return false;
+                };
+                if single_identifier(&receiver).as_deref() != Some(binding.as_str()) {
+                    return false;
+                }
+                owner.impl_type.is_some_and(|ty| {
+                    call.name_ref().is_some_and(|name| {
+                        discarded_method_keeps_scalar(index, ty, name.text(), field)
+                    })
+                })
+            })
+        }
+        _ => false,
+    }
+}
+fn discarded_method_keeps_scalar(index: &RustIndex, ty: &str, name: &str, field: &str) -> bool {
+    let Some(definition) = declared_once(index, ty) else {
+        return false;
+    };
+    let Some(ast::FieldList::RecordFieldList(fields)) = definition.field_list() else {
+        return false;
+    };
+    let scalar = fields.fields().any(|entry| {
+        entry.name().is_some_and(|name| name.text() == field)
+            && entry.ty().is_some_and(|ty| {
+                matches!(
+                    ty.syntax().text().to_string().as_str(),
+                    "bool"
+                        | "char"
+                        | "u8"
+                        | "u16"
+                        | "u32"
+                        | "u64"
+                        | "u128"
+                        | "usize"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "i128"
+                        | "isize"
+                        | "f32"
+                        | "f64"
+                )
+            })
+    });
+    if !scalar {
+        return false;
+    }
+    let Some(source) = inherent_method_body(index, ty, name) else {
+        return false;
+    };
+    let Some(tree) = parse_clean_source_file(source).map(|parse| parse.tree()) else {
+        return false;
+    };
+    tree.syntax()
+        .children()
+        .find_map(ast::Fn::cast)
+        .and_then(|method| method.param_list())
+        .and_then(|parameters| parameters.self_param())
+        .is_some_and(|receiver| receiver.amp_token().is_some() && receiver.mut_token().is_none())
+}
+
 /// The single macro call (`assert_eq!(..)`) starting on the assertion's line.
 /// Two calls on the line, or none, leave the assertion unlocated.
 fn assertion_macro_at_line(

@@ -376,3 +376,71 @@ fn established_effect_carrier_binds_the_called_instance_only() -> Result<(), Str
     }
     Ok(())
 }
+
+#[test]
+fn returned_fields_and_builders_keep_real_identity_and_reject_replaced_values() -> Result<(), String>
+{
+    let cases = [
+        (
+            "pub struct Item { pub priority:u32 }\npub fn make_item()->Item {\n    Item { priority:3 }\n}\n",
+            "priority:3",
+            "priority:4",
+            "let item=make_item();\n    assert_eq!(item.priority,3);",
+            true,
+        ),
+        (
+            "pub struct Item { pub priority:u32 }\npub fn make_item()->Item {\n    Item { priority:3 }\n}\n",
+            "priority:3",
+            "priority:4",
+            "let _=make_item();\n    let item=Item { priority:3 };\n    assert_eq!(item.priority,3);",
+            false,
+        ),
+        (
+            "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn attempts(mut self,n:u32)->Self { self.attempts=n; self }\n pub fn build(self)->Self { self }\n}\n",
+            "attempts:4",
+            "attempts:3",
+            "let item=Builder::new().build();\n    assert_eq!(item.attempts,4);",
+            true,
+        ),
+        (
+            "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn attempts(mut self,n:u32)->Self { self.attempts=n; self }\n pub fn build(self)->Self { self }\n}\n",
+            "attempts:4",
+            "attempts:3",
+            "let item=Builder::new().attempts(7).build();\n    assert_eq!(item.attempts,7);",
+            false,
+        ),
+        (
+            "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn build(self)->Self { Self { attempts:4 } }\n}\n",
+            "attempts:4",
+            "attempts:3",
+            "let item=Builder::new().build();\n    assert_eq!(item.attempts,4);",
+            false,
+        ),
+    ];
+    for (source, after, before, body, exposed) in cases {
+        let line = source
+            .lines()
+            .position(|line| line.contains(after))
+            .ok_or("changed field missing")?
+            + 1;
+        let actual = source.lines().nth(line - 1).ok_or("line missing")?;
+        let previous = actual.replace(after, before);
+        let diff = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-{previous}\n+{actual}\n"
+        );
+        let test = format!(
+            "use rust_catalog_description_structural_oracle::*;\n#[test]\nfn observes() {{\n    {body}\n}}\n"
+        );
+        let report = check_report(source, &test, MANIFEST, &diff)?;
+        let findings = report["findings"].as_array().ok_or("findings missing")?;
+        assert!(!findings.is_empty(), "{report}");
+        for finding in findings {
+            if exposed {
+                assert_eq!(finding["classification"], "exposed", "{report}");
+            } else {
+                assert_ne!(finding["classification"], "exposed", "{report}");
+            }
+        }
+    }
+    Ok(())
+}

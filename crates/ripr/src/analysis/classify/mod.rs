@@ -4,7 +4,7 @@ mod argument_fold;
 mod arm_selection;
 mod binding_return_flow;
 mod boundary_pairing;
-mod builder_override;
+pub(in crate::analysis) mod builder_override;
 mod call_identity;
 mod caller_loop_selector;
 mod changed_span;

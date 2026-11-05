@@ -1228,6 +1228,16 @@ impl ClassifiedProbeEvidence {
                                 receiver.admits(owner, context.index, test, assertion, pin_syntax)
                             })
                 },
+                value_observer_identity: &|test, assertion| {
+                    context.workspace_complete
+                        && pin_syntax.admits(test, assertion, context.index)
+                        && crate::analysis::classify::builder_override::owner_field_read_identity(
+                            context.probe,
+                            context.index,
+                            test,
+                            assertion,
+                        )
+                },
                 setter_writes_field: &|impl_type, setter, field| {
                     setter_plainly_writes(context.index, impl_type, setter, field)
                 },

@@ -51,6 +51,13 @@ pub(crate) fn assertion_oracle_text(line: &str) -> Option<String> {
 /// unwrapping a `matches!` condition. This supplies operand boundaries only;
 /// identity, execution and strength remain with their existing authorities.
 pub(crate) fn assertion_observed_operand(line: &str) -> Option<String> {
+    observed_assertion_macro_operand(line).or_else(|| {
+        let (_, twin) = super::scan::err_return_guard_twin(line)?;
+        observed_assertion_macro_operand(&twin)
+    })
+}
+
+fn observed_assertion_macro_operand(line: &str) -> Option<String> {
     let masked = mask_comments_and_strings(line);
     let (_, mut arguments) = [
         "assert!",
