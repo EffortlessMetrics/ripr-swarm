@@ -2663,7 +2663,7 @@ fn guarded_struct_error_return(
     owner: &FunctionSummary,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<(String, String)> {
-    use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
+    use ra_ap_syntax::{AstNode, ast, ast::HasArgList, ast::HasAttrs, ast::HasName};
     if !matches!(
         probe.family,
         ProbeFamily::ErrorPath | ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
