@@ -15,11 +15,14 @@
 //! #ripr agent static-advisory base=origin/main findings=6 gaps=2 exposed=4 weakly_exposed=2
 //! weakly_exposed|src/lib.rs:404|major: self.major|missing=major: self.major|test=t1|id=probe:...
 //! t1=tests/test_version.rs:254 test_next_minor exact_value `assert_eq!(next.minor, 3);`
-//! next=ripr explain --root /repo probe:...
+//! next=ripr explain --root /repo probe:... --format agent
 //! ```
 //!
 //! Terminal states are one explicit line: `done=` when nothing is left to fix
 //! from the test side, `stop=` when ripr cannot offer a test-side fix.
+//! Explain drill-ins keep this format unless an explicit suppression policy
+//! was applied. Policy-bearing reports retain the existing human route because
+//! compact artifact replay cannot apply an explicit suppression policy.
 
 use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
@@ -267,12 +270,8 @@ fn render_open_limited(
     }
     push_limits(&mut out, considered, &[]);
     if let Some(first) = open.first() {
-        out.push_str(&match drill_in {
-            Some(FindingDrillIn::Commands(navigation)) => {
-                format!("next={}\n", navigation.explain_command(&first.id))
-            }
-            None => format!("next=ripr explain {}\n", first.id),
-        });
+        out.push_str(&explain_next_line(&first.id, output, drill_in));
+        out.push('\n');
     }
     out
 }
@@ -382,12 +381,7 @@ fn next_line(
     provenance: CheckDiffProvenance,
 ) -> Option<String> {
     if let Some(gap) = gaps.first() {
-        return Some(match drill_in {
-            Some(FindingDrillIn::Commands(navigation)) => {
-                format!("next={}", navigation.explain_command(&gap.id))
-            }
-            None => format!("next=ripr explain {}", gap.id),
-        });
+        return Some(explain_next_line(&gap.id, output, drill_in));
     }
     let action =
         triage::canonical_next_action_for_triage(triage, output, drill_in, provenance).ok()?;
@@ -395,6 +389,28 @@ fn next_line(
     let lines = render_next_action_plain_at_root(&action, Some(&output.root));
     let command = lines.first()?.trim().strip_prefix("Next:")?.trim();
     Some(format!("next={command}"))
+}
+
+/// Keep explain drill-ins compact without rebuilding the navigation's scope.
+/// Policy-bearing reports retain the existing human route: agent explain
+/// rejects `--from` with `--suppression-policy`, and this projection does not
+/// carry the artifact/live distinction. Even an empty policy has that CLI
+/// constraint, so use the producer's policy-presence marker, not its matches.
+/// Context and other canonical commands must not inherit this format option.
+fn explain_next_line(
+    finding_id: &str,
+    output: &CheckOutput,
+    drill_in: Option<&FindingDrillIn>,
+) -> String {
+    let command = match drill_in {
+        Some(FindingDrillIn::Commands(navigation)) => navigation.explain_command(finding_id),
+        None => format!("ripr explain {finding_id}"),
+    };
+    if output.suppression.is_some() {
+        format!("next={command}")
+    } else {
+        format!("next={command} --format agent")
+    }
 }
 
 struct TestRef {
