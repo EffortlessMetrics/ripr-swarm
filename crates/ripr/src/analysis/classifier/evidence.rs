@@ -753,7 +753,8 @@ impl ClassifiedProbeEvidence {
         };
         let owner_return_pin = context
             .owner_fn
-            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index));
+            .and_then(|owner| OwnerReturnPin::establish(context.probe, owner, context.index))
+            .filter(|pin| context.workspace_complete || !pin.needs_complete_dispatch_context());
         let async_result_identity = context
             .workspace_complete
             .then(|| {

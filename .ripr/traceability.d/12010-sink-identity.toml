@@ -20,4 +20,5 @@ tests = [
   "crates/ripr/tests/return_diagnostic_confirmation.rs::primitive_named_format_effect_carries_only_its_changed_argument",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::tuple_option_projection_keeps_its_receiver_and_changed_slot",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::tuple_iterator_identity_cannot_borrow_an_inherent_override",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/tuple_projection.rs::iterator_option_tuple_projection_establishes_and_pins_its_actual_component",
 ]

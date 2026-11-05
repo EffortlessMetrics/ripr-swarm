@@ -4647,6 +4647,11 @@ impl OwnerReturnPin {
         self.returns_bool && matches!(self.path, ReturnPathGate::Any)
     }
 
+    /// The new standard-trait dispatch exclusion relies on a complete index.
+    pub(in crate::analysis) fn needs_complete_dispatch_context(&self) -> bool {
+        self.tuple_iterator_dispatch
+    }
+
     /// The owner-side gates: `None` when the probe is not a return value
     /// (or a changed `return Err(..)`, filed as `error_path`),
     /// the owner's declaration or return paths are not established, or
