@@ -1097,6 +1097,10 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
             "refresh must accept exactly the optional base and source arguments: {refresh}"
         ));
     }
+    let source_description = refresh
+        .pointer("/inputSchema/properties/source/description")
+        .and_then(Value::as_str)
+        .ok_or("source description missing")?;
     let discovery = line(json!({ "jsonrpc": "2.0", "id": 1,
         "method": "server/discover", "params": { "_meta": current_meta() } }))?;
     let discover_output = run_mcp(&root, &[&discovery])?;
@@ -1149,6 +1153,31 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
         }
         if text.contains("the same analysis `ripr check`") {
             failures.push(format!("{surface} promises identical CLI input"));
+        }
+    }
+    for (surface, text) in [
+        ("initialize", instructions),
+        ("refresh", description),
+        ("source schema", source_description),
+        ("help", help.as_str()),
+    ] {
+        let text = normalized(text);
+        for required in ["findings and inventory", "agree", "item gates"] {
+            if !text.contains(required) {
+                failures.push(format!("{surface} omitted {required:?}"));
+            }
+        }
+        for forbidden in [
+            "worktree repair cards/readiness are withheld",
+            "with no repair cards",
+            "repair cards and readiness are withheld",
+            "always repair-ready",
+            "all worktree items are ready",
+            "worktree cards are always available",
+        ] {
+            if text.contains(forbidden) {
+                failures.push(format!("{surface} has blanket claim {forbidden:?}"));
+            }
         }
     }
     let description = normalized(description);

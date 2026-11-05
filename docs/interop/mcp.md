@@ -99,7 +99,8 @@ inventory each record the raw Rust bytes they read; when they agree
 "available"`) the same repair readiness, `ripr_get_repair_card` and
 `ripr_prepare_repair` the committed refresh offers are available, behind their
 usual per-item gates, and the producer commitment is part of the snapshot
-identity. When a saved file or `HEAD` moved between the two producers, or any
+identity. This is a published session snapshot, not a requirement to Git-commit
+the worktree edits. When a saved file or `HEAD` moved between the two producers, or any
 input was not observed (`not_established`, `withheld`), every item is
 `repair_packet_ready: false` with `worktree_source_not_committed` naming the
 cause and `ripr_get_repair_card` refuses with `incomplete_inventory`: refresh
@@ -671,7 +672,7 @@ bounded-selection summary.
 `ripr://repair-card/{canonical_id}`) projects the bounded repair card
 for one canonical item: the same versioned `repair_card.v1` document `ripr
 agent card` and the standard language server project, assembled by the shared
-application authority from the committed snapshot — the adapter never
+application authority from the completed session snapshot — the adapter never
 re-derives readiness, identity, currentness, or route state. The analyzed
 repository head and the diff-scoped classified seam inventory (each retained
 seam owner-discriminated bound to a snapshot item, with its evidence-scope

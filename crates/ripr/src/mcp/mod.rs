@@ -89,8 +89,8 @@ the shared check authority; its optional `base` argument selects another
 revision. By default, staged and unstaged tracked edits and untracked files
 are outside the analyzed scope. Opt in with `source: "worktree"` to include
 saved staged and unstaged tracked edits; unsaved buffers and untracked files
-remain outside. Worktree snapshots withhold repair cards and readiness, with
-consumed-source commitment explicitly not established. Its warm cache lives
+remain outside. Worktree cards and readiness require findings and inventory to agree on
+consumed Rust bytes and the item gates to pass; refresh after edits. Its warm cache lives
 under the root's `target/ripr/`. `ripr check` defaults to the working tree
 when staged or unstaged tracked edits exist; shared check authority does not
 mean identical input. Use `ripr check --committed` for committed input, or
@@ -104,7 +104,7 @@ transaction; `ripr_get_repair_attempt` and `ripr_get_receipt_status` read
 session transactions and the durable attempt store without executing
 anything. `ripr_get_repair_card` projects the same bounded repair card as
 `ripr agent card` and the standard-LSP handoff for one canonical item of the
-committed snapshot, assembled by the shared application authority; it edits
+completed session snapshot, assembled by the shared application authority; it edits
 nothing, executes nothing, and never upgrades readiness or currentness.
 The server does not edit source, execute verification or mutation
 commands, launch processes, load project-local provider configuration, or
