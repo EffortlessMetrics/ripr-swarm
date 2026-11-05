@@ -1658,6 +1658,72 @@ cannot evaluate no longer hides a false one (`vip and total > 1000`); this
 also applies to live guarded lines and only moves a verdict from `exposed` to
 `weakly_exposed`.
 
+
+## Changed Range Header Amendment (#12948)
+
+A strong exact-value assertion on an owner does not establish that a changed
+`range(...)` header affects that call. An empty range, or an added iteration
+whose contribution is zero, can leave the returned result unchanged.
+
+The Python adapter retains existing oracle credit for a changed bare `range`
+header only when a strong related literal-input call establishes distinct old
+and new integer sums in this closed owner shape: initialize one accumulator to
+zero, iterate a bare `range` with one to three readable integer arguments,
+perform only `acc += item`, then return `acc`. The range builtin and bound
+parameters must remain intact. Literal bounds and the existing bounded integer
+offset reader are supported; checked arithmetic refuses overflow without
+walking or allocating the range.
+
+The witness must be the selected assertion's direct owner call, compared with an
+integer literal by plain equality or unittest `assertEqual`. Discarded calls,
+assertion messages, nested calls and comparisons between calls do not supply
+the witness; partial or multiline row excerpts remain unresolved.
+
+The expected signed integer must equal one of the modeled old/new sums; an
+assertion that fails for both results is not a discriminator. Test-side writes
+to `range`, including dynamic or foreign attribute writes, withhold credit.
+The test body must reach its selected top-level assertion without another
+assertion or unknown effect; only inert literal bindings and modeled owner
+calls are admitted around that assertion. A preceding failing assertion,
+exceptional argument or destructuring failure cannot lend a witness.
+
+Calls must bind every declared parameter with a known scalar value or literal
+default. Excess, duplicate, unknown or positional-only keyword arguments,
+missing required parameters and unsupported argument forms withhold credit.
+Computed defaults or annotations are outside the closed owner model.
+
+Every range-bound input must retain its integer type before offset
+normalization. Integral-valued floats such as `3.0` still raise `TypeError`
+in Python range; decimal equality normalization cannot turn them into integer
+witnesses. This check covers all arguments of both headers and every modeled
+call, including prior calls in the selected test. Unused scalar parameters
+need not be integers, and the existing supported-expression boundary remains.
+
+The old-body witness is the existing `sole_line_replacement` fact: the
+production file contains exactly one added line replacing one removed line at
+the same coordinate. Other production edits keep the header unresolved.
+Applicability uses the native For iterator's line span, so changed interior
+lines of multiline headers and wrapped iterators fail closed rather than
+bypassing the model. Only bare single-line range replacements are evaluated.
+
+In a multi-line production diff, a changed For/AsyncFor header also withholds
+credit from every other changed finding on that same qualified owner,
+including removed-only evidence. A sibling accumulator or return edit can
+cancel the apparent range difference; the generic owner-name exact oracle
+cannot establish the combined old/new result. Header ownership comes from
+the narrowest native source owner before quiet-line filtering. Old headers
+use reconstructed old-source coordinates and retained qualified symbols,
+never a deletion insertion point that may belong to the next function.
+Independent and enclosing owners do not inherit a nested helper's limit;
+ambiguous repeated qualified definitions conservatively share it.
+
+Without that witness, the change carries `unsupported_syntax`, unknown
+infection and a non-exposed classification. Missing old text, unreadable
+inputs, zero steps, rebinding, other loop bodies and unavailable owner source
+remain unresolved. This does not add a repair-packet producer or change the
+packet validator. The Rust range-bound producer in RIPR-SPEC-0370 remains a
+separate proposed contract.
+
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python

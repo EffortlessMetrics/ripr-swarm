@@ -1,0 +1,21 @@
+[[behavior]]
+id = "RIPR-SPEC-0028"
+name = "changed Python range headers require distinct returned sums for an exact pin"
+spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
+tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_preserves_integer_types_before_offset_normalization",
+  "crates/ripr/src/analysis/language/python/range_activation_tests.rs::changed_range_combined_body_edits_withhold_every_finding",
+  "crates/ripr/src/analysis/language/python/range_activation_tests.rs::changed_range_compound_context_withholds_removed_only_evidence",
+  "crates/ripr/src/analysis/language/python/range_activation_tests.rs::changed_range_compound_context_preserves_independent_owner_credit",
+  "crates/ripr/src/analysis/language/python/range_activation_tests.rs::changed_range_compound_ownership_uses_source_coordinates",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_reconciles_executed_review_cases",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_requires_a_test_that_can_reach_and_pass_its_pin",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_requires_an_unchanged_old_body_and_catches_old_wrappers",
+  "crates/ripr/src/analysis/language/python/range_activation.rs::tests::changed_range_owner_line_count_bounds",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_credits_only_the_call_in_the_exact_pin",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_requires_a_differing_iteration_sequence",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_withholds_equal_sums_and_unreadable_shapes",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::changed_range_does_not_trust_rebound_inputs_or_a_shadowed_builtin",
+]
+code = ["crates/ripr/src/analysis/language/python/range_activation.rs", "crates/ripr/src/analysis/language/python/static_limits.rs", "crates/ripr/src/analysis/language/python/deleted_lines.rs"]
+metrics = ["unit_test_pass_rate"]
