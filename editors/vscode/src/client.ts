@@ -635,6 +635,7 @@ export class RiprClientController {
       getServer: () => this.server,
       getWorkspaceRoot: () => this.workspaceRoot,
       getStartGeneration: () => this.startGeneration,
+      sessionRootBlocker: () => this.sessionRootBlocker(),
       getStatusKind: () => this.status.kind,
       getSetupStatus: () => this.setupStatus,
       statusContext: () => this.statusContext(),
