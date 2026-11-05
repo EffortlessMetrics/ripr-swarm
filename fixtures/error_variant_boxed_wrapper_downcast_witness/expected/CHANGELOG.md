@@ -755,3 +755,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (55)
+
+Reason:
+RIPR-SPEC-0106: current21production+4native controls establish the current bound unit-error observer selects only the first literal guard return; later identical return, unentered, overwritten, shadowed, unrelated and sibling-variant controls remain non-exposed; wrappers retain typed unresolved binding. Native per-return contrast independently distinguishes the first from the second return.
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
