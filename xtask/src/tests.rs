@@ -6559,6 +6559,14 @@ fn non_rust_programming_policy_requires_retention_rule() {
     assert!(non_rust_programming_retention_reason("tools/activate-rust-extra.sh").is_none());
     assert!(non_rust_programming_retention_reason("tools/test-activate-rust-extra.sh").is_none());
     assert!(
+        non_rust_programming_retention_reason("tools/python/installed-provider-recovery/run.py")
+            .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason("tools/python/installed-provider-recovery/other.py")
+            .is_none()
+    );
+    assert!(
         non_rust_programming_retention_reason("tools/python/portable-ripr-consumer/run.py")
             .is_some()
     );

@@ -44,6 +44,7 @@ on:
       - "crates/ripr/**"
       - "fixtures/python/**"
       - "packaging/python/**"
+      - "tools/python/installed-provider-recovery/**"
       - "policy/dependency_allowlist.txt"
       - "policy/distribution.toml"
       - "policy/non-rust-allowlist.toml"
@@ -592,6 +593,16 @@ jobs:
           tar -tzf "${evidence}/python-basic-fixture.tar.gz" \
             | grep -Fx 'fixtures/python/basic/diff.patch'
 
+      - name: Package installed provider recovery control
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="${GITHUB_WORKSPACE}/target/ripr/python-wheel-evidence"
+          tar -czf "${evidence}/provider-recovery.tar.gz" -C "${GITHUB_WORKSPACE}" \
+            tools/python/installed-provider-recovery/run.py \
+            crates/ripr/tests/fixtures/proptest_singleton
+          (cd "${evidence}" && sha256sum provider-recovery.tar.gz > provider-recovery.sha256)
+
       - name: Upload no-publish wheel evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -817,6 +828,37 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: 1.95.0
+
+      - name: Exercise installed offline provider recovery
+        id: provider_recovery
+        if: ${{ matrix.client == 'pip' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd evidence && sha256sum -c provider-recovery.sha256)
+          mkdir "${RUNNER_TEMP}/provider-input"
+          tar -xzf evidence/provider-recovery.tar.gz -C "${RUNNER_TEMP}/provider-input"
+          test "$(sha256sum "${CONSUMER_EXECUTABLE}" | awk '{print $1}')" = "${EXPECTED_PAYLOAD_SHA256}"
+          native_cargo="$(rustup which --toolchain 1.95.0 cargo)"
+          native_rustc="$(rustup which --toolchain 1.95.0 rustc)"
+          env -i HOME="${HOME}" PATH="$(dirname "${native_cargo}"):${CONSUMER_PATH}" \
+            RUSTC="${native_rustc}" RUSTUP_TOOLCHAIN=1.95.0 \
+            "${CONSUMER_PYTHON}" "${RUNNER_TEMP}/provider-input/tools/python/installed-provider-recovery/run.py" \
+            "${CONSUMER_EXECUTABLE}" "${RUNNER_TEMP}/provider-input/crates/ripr/tests/fixtures/proptest_singleton" \
+            "${RUNNER_TEMP}/provider-recovery-work" "${GITHUB_WORKSPACE}/provider-recovery-evidence"
+          jq -e --arg digest "${EXPECTED_PAYLOAD_SHA256}" \
+            '.status == "pass" and .binary_sha256 == $digest and .locked_archives > 0' \
+            provider-recovery-evidence/record.json > /dev/null
+          test "$(sha256sum "${CONSUMER_EXECUTABLE}" | awk '{print $1}')" = "${EXPECTED_PAYLOAD_SHA256}"
+
+      - name: Retain installed provider recovery evidence
+        if: ${{ always() && matrix.client == 'pip' && steps.provider_recovery.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ripr-python-provider-recovery-${{ env.CANDIDATE_SHA }}
+          path: provider-recovery-evidence/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Run the strict installed ordinary journey
         id: ordinary
