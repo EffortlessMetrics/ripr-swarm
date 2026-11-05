@@ -127,43 +127,67 @@ pub(in crate::analysis) fn declared_field_reach(
     FieldTable::parse(&facts.source)?.reach(&owner.impl_context, field)
 }
 
-/// Whether a changed `self.<field> = ..` write of `owner` starts a repair from
-/// a weak read in the tests that call the owner directly: the shared start
-/// policy over those tests. The repository seam of a non-public field is
-/// admitted on this, without the per-seam evidence pass. More direct tests than
-/// the compact evidence keeps withhold, so the set the policy sees is never
-/// wider than the one the seam is later graded over.
-pub(in crate::analysis) fn weak_start_over_direct_tests(
+/// Whether `masked` (comments and strings masked) calls `name` as a bare,
+/// method or path call: `name(` not continuing a longer identifier.
+fn mentions_call(masked: &str, name: &str) -> bool {
+    let call = format!("{name}(");
+    masked.match_indices(&call).any(|(at, _)| {
+        !masked[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|before| before.is_alphanumeric() || before == '_')
+    })
+}
+
+/// Every test, in any file, that may run `owner`: it calls the owner's name on
+/// the owner's type (the test sits in the owner's file or names the type), or
+/// calls a function that does, up to three hops. This is a structural
+/// over-approximation of the relations the finding is graded over: a test the
+/// relation machinery misses (an aliased, iterated or closure receiver, a
+/// helper) is still found, and the start withholds unless it too is a placed
+/// weak read.
+pub(in crate::analysis) fn tests_that_may_run_owner<'a>(
     owner: &FunctionSummary,
-    expression: &str,
-    field: &str,
-    index: &RustIndex,
-) -> bool {
+    index: &'a RustIndex,
+) -> Vec<&'a crate::analysis::rust_index::TestSummary> {
     let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
-        return false;
+        return Vec::new();
     };
     let type_name = self_type.split('<').next().unwrap_or(self_type).trim();
-    let call = format!(".{}(", owner.name);
-    // A direct call on a receiver of the owner's type: the test either sits in
-    // the owner's file (an inline module) or names the type. The cheap name
-    // filters run before the per-test relation check, which scans every
-    // function. A crowd of name matches is no start.
-    let named: Vec<&crate::analysis::rust_index::TestSummary> = index
+    let mask = |text: &str| crate::analysis::extract::mask_comments_and_strings(text);
+    let mut names: Vec<String> = Vec::new();
+    // Functions that call the owner, then functions that call those.
+    let mut callers: Vec<(String, String)> = Vec::new();
+    for function in index.functions().iter() {
+        if function.id == owner.id {
+            continue;
+        }
+        callers.push((function.name.clone(), mask(function.body.as_ref())));
+    }
+    let mut called = vec![owner.name.clone()];
+    for _ in 0..3 {
+        let mut next: Vec<String> = Vec::new();
+        for (name, body) in &callers {
+            if !names.contains(name) && called.iter().any(|callee| mentions_call(body, callee)) {
+                names.push(name.clone());
+                next.push(name.clone());
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        called = next;
+    }
+    index
         .tests()
         .iter()
-        .filter(|test| test.body.contains(&call))
-        .filter(|test| test.file == owner.file || test.body.contains(type_name))
-        .collect();
-    if named.len() > crate::analysis::test_grip_evidence::COMPACT_RELATED_TEST_LIMIT {
-        return false;
-    }
-    let direct: Vec<&crate::analysis::rust_index::TestSummary> = named
-        .into_iter()
-        .filter(|test| super::related_tests::owner_call_is_direct(test, owner, index))
-        .collect();
-    !direct.is_empty()
-        && direct.len() <= crate::analysis::test_grip_evidence::COMPACT_RELATED_TEST_LIMIT
-        && super::assigned_field_weak_read_start(owner, expression, field, &direct, index)
+        .filter(|test| {
+            let body = mask(test.body.as_ref());
+            (mentions_call(&body, &owner.name)
+                && (test.file == owner.file || body.contains(type_name)))
+                || names.iter().any(|helper| mentions_call(&body, helper))
+        })
+        .collect()
 }
 
 /// Whether a test in `test_file` can spell a read of a field of `reach`

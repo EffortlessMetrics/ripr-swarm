@@ -17816,6 +17816,8 @@ tests = [
   "crates/ripr/tests/repair_check_recommended_start.rs::a_weak_read_of_a_written_field_starts_the_repair_check_recommends",
   "crates/ripr/tests/repair_check_recommended_start.rs::a_weak_read_of_a_private_or_crate_field_starts_only_where_the_test_can_name_it",
   "crates/ripr/tests/repair_check_recommended_start.rs::a_second_test_that_observes_the_write_another_way_withholds_the_start",
+  "crates/ripr/tests/repair_check_recommended_start.rs::every_test_that_runs_the_owner_must_be_a_placed_weak_read",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::a_cancelled_inventory_reports_the_cancellation_from_field_admission",
 ]
 fixtures = [
   "fixtures/rust_map_overwrite_count",

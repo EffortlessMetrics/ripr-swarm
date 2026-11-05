@@ -872,6 +872,106 @@ fn a_second_test_that_observes_the_write_another_way_withholds_the_start() -> Re
     Ok(())
 }
 
+/// #11870 review round 3: the start fires only when every test that runs the
+/// owner is itself a placed weak read. A second test that reaches or observes
+/// the write some way the lexical rules do not place (an assertion held in a
+/// helper, an `if`/`panic!` or `Err` check, an aliased, iterated or closure
+/// receiver, a non-direct call through a helper) withholds, for a private field
+/// (inline tests) and a plain `pub` field (`tests/`) alike.
+#[test]
+fn every_test_that_runs_the_owner_must_be_a_placed_weak_read() -> Result<(), String> {
+    let extras = "\nimpl Counter {\n    pub fn value(&self) -> u32 {\n        self.count\n    }\n}\n\nimpl std::fmt::Display for Counter {\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n        write!(f, \"{}\", self.count)\n    }\n}\n";
+    let weak = "#[test]\nfn a() {\n    let mut c = Counter::new();\n    c.bump();\n    assert!(c.count > 0);\n}\n";
+    // (label, helper items, second test signature, second test body)
+    let cases: [(&str, &str, &str, &str); 7] = [
+        (
+            "helper",
+            "fn check(c: &Counter) {\n    assert_eq!(c.value(), 2);\n}\n",
+            "fn b()",
+            "    let mut c = Counter::new();\n    c.bump();\n    check(&c);",
+        ),
+        (
+            "ifpanic",
+            "",
+            "fn b()",
+            "    let mut c = Counter::new();\n    c.bump();\n    if c.value() != 2 {\n        panic!(\"bad\");\n    }",
+        ),
+        (
+            "result",
+            "",
+            "fn b() -> Result<(), String>",
+            "    let mut c = Counter::new();\n    c.bump();\n    if c.value() != 2 {\n        return Err(\"bad\".to_string());\n    }\n    Ok(())",
+        ),
+        (
+            "alias",
+            "",
+            "fn b()",
+            "    let mut c = Counter::new();\n    let r = &mut c;\n    r.bump();\n    assert_eq!(c.value(), 2);",
+        ),
+        (
+            "iterated",
+            "",
+            "fn b()",
+            "    let mut cs = vec![Counter::new()];\n    for c in cs.iter_mut() {\n        c.bump();\n    }\n    assert_eq!(cs[0].value(), 2);",
+        ),
+        (
+            "closure",
+            "",
+            "fn b()",
+            "    let mut c = Counter::new();\n    let f = |x: &mut Counter| x.bump();\n    f(&mut c);\n    assert_eq!(c.value(), 2);",
+        ),
+        (
+            "indirect",
+            "fn run(c: &mut Counter) {\n    c.bump();\n}\n",
+            "fn b()",
+            "    let mut c = Counter::new();\n    run(&mut c);\n    assert_eq!(c.to_string(), \"2\");",
+        ),
+    ];
+    let mut escapes: Vec<String> = Vec::new();
+    for (visibility, field_line) in [("priv", "count"), ("pub", "pub count")] {
+        let lib = |text: &str| {
+            text.replace("pub count", field_line).replacen(
+                "}\n\nimpl Counter",
+                &format!("}}\n{extras}\nimpl Counter"),
+                1,
+            )
+        };
+        let base = lib(WRITE_BASE);
+        let new = lib(&WRITE_BASE.replace("self.count = 1;", "self.count = 2;"));
+        let indent = |text: &str| text.replace('\n', "\n    ");
+        for (label, helpers, signature, body) in cases {
+            let second = format!("#[test]\n{signature} {{\n{body}\n}}\n");
+            let name = format!("every{visibility}{label}");
+            let repo_case = if visibility == "priv" {
+                let wrap = |lib: &str| {
+                    format!(
+                        "{lib}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    {}\n    {}\n    {}}}\n",
+                        indent(helpers),
+                        indent(weak),
+                        indent(&second)
+                    )
+                };
+                repo(&name, &wrap(&base), &wrap(&new), "", true)?
+            } else {
+                let test = format!("use fx::Counter;\n\n{helpers}\n{weak}\n{second}");
+                repo(&name, &base, &new, &test, true)?
+            };
+            if check_start_id(&repo_case.root)?.is_some() {
+                escapes.push(format!("{name}: check offered a start"));
+            }
+            ripr(&repo_case.root, &["repair"])?;
+            if attempts(&repo_case.root) != 0 {
+                escapes.push(format!("{name}: repair started an attempt"));
+            }
+        }
+    }
+    if escapes.is_empty() {
+        Ok(())
+    } else {
+        Err(escapes.join("; "))
+    }
+}
+
 /// Splits a command line the way the bound-root quoting writes it: single
 /// quotes group, `'\''` is a literal quote, whitespace separates.
 fn shell_split(command: &str) -> Result<Vec<String>, String> {

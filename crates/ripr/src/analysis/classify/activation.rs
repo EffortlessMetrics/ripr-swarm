@@ -4314,29 +4314,49 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
     // #11870: a non-public field is read only by a test that can name it.
     let mut reach = None;
     let mut weak = false;
-    for test in tests {
-        let direct = super::related_tests::owner_call_is_direct(test, owner, index);
+    // The related tests, plus every test that may run the owner another way
+    // the relation machinery does not place (an alias, a loop, a closure, a
+    // helper): each must itself be a placed weak read.
+    let mut every: Vec<&TestSummary> = tests.to_vec();
+    for found in super::field_reach::tests_that_may_run_owner(owner, index) {
+        if !every
+            .iter()
+            .any(|known| known.file == found.file && known.start_line == found.start_line)
+        {
+            every.push(found);
+        }
+    }
+    for test in every {
+        // Every test that runs the owner must itself be a placed weak read:
+        // a test that reaches the owner another way (a helper, a loop, an
+        // alias), or that reads the write through a getter, `Display`, a
+        // helper-held assertion or an `if`/`panic!` check, may be the exact
+        // check these rules do not place.
+        if !super::related_tests::owner_call_is_direct(test, owner, index) {
+            return false;
+        }
         // Pass one: the weak reads, as (assertion index, binding).
         let mut weak_reads: Vec<(usize, String)> = Vec::new();
         for (at, assertion) in test.assertions.iter().enumerate() {
             if assigned_field_read_confirms(owner, path, test, assertion, index) {
                 return false;
             }
-            if direct && let Some(binding) = weak_assigned_field_read(owner, path, test, assertion)
-            {
+            if let Some(binding) = weak_assigned_field_read(owner, path, test, assertion) {
                 weak_reads.push((at, binding));
             }
         }
-        if !weak_reads.is_empty()
-            && reach
-                .get_or_insert_with(|| super::field_reach::declared_field_reach(owner, path, index))
-                .is_some_and(|reach| {
-                    !super::field_reach::test_can_name_field(
-                        reach,
-                        owner.file.as_path(),
-                        test.file.as_path(),
-                    )
-                })
+        if weak_reads.is_empty() {
+            return false;
+        }
+        if reach
+            .get_or_insert_with(|| super::field_reach::declared_field_reach(owner, path, index))
+            .is_some_and(|reach| {
+                !super::field_reach::test_can_name_field(
+                    reach,
+                    owner.file.as_path(),
+                    test.file.as_path(),
+                )
+            })
         {
             return false;
         }
@@ -4358,18 +4378,11 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
                 return false;
             }
         }
-        // A direct test with no weak read of its own may observe the same
-        // write another way (a getter, `Display`, `Debug`): the exact check
-        // these rules do not place. Unless it provably checks something
-        // else, it withholds the start.
-        if direct && weak_reads.is_empty() && test_may_observe_owner_receiver(test, call.name()) {
-            return false;
-        }
         // Pass three: the rest of the body, assertions or not.
         if test_body_may_check_field_elsewhere(test, &weak_reads, call.name(), path) {
             return false;
         }
-        weak = weak || !weak_reads.is_empty();
+        weak = true;
     }
     // The type walk is the costly check, so it runs last, only for a start
     // every cheaper rule allowed. The test's binding is the impl's `Self`
@@ -4380,44 +4393,6 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
         &format!("{expression} Self"),
         index,
     )
-}
-
-/// Whether a test that calls the owner directly but reads the written field
-/// weakly nowhere may observe the owner's receiver in an assertion: an
-/// assertion that names the binding the owner ran on (a getter, `to_string`,
-/// `format!("{c}")`, a helper), or any assertion at all when that binding
-/// cannot be read off the body (a temporary or chained receiver). A test with
-/// no assertion observes nothing.
-fn test_may_observe_owner_receiver(test: &TestSummary, owner_name: &str) -> bool {
-    if test.assertions.is_empty() {
-        return false;
-    }
-    let body = crate::analysis::extract::mask_comments_and_strings(test.body.as_ref());
-    let needle = format!(".{owner_name}(");
-    let mut receivers: Vec<String> = Vec::new();
-    for (at, _) in body.match_indices(&needle) {
-        let receiver: String = body[..at]
-            .chars()
-            .rev()
-            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        if receiver.is_empty() || receiver.starts_with(|ch: char| ch.is_ascii_digit()) {
-            return true;
-        }
-        receivers.push(receiver);
-    }
-    if receivers.is_empty() {
-        return true;
-    }
-    test.assertions.iter().any(|assertion| {
-        let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
-        receivers.iter().any(|receiver| {
-            names_whole_ident(&masked, receiver) || names_format_capture(&assertion.text, receiver)
-        })
-    })
 }
 
 /// Whether `test`'s body, with the weak-read assertions (`weak_reads`) cut

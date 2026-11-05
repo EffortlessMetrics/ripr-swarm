@@ -200,7 +200,7 @@ pub(crate) fn inventory_seams_at_with_config(
         &rust_files,
         harness_registrations(config),
     )?;
-    Ok(inventory_seams_from_index(&production_files, &index))
+    inventory_seams_from_index_checked(&production_files, &index)
 }
 
 /// Whether a seam limit was the built-in default or explicitly configured
@@ -872,7 +872,7 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     rust_index::apply_oracle_policy(&mut index, config.oracles());
     trace_latency_phase("apply_oracle_policy", "ok", policy_started.elapsed());
     let seams_started = Instant::now();
-    let seams = inventory_seams_from_index(&production_files, &index);
+    let seams = inventory_seams_from_index_checked(&production_files, &index)?;
     trace_latency_phase("inventory_seams", "ok", seams_started.elapsed());
     let evidence_started = Instant::now();
     let evidence = test_grip_evidence::evidence_for_seams(&seams, &index);
@@ -1058,7 +1058,7 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
         harness_registrations(config),
     )?;
     rust_index::apply_oracle_policy(&mut index, config.oracles());
-    let seams = inventory_seams_from_index(&production_files, &index);
+    let seams = inventory_seams_from_index_checked(&production_files, &index)?;
     let mut counts = SeamGripClassCounts::new(seams.len());
     let context = test_grip_evidence::CompactGripContext::new(&index);
     for seam in &seams {
@@ -1093,7 +1093,7 @@ fn inventory_compact_classified_seams_from_state_with_config(
     );
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
-    let seams = inventory_seams_from_index(&production_files, &cached.index);
+    let seams = inventory_seams_from_index_checked(&production_files, &cached.index)?;
     let context = test_grip_evidence::CompactGripContext::new(&cached.index);
     let mut classified = Vec::with_capacity(seams.len());
     for seam in seams {
@@ -1581,7 +1581,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let seams = inventory_seams_from_index(&production_files, &cached.index)
+    let seams = inventory_seams_from_index_checked(&production_files, &cached.index)?
         .into_iter()
         .filter(|seam| candidate_functions.contains_key(seam.owner()))
         .collect::<Vec<_>>();
@@ -2600,7 +2600,7 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
         .collect::<Vec<_>>();
     cancellation::checkpoint()?;
     let seams_started = Instant::now();
-    let seams = inventory_seams_from_index(&scoped_production_files, &cached.index);
+    let seams = inventory_seams_from_index_checked(&scoped_production_files, &cached.index)?;
     trace_latency_phase(
         "inventory_seams",
         "review_scope_ok",
@@ -3257,7 +3257,7 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
         build_started.elapsed(),
     );
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
-    let seams = inventory_seams_from_index(&production_files, &cached.index);
+    let seams = inventory_seams_from_index_checked(&production_files, &cached.index)?;
     let mut counts = SeamGripClassCounts::new(seams.len());
     let context = test_grip_evidence::CompactGripContext::new(&cached.index);
     for seam in &seams {
@@ -3787,10 +3787,10 @@ impl OwnedWorkspaceState {
 
 /// Inventory seams from a pre-built index. Public(crate) so tests can
 /// drive the walker without re-running file discovery.
-pub(crate) fn inventory_seams_from_index(
+pub(crate) fn inventory_seams_from_index_checked(
     production_files: &[PathBuf],
     index: &RustIndex,
-) -> Vec<RepoSeam> {
+) -> Result<Vec<RepoSeam>, String> {
     if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
         eprintln!("{disclosure}");
     }
@@ -3801,6 +3801,16 @@ pub(crate) fn inventory_seams_from_index(
         eprintln!("{disclosure}");
     }
     seams_from_index_files(production_files, index)
+}
+
+/// [`inventory_seams_from_index_checked`] for tests, which are never
+/// cancelled.
+#[cfg(test)]
+pub(crate) fn inventory_seams_from_index(
+    production_files: &[PathBuf],
+    index: &RustIndex,
+) -> Vec<RepoSeam> {
+    inventory_seams_from_index_checked(production_files, index).unwrap_or_default()
 }
 
 /// One bounded seam index over a caller-named file set (#8547), built
@@ -3838,14 +3848,14 @@ impl FileSeamIndex {
         files.iter().all(|file| self.files.contains(file))
     }
 
-    pub(crate) fn seams_in_file(&self, file: &Path) -> Vec<RepoSeam> {
+    pub(crate) fn seams_in_file(&self, file: &Path) -> Result<Vec<RepoSeam>, String> {
         seams_from_index_files(std::slice::from_ref(&file.to_path_buf()), &self.index)
     }
 
-    pub(crate) fn classify_in_file(&self, file: &Path) -> Vec<ClassifiedSeam> {
-        let seams = self.seams_in_file(file);
+    pub(crate) fn classify_in_file(&self, file: &Path) -> Result<Vec<ClassifiedSeam>, String> {
+        let seams = self.seams_in_file(file)?;
         let evidence = test_grip_evidence::evidence_for_seams(&seams, &self.index);
-        seam_classification::classify_seams(&seams, &evidence)
+        Ok(seam_classification::classify_seams(&seams, &evidence))
     }
 }
 
@@ -3874,10 +3884,10 @@ pub(crate) fn scoped_file_seams(
         .as_ref()
         .filter(|index| index.covers(std::slice::from_ref(&file.to_path_buf())))
     {
-        return Ok(index.seams_in_file(file));
+        return index.seams_in_file(file);
     }
     let built = FileSeamIndex::build(root, config, std::slice::from_ref(&file.to_path_buf()))?;
-    let seams = built.seams_in_file(file);
+    let seams = built.seams_in_file(file)?;
     *seam_index = Some(built);
     Ok(seams)
 }
@@ -3915,15 +3925,18 @@ pub(crate) fn classify_seams_in_file_with_shared_index(
         }
     }
     if let Some(index) = seam_index.as_ref().filter(|index| index.covers(&files)) {
-        return Ok(index.classify_in_file(file));
+        return index.classify_in_file(file);
     }
     let built = FileSeamIndex::build(root, config, &files)?;
-    let classified = built.classify_in_file(file);
+    let classified = built.classify_in_file(file)?;
     *seam_index = Some(built);
     Ok(classified)
 }
 
-fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Vec<RepoSeam> {
+fn seams_from_index_files(
+    production_files: &[PathBuf],
+    index: &RustIndex,
+) -> Result<Vec<RepoSeam>, String> {
     let mut seams: Vec<RepoSeam> = Vec::new();
     let admission = FieldSeamAdmission::new(index);
 
@@ -3958,7 +3971,7 @@ fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Ve
             ) else {
                 continue;
             };
-            if matches!(admission.admits(&seam, &facts.source, &owners), Ok(true)) {
+            if admission.admits(&seam, &facts.source, &owners)? {
                 seams.push(seam);
             }
         }
@@ -3988,7 +4001,7 @@ fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Ve
             && a.owner() == b.owner()
     });
 
-    seams
+    Ok(seams)
 }
 
 /// Canonical sort identity shared by the legacy full sort and the bounded
@@ -4189,6 +4202,8 @@ struct FieldSeamAdmission<'a> {
     /// test, so a field no such assertion names is never graded and costs no
     /// evidence pass.
     read_names: std::cell::OnceCell<std::collections::BTreeSet<String>>,
+    /// The grip context for the exact start check, built on first need.
+    context: std::cell::OnceCell<test_grip_evidence::CompactGripContext<'a>>,
     /// One parse of each file's struct declarations.
     tables: std::cell::RefCell<BTreeMap<PathBuf, Option<crate::analysis::classify::FieldTable>>>,
 }
@@ -4198,6 +4213,7 @@ impl<'a> FieldSeamAdmission<'a> {
         Self {
             index,
             read_names: std::cell::OnceCell::new(),
+            context: std::cell::OnceCell::new(),
             tables: std::cell::RefCell::new(BTreeMap::new()),
         }
     }
@@ -4270,14 +4286,30 @@ impl<'a> FieldSeamAdmission<'a> {
         let Some(owner) = owners.owner(seam.display_line()) else {
             return Ok(false);
         };
-        Ok(self.field_declared(seam.file(), source, owner, field)
+        // Cheap necessary conditions first; the exact start (the seam's own
+        // evidence over every test that runs the owner) decides last, so an
+        // admitted seam always carries the start fact and admission is never
+        // looser than the start.
+        if !(self.field_declared(seam.file(), source, owner, field)
             && self.some_test_reads_weakly(field)
-            && crate::analysis::classify::weak_start_over_direct_tests(
+            && crate::analysis::classify::assigned_field_weak_read_start(
                 owner,
                 seam.expression(),
                 field,
+                &[],
                 self.index,
             ))
+        {
+            return Ok(false);
+        }
+        let context = self
+            .context
+            .get_or_init(|| test_grip_evidence::CompactGripContext::new(self.index));
+        Ok(
+            !test_grip_evidence::compact_evidence_for_seam(seam, context)
+                .missing_discriminators
+                .is_empty(),
+        )
     }
 }
 
@@ -5675,6 +5707,28 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
         let twin =
             format!("mod other {{\n    pub struct C {{\n        count: u32,\n    }}\n}}\n{here}");
         assert!(written_field_seam_files(&[("src/counter.rs", &twin)])?.is_empty());
+        Ok(())
+    }
+
+    /// A cancelled run reports the cancellation from the non-public field
+    /// admission instead of silently dropping seams.
+    #[test]
+    fn a_cancelled_inventory_reports_the_cancellation_from_field_admission() -> Result<(), String> {
+        let source = "pub struct C {\n    count: u32,\n}\n\nimpl C {\n    pub fn bump(&mut self) {\n        self.count = 2;\n    }\n}\n";
+        let path = PathBuf::from("src/counter.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let token = cancellation::AnalysisCancellationToken::new();
+        token.cancel(cancellation::AnalysisAbortKind::Cancelled);
+        let cancelled = cancellation::with_token(&token, || {
+            inventory_seams_from_index_checked(std::slice::from_ref(&path), &index)
+        });
+        assert!(cancelled.is_err(), "{cancelled:?}");
+        // The same inventory without a cancelled token completes.
+        let completed = inventory_seams_from_index_checked(&[path], &index)?;
+        assert!(
+            completed.is_empty(),
+            "no test reads the field: {completed:?}"
+        );
         Ok(())
     }
 

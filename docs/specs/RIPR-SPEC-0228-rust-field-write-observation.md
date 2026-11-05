@@ -317,10 +317,15 @@ rejected alternative. Any can be reversed later without touching the rest.
    the exact check these rules do not place: no other statement, assertion or
    not, names the field or uses the binding except as the owner call or its
    `let` (an alias, a helper call, a destructure, a move, an `if`/`panic!`
-   check withholds); a related test that calls the owner directly and reads the field
-   weakly nowhere withholds when an assertion of it names the binding the owner
-   ran on (a getter, `Display`, `Debug`, a helper) or the binding cannot be read
-   off the body; the owner's `Self` type is also not a non-plain `Drop`
+   check withholds); every test that may run the owner is itself a placed weak
+   read: the related tests that establish reach, plus every test in the index
+   that calls the owner's name on its type (it sits in the owner's file or
+   names the type) or calls a function that does, up to three hops. A test
+   among them that is not a direct caller with a placed weak read (an observer
+   through a getter, `Display` or `Debug`, an assertion held in a helper, an
+   `if`/`panic!` or `Err` check, an aliased, iterated or closure receiver, a
+   call through a helper, a test with no assertion) withholds. Tests that only
+   share a file or a name with the owner are not among them; the owner's `Self` type is also not a non-plain `Drop`
    type. A strong read stays "nothing to do"; no read, a
    sibling field, another binding, a later write, a by-value owner, an
    equality, a bare boolean, a getter and a private field start nothing.
@@ -485,7 +490,12 @@ changes `self.count += 2` to `self.count += 1`.
   `a_weak_read_of_a_private_or_crate_field_starts_only_where_the_test_can_name_it`
   and `a_second_test_that_observes_the_write_another_way_withholds_the_start`
   (a getter, `to_string`, `format!("{c}")` or `Debug` read in a second test of
-  the owner withholds, for private and plain `pub` fields).
+  the owner withholds, for private and plain `pub` fields),
+  `every_test_that_runs_the_owner_must_be_a_placed_weak_read` (a helper-held
+  assertion, an `if`/`panic!` or `Err` check, an aliased, iterated or closure
+  receiver and a non-direct call through a helper each withhold, for private
+  and plain `pub` fields), and `seam_inventory.rs`
+  `a_cancelled_inventory_reports_the_cancellation_from_field_admission`.
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.
 - Probe boundary (#6676, #6675): `lexical.rs`
   `let_binding_type_annotations_are_not_field_construction` and
