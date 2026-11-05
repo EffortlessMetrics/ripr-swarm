@@ -378,6 +378,31 @@ pub(super) fn match_direct_owner_call(
     }
 }
 
+/// Preserve the existing bare/file keys and also bind ordinary inline owners
+/// through their indexed declaration, rather than treating a crate root as
+/// the inline function's module.
+fn helper_owner_lookup_names(owner: &OwnerContext<'_>, index: &RustIndex) -> Vec<String> {
+    let mut lookup_names = vec![owner.name.clone()];
+    if let Some(module_path) = &owner.module_path {
+        let normalized = module_path.replace('/', "::");
+        if !normalized.is_empty() {
+            lookup_names.push(format!("{normalized}::{}", owner.name));
+        }
+    }
+    if owner.free_function
+        && let Some(module_path) = owner
+            .function
+            .and_then(|function| context::owner_delegation_module_path(index, function))
+    {
+        let normalized = module_path.replace('/', "::");
+        let qualified = format!("{normalized}::{}", owner.name);
+        if !normalized.is_empty() && !lookup_names.contains(&qualified) {
+            lookup_names.push(qualified);
+        }
+    }
+    lookup_names
+}
+
 pub(super) fn match_helper_owner_call(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
@@ -387,13 +412,7 @@ pub(super) fn match_helper_owner_call(
     if owner.name.is_empty() {
         return;
     }
-    let mut lookup_names = vec![owner.name.clone()];
-    if let Some(module_path) = &owner.module_path {
-        let normalized = module_path.replace('/', "::");
-        if !normalized.is_empty() {
-            lookup_names.push(format!("{normalized}::{}", owner.name));
-        }
-    }
+    let lookup_names = helper_owner_lookup_names(owner, context.index);
     let mut linked = BTreeSet::new();
     for lookup_name in &lookup_names {
         let batch = if owner.free_function {

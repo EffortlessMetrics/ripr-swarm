@@ -201,7 +201,9 @@ Missing, duplicate or unparseable source does not grant qualified reach; the
 analysis does not re-read live files or change cached source spans. A qualified
 inline delegation retains its module key when a same-named production owner
 exists elsewhere in the package; calling an inline rival must not credit an
-unrelated file-backed child.
+unrelated file-backed child. The consumer resolves an ordinary inline
+owner through its indexed declaration module as well as the existing file key,
+so a real inline target keeps credit beside a same-named rival.
 
 Full evidence carries the indexed test target. Compact evidence intentionally
 omits target details and preserves the five stage states and contradiction count.

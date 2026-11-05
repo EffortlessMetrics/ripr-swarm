@@ -1886,7 +1886,10 @@ fn callee_delegates_to_owner_in_same_module(
     callee.id.0.starts_with(&format!("{owner_scope}::")) || callee.id.0 == owner_scope
 }
 
-fn owner_delegation_module_path(index: &RustIndex, owner: &FunctionSummary) -> Option<String> {
+pub(super) fn owner_delegation_module_path(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> Option<String> {
     let file_prefix = format!("{}::", owner.file.display());
     if let Some(rest) = owner.id.0.strip_prefix(&file_prefix)
         && let Some((module, _)) = rest.split_once("::")
