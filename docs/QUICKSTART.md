@@ -1,6 +1,7 @@
 # Quickstart
 
 Your tests pass. Would they notice if the change you just made were wrong?
+
 Inspect a change, read the testing gap, and decide which focused test to add.
 ripr uses static analysis; it does not run mutants or write the test for you.
 
