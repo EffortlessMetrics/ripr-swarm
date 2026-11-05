@@ -1,0 +1,12 @@
+{
+  "base": "0402cb776a96d21324b53792dc41356915e3aa31",
+  "candidate": "5bc9e2d3513ba8818299958c959c5d9271bdac6a",
+  "tree": "9648b5602702bdf98606d1a3e522002344239e0e",
+  "patch_bytes": 26464,
+  "patch_sha256": "fad25ab80bbb1148dcf2b59c9700a44401227eac4eca9e3dab641254b889bba0",
+  "change": "canonical typed caller graph for expected helper independence; bounded standard named-primitive format effect carrier; unused helper removal; actual error fixture diff; traceability; full1.167 compact/sharded0.169",
+  "red_proof": "0402 original independent-helper weak; literal control exposed; actual self-computed helper weak. Formatted SideEffect original fixture weak with actual native positive previously retained.",
+  "current_test_status": "guarded16-production plus4-native compile active, no current pass claim",
+  "boxed_branch_result": "First-return-only counterfactual flips2 named passing tests to failures; second-return-only flipsnone. Existing golden exposesboth. Wrapper conversions remain documented weak. Do not restoreboth through test-level linkage.",
+  "remaining": "terminal affected tests;tuple-projection preservation;disposition of ambiguous multi-return typed variant credit;25 provisional artifact regeneration;parity/policy/hosted/install/release-selection/promotion holds"
+}

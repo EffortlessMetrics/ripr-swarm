@@ -1,0 +1,168 @@
+{
+  "rows": [
+    {
+      "case": "input",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--offline",
+        "--manifest-path",
+        "/dev/shm/ripr-011-qualification/boxed-branch-3vmx3ikd/input/Cargo.toml",
+        "--target-dir",
+        "/workspace/011-integration-proof/golden-native-pairs/target",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 101,
+      "guard_stop": null,
+      "seconds": 0.803,
+      "stdout_sha256": "5fc4e3b6923f3bce2694399c06acfcd31de2c3fe6c0a23146443da1110ae27ae",
+      "stderr_sha256": "d0ec7c78656b1201350901a61b770c7289165fb0c72af7c50d35fb4a8c57c878",
+      "tests": [
+        {
+          "name": "checksum_summary_pins_wrong_sibling_variant",
+          "status": "FAILED"
+        },
+        {
+          "name": "glyph_summary_downcast_witness_on_stringified_wrapper",
+          "status": "FAILED"
+        },
+        {
+          "name": "length_summary_only_checks_is_err",
+          "status": "ok"
+        },
+        {
+          "name": "parse_summary_boxed_variant_propagates_malformed_source",
+          "status": "ok"
+        },
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "status": "ok"
+        },
+        {
+          "name": "render_summary_observes_other_enum_variant",
+          "status": "FAILED"
+        },
+        {
+          "name": "theme_summary_ignores_matches_result",
+          "status": "ok"
+        }
+      ],
+      "nonempty_test_execution": true
+    },
+    {
+      "case": "first_return_only",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--offline",
+        "--manifest-path",
+        "/dev/shm/ripr-011-qualification/boxed-branch-3vmx3ikd/input/Cargo.toml",
+        "--target-dir",
+        "/workspace/011-integration-proof/golden-native-pairs/target",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 101,
+      "guard_stop": null,
+      "seconds": 0.601,
+      "stdout_sha256": "e3804fe843dec6a7867e1b3617c21842d2f59727efb7a8e7a13afa9fcb09ba33",
+      "stderr_sha256": "4bd6188741cf15a303c1e1755c3ae800a147799505de0b5c94a8d7d6381087e8",
+      "tests": [
+        {
+          "name": "checksum_summary_pins_wrong_sibling_variant",
+          "status": "FAILED"
+        },
+        {
+          "name": "glyph_summary_downcast_witness_on_stringified_wrapper",
+          "status": "FAILED"
+        },
+        {
+          "name": "length_summary_only_checks_is_err",
+          "status": "ok"
+        },
+        {
+          "name": "parse_summary_boxed_variant_propagates_malformed_source",
+          "status": "FAILED"
+        },
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "status": "FAILED"
+        },
+        {
+          "name": "render_summary_observes_other_enum_variant",
+          "status": "FAILED"
+        },
+        {
+          "name": "theme_summary_ignores_matches_result",
+          "status": "ok"
+        }
+      ],
+      "nonempty_test_execution": true,
+      "changed_named_outcomes": [
+        {
+          "name": "parse_summary_boxed_variant_propagates_malformed_source",
+          "input": "ok",
+          "control": "FAILED"
+        },
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "input": "ok",
+          "control": "FAILED"
+        }
+      ]
+    },
+    {
+      "case": "second_return_only",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "test",
+        "--offline",
+        "--manifest-path",
+        "/dev/shm/ripr-011-qualification/boxed-branch-3vmx3ikd/input/Cargo.toml",
+        "--target-dir",
+        "/workspace/011-integration-proof/golden-native-pairs/target",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit": 101,
+      "guard_stop": null,
+      "seconds": 0.601,
+      "stdout_sha256": "5fc4e3b6923f3bce2694399c06acfcd31de2c3fe6c0a23146443da1110ae27ae",
+      "stderr_sha256": "bee9d10aec1ae7b5d6b7533353774f7c533e3ed602a703850d6f6881311259e0",
+      "tests": [
+        {
+          "name": "checksum_summary_pins_wrong_sibling_variant",
+          "status": "FAILED"
+        },
+        {
+          "name": "glyph_summary_downcast_witness_on_stringified_wrapper",
+          "status": "FAILED"
+        },
+        {
+          "name": "length_summary_only_checks_is_err",
+          "status": "ok"
+        },
+        {
+          "name": "parse_summary_boxed_variant_propagates_malformed_source",
+          "status": "ok"
+        },
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "status": "ok"
+        },
+        {
+          "name": "render_summary_observes_other_enum_variant",
+          "status": "FAILED"
+        },
+        {
+          "name": "theme_summary_ignores_matches_result",
+          "status": "ok"
+        }
+      ],
+      "nonempty_test_execution": true,
+      "changed_named_outcomes": []
+    }
+  ],
+  "claim": "Per-return counterfactuals isolate which existing tests notice each changed error branch; deliberately wrong sibling tests may make whole harness fail."
+}

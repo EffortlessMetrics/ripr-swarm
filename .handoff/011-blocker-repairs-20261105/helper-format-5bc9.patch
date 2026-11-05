@@ -1,0 +1,555 @@
+diff --git a/.ripr/traceability.d/12010-sink-identity.toml b/.ripr/traceability.d/12010-sink-identity.toml
+index 1249c6efa..0fa2cc0a0 100644
+--- a/.ripr/traceability.d/12010-sink-identity.toml
++++ b/.ripr/traceability.d/12010-sink-identity.toml
+@@ -13,4 +13,9 @@ tests = [
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_field_constructor_identity_respects_namespace",
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_field_identity_rejects_mutation_inside_let_initializers",
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::persisted_effect_identity_tracks_the_changed_argument_not_written_siblings",
++  "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_comparisons_pair_the_boundary_oracle_with_its_owner_and_element",
++  "crates/ripr/tests/return_diagnostic_confirmation.rs::unit_error_variant_unwrap_identity_preserves_current_binding",
++  "crates/ripr/tests/return_diagnostic_confirmation.rs::bound_literal_matches_keeps_scalar_identity_and_currentness",
++  "crates/ripr/tests/return_diagnostic_confirmation.rs::independent_same_named_method_helper_does_not_look_self_computed",
++  "crates/ripr/tests/return_diagnostic_confirmation.rs::primitive_named_format_effect_carries_only_its_changed_argument",
+ ]
+diff --git a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+index 0cc07834e..2ef4e2739 100644
+--- a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
++++ b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+@@ -227,9 +227,65 @@ fn changed_parameters(
+     }
+     (!changed.is_empty()).then_some(changed)
+ }
+-fn parameter_value(mut expression: ast::Expr, parameters: &BTreeSet<String>) -> bool {
++// One standard format string with named primitive captures only. No Display
++// implementation, explicit argument expression or hidden macro executes here.
++fn primitive_format_captures(
++    call: &ast::MacroCall,
++    primitive: &BTreeSet<String>,
++) -> Option<BTreeSet<String>> {
++    if call.path()?.syntax().text().to_string() != "format" {
++        return None;
++    }
++    let tokens = call.token_tree()?.syntax().text().to_string();
++    let inner = tokens.strip_prefix('(')?.strip_suffix(')')?;
++    let parsed = parse_function(&format!("fn args() {{ argument({inner}) }}"))?;
++    let ast::Expr::CallExpr(arguments) = parsed.body()?.stmt_list()?.tail_expr()? else {
++        return None;
++    };
++    let values: Vec<_> = arguments.arg_list()?.args().collect();
++    let [ast::Expr::Literal(literal)] = values.as_slice() else {
++        return None;
++    };
++    let ast::LiteralKind::String(literal) = literal.kind() else {
++        return None;
++    };
++    let template = literal.value().ok()?;
++    let chars: Vec<_> = template.chars().collect();
++    let mut at = 0;
++    let mut captures = BTreeSet::new();
++    while at < chars.len() {
++        match chars[at] {
++            '{' if chars.get(at + 1) == Some(&'{') => at += 2,
++            '}' if chars.get(at + 1) == Some(&'}') => at += 2,
++            '{' => {
++                let start = at + 1;
++                let end = start + chars.get(start..)?.iter().position(|c| *c == '}')?;
++                let name: String = chars[start..end].iter().collect();
++                if !primitive.contains(&name) {
++                    return None;
++                }
++                captures.insert(name);
++                at = end + 1;
++            }
++            '}' => return None,
++            _ => at += 1,
++        }
++    }
++    Some(captures)
++}
++fn parameter_value(
++    mut expression: ast::Expr,
++    parameters: &BTreeSet<String>,
++    primitive_format: &BTreeSet<String>,
++) -> bool {
+     for _ in 0..super::MAX_DEPTH {
+         let next = match expression {
++            ast::Expr::MacroExpr(expression) => {
++                return expression
++                    .macro_call()
++                    .and_then(|call| primitive_format_captures(&call, primitive_format))
++                    .is_some_and(|captures| captures.iter().any(|name| parameters.contains(name)));
++            }
+             ast::Expr::PathExpr(path) => {
+                 return bare_path(ast::Expr::PathExpr(path))
+                     .is_some_and(|name| parameters.contains(&name));
+@@ -270,14 +326,18 @@ fn storage_field(mut expression: ast::Expr) -> Option<String> {
+     }
+     None
+ }
+-fn parameter_write(expression: ast::Expr, parameters: &BTreeSet<String>) -> Option<String> {
++fn parameter_write(
++    expression: ast::Expr,
++    parameters: &BTreeSet<String>,
++    primitive_format: &BTreeSet<String>,
++) -> Option<String> {
+     if expression.attrs().next().is_some() {
+         return None;
+     }
+     match expression {
+         ast::Expr::BinExpr(assignment)
+             if assignment.op_kind() == Some(ast::BinaryOp::Assignment { op: None })
+-                && parameter_value(assignment.rhs()?, parameters) =>
++                && parameter_value(assignment.rhs()?, parameters, primitive_format) =>
+         {
+             storage_field(assignment.lhs()?)
+         }
+@@ -295,7 +355,7 @@ fn parameter_write(expression: ast::Expr, parameters: &BTreeSet<String>) -> Opti
+             if arguments.len() != arity
+                 || !arguments
+                     .into_iter()
+-                    .any(|arg| parameter_value(arg, parameters))
++                    .any(|arg| parameter_value(arg, parameters, primitive_format))
+             {
+                 return None;
+             }
+@@ -307,12 +367,58 @@ fn parameter_write(expression: ast::Expr, parameters: &BTreeSet<String>) -> Opti
+ fn parameter_fields(
+     callee: &FunctionSummary,
+     parameters: &BTreeSet<String>,
++    index: &RustIndex,
+ ) -> Option<BTreeSet<String>> {
+     let function = parse_function(&callee.body)?;
+     let body = function.body()?;
++    let standard_format =
++        !crate::analysis::classify::activation::macro_names_rebound(index, &["format"]);
++    let primitive_format: BTreeSet<_> = if !standard_format {
++        BTreeSet::new()
++    } else {
++        function
++            .param_list()?
++            .params()
++            .filter_map(|parameter| {
++                let ast::Pat::IdentPat(pattern) = parameter.pat()? else {
++                    return None;
++                };
++                let ty = compact(&parameter.ty()?.syntax().text().to_string());
++                let ty = ty.strip_prefix('&').unwrap_or(&ty);
++                if !matches!(
++                    ty,
++                    "str"
++                        | "bool"
++                        | "char"
++                        | "i8"
++                        | "i16"
++                        | "i32"
++                        | "i64"
++                        | "i128"
++                        | "isize"
++                        | "u8"
++                        | "u16"
++                        | "u32"
++                        | "u64"
++                        | "u128"
++                        | "usize"
++                        | "f32"
++                        | "f64"
++                ) || crate::analysis::classify::owner_pin::wrapper_may_be_rebound(ty, index)
++                {
++                    return None;
++                }
++                Some(pattern.name()?.text().to_string())
++            })
++            .collect()
++    };
+     if function.attrs().next().is_some()
+         || body.syntax().descendants().any(|node| {
+-            ast::MacroCall::can_cast(node.kind()) || ast::CallExpr::can_cast(node.kind())
++            ast::CallExpr::can_cast(node.kind())
++                || ast::MacroCall::cast(node).is_some_and(|call| {
++                    !standard_format
++                        || primitive_format_captures(&call, &primitive_format).is_none()
++                })
+         })
+     {
+         return None;
+@@ -343,14 +449,14 @@ fn parameter_fields(
+     {
+         // Unchanged arguments may still be written to other fields. They
+         // establish only bounded execution, never the selected payload carrier.
+-        if parameter_write(expression.clone(), &all_parameters).is_some() {
++        if parameter_write(expression.clone(), &all_parameters, &primitive_format).is_some() {
+             admitted_methods += expression
+                 .syntax()
+                 .descendants()
+                 .filter(|node| ast::MethodCallExpr::can_cast(node.kind()))
+                 .count();
+         }
+-        if let Some(field) = parameter_write(expression, parameters) {
++        if let Some(field) = parameter_write(expression, parameters, &primitive_format) {
+             *writes.entry(field).or_default() += 1;
+         }
+     }
+@@ -444,7 +550,7 @@ impl ArgumentReceiver {
+                 return None;
+             }
+             let parameters = changed_parameters(before, &call, callee)?;
+-            let carrying = parameter_fields(callee, &parameters)?;
++            let carrying = parameter_fields(callee, &parameters, index)?;
+             fields.retain(|field| carrying.contains(field));
+         }
+         (!fields.is_empty()).then_some(Self {
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 318235605..66e98de3b 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -362,6 +362,9 @@ impl StdRootedCalls {
+ /// No cache outlives that immutable index; no public/file facts are changed.
+ #[derive(Clone, Debug, Default)]
+ pub(in crate::analysis) struct OwnerPinSyntax {
++    /// Reuse the classifier's typed caller graph for expected-side helpers;
++    /// a slice's `len` must not be mistaken for the changed `Stack::len`.
++    expected_owner_callers: crate::analysis::classifier::OwnerCallerNames,
+     /// Per test file, its `std`/`core`-rooted `assert_eq!` calls and which
+     /// of those roots the file itself leaves unrebound (#7857). Parsed once
+     /// per file, not once per assertion.
+@@ -6306,20 +6309,27 @@ impl OwnerReturnPin {
+         // #7714: a test-file helper that computes its value from the owner
+         // (`fn expected() -> String { check(99).unwrap_err() }`) makes the
+         // expected operand the owner's own value, however it is bound.
+-        if test_file_helpers_reaching_owner(index, test, expected, &self.name)
+-            .iter()
+-            .any(|helper| {
+-                expected_reaches_owner(test, &assertion.text, expected, helper)
+-                    || expected_constant_reaches_owner(
+-                        index,
+-                        test,
+-                        expected,
+-                        helper,
+-                        &PinCall::Bare,
+-                        &self.owner_file,
+-                    )
+-            })
+-        {
++        if test_file_helpers_reaching_owner(
++            index,
++            test,
++            expected,
++            &self.name,
++            &self.owner_file,
++            self.owner_start_line,
++            &syntax.expected_owner_callers,
++        )
++        .iter()
++        .any(|helper| {
++            expected_reaches_owner(test, &assertion.text, expected, helper)
++                || expected_constant_reaches_owner(
++                    index,
++                    test,
++                    expected,
++                    helper,
++                    &PinCall::Bare,
++                    &self.owner_file,
++                )
++        }) {
+             return false;
+         }
+         match (&self.path, call) {
+@@ -9192,16 +9202,6 @@ fn local_variant_path(path: &str) -> Option<(String, String)> {
+         .then(|| (qualifier.to_string(), variant.to_string()))
+ }
+ 
+-/// #7063: the enum and variant of a changed `[return ]Err(Type::Variant(..))`
+-/// or `Err(Type::Variant { .. })` whose variant carries a payload.
+-fn payload_variant_construction(expression: &str) -> Option<(String, String)> {
+-    let text = expression.trim().trim_end_matches(';').trim_end();
+-    let text = text.strip_prefix("return ").map_or(text, str::trim);
+-    let key = error_variant_key(text)?;
+-    let argument = text.strip_prefix("Err(")?.strip_suffix(')')?;
+-    argument.trim_end().ends_with([')', '}']).then_some(key)
+-}
+-
+ /// #7063: a changed early `return Err(Type::Variant ..);` beside other
+ /// `return Err(..)` exits. A pin expecting `Err(Type::Variant ..)` observes
+ /// the changed return when no other exit can build that variant: every other
+@@ -15030,6 +15030,9 @@ fn test_file_helpers_reaching_owner(
+     test: &TestSummary,
+     expected: &str,
+     name: &str,
++    owner_file: &Path,
++    owner_line: usize,
++    callers: &crate::analysis::classifier::OwnerCallerNames,
+ ) -> Vec<String> {
+     // A literal or an operand with no name in it cannot reach a helper.
+     let masked_expected = mask_comments_and_strings(expected);
+@@ -15044,7 +15047,7 @@ fn test_file_helpers_reaching_owner(
+     };
+     // Free non-test functions only: a method or a sibling test sharing a
+     // common name (`new`, `len`) would otherwise withhold unrelated pins.
+-    let candidates: Vec<(&str, String)> = facts
++    let candidates: Vec<&str> = facts
+         .functions
+         .iter()
+         .filter(|function| {
+@@ -15059,20 +15062,20 @@ fn test_file_helpers_reaching_owner(
+                     .iter()
+                     .any(|attr| attr.contains("test") || attr.contains("rstest"))
+         })
+-        .map(|function| (function.name.as_str(), function.body.as_str()))
+-        .map(|(helper, body)| (helper, mask_comments_and_strings(body)))
++        .map(|function| function.name.as_str())
+         .collect();
+-    let mut reaching: BTreeSet<String> = BTreeSet::new();
+-    let mut frontier = vec![name.to_string()];
+-    while let Some(target) = frontier.pop() {
+-        for (helper, body) in &candidates {
+-            if !reaching.contains(*helper) && contains_as_whole_word(body, &target) {
+-                reaching.insert((*helper).to_string());
+-                frontier.push((*helper).to_string());
+-            }
+-        }
+-    }
+-    reaching.into_iter().collect()
++    let owner = index.functions().iter().find(|function| {
++        function.file == owner_file && function.start_line == owner_line && function.name == name
++    });
++    candidates
++        .into_iter()
++        .filter_map(|helper| {
++            // Missing owner identity cannot certify an independent helper.
++            owner
++                .is_none_or(|owner| callers.caller_reaches(index, owner, None, helper))
++                .then(|| helper.to_string())
++        })
++        .collect()
+ }
+ 
+ /// Names `file` imports the owner `name` under (`use crate::quota as q;`).
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index 8fa717a17..7ed867bf8 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -699,7 +699,8 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// `1.164`: compose importer identity with main field-snapshot and panic-marker semantics.
+ /// `1.165`: returned comparisons retain same-owner/element boundary pairing.
+ /// `1.166`: canonical scalar-match and unit-error unwrap observer identity.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.166";
++/// `1.167`: typed helper-call independence and primitive named-format effect carriers.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.167";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -911,7 +912,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.166";
+ /// `0.166`: same composed semantics as full `1.164`.
+ /// `0.167`: same returned-boundary pairing as full `1.165`.
+ /// `0.168`: same observer identity as full `1.166`.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.168";
++/// `0.169`: same observer identities as full `1.167`.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1125,7 +1127,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.168";
+ /// `0.166`: same composed semantics as full `1.164`.
+ /// `0.167`: same returned-boundary pairing as full `1.165`.
+ /// `0.168`: same observer identity as full `1.166`.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.168";
++/// `0.169`: same observer identities as full `1.167`.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5281,7 +5284,7 @@ mod tests {
+         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+         // Composed main and successor invalidate both predecessor branches.
+         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.166");
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.167");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5427,8 +5430,8 @@ mod tests {
+         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.168");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.168");
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.169");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.169");
+     }
+ 
+     #[test]
+@@ -5759,6 +5762,7 @@ mod tests {
+             ("pre-field-snapshot-composition", "1.163", "0.165"),
+             ("pre-returned-boundary-pairing", "1.164", "0.166"),
+             ("pre-scalar-and-unit-error-identity", "1.165", "0.167"),
++            ("pre-helper-and-formatted-effect-identity", "1.166", "0.168"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+@@ -5832,7 +5836,7 @@ mod tests {
+     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
+         for previous in [
+             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
+-            "0.161", "0.162", "0.163", "0.164", "0.165", "0.166", "0.167",
++            "0.161", "0.162", "0.163", "0.164", "0.165", "0.166", "0.167", "0.168",
+         ] {
+             for compact in [false, true] {
+                 let scratch = integrity_scratch("property-shard-generation")?;
+diff --git a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+index d241da0f8..e52f85bc2 100644
+--- a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
++++ b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.166";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.167";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index a43267bc3..fed68f44c 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -819,3 +819,89 @@ fn bound_literal_matches_keeps_scalar_identity_and_currentness() -> Result<(), S
+     }
+     Ok(())
+ }
++
++#[test]
++fn independent_same_named_method_helper_does_not_look_self_computed() -> Result<(), String> {
++    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
++        .join("../../fixtures/owner_name_collision_helper_keeps_credit");
++    let source = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
++        .map_err(|error| error.to_string())?;
++    let manifest = std::fs::read_to_string(fixture.join("input/Cargo.toml"))
++        .map_err(|error| error.to_string())?;
++    let diff =
++        std::fs::read_to_string(fixture.join("diff.patch")).map_err(|error| error.to_string())?;
++    for (source, exposed) in [
++        (source.clone(), true),
++        (source.replace("count_items(&[1, 2, 3, 4])", "4"), true),
++        (
++            source
++                .replace(
++                    "values.len()",
++                    "Stack::len(&Stack::from_vec(values.to_vec()))",
++                )
++                .replace("count_items(&[1, 2, 3, 4])", "count_items(&[1, 2, 3])"),
++            false,
++        ),
++    ] {
++        let report = check_report(&source, "", &manifest, &diff)?;
++        let findings = report["findings"].as_array().ok_or("missing findings")?;
++        assert_eq!(findings.len(), 1, "{report}");
++        assert_eq!(
++            findings[0]["classification"] == "exposed",
++            exposed,
++            "{report}"
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn primitive_named_format_effect_carries_only_its_changed_argument() -> Result<(), String> {
++    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
++        .join("../../fixtures/observation_verified_call_deletion");
++    let source =
++        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
++    let test = std::fs::read_to_string(fixture.join("input/tests/store_tests.rs"))
++        .map_err(|e| e.to_string())?;
++    let manifest =
++        std::fs::read_to_string(fixture.join("input/Cargo.toml")).map_err(|e| e.to_string())?;
++    let diff = std::fs::read_to_string(fixture.join("diff.patch")).map_err(|e| e.to_string())?;
++    for (source, test, diff, exposed) in [
++        (source.clone(), test.clone(), diff.clone(), true),
++        (
++            source.clone(),
++            test.replace(
++                "assert_eq!(cache.inserted, vec![\"result_key=42\".to_string()]);",
++                "assert_eq!(cache.inserted.len(), 1);",
++            ),
++            diff.clone(),
++            false,
++        ),
++        (
++            source.replace("format!(\"{key}={value}\")", "format!(\"constant\")"),
++            test.clone(),
++            diff.clone(),
++            false,
++        ),
++        (
++            format!("macro_rules! format {{ ($($t:tt)*) => {{ String::new() }}; }}\n{source}"),
++            test.clone(),
++            diff.replace("@@ -13,4 +13,4", "@@ -14,4 +14,4"),
++            false,
++        ),
++    ] {
++        let report = check_report(&source, &test, &manifest, &diff)?;
++        let findings = report["findings"].as_array().ok_or("missing findings")?;
++        let selected: Vec<_> = findings
++            .iter()
++            .filter(|finding| finding["probe"]["family"] == "side_effect")
++            .collect();
++        assert_eq!(selected.len(), 1, "{report}");
++        assert_eq!(
++            selected[0]["classification"] == "exposed",
++            exposed,
++            "{report}"
++        );
++    }
++    Ok(())
++}
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index 1a162dc70..c1ec528ca 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -19795,7 +19795,7 @@ top-level `source_subject`:
+ 
+ - `digest_algorithm`: always `"sha256"`.
+ - `corpus` (additive, full Rust inventory only): the analysis-owned
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.166",
++  `{ "scope": "rust_workspace", "cache_schema_version": "1.167",
+   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+   classified inventory cache key, including both production and test Rust
+   files after the existing generated-file exclusions. Repo-exposure producers
+@@ -20580,7 +20580,7 @@ targeted-rerun receipt shape:
+     "recomputation_reasons": ["selected_test_scope_recomputed"],
+     "invalidation_status": "not_available",
+     "input_fingerprint": {
+-      "schema_version": "1.166",
++      "schema_version": "1.167",
+       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+       "workspace_root_hash": "…",
+       "files_content_hash": "…",
+diff --git a/fixtures/unwrap_err_variant_positive/diff.patch b/fixtures/unwrap_err_variant_positive/diff.patch
+index 2f31fa2bd..d18ca46aa 100644
+--- a/fixtures/unwrap_err_variant_positive/diff.patch
++++ b/fixtures/unwrap_err_variant_positive/diff.patch
+@@ -1,8 +1,8 @@
+ diff --git a/src/lib.rs b/src/lib.rs
+-index 0000000..1111111 100644
+ --- a/src/lib.rs
+ +++ b/src/lib.rs
+-@@ -6,6 +6,6 @@ pub enum CalcError {
++@@ -6,7 +6,7 @@ pub enum CalcError {
++ 
+  pub fn compute(x: i32) -> Result<i32, CalcError> {
+      if x < 0 {
+ -        return Err(CalcError::TooLarge);
+diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
+index 74aad33b5..bbbda83d1 100644
+--- a/xtask/src/tests/rust_corpus_projection.rs
++++ b/xtask/src/tests/rust_corpus_projection.rs
+@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.166";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.167";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";

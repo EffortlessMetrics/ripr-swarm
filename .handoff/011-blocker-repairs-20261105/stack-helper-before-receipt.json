@@ -1,0 +1,26 @@
+{
+  "producer": "0402cb776a96d21324b53792dc41356915e3aa31",
+  "rows": [
+    {
+      "case": "independent_helper",
+      "exit": 0,
+      "classes": [
+        "weakly_exposed"
+      ]
+    },
+    {
+      "case": "literal",
+      "exit": 0,
+      "classes": [
+        "exposed"
+      ]
+    },
+    {
+      "case": "self_computed_helper",
+      "exit": 0,
+      "classes": [
+        "weakly_exposed"
+      ]
+    }
+  ]
+}
