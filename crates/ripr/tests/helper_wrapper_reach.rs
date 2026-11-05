@@ -661,13 +661,71 @@ fn generic_helper_behind_a_constant_argument_wrapper_pairs() -> Result<(), Strin
     );
     assert_eq!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
     // The wrapper's exact pin at `capped_score(10)` pairs with `cap ==
-    // value`; propagation through `if .. { cap } else { value }` remains a
-    // separate syntax-first limit, so the class is not asserted here.
+    // value`, and the condition decides which parameter the helper returns
+    // (#6694), so the finding is no longer an abstention.
     assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
     assert!(
         !discriminate_summary(&finding).contains("same_test_pairing_missing"),
         "{finding}"
     );
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+const CAPPED_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn capped<T: PartialOrd + Copy>(value: T, cap: T) -> T {\n-    if value > cap {\n+    if cap < value {\n         cap\n";
+const CAPPED_HELPER: &str = "fn capped<T: PartialOrd + Copy>(value: T, cap: T) -> T {\n    if cap < value {\n        cap\n    } else {\n        value\n    }\n}\n";
+const CAPPED_WRAPPER: &str = "pub fn capped_score(value: u32) -> u32 {\n    capped(value, 10)\n}\n";
+const CAPPED_TESTS: &str = "        assert_eq!(capped_score(11), 10);\n        assert_eq!(capped_score(10), 10);\n        assert_eq!(capped_score(3), 3);\n";
+
+fn capped_source(helper: &str, wrapper: &str, tests: &str) -> String {
+    format!(
+        "{helper}\n{wrapper}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn scores_above_the_cap_are_capped() {{\n{tests}    }}\n}}\n"
+    )
+}
+
+// #6694: the helper's branches return its two parameters, so the condition
+// decides the returned value; every control below keeps the abstention or a
+// weaker class because the pairing, the sink or the oracle is not exact.
+#[test]
+fn parameter_returning_helper_is_exposed_only_through_an_exact_forwarding_wrapper()
+-> Result<(), String> {
+    let exposed = predicate_finding(
+        &capped_source(CAPPED_HELPER, CAPPED_WRAPPER, CAPPED_TESTS),
+        CAPPED_DIFF,
+    )?;
+    assert_eq!(exposed["classification"], "exposed", "{exposed}");
+    // The wrapper transforms the argument by a value ripr cannot read.
+    let transformed = predicate_finding(
+        &capped_source(
+            CAPPED_HELPER,
+            "fn step() -> u32 {\n    1\n}\n\npub fn capped_score(value: u32) -> u32 {\n    capped(value * step(), 10)\n}\n",
+            CAPPED_TESTS,
+        ),
+        CAPPED_DIFF,
+    )?;
+    assert_ne!(transformed["classification"], "exposed", "{transformed}");
+    // A wrapper assertion that is not an exact value.
+    let loose = predicate_finding(
+        &capped_source(
+            CAPPED_HELPER,
+            CAPPED_WRAPPER,
+            "        assert!(capped_score(11) > 5);\n        assert!(capped_score(10) > 5);\n",
+        ),
+        CAPPED_DIFF,
+    )?;
+    assert_ne!(loose["classification"], "exposed", "{loose}");
+    // A second helper of the same name: the wrapper may call either.
+    let two_helpers = predicate_finding(
+        &capped_source(
+            &format!(
+                "{CAPPED_HELPER}\nmod other {{\n    pub fn capped<T: PartialOrd + Copy>(value: T, cap: T) -> T {{\n        if value > cap {{\n            cap\n        }} else {{\n            value\n        }}\n    }}\n}}\n"
+            ),
+            CAPPED_WRAPPER,
+            CAPPED_TESTS,
+        ),
+        CAPPED_DIFF,
+    )?;
+    assert_ne!(two_helpers["classification"], "exposed", "{two_helpers}");
     Ok(())
 }
 

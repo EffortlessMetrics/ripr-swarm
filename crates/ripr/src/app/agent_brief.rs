@@ -506,6 +506,43 @@ impl<'a> AgentBriefChangedScope<'a> {
             || matching_changed_owner(seam, &self.working_set).is_some()
     }
 
+    /// True when some test in `test_files` lives in a file the working set
+    /// names, the only files whose tests can raise a related-test why-now.
+    /// When none does, no seam can match through related-test evidence.
+    pub(crate) fn related_tests_possible<'p>(
+        &self,
+        test_files: impl IntoIterator<Item = &'p Path>,
+    ) -> bool {
+        test_files.into_iter().any(|file| {
+            let file = normalized_path(file);
+            self.working_set.files.contains(&file)
+                || self
+                    .working_set
+                    .changed_lines
+                    .iter()
+                    .any(|(line_file, _)| *line_file == file)
+        })
+    }
+
+    /// False only for a seam that cannot match any non-fallback why-now: not
+    /// on a changed line or in a changed owner, not in a working-set file, and
+    /// (`related_tests_possible` false) with no related-test route. Such a
+    /// seam is discarded once any scoped match exists, so its evidence is
+    /// never needed. The two related-test priorities read evidence, so they
+    /// stay unfiltered unless `related_tests_possible` proves them out.
+    pub(crate) fn can_match_non_fallback(
+        &self,
+        seam: &RepoSeam,
+        related_tests_possible: bool,
+    ) -> bool {
+        related_tests_possible
+            || self.contains(seam)
+            || self
+                .working_set
+                .files
+                .contains(&normalized_path(seam.file()))
+    }
+
     /// True when `classified` holds at least the requested number of
     /// selectable seams at the changed-line or changed-owner priority.
     /// An explicit seam id selects by id, so it never qualifies.
@@ -853,6 +890,8 @@ enum AgentBriefOmission {
     /// A gap-class seam whose evidence stages are opaque or unknown
     /// ([`is_static_limited`]); the class alone would read as a repairable gap.
     EvidenceLimited(SeamGripClass),
+    /// A producer-named panic limit can retain concrete stage states.
+    PanicOutcomeUnresolved(SeamGripClass),
 }
 
 impl AgentBriefOmission {
@@ -868,6 +907,12 @@ impl AgentBriefOmission {
                 && !entry.class.is_static_limitation()
                 && crate::output::evidence_record::is_static_limited(entry)
             {
+                if entry
+                    .evidence
+                    .names_static_limit(crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved)
+                {
+                    return Some(Self::PanicOutcomeUnresolved(entry.class));
+                }
                 return Some(Self::EvidenceLimited(entry.class));
             }
             return Some(Self::NotActionable(entry.class));
@@ -888,6 +933,10 @@ impl AgentBriefOmission {
             ),
             Self::EvidenceLimited(class) => format!(
                 "is {} but its evidence is opaque or unknown at a stage, so it is a static limitation and is not included in agent brief results",
+                class.as_str()
+            ),
+            Self::PanicOutcomeUnresolved(class) => format!(
+                "is {} but ripr cannot tell whether the changed code causes the expected panic, so it is a static limitation and is not included in agent brief results",
                 class.as_str()
             ),
         }
@@ -912,6 +961,10 @@ impl AgentBriefOmission {
             ),
             Self::EvidenceLimited(class) => format!(
                 "{count} more matching {noun} {verb} {} with opaque or unknown evidence (static limitations) and not included in agent brief results",
+                class.as_str()
+            ),
+            Self::PanicOutcomeUnresolved(class) => format!(
+                "{count} more matching {noun} {verb} {} with unresolved expected panic outcomes (static limitations) and not included in agent brief results",
                 class.as_str()
             ),
         }

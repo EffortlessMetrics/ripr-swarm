@@ -856,7 +856,9 @@ fn hidden_finding_reason(finding: &Finding) -> String {
             }
             ExposureClass::StaticUnknown => &finding.ripr.infect.summary,
         });
-    one_line(&super::evidence_lines::plain_default_missing(reason))
+    one_line(&super::evidence_lines::plain_default_missing_for(
+        finding, reason,
+    ))
 }
 
 /// The currentness mix of the omitted set. `unresolved_subject` is the

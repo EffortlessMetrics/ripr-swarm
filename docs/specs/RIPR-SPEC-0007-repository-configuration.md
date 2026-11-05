@@ -479,6 +479,20 @@ Given a selected root with its own rustup toolchain selection,
 when doctor probes cargo or rustc,
 then the probe runs in the selected root rather than the caller's directory.
 
+Given explicit compiler environment values and --profile source-build,
+when doctor evaluates tool_rustc,
+then RUSTC takes precedence over CARGO_BUILD_RUSTC and otherwise PATH rustc;
+and a bare executable name uses PATH while a relative path containing a
+separator resolves from the selected root, with spaces kept literally;
+and a missing, malformed, below-minimum or failing selected compiler fails
+without retrying a lower-priority compiler;
+and an empty or non-Unicode selected value fails with its variable named;
+and the bounded probe, no-auto-install policy and MSRV check remain in force.
+The analysis profile keeps its existing PATH behavior. Cargo configuration
+files, compiler wrappers and successful build qualification are outside this
+prerequisite check. Non-Unicode overrides are conservatively refused, not a
+claim to duplicate Cargo's invalid-Unicode fallback behavior.
+
 Given a git root whose Cargo workspace lives in a subdirectory (for example
 `rust/Cargo.toml` with `[workspace]` and no Cargo.toml at the git top level),
 when ripr doctor runs from that git root,
@@ -679,6 +693,11 @@ Current tests:
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_loaded_config_path`
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_malformed_config_error`
 - `crates/ripr/src/output/doctor.rs::tests::old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_overrides_precede_path_without_shell_splitting`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_failure_never_borrows_a_healthy_fallback`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_empty_override_is_an_error_before_fallback`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_compiler_non_unicode_override_is_disclosed`
+- `crates/ripr/tests/doctor_json_schema.rs::source_build_doctor_json_refuses_missing_explicit_compiler`
 - `crates/ripr/src/output/doctor.rs::tests::rust_root_with_missing_cargo_discloses_verification_limitation`
 - `crates/ripr/src/output/doctor.rs::tests::source_build_missing_toolchain_names_install_fix_and_keeps_other_failures`
 - `crates/ripr/src/output/doctor.rs::tests::doctor_wait_failure_stays_off_the_source_build_install_route`
