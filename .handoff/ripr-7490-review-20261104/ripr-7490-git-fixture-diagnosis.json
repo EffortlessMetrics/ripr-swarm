@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "candidate_tree": "1df07a7c03660049a44bc92da176649cc24c6006",
+  "native_exit": 101,
+  "counts": {
+    "passed": 17964,
+    "failed": 7,
+    "ignored": 1,
+    "measured": 0,
+    "filtered": 0
+  },
+  "harness_duration_seconds": 725.33,
+  "peak_memory_bytes": 4901572608,
+  "min_workspace_free_bytes": 23873789952,
+  "min_temp_free_bytes": 9278603264,
+  "guard_stop": null,
+  "log_sha256": "b66c96f758ba031ee7d7a34d90bde693c66369fba52995cfd93bc925c5e8956a",
+  "failure_names": [
+    "analysis::language::rust::diff_workspace_skip_tests::rust_edit_and_deep_docs_still_walk",
+    "output::doctor::tests::mixed_rust_and_python_root_reports_rust_toolchain_advisory",
+    "output::doctor::tests::nested_workspace_does_not_override_rust_disabled_in_languages",
+    "output::doctor::tests::python_root_skips_rust_toolchain_checks_without_cargo_or_rustc",
+    "output::doctor::tests::rust_listed_beside_typescript_without_rust_markers_skips_rust_toolchain",
+    "output::doctor::tests::rust_root_with_missing_cargo_discloses_verification_limitation",
+    "output::doctor::tests::typescript_enabled_root_skips_rust_toolchain_checks"
+  ],
+  "failure_causes": [
+    "Rust tracking positive: open Rust source tracking probe exited128 without local Git repository.",
+    "Six doctor positives: git_repository Fail; fake empty .git helper is not an actual Git repository and two positives omit even that marker."
+  ],
+  "prior_ancestry_controls": "Allsevenoriginalancestrycontrols passed inside this exactfullCargo run; no skips.",
+  "diagnostic_comparisons": [
+    {
+      "label": "diagnosis_workspace_rust",
+      "binary_build_tree": "1df07a7c03660049a44bc92da176649cc24c6006",
+      "binary_sha256": "12969463af57ae087366affe89c02596051a234ebb8eacb3324bda50dfdc3a82",
+      "native_exit": 0,
+      "counts": [
+        1,
+        0,
+        0
+      ],
+      "log_sha256": "af24f05a35118d93ba044f021816ac5496713d51a73a6e7f38b5716c8b714e0d"
+    },
+    {
+      "label": "diagnosis_workspace_doctor",
+      "binary_build_tree": "1df07a7c03660049a44bc92da176649cc24c6006",
+      "binary_sha256": "12969463af57ae087366affe89c02596051a234ebb8eacb3324bda50dfdc3a82",
+      "native_exit": 0,
+      "counts": [
+        84,
+        0,
+        0
+      ],
+      "log_sha256": "3735574311dbcb25d05f22dbedd016c3ad364cdb4ddfe75ec3b62447fbed211e"
+    },
+    {
+      "label": "diagnosis_clean_prior_rust",
+      "binary_build_tree": "1b5f9252f7e2ee212ea5e39c1cbd7efaa1e3688d",
+      "binary_sha256": "e0ebc1d943e5addb41713239b5f5d93ddbb0660c3d072bda05d1a0989e359ca3",
+      "native_exit": 101,
+      "counts": [
+        0,
+        1,
+        0
+      ],
+      "log_sha256": "d75b0083ce6b36677c8a3a00c6efe29c40022cebc5c33338af2141e9b50a6584"
+    },
+    {
+      "label": "diagnosis_clean_prior_doctor",
+      "binary_build_tree": "1b5f9252f7e2ee212ea5e39c1cbd7efaa1e3688d",
+      "binary_sha256": "e0ebc1d943e5addb41713239b5f5d93ddbb0660c3d072bda05d1a0989e359ca3",
+      "native_exit": 101,
+      "counts": [
+        78,
+        6,
+        0
+      ],
+      "log_sha256": "31ba2d17098cd596b5b72b8ef0c8237c6525e13272cd586f30a4f3fe6e29c1dc"
+    }
+  ],
+  "interpretation": "Inherited fixture dependency confirmed: prior1b5binary reproduces same seven failures in reviewedcleanroot; current1dfbinary passes85subjects inworkspacetemp. No production check is relaxed. Previous fullrun remains native101, not qualified."
+}

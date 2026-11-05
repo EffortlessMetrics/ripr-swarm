@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "input_tree": "1df07a7c03660049a44bc92da176649cc24c6006",
+  "output_tree": "9639eca69ec36fb5ca153d713eb2253f2b15d339",
+  "patch": "ripr-7490-git-fixtures-on-1df.patch",
+  "bytes": 3018,
+  "sha256": "f817ce7e21840b2686ad4d3cfacea73ba1b17d01613be24b8e317134a892508e",
+  "changed_files": [
+    "crates/ripr/src/output/doctor.rs (test module only)",
+    "crates/ripr/src/analysis/language/rust/diff_workspace_skip_tests.rs"
+  ],
+  "change": "Doctor positive fixtures use shared bounded realgitinit and verify insideworktree; two positives now call that setup. Rust discovery/open positive owns realgitinit and stages src/lib.rs. Bare/malformed no-worktree negatives untouched. Production code unchanged from reviewed1df.",
+  "status": "Guarded default-feature doctor build/test in reviewedcleanroot active; newtestsnotyetexecuted. Source-owner review requested on this exacttest-onlydelta.",
+  "apply": "Apply patch with git apply --index to statedinputtree; require git write-tree matchesoutputtree. Later minimal integration artifact will includecompletebase90patch and actualqualificationreceipts."
+}

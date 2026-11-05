@@ -1,0 +1,58 @@
+diff --git a/crates/ripr/src/analysis/language/rust/diff_workspace_skip_tests.rs b/crates/ripr/src/analysis/language/rust/diff_workspace_skip_tests.rs
+index dbcaddfdd..f101a095f 100644
+--- a/crates/ripr/src/analysis/language/rust/diff_workspace_skip_tests.rs
++++ b/crates/ripr/src/analysis/language/rust/diff_workspace_skip_tests.rs
+@@ -238,6 +238,10 @@ fn generated_only_instant_skips_walk_and_still_counts_the_skip() -> Result<(), S
+ #[test]
+ fn rust_edit_and_deep_docs_still_walk() -> Result<(), String> {
+     let fixture = crate_fixture("must-walk")?;
++    // Open-file admission consults the Git index. Own that precondition
++    // rather than borrowing an enclosing checkout from the temporary parent.
++    crate::testing::fixture_git::fixture_git_ok(&fixture.0, &["init", "--quiet"])?;
++    crate::testing::fixture_git::fixture_git_ok(&fixture.0, &["add", "src/lib.rs"])?;
+     let (rust_result, rust_walks) = crate::analysis::workspace::discover_probe::observe(|| {
+         analyze(&fixture.0, AnalysisMode::Instant, &rust_diff())
+     });
+diff --git a/crates/ripr/src/output/doctor.rs b/crates/ripr/src/output/doctor.rs
+index a2bfe9fac..8c933cc05 100644
+--- a/crates/ripr/src/output/doctor.rs
++++ b/crates/ripr/src/output/doctor.rs
+@@ -3378,11 +3378,18 @@ mod tests {
+         Ok(root)
+     }
+ 
+-    /// Bound ancestor Cargo.toml discovery at this fixture. Tests live under
+-    /// the ripr work tree (`target/`), so without a local `.git` the walk
+-    /// would credit `/workspace/Cargo.toml`.
++    /// Establish this fixture's real Git work tree and bound ancestor manifest
++    /// discovery independently of whether its temporary parent is a checkout.
+     fn isolate_as_git_root(root: &Path) -> Result<(), String> {
+-        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))
++        crate::testing::fixture_git::fixture_git_ok(root, &["init", "--quiet"])?;
++        let inside = crate::testing::fixture_git::fixture_git_stdout(
++            root,
++            &["rev-parse", "--is-inside-work-tree"],
++        )?;
++        if inside.trim() != "true" {
++            return Err(format!("doctor fixture is not a Git work tree: {inside}"));
++        }
++        Ok(())
+     }
+ 
+     /// Evaluate a root with a probe where every tool except `git` is
+@@ -4010,6 +4017,7 @@ mod tests {
+                 ("src/lib.rs", "pub fn f() {}\n"),
+             ],
+         )?;
++        isolate_as_git_root(&root)?;
+         let (report, _probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
+         let _ = std::fs::remove_dir_all(&root);
+         if check(&report, "cargo_toml")?.status != DoctorCheckStatus::Pass {
+@@ -4318,6 +4326,7 @@ mod tests {
+                 ("pyproject.toml", "[project]\nname = \"probe\"\n"),
+             ],
+         )?;
++        isolate_as_git_root(&root)?;
+         let (report, _probed) =
+             evaluate_without_rust_toolchain(&root, &[LanguageId::Rust, LanguageId::Python]);
+         let _ = std::fs::remove_dir_all(&root);
