@@ -347,6 +347,27 @@ test-host failure copies a size-capped, redacted log subset into
 the vscode job fails. Success runs do not retain the diagnostics copy, and
 collection cannot change the original test exit status.
 
+The genuine actionable-queue fixture has a separate 30-minute Cargo deadline.
+It reports the producer phase and log directory immediately, then progress every
+15 seconds. For a deliberately slower cold build, set
+`RIPR_TEST_PRODUCER_TIMEOUT_MS` to an integer from `1` through `7200000`
+(two hours); zero and invalid values refuse setup before the producer starts.
+`SIGINT` or `SIGTERM` cancels the producer through the editor's existing process
+containment helper, and setup waits for process/pipe closure before returning.
+Timeout, cancellation, excess output or a native failure cannot supply a queue.
+The bounded original output and cause remain in `producer-failure.log` under
+the printed `actionable-queue-…` directory. Successful setup retains its existing
+exact-test, compiler executable and queue-hash receipt. This producer receipt
+does not establish that the subsequent VS Code host suite passed.
+
+After extension compilation, its process and adapter controls can be run without
+launching the editor:
+
+```bash
+cd editors/vscode
+node node_modules/mocha/bin/mocha.js --ui tdd out/test/suite/fixture_producer.test.js
+```
+
 ## Flaky tests
 
 A flaky test is a bug in the test, the product, or the harness, so the fix is

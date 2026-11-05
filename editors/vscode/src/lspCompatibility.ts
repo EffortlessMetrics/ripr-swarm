@@ -630,7 +630,8 @@ export function terminateProbeProcessTree(child: cp.ChildProcess): void {
 export function spawnProbeProcess(
   command: string,
   args: readonly string[],
-  useShell: boolean
+  useShell: boolean,
+  context: Pick<cp.SpawnOptionsWithoutStdio, 'cwd' | 'env'> = {}
 ): cp.ChildProcessWithoutNullStreams {
   if (process.platform === 'win32') {
     const encodedWrapper = Buffer.from(WINDOWS_PROBE_JOB_WRAPPER, 'utf16le').toString('base64');
@@ -650,11 +651,12 @@ export function spawnProbeProcess(
         encodedWrapper
       ],
       {
+        cwd: context.cwd,
         shell: false,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
-          ...process.env,
+          ...(context.env ?? process.env),
           RIPR_PROBE_COMMAND: command,
           RIPR_PROBE_ARGUMENTS: args.join(' '),
           RIPR_PROBE_EXIT_NONCE: exitNonce,
@@ -680,6 +682,7 @@ export function spawnProbeProcess(
     return child;
   }
   return cp.spawn(command, args, {
+    ...context,
     shell: useShell,
     detached: true,
     stdio: ['pipe', 'pipe', 'pipe']

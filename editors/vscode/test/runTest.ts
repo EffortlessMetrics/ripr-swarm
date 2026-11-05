@@ -229,7 +229,7 @@ async function main() {
     process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = clipboardCapturePath;
     if (workspaceTrustMode === 'trusted' && process.env.RIPR_TEST_MULTIROOT_ONLY !== '1'
       && !process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT) {
-      process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = stageGenuineActionableQueue(
+      process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = await stageGenuineActionableQueue(
         path.resolve(__dirname, '../../../../'), path.join(artifactRoot, `actionable-queue-${runId}`)
       );
     }
