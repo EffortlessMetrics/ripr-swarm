@@ -66,8 +66,13 @@ other keys are unaffected):
 
 - `recall_of_missed`: runtime-missed mutants across every disposition, counted
   by ripr grip class (`ungripped`, `activation_unknown`, `strongly_gripped`,
-  `opaque`, `weakly_gripped`, `no_joined_seam`) and the share flagged
-  `ungripped`.
+  `opaque`, `weakly_gripped`, `no_joined_seam`) and two labelled shares: the
+  strict `ungripped_share_of_missed`, and `flagged_or_unknown_share_of_missed`
+  (ungripped, weakly_gripped, activation_unknown and opaque, i.e. a gap or an
+  honest unknown rather than a confirmed gap), with `not_flagged_missed`
+  (strongly_gripped and no_joined_seam) for the remainder. `by_language`
+  splits the same figures: Rust is established; Python and TypeScript are
+  `not_established` until a real-mutant corpus exists, and carry no numbers.
 - `seam_coverage`: mutants total, caught and missed counts, `canonical_precise`
   and no-containing-seam counts, and their shares of all recorded mutants.
 

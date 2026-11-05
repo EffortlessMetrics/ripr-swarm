@@ -108,6 +108,23 @@ Inspect the selected package instead with
 For workflow-policy, agent-skill, and executable-file edits, use the existing
 [`cargo policy` frontdoor](../CONTRIBUTING.md#local-setup) for focused feedback.
 
+For local checks selected by your committed changes, inspect the fast route's
+scope and then run it from the repository root:
+
+```bash
+cargo xtask help check-fast
+cargo xtask check-fast
+```
+
+`check-fast` selects checks from the committed `origin/main...HEAD` diff;
+unstaged, staged, and untracked changes do not enter that selector, although
+the selected gates inspect the live worktree. It records selector identity and
+ran/skipped gates in `target/ripr/reports/check-fast.md` and
+`target/ripr/reports/check-fast-selector.md`. Local ref freshness is not checked;
+fetch `origin main` and retry if the recorded basis is unexpected. The first
+invocation builds `xtask`, and Rust changes select workspace/all-target Clippy.
+This focused route does not replace `precommit` or required hosted CI.
+
 ### Bounded module-motion controls
 
 The #4680 controls implement the

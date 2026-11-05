@@ -10516,7 +10516,7 @@
         },
         {
           "type": "expected_class",
-          "class": "reachable_unrevealed"
+          "class": "no_static_path"
         },
         {
           "type": "maximum_class",
