@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "input_tree": "3ae02947cca2e2e9aaa8fec47936463dcc63dc4a",
+  "output_tree": "1b5f9252f7e2ee212ea5e39c1cbd7efaa1e3688d",
+  "patch": "ripr-7490-final-1b5f9252.patch",
+  "bytes": 36416,
+  "sha256": "cd88ce82499c5172f374d5ba3a4fa30191ee90ac47f8cbfc112835cfc2ffaaa3",
+  "status": "Unqualified candidate; guarded default-feature framed-test compilation active. The prior tree428 production inventory returned StageState::Yes; its assertion failed on JSON spelling Yes versus yes. This snapshot compares the enum directly. Prior tree428 reload retry, hover, cache30, export8, and existing retry/cancel controls passed. Both LSP producers ran successfully with explicit opt-in; semantic JSON diff exactly diagnostics[0].data.evidence.discriminate yes to weak, code-action JSON unchanged. Default comparison and full rerun remain pending. Seven marker-free ancestry tests remain environment-blocked.",
+  "apply": "Reconstruct frozen input tree3ae from the original handoff, then git apply --index this alternate patch; require git write-tree equals output_tree. Do not stack alternate repair patches."
+}
