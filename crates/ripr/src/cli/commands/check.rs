@@ -2790,11 +2790,8 @@ mod tests {
             // #13138: the real incomplete zero-finding check result must not
             // become done= when the compact Agent renderer projects it.
             assert!(!output.no_scope_provided);
-            let text = output::render::render_check_with_config(
-                &output,
-                &OutputFormat::Agent,
-                &config,
-            )?;
+            let text =
+                output::render::render_check_with_config(&output, &OutputFormat::Agent, &config)?;
             assert!(
                 text.contains("analysis=incomplete|outcome=partial_with_limitations\n"),
                 "{text}"
