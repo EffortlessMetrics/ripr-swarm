@@ -12,7 +12,7 @@
 //!   whole debug text of the owner's result;
 //! - **insta**: `assert_json_snapshot!(value)` compares a snapshot kept in a
 //!   committed file ripr does not read, and no redaction names the changed
-//!   field;
+//!   field, or active settings/redactions are unread;
 //! - **fixture receiver**: the changed tail is a closure over a field of
 //!   `self`, and the test pins `helper().owner(..)` or `let x = helper();
 //!   x.owner(..)` to a literal, so the closure runs over data ripr does not
@@ -56,6 +56,7 @@ enum Idiom {
     MockClosure,
     ExpectDebug,
     InstaSnapshot,
+    InstaSettings,
     FixtureReceiver,
     RecordingDouble,
     LocalExecutor,
@@ -75,6 +76,9 @@ impl Idiom {
             }
             Idiom::InstaSnapshot => {
                 "compares the owner's result with an insta snapshot kept outside the source, and no redaction names the changed field"
+            }
+            Idiom::InstaSettings => {
+                "compares the owner's result with an insta snapshot under settings or redactions that ripr does not read"
             }
             Idiom::FixtureReceiver => {
                 "pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over"
@@ -151,8 +155,10 @@ pub(in crate::analysis) fn withhold_framework_oracle_gap(
                 Idiom::MockClosure
             } else if direct && expect_debug_literal(test, &owner.name) {
                 Idiom::ExpectDebug
-            } else if direct && insta_leaves_field_unredacted(test, changed_text, &owner.name) {
-                Idiom::InstaSnapshot
+            } else if direct
+                && let Some(idiom) = insta_field_snapshot_limit(test, changed_text, &owner.name)
+            {
+                idiom
             } else if strong
                 && direct
                 && family == ProbeFamily::ReturnValue
@@ -726,20 +732,17 @@ fn expect_debug_literal(test: &TestFact, owner: &str) -> bool {
         .starts_with(|ch: char| ch.is_alphanumeric() || matches!(ch, '[' | '(' | '{' | '-'))
 }
 
-/// An insta snapshot macro with no inline `@` literal, on a changed struct
-/// field initializer that no redaction names. Any other changed line keeps
-/// the gap.
-fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &str) -> bool {
+/// An owner-bound field snapshot with unread settings/selectors, or with an
+/// unredacted field whose external expected bytes are unread. Literal selectors
+/// keep the redacted-field gap only when settings are readable. Unknown
+/// configuration also withholds beside inline expected text (#6642, #13035).
+fn insta_field_snapshot_limit(test: &TestFact, changed_text: &str, owner: &str) -> Option<Idiom> {
     let raw: &str = &test.body;
     let code = masked(raw);
-    // Redactions and filters set outside the macro are not read.
-    if ["add_redaction", "with_settings", "Settings"]
-        .iter()
-        .any(|name| code.contains(name))
-    {
-        return false;
-    }
-    let mut found = false;
+    // Only a struct field the snapshot serializes: other changed lines keep
+    // their existing disposition. An unread map alone is not a witness.
+    let field = field_name(changed_text)?;
+    let mut found = None;
     for macro_name in INSTA_MACROS {
         for (at, _) in code.match_indices(macro_name) {
             if !code[..at].chars().next_back().is_none_or(boundary) {
@@ -749,9 +752,11 @@ fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &st
                 continue;
             };
             let arguments = &code[from..to];
-            if arguments.contains('@') {
-                continue;
-            }
+            // Preserve accepted Settings admission: only executable whole names
+            // before this assertion can affect its comparison.
+            let unread_settings = ["add_redaction", "with_settings", "Settings"]
+                .iter()
+                .any(|name| contains_name(&code[..at], name));
             // The snapshotted value follows an optional literal name; the
             // masked text hides a literal, so the original shows it.
             let parts = split_arguments(arguments);
@@ -770,19 +775,29 @@ fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &st
             if !derives_from_owner(&code, at, &arguments[start..end], owner) {
                 continue;
             }
-            // Only a struct field the snapshot serializes: a changed
-            // predicate or arm shapes the whole rendering, which the
-            // snapshot weakly checks as before.
-            let Some(field) = field_name(changed_text) else {
-                continue;
+            if unread_settings {
+                return Some(Idiom::InstaSettings);
+            }
+            // A redaction map that names the field replaces it in the
+            // snapshot, so the gap stays; an unredacted sibling beside a map,
+            // or no map at all, is serialized into a committed file ripr does
+            // not read, so it is withheld (#6642).
+            let Some(selectors) = redaction_selectors(&raw[from..to]) else {
+                // Not reading a selector establishes neither that the field
+                // survives nor that it is redacted. Preserve that uncertainty
+                // even when expected bytes are inline in the source.
+                return Some(Idiom::InstaSettings);
             };
-            if redaction_selectors(&raw[from..to])
+            if arguments.contains('@') {
+                continue;
+            }
+            if selectors
                 .iter()
                 .any(|selector| selector.split(boundary).any(|s| s == field))
             {
                 continue;
             }
-            found = true;
+            found = Some(Idiom::InstaSnapshot);
         }
     }
     found
@@ -819,16 +834,93 @@ fn macro_arguments(rest: &str) -> Option<&str> {
     None
 }
 
-/// String literals in the arguments that key a redaction (`".id" => ..`).
-fn redaction_selectors(arguments: &str) -> Vec<&str> {
-    arguments
-        .split('"')
-        .skip(1)
-        .step_by(2)
-        .zip(arguments.split('"').skip(2).step_by(2))
-        .filter(|(_, after)| after.trim_start().starts_with("=>"))
-        .map(|(literal, _)| literal)
+/// Top-level braced argument of an insta macro call, if any.
+fn insta_redaction_map(arguments: &str) -> Option<&str> {
+    let code = masked(arguments);
+    split_arguments(&code).into_iter().find_map(|(start, end)| {
+        let part = &code[start..end];
+        let trimmed = part.trim_start();
+        let trimmed = trimmed
+            .strip_prefix("match")
+            .and_then(|rest| rest.trim_start().strip_prefix(".."))
+            .map_or(trimmed, str::trim_start);
+        trimmed
+            .starts_with('{')
+            .then(|| &arguments[start + part.len() - trimmed.len()..end])
+    })
+}
+
+/// `Some([])` means no map; `None` means a present map is unreadable.
+fn redaction_selectors(arguments: &str) -> Option<Vec<&str>> {
+    let Some(map) = insta_redaction_map(arguments) else {
+        return Some(Vec::new());
+    };
+    redaction_map_selectors(map)
+}
+
+/// Selector path literals inside a braced insta redaction map.
+fn redaction_map_selectors(map: &str) -> Option<Vec<&str>> {
+    use ra_ap_syntax::{AstNode, ast};
+    // Insta's literal-key => expression entries have the same syntax as match
+    // arms. Reuse the Rust parser so expression commas (including turbofish
+    // arguments and closure parameters) and comment trivia retain their roles.
+    const PREFIX: &str = "fn redactions() { match () ";
+    let source = format!("{PREFIX}{map} }}");
+    let parse = crate::analysis::syntax::parse_clean_source_file(&source)?;
+    let arms = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::MatchArmList::cast)?;
+    arms.arms()
+        .map(|arm| {
+            let pattern = arm.pat()?;
+            if !matches!(pattern, ast::Pat::LiteralPat(_)) {
+                return None;
+            }
+            let start =
+                usize::from(pattern.syntax().text_range().start()).checked_sub(PREFIX.len())?;
+            string_literal_in_redaction_map(map, start).map(|(path, _)| path)
+        })
         .collect()
+}
+
+fn string_literal_in_redaction_map(map: &str, start: usize) -> Option<(&str, usize)> {
+    let tail = &map[start..];
+    if tail.starts_with('"') {
+        return normal_string_literal(tail).map(|(content, end)| (content, start + end));
+    }
+    if tail.starts_with('r') {
+        return raw_string_literal(tail).map(|(content, end)| (content, start + end));
+    }
+    None
+}
+
+fn normal_string_literal(text: &str) -> Option<(&str, usize)> {
+    let mut escaped = false;
+    for (offset, ch) in text.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '"' => return Some((&text[1..offset], offset + 1)),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn raw_string_literal(text: &str) -> Option<(&str, usize)> {
+    let rest = text.strip_prefix('r')?;
+    let hash_count = rest.chars().take_while(|&ch| ch == '#').count();
+    let after_hashes = &rest[hash_count..];
+    let open = after_hashes.strip_prefix('"')?;
+    let close = format!("\"{}", "#".repeat(hash_count));
+    let content_end = open.find(&close)?;
+    let end = 1 + hash_count + 1 + content_end + close.len();
+    Some((&open[..content_end], end))
 }
 
 /// `name` of a struct-literal field initializer line (`name: expr,`).
@@ -855,9 +947,124 @@ mod tests {
             redaction_selectors(
                 "record, { \".id\" => \"[id]\", \".meta.at\" => \"[t]\", \"[].n\" => 1 }"
             ),
-            vec![".id", ".meta.at", "[].n"]
+            Some(vec![".id", ".meta.at", "[].n"])
         );
-        assert!(redaction_selectors("record").is_empty());
+        assert!(redaction_selectors("record") == Some(vec![]));
+    }
+
+    #[test]
+    fn redaction_selectors_ignore_match_arms_in_the_snapshotted_value() {
+        assert!(
+            redaction_selectors("make_record(match kind { \"small\" => 2, _ => 3 })")
+                == Some(vec![])
+        );
+        assert!(
+            insta_redaction_map("make_record(match kind { \"small\" => 2, _ => 3 })").is_none()
+        );
+    }
+
+    #[test]
+    fn redaction_selectors_read_raw_string_map_keys() {
+        assert_eq!(
+            redaction_selectors("record, { r#\".id\"# => \"[id]\" }"),
+            Some(vec![".id"])
+        );
+    }
+
+    #[test]
+    fn redaction_selectors_handle_unicode_whitespace_and_expression_values() {
+        assert_eq!(
+            redaction_selectors(
+                "record, {\u{0085}\".id\" => \"[id]\",\u{200e}r#\".items\"# => 1 }"
+            ),
+            Some(vec![".id", ".items"])
+        );
+        assert_eq!(
+            redaction_selectors(
+                "record, { /* before key */ \".id\" /* before arrow */ => /* value */ 0, \".items\" => 1 }"
+            ),
+            Some(vec![".id", ".items"])
+        );
+        assert_eq!(
+            redaction_selectors("record, match /* trivia */ .. { \".id\" => 0 }"),
+            Some(vec![".id"])
+        );
+        assert_eq!(redaction_selectors("record, { SELECTOR => 0 }"), None);
+        assert_eq!(redaction_selectors("record, { \".id\" => }"), None);
+        assert_eq!(redaction_selectors("record"), Some(vec![]));
+        for value in [
+            "insta::dynamic_redaction(|value, _| value)",
+            "insta::rounded_redaction(2)",
+            "choose::<u8, u16>()",
+            "|left, right| left + right",
+            "-1",
+            "1.5",
+            "réponse",
+            "[1, 2]",
+            "{ let text = r#\"}, \".fake\" =>\"#; text }",
+            "(/* comma, brace } */ 1, 2)",
+        ] {
+            let arguments = format!("record, {{ \".first\" => {value}, \".id\" => \"[id]\" }}");
+            assert_eq!(
+                redaction_selectors(&arguments),
+                Some(vec![".first", ".id"]),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn insta_withholds_when_operand_contains_match_but_no_redaction_map() -> Result<(), String> {
+        let owner = "make_record";
+        let items_change = "        items: items.len(),";
+        let match_operand = "#[cfg(test)]
+mod tests {
+    #[test]
+    fn snap() {
+        insta::assert_json_snapshot!(make_record(match kind { \"small\" => 2, _ => 3 }));
+    }
+}
+";
+        assert!(
+            insta_field_snapshot_limit(&test_named(match_operand, "snap")?, items_change, owner)
+                .is_some(),
+            "match arms in the operand must not masquerade as a redaction map"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn insta_withholds_an_unredacted_field_and_keeps_the_gap_for_a_redacted_one()
+    -> Result<(), String> {
+        let owner = "make_record";
+        let id_change = "        id: next_id(),";
+        let items_change = "        items: items.len(),";
+        let snapshot = |args: &str| {
+            format!(
+                "#[cfg(test)]\nmod tests {{\n    #[test]\n    fn snap() {{\n        let record = make_record(2);\n        insta::assert_json_snapshot!({args});\n    }}\n}}\n"
+            )
+        };
+        let ordinary = snapshot("record, { \".id\" => \"[id]\" }");
+        let raw_key = snapshot("record, { r#\".id\"# => \"[id]\" }");
+        let whole_object = snapshot("record");
+        // The field the map names is replaced in the snapshot: the gap stays.
+        for source in [&ordinary, &raw_key] {
+            assert!(
+                insta_field_snapshot_limit(&test_named(source, "snap")?, id_change, owner)
+                    .is_none(),
+                "a redacted field keeps its gap"
+            );
+        }
+        // An unredacted sibling beside a map, and a whole-object snapshot, are
+        // serialized into a committed file ripr does not read: withheld.
+        for source in [&ordinary, &raw_key, &whole_object] {
+            assert!(
+                insta_field_snapshot_limit(&test_named(source, "snap")?, items_change, owner)
+                    .is_some(),
+                "an unredacted field is withheld"
+            );
+        }
+        Ok(())
     }
 
     #[test]

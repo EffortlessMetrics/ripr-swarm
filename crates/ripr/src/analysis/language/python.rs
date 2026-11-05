@@ -376,9 +376,15 @@ mod guard_activation;
 mod guard_atoms;
 mod guard_credit;
 mod helper_inline;
+mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
 mod loop_walk;
+// The may-reach graph is built and measured by tests and the corpus report
+// only; no verdict reads it yet (#11425), so it is not part of the shipped
+// build.
+#[cfg(test)]
+mod may_reach;
 mod message_pin;
 mod module_value;
 mod test_local_literal;
@@ -394,6 +400,9 @@ mod discriminators;
 mod effect_alignment;
 #[cfg(test)]
 mod effect_order_tests;
+mod exception_variant;
+#[cfg(test)]
+mod exception_variant_tests;
 mod hypothesis;
 mod module_constants;
 mod nested_result;
@@ -1853,14 +1862,17 @@ impl PythonAdapter {
         // Bytecode CPython never checks against its source, or an import path
         // a test configuration adds, can run code other than what is read
         // here (#9226). Read once, only when a file changed.
-        let shadowed_import = !python_changed_files.is_empty()
-            && (module_value::unchecked_bytecode(
+        let unchecked_bytecode = !python_changed_files.is_empty()
+            && module_value::unchecked_bytecode(
                 &options.root,
                 workspace_read.sources.keys().map(|file| file.as_path()),
-            ) || module_value::import_path_configured(
+            );
+        let configured_import_path = !python_changed_files.is_empty()
+            && module_value::import_path_configured(
                 &options.root,
                 workspace_read.sources.keys().map(|file| file.as_path()),
-            ));
+            );
+        let shadowed_import = unchecked_bytecode || configured_import_path;
         let extension_names = if python_changed_files.is_empty() {
             Some(BTreeSet::new())
         } else {
@@ -1876,21 +1888,59 @@ impl PythonAdapter {
             .keys()
             .flat_map(|file| file.ancestors().skip(1))
             .collect();
-        let foreign_of = |file: &Path| {
-            let mut foreign = foreign_index.excluding(file);
-            if shadowed_import
+        let import_path_admission = if !workspace_incomplete && !unchecked_bytecode {
+            import_identity::import_path_admission(
+                &options.root,
+                &import_roots,
+                configured_import_path,
+            )
+        } else {
+            import_identity::ImportPathAdmission::Refused
+        };
+        // A canonical `import pytest` can load a local module or package.
+        // The exception-class reading needs the real framework's semantics;
+        // keep this per-run fact separate from other module-value credit.
+        let pytest_import_unshadowed = import_path_admission.admitted()
+            && exception_variant::pytest_import_unshadowed(
+                &options.root,
+                &import_roots,
+                extension_names.as_ref(),
+            );
+        let import_shadow_for = |file: &Path| {
+            shadowed_import
                 || module_value::extension_beside(&options.root, file)
                 || module_value::compiled_package_shadow(&options.root, &import_roots, file)
                 || extension_names
                     .as_ref()
                     .is_none_or(|names| module_value::shadowed_by_extension(names, file))
-            {
+        };
+        let foreign_of = |file: &Path| {
+            let mut foreign = foreign_index.excluding(file);
+            if import_shadow_for(file) {
                 foreign.mark_compiled_shadow();
             }
             foreign
         };
+        let mut unshadowed_modules = BTreeSet::new();
         for changed in &python_changed_files {
-            let mut foreign = foreign_of(&changed.path);
+            let mut foreign = foreign_index.excluding(&changed.path);
+            let module_import_unshadowed = import_identity::module_import_unshadowed(
+                &options.root,
+                &changed.path,
+                &workspace_read.sources,
+                &import_roots,
+                extension_names.as_ref(),
+                import_path_admission,
+                &foreign,
+            );
+            if module_import_unshadowed {
+                unshadowed_modules.insert(changed.path.clone());
+            }
+            // Keep the legacy refusal on the shared owner. Only the two
+            // bounded readings receive the separate positive import fact.
+            if import_shadow_for(&changed.path) {
+                foreign.mark_compiled_shadow();
+            }
             // A sole top-level line replacement may be a module constant a
             // sibling module reads through a relative import of one of its
             // readers (#9619); each such module gets its own write view.
@@ -2159,6 +2209,8 @@ impl PythonAdapter {
                         (changed.added_lines.as_slice(), changed.removed_lines.as_slice()),
                         ([added_line], [removed_line]) if added_line.line == removed_line.line
                     ),
+                    module_import_unshadowed: unshadowed_modules.contains(&changed.path),
+                    pytest_import_unshadowed,
                 };
                 if let Some(mut finding) = classify_change_with_value_origins(
                     &changed.path,
@@ -2444,6 +2496,8 @@ mod forwarder_tests;
 #[cfg(test)]
 mod imported_call_operator_tests;
 #[cfg(test)]
+mod may_reach_tests;
+#[cfg(test)]
 mod module_value_tests;
 #[cfg(test)]
 mod new_declaration_tests;
@@ -2471,6 +2525,8 @@ mod tests;
 
 #[cfg(test)]
 mod loop_walk_tests;
+#[cfg(test)]
+mod unemitted_stage_unknown_tests;
 #[cfg(test)]
 mod verdict_corpus_tests;
 

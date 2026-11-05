@@ -14,8 +14,6 @@ mod test_session;
 pub(crate) use command_diagnostic::{
     CommandDiagnostic, DISCLOSURE as COMMAND_DIAGNOSTIC_DISCLOSURE,
 };
-#[cfg(all(test, target_os = "linux"))]
-pub(crate) use test_session::enter_test_session;
 
 /// Grace period for draining stdout/stderr pipes after a process-group kill.
 ///
@@ -2100,7 +2098,9 @@ mod tests {
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
     use std::thread;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
+    #[cfg(unix)]
+    use std::time::Instant;
 
     #[cfg(unix)]
     use std::os::unix::process::CommandExt;

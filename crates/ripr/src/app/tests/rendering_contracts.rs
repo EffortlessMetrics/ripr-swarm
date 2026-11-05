@@ -60,6 +60,43 @@ fn repo_format_render_reports_stage_events_to_the_progress_sink() -> Result<(), 
     Ok(())
 }
 
+/// #13103: `json-compact` is the same document as `json`, minified. The
+/// parsed values must be identical and the `json` bytes must not move.
+#[test]
+fn json_compact_parses_identically_to_json_and_is_smaller() -> Result<(), String> {
+    let output = check_output_with(vec![sample_finding("src/lib.rs", 1)]);
+    let config = RiprConfig::default();
+    let json = render_check_with_config(&output, &OutputFormat::Json, &config)?;
+    let compact = render_check_with_config(&output, &OutputFormat::JsonCompact, &config)?;
+    let json_value: serde_json::Value =
+        serde_json::from_str(&json).map_err(|error| error.to_string())?;
+    let compact_value: serde_json::Value =
+        serde_json::from_str(&compact).map_err(|error| error.to_string())?;
+    assert_eq!(json_value, compact_value);
+    assert!(compact.len() < json.len(), "compact {compact}");
+    assert!(!compact.contains("\n  "), "compact {compact}");
+    Ok(())
+}
+
+/// #13195: `sarif-compact` is the same SARIF document as `sarif`, minified,
+/// through the public render path; the `sarif` bytes must not move.
+#[test]
+fn sarif_compact_parses_identically_to_sarif_and_is_smaller() -> Result<(), String> {
+    let output = check_output_with(vec![sample_finding("src/lib.rs", 1)]);
+    let config = RiprConfig::default();
+    let sarif = render_check_with_config(&output, &OutputFormat::Sarif, &config)?;
+    let compact = render_check_with_config(&output, &OutputFormat::SarifCompact, &config)?;
+    let sarif_value: serde_json::Value =
+        serde_json::from_str(&sarif).map_err(|error| error.to_string())?;
+    let compact_value: serde_json::Value =
+        serde_json::from_str(&compact).map_err(|error| error.to_string())?;
+    assert_eq!(sarif_value, compact_value);
+    assert_eq!(compact_value["version"], "2.1.0");
+    assert!(compact.len() < sarif.len(), "compact {compact}");
+    assert!(!compact.contains("\n  "), "compact {compact}");
+    Ok(())
+}
+
 #[test]
 fn summary_default_is_empty() {
     let summary = Summary::default();

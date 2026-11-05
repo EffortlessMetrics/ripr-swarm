@@ -251,8 +251,26 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     crate::atomic_file::ensure_default_output_contained(&options.root)?;
 
     let config = load_for_root(&options.root)?;
-    let (classified, _) =
-        analysis::inventory_classified_seams_at_with_config(&options.root, &config)?;
+    // #13055: the whole-workspace walk can run for minutes on a very large
+    // source file. Disclose it with the same stderr stage lines and heartbeats
+    // `ripr check` and `ripr explain` project, so a long run does not read as
+    // a hang. `--quiet` / `RIPR_QUIET` silence it; stdout and the report files
+    // are unchanged. The command writes files, so its output is not a machine
+    // stream and only the quiet switches key the silencing.
+    let progress = (!crate::cli::progress::progress_silenced(options.quiet, false)).then(|| {
+        crate::cli::progress::CliProgressSink::for_stderr(
+            std::io::IsTerminal::is_terminal(&std::io::stderr()),
+            crate::cli::progress::ProgressPolicy::STANDARD,
+        )
+    });
+    let progress_sink = progress
+        .as_ref()
+        .map(|sink| sink as &dyn app::AnalysisProgressSink);
+    let (classified, _) = app::repo_inventory_with_progress(
+        progress_sink,
+        || analysis::inventory_classified_seams_at_with_config(&options.root, &config),
+        Ok,
+    )?;
     let calibration = match &options.mutation_calibration {
         Some(path) => {
             let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
@@ -279,6 +297,13 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    println!(
+        "{}",
+        output::evidence_health::render_evidence_health_headline(&report)
+    );
+    if let Some(progress) = &progress {
+        progress.commit_success();
+    }
     Ok(())
 }
 
@@ -1040,10 +1065,12 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
     let mut out = PathBuf::from("target/ripr/reports/evidence-health.json");
     let mut out_md = PathBuf::from("target/ripr/reports/evidence-health.md");
     let mut mutation_calibration: Option<PathBuf> = None;
+    let mut quiet = false;
 
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
+            "--quiet" => quiet = true,
             "--root" => {
                 i += 1;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
@@ -1074,6 +1101,7 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
         out,
         out_md,
         mutation_calibration,
+        quiet,
     })
 }
 
@@ -2851,7 +2879,12 @@ mod tests {
                 out: PathBuf::from("target/ripr/reports/evidence-health.json"),
                 out_md: PathBuf::from("target/ripr/reports/evidence-health.md"),
                 mutation_calibration: None,
+                quiet: false,
             })
+        );
+        assert_eq!(
+            parse_evidence_health_options(&args(&["--quiet"])).map(|options| options.quiet),
+            Ok(true)
         );
         assert_eq!(
             parse_evidence_health_options(&args(&[
@@ -2871,6 +2904,7 @@ mod tests {
                 mutation_calibration: Some(PathBuf::from(
                     "target/ripr/reports/mutation-calibration.json"
                 )),
+                quiet: false,
             })
         );
     }

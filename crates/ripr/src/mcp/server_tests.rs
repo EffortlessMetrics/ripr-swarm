@@ -1488,6 +1488,112 @@ fn unknown_arguments_are_refused_by_name_and_allowed_ones_pass() -> Result<(), S
         .ok_or_else(|| format!("unknown-argument refusal lost structured data: {error:?}"))?;
     assert_eq!(data["argument"], serde_json::json!("verbose"));
     assert_eq!(data["allowed"], serde_json::json!(allowed));
+    assert!(data.get("argument_truncated").is_none());
+    assert!(data.get("argument_bytes").is_none());
+    Ok(())
+}
+
+/// #13154: diagnostic previews must not turn an admitted caller error into
+/// a generic output-limit failure. Validation still uses the complete key.
+#[test]
+fn unknown_argument_names_keep_bounded_explicit_diagnostics() -> Result<(), String> {
+    let allowed = ["base", "source"];
+    for (name, preview, truncated) in [
+        ("x".repeat(128), "x".repeat(128), false),
+        ("x".repeat(129), "x".repeat(128), true),
+        ("雪".repeat(128), "雪".repeat(128), false),
+        ("雪".repeat(129), "雪".repeat(128), true),
+        (
+            format!("base{}", "x".repeat(128)),
+            format!("base{}", "x".repeat(124)),
+            true,
+        ),
+        ("x".repeat(150_000), "x".repeat(128), true),
+        ("\u{1}".repeat(40_000), "\u{1}".repeat(128), true),
+    ] {
+        let arguments = argument_map(serde_json::json!({ name.clone(): true }));
+        let error = reject_unknown_arguments(&arguments, &allowed)
+            .err()
+            .ok_or("the complete unknown argument name must be refused")?;
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        let failure = invalid_argument_failure(&error);
+        let envelope = protocol::tool_failure(&failure, workspace::REFRESH_SCHEMA_VERSION)?;
+        let bytes = serde_json::to_vec(&envelope)
+            .map_err(|error| error.to_string())?
+            .len();
+        assert!(bytes <= 8 * 1024, "typed diagnostic grew to {bytes} bytes");
+        assert_eq!(envelope["isError"], serde_json::json!(true));
+        assert_eq!(failure.code, workspace::CODE_INVALID_ARGUMENT);
+        assert_eq!(failure.data["argument"], serde_json::json!(preview));
+        assert_eq!(failure.data["allowed"], serde_json::json!(allowed));
+        if truncated {
+            assert_eq!(failure.data["argument_truncated"], serde_json::json!(true));
+            assert_eq!(
+                failure.data["argument_bytes"],
+                serde_json::json!(name.len())
+            );
+            assert!(failure.detail.contains("truncated"), "{}", failure.detail);
+        } else {
+            assert!(failure.data.get("argument_truncated").is_none());
+            assert!(failure.data.get("argument_bytes").is_none());
+        }
+        // Allowed names remain visible even when Debug escaping expands
+        // the preview beyond the shared human-detail character bound.
+        assert!(failure.detail.contains("base"), "{}", failure.detail);
+        assert!(failure.detail.contains("source"), "{}", failure.detail);
+        assert!(
+            failure.recovery.contains("inputSchema"),
+            "{}",
+            failure.recovery
+        );
+    }
+    // A preview equal to a permitted name is still an unknown full key.
+    // This rejects a wrong implementation that validates after clipping.
+    let allowed_name = "x".repeat(128);
+    let arguments = argument_map(serde_json::json!({ format!("{allowed_name}x"): true }));
+    assert!(reject_unknown_arguments(&arguments, &[allowed_name.as_str()]).is_err());
+    Ok(())
+}
+
+/// #13220: preserve the protocol category and ordinary message while making
+/// a long method name a disclosed preview, never a response-sized echo.
+#[test]
+fn unknown_method_names_keep_bounded_explicit_diagnostics() -> Result<(), String> {
+    for (name, preview, truncated) in [
+        ("nope/never".to_string(), "nope/never".to_string(), false),
+        ("x".repeat(128), "x".repeat(128), false),
+        ("x".repeat(129), "x".repeat(128), true),
+        ("雪".repeat(128), "雪".repeat(128), false),
+        ("雪".repeat(129), "雪".repeat(128), true),
+        ("x".repeat(150_000), "x".repeat(128), true),
+        ("\u{1}".repeat(40_000), "\u{1}".repeat(128), true),
+        ("😀".repeat(40_000), "😀".repeat(128), true),
+    ] {
+        let error = unknown_method_error(&name);
+        assert_eq!(error.code, rmcp::model::ErrorCode::METHOD_NOT_FOUND);
+        let expected_message = if truncated {
+            format!("Method not found: {preview} (name truncated)")
+        } else {
+            format!("Method not found: {preview}")
+        };
+        assert_eq!(error.message.as_ref(), expected_message.as_str());
+        if truncated {
+            assert_eq!(
+                error.data,
+                Some(serde_json::json!({
+                    "method": preview,
+                    "method_truncated": true,
+                    "method_bytes": name.len(),
+                }))
+            );
+        } else {
+            assert!(error.data.is_none());
+        }
+        let bytes = serde_json::to_vec(&error)
+            .map_err(|error| error.to_string())?
+            .len();
+        assert!(bytes <= 4 * 1024, "method diagnostic grew to {bytes} bytes");
+    }
     Ok(())
 }
 
@@ -1762,6 +1868,24 @@ fn mcp_doc_error_table_matches_vocabulary_and_resource_failure_mapping() -> Resu
 /// next request, and the refresh after the failure analyzes normally, so a
 /// contained failure never ends the MCP process or leaves a half-committed
 /// snapshot behind.
+/// The one test-side Git launch in this file (shared by every fixture so the
+/// process-spawn allowance stays a single site).
+fn git_in(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("git {args:?}: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
 async fn worktree_refresh(
     server: &McpServer,
 ) -> Result<rmcp::model::CallToolResponse, rmcp::model::ErrorData> {
@@ -1793,21 +1917,7 @@ async fn refresh_contains_a_language_adapter_panic() -> Result<(), String> {
         "pub fn gate_state(flag: bool) -> bool { flag }\n",
     )
     .map_err(|error| error.to_string())?;
-    let run_git = |args: &[&str]| -> Result<(), String> {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(&root)
-            .output()
-            .map_err(|error| format!("git {args:?}: {error}"))?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "git {args:?}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
-    };
+    let run_git = |args: &[&str]| git_in(&root, args);
     run_git(&["init"])?;
     run_git(&["config", "user.email", "ripr@example.invalid"])?;
     run_git(&["config", "user.name", "RIPR Test"])?;
@@ -2053,4 +2163,136 @@ fn typed_failure_carries_the_remedy_its_recovery_prose_states() {
     )
     .value();
     assert_eq!(pointless["remedy"]["retry_stated"], false, "{pointless}");
+}
+
+/// A throwaway Git repository with one committed Rust file and an uncommitted
+/// edit, so a worktree refresh has something to analyze (#13196).
+fn verify_route_fixture(label: &str) -> Result<PathBuf, String> {
+    static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-{label}-{}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos(),
+        NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mcp-verify\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool { flag }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let run_git = |args: &[&str]| git_in(&root, args);
+    run_git(&["init"])?;
+    run_git(&["config", "user.email", "ripr@example.invalid"])?;
+    run_git(&["config", "user.name", "RIPR Test"])?;
+    run_git(&["add", "Cargo.toml", "src/lib.rs"])?;
+    run_git(&["commit", "-m", "base"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+/// One `ripr_refresh` through the real tool route; returns the wire document
+/// (`isError` and `structuredContent`).
+async fn refresh_wire(
+    server: &McpServer,
+    base: Option<&str>,
+    source: &str,
+) -> Result<Value, String> {
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("source".to_string(), Value::String(source.to_string()));
+    if let Some(base) = base {
+        arguments.insert("base".to_string(), Value::String(base.to_string()));
+    }
+    let response = server
+        .refresh_tool(Some(arguments), super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map_err(|error| format!("refresh must answer, not error: {error:?}"))?;
+    let rmcp::model::CallToolResponse::Complete(result) = response else {
+        return Err("refresh did not complete".to_string());
+    };
+    serde_json::to_value(&result).map_err(|error| error.to_string())
+}
+
+/// #13196: the emitted post-edit `verify.mcp` arguments follow the retained
+/// snapshot's analysed scope, never a later request's. A default-base snapshot
+/// followed by a failed other-base request keeps the base-less route; an
+/// explicit-base snapshot keeps its own base; with no snapshot at all the
+/// requested base is the only scope there is.
+#[tokio::test(flavor = "current_thread")]
+async fn refresh_verify_route_follows_the_retained_snapshot_base() -> Result<(), String> {
+    let root = verify_route_fixture("verify-base")?;
+    let server = McpServer::new(
+        WorkspaceStatus::resolve_with_root(Some(root.clone())).0,
+        Some(root.clone()),
+    )
+    .map_err(|error| error.to_string())?;
+    let verify_arguments =
+        |wire: &Value| wire["structuredContent"]["verify"]["mcp"]["arguments"].clone();
+
+    let default_wire = refresh_wire(&server, None, "worktree").await?;
+    assert_eq!(
+        default_wire["isError"],
+        serde_json::json!(false),
+        "{default_wire}"
+    );
+    assert_eq!(
+        verify_arguments(&default_wire),
+        serde_json::json!({ "source": "worktree" }),
+        "default-base control keeps the base-less route"
+    );
+
+    let failed_wire = refresh_wire(&server, Some("no-such-revision-13196"), "worktree").await?;
+    assert_eq!(
+        failed_wire["isError"],
+        serde_json::json!(true),
+        "{failed_wire}"
+    );
+    assert_eq!(
+        verify_arguments(&failed_wire),
+        serde_json::json!({ "source": "worktree" }),
+        "a failed other-base request must not become the retained default snapshot's scope"
+    );
+
+    let explicit_wire = refresh_wire(&server, Some("HEAD"), "worktree").await?;
+    assert_eq!(
+        explicit_wire["isError"],
+        serde_json::json!(false),
+        "{explicit_wire}"
+    );
+    assert_eq!(
+        verify_arguments(&explicit_wire),
+        serde_json::json!({ "source": "worktree", "base": "HEAD" }),
+        "an explicit-base snapshot keeps its base"
+    );
+
+    let fresh = McpServer::new(
+        WorkspaceStatus::resolve_with_root(Some(root.clone())).0,
+        Some(root.clone()),
+    )
+    .map_err(|error| error.to_string())?;
+    let no_snapshot = refresh_wire(&fresh, Some("no-such-revision-13196"), "worktree").await?;
+    assert_eq!(
+        no_snapshot["isError"],
+        serde_json::json!(true),
+        "{no_snapshot}"
+    );
+    assert_eq!(
+        verify_arguments(&no_snapshot),
+        serde_json::json!({ "source": "worktree", "base": "no-such-revision-13196" }),
+        "with no snapshot the requested base is the only scope"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
 }
