@@ -282,13 +282,32 @@ fn discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle() ->
 fn persisted_effect_observer_retains_identity_without_lending_it_to_another_instance()
 -> Result<(), String> {
     let source =
-        include_str!("../../../fixtures/observation_verified_side_effect/input/src/lib.rs");
+        include_str!("../../../fixtures/observation_verified_side_effect/input/src/lib.rs")
+            .replace(
+                "pub sent: RefCell<Vec<String>>,",
+                "pub sent: RefCell<Vec<String>>,\n    pub status: u32,",
+            )
+            .replace(
+                "Notifier { sent: RefCell::new(Vec::new()) }",
+                "Notifier { sent: RefCell::new(Vec::new()), status: 0 }",
+            )
+            .replace(
+                "self.sent.borrow_mut().push(payload.to_string());",
+                "let _ = self.status;\n        self.sent.borrow_mut().push(payload.to_string());",
+            );
     let test = include_str!(
         "../../../fixtures/observation_verified_side_effect/input/tests/process_tests.rs"
     );
     let manifest =
         include_str!("../../../fixtures/observation_verified_side_effect/input/Cargo.toml");
-    let diff = include_str!("../../../fixtures/observation_verified_side_effect/diff.patch");
+    let line = source
+        .lines()
+        .position(|line| line.trim() == "notifier.send(order_id)")
+        .ok_or("effect line missing")?
+        + 1;
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-    notifier.send(\"static_msg\")\n+    notifier.send(order_id)\n"
+    );
     let unrelated = test.replace(
         "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
         "let other = Notifier::new();\n    assert_eq!(*other.sent.borrow(), Vec::<String>::new());",
@@ -305,6 +324,11 @@ fn persisted_effect_observer_retains_identity_without_lending_it_to_another_inst
         "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
         "notifier.sent.borrow_mut().clear();\n    assert_eq!(*notifier.sent.borrow(), Vec::<String>::new());",
     );
+    let readonly = test.replace(
+        "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
+        "assert_eq!(notifier.status, 0);",
+    );
+    assert_ne!(readonly, test);
     assert_ne!(renamed, test);
     assert_ne!(coincident_name, test);
     assert_ne!(cleared, test);
@@ -314,8 +338,9 @@ fn persisted_effect_observer_retains_identity_without_lending_it_to_another_inst
         (unrelated.as_str(), "weakly_exposed"),
         (coincident_name.as_str(), "weakly_exposed"),
         (cleared.as_str(), "weakly_exposed"),
+        (readonly.as_str(), "weakly_exposed"),
     ] {
-        let report = check_report(source, test, manifest, diff)?;
+        let report = check_report(&source, test, manifest, &diff)?;
         let finding = report["findings"]
             .as_array()
             .ok_or("missing findings")?

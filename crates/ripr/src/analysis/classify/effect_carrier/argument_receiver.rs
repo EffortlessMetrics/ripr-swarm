@@ -129,18 +129,9 @@ impl ArgumentReceiver {
         if impl_self_type_name(&callee.id.0).as_deref() != Some(receiver_ty.as_str()) {
             return None;
         }
-        let callee = parse_function(&callee.body)?;
-        let fields = callee
-            .body()?
-            .syntax()
-            .descendants()
-            .filter_map(ast::FieldExpr::cast)
-            .filter_map(|field| {
-                (bare_path(field.expr()?).as_deref() == Some("self"))
-                    .then(|| field.name_ref().map(|name| name.text().to_string()))
-                    .flatten()
-            })
-            .collect::<BTreeSet<_>>();
+        // Reuse the carrier's write attribution. Merely reading self.status
+        // must not identify an observer of the self.sent write.
+        let fields = super::function_field_use(callee)?.writes;
         (!fields.is_empty()).then_some(Self { parameter, fields })
     }
     pub(in crate::analysis) fn admits(

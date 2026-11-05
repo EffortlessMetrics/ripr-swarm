@@ -3140,7 +3140,7 @@ fn analyze_related_assertions(
                             operands
                                 .iter()
                                 .any(|operand| is_whole_owner_call(operand.trim(), owner))
-                        }) || crate::analysis::extract::outer_assertion_condition(&assertion.text)
+                        }) || crate::analysis::extract::assertion_observed_operand(&assertion.text)
                             .is_some_and(|operand| is_whole_owner_call(operand.trim(), owner))
                     });
                 let identity = (direct_owner_oracle
@@ -3168,7 +3168,13 @@ fn analyze_related_assertions(
                     || out_parameter_confirmed
                     || captured_log_read
                     || collection_read
-                    || effect_receiver_read;
+                    || effect_receiver_read
+                    || producer_owned_result_identity(
+                        &assertion_context,
+                        assertion,
+                        import_defeats_owner,
+                        cross_package_defeats_owner,
+                    );
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated
                 // one regardless of encounter order; a weaker oracle cannot.
@@ -3841,6 +3847,31 @@ fn terms_outside_owner_calls(operand: &str, owner: &str) -> Vec<String> {
 /// (#3731 review; identity resolution tracked on #3727).
 fn guarded_oracle_names_bare_callee(text: &str, callee: &str) -> bool {
     text.contains(&format!("match {callee}("))
+}
+
+fn producer_owned_result_identity(
+    context: &RevealMatchContext,
+    assertion: &OracleFact,
+    import_defeats_owner: bool,
+    cross_package_defeats_owner: bool,
+) -> bool {
+    context.owner_callee.is_some_and(|owner| {
+        matches!(assertion.kind, OracleKind::GuardedResultMatch)
+            && matches!(
+                context.family,
+                ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+            )
+            && !import_defeats_owner
+            && !cross_package_defeats_owner
+            && !context.owner_shadowed
+            && guarded_oracle_names_bare_callee(&assertion.text, owner)
+            && context
+                .error_construction_variant
+                .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
+            && (matches!(context.family, ProbeFamily::ErrorPath)
+                || context.error_construction_variant.is_some()
+                || assertion.ok_value_observed == Some(true))
+    })
 }
 
 /// String literals in a match-arm pattern (left of the arm separator `=>`).
@@ -4610,18 +4641,12 @@ fn assertion_matches_probe_detail_with_literals(
     //   Err-guard discriminator — the pin gate above names the changed
     //   variant — the same principle that leaves ErrorPath probes
     //   unchanged here.
-    let producer_owned_result = owner_callee.is_some_and(|owner| {
-        matches!(assertion.kind, OracleKind::GuardedResultMatch)
-            && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::ReturnValue)
-            && !import_defeats_owner
-            && !cross_package_defeats_owner
-            && guarded_oracle_names_bare_callee(&assertion.text, owner)
-            && error_construction_variant
-                .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
-            && (matches!(family, ProbeFamily::ErrorPath)
-                || error_construction_variant.is_some()
-                || assertion.ok_value_observed == Some(true))
-    });
+    let producer_owned_result = producer_owned_result_identity(
+        context,
+        assertion,
+        import_defeats_owner,
+        cross_package_defeats_owner,
+    );
     // #4478: an `assert_eq!` whose operand is a call naming the owner pins
     // the owner's whole return value, which a changed `return_value`
     // expression flows into when the owner's return paths make it the
