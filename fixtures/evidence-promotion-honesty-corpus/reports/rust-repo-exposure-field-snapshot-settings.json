@@ -1,0 +1,106 @@
+{
+  "schema_version": "0.5",
+  "artifact": {"analysis":{"base_revision":null,"command":"ripr check --format repo-exposure-json","format":"repo-exposure-json","input_identity":"input:v4:fnv1a64:ba6308e4e005ba1b","mode":"ready","profile":"ready","worktree":"clean"},"canonicalization":"raw_json_placeholder_v1","content_sha256":"sha256:8d32d7e9108d36e9b7cc382d4dd73933a0898b3413d43777bc20fcd6ee511e02","generated_at":"unix_ms:1793869741166","kind":"repo_exposure","producer":{"tool":"ripr","version":"0.11.0"},"repository":{"head":"f9ca5e1a9da13f5921539afddf0d1219698df0aa","root":"/workspace/scratch/3bc73c68798d/field-snapshot-candidate/fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/field-snapshot-settings"},"schema_version":"1","snapshot_identity":"snapshot:input:v4:fnv1a64:ba6308e4e005ba1b;revision:f9ca5e1a9da13f5921539afddf0d1219698df0aa"},
+  "source_subject": {"corpus":{"analyzed_production_files":["src/lib.rs"],"cache_schema_version":"1.161","files_content_hash":"8b173d39fffef134","scope":"rust_workspace"},"digest_algorithm":"sha256","files":[{"digest":"sha256:bf27feeb9adbb0b7396bf853da3cc49b6ebe0b4123cf3a015a54ba0db48d95ac","path":"src/lib.rs"}]},
+  "analysis_inputs": {"analyzer_version":"0.11.0+6bea6dcb556e6d89de5065b52f1c525ac86b51c1+languages:rust=1,typescript=1,python=1,perl=0","cfg_features_hash":"cbf29ce484222325","config_hash":"881255e2f498d9f2","lockfile_hash":"0b74165b4cea4f09","suppressions_hash":"cbf29ce484222325","test_intent_hash":"cbf29ce484222325","toolchain_hash":"833996a486514c49","workspace_manifests_hash":"40aa4ef8c093f3b7"},
+  "scope": "repo",
+  "run_status": "complete",
+  "metrics": {
+    "seams_total": 3,
+    "headline_eligible": 3,
+    "strongly_gripped": 0,
+    "weakly_gripped": 3,
+    "ungripped": 0,
+    "reachable_unrevealed": 0,
+    "activation_unknown": 0,
+    "propagation_unknown": 0,
+    "observation_unknown": 0,
+    "discrimination_unknown": 0,
+    "opaque": 0,
+    "intentional": 0,
+    "suppressed": 0
+  },
+  "seams": [
+    {
+      "seam_id": "9693b7968d3d60b2",
+      "kind": "field_construction",
+      "file": "src/lib.rs",
+      "line": 8,
+      "column": 9,
+      "end_line": 8,
+      "end_column": 36,
+      "owner": "src/lib.rs::make_record",
+      "expression": "id: format!(\"{}-1\", prefix)",
+      "grip_class": "weakly_gripped",
+      "headline_eligible": true,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "weak"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "record_oracle", "file": "src/lib.rs", "line": 18, "oracle_kind": "snapshot", "oracle_strength": "medium", "evidence_summary": "snapshot oracle", "relation_reason": "direct_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": ["\"ord\""],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"static_limitation","has_concrete_guidance":false,"reason":"whether the framework oracle notices the changed field is unresolved","signals":{"assertion_shape":false,"candidate_value":true,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":1,"canonical_gap_id":"gap:ac2779bc279bd3cf","canonical_gap_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","canonical_item":{"actionability":"static_limitation","canonical_gap_id":"gap:ac2779bc279bd3cf","canonical_item_kind":"limitation","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data","static limitation: rust_framework_oracle_unresolved"]},"evidence_class":"field_construction","gap_state":"static_limitation","group_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","primary_anchor":{"file":"src/lib.rs","kind":"weakly_gripped","line":8,"reason":"canonical_group_primary_raw_finding","source_id":"9693b7968d3d60b2"},"raw_group_size":1,"raw_spans":[{"end_line":8,"file":"src/lib.rs","kind":"weakly_gripped","source_id":"9693b7968d3d60b2","start_line":8}],"receipt_command":null,"recommended_repair":"Inspect static limitation `rust_framework_oracle_unresolved` via `analysis/oracle-semantics-audit-fixes`.","related_test":{"file":"src/lib.rs","line":18,"name":"record_oracle","reason":"direct_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[{"category":"rust_framework_oracle_unresolved","reason":"rust_framework_oracle_unresolved: `record_oracle` (src/lib.rs:18) compares the owner's result with an insta snapshot under settings or redactions that ripr does not read; Original discrimination: Strongest oracle for seam kind `field_construction` is `medium` (kind-match false)","repair_route":"analysis/oracle-semantics-audit-fixes","stage":"discriminate","state":"weak"}],"verify_command":null,"why":"whether the framework oracle notices the changed field is unresolved"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed 1 concrete activation value(s) for seam `id: format!(\"{}-1\", prefix)`"},"discriminate":{"confidence":"medium","state":"weak","summary":"rust_framework_oracle_unresolved: `record_oracle` (src/lib.rs:18) compares the owner's result with an insta snapshot under settings or redactions that ripr does not read; Original discrimination: Strongest oracle for seam kind `field_construction` is `medium` (kind-match false)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `output_field` sink is yes"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::make_record`: record_oracle"}},"grip_class":"weakly_gripped","headline_eligible":true,"location":{"file":"src/lib.rs","line":8},"missing_discriminators":[],"observed_values":[{"context":"function_argument","line":19,"text":"let record = make_record(\"ord\", &[1, 2]);","value":"\"ord\""}],"owner":"src/lib.rs::make_record","presentation_text":null,"raw_findings":[{"evidence_record_ref":"9693b7968d3d60b2","expression":"id: format!(\"{}-1\", prefix)","file":"src/lib.rs","kind":"weakly_gripped","language":"rust","language_status":"stable","line":8,"probe_kind":"field_construction","source_id":"9693b7968d3d60b2"}],"recommendation":{"action":"inspect_static_limitation","assertion_shape":null,"candidate_values":[{"reason":"observed function_argument value from existing tests","value":"\"ord\""}],"nearest_test_to_imitate":{"evidence_summary":"snapshot oracle","file":"src/lib.rs","line":18,"name":"record_oracle","oracle_kind":"snapshot","oracle_semantics":{"missing":"a small explicit discriminator if the snapshot is too broad to review","observes":"a snapshot of rendered or debug output","upgrade_suggestion":"add an exact assertion for the changed field or value when the snapshot is broad"},"oracle_strength":"medium","relation_confidence":"high","relation_reason":"direct_owner_call"},"reason":"whether the framework oracle notices the changed field is unresolved","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"snapshot oracle","file":"src/lib.rs","line":18,"name":"record_oracle","oracle_kind":"snapshot","oracle_semantics":{"missing":"a small explicit discriminator if the snapshot is too broad to review","observes":"a snapshot of rendered or debug output","upgrade_suggestion":"add an exact assertion for the changed field or value when the snapshot is broad"},"oracle_strength":"medium","relation_confidence":"high","relation_reason":"direct_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"9693b7968d3d60b2","seam_kind":"field_construction","static_limitations":[{"category":"rust_framework_oracle_unresolved","reason":"rust_framework_oracle_unresolved: `record_oracle` (src/lib.rs:18) compares the owner's result with an insta snapshot under settings or redactions that ripr does not read; Original discrimination: Strongest oracle for seam kind `field_construction` is `medium` (kind-match false)","repair_route":"analysis/oracle-semantics-audit-fixes","stage":"discriminate","state":"weak"}]}
+    },
+    {
+      "seam_id": "96a1ba968d49a327",
+      "kind": "field_construction",
+      "file": "src/lib.rs",
+      "line": 9,
+      "column": 9,
+      "end_line": 9,
+      "end_column": 36,
+      "owner": "src/lib.rs::make_record",
+      "expression": "items: items.iter().count()",
+      "grip_class": "weakly_gripped",
+      "headline_eligible": true,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "weak"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "record_oracle", "file": "src/lib.rs", "line": 18, "oracle_kind": "snapshot", "oracle_strength": "medium", "evidence_summary": "snapshot oracle", "relation_reason": "direct_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": ["\"ord\""],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"static_limitation","has_concrete_guidance":false,"reason":"whether the framework oracle notices the changed field is unresolved","signals":{"assertion_shape":false,"candidate_value":true,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":1,"canonical_gap_id":"gap:f3e574fc574a709e","canonical_gap_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","canonical_item":{"actionability":"static_limitation","canonical_gap_id":"gap:f3e574fc574a709e","canonical_item_kind":"limitation","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data","static limitation: rust_framework_oracle_unresolved"]},"evidence_class":"field_construction","gap_state":"static_limitation","group_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","primary_anchor":{"file":"src/lib.rs","kind":"weakly_gripped","line":9,"reason":"canonical_group_primary_raw_finding","source_id":"96a1ba968d49a327"},"raw_group_size":1,"raw_spans":[{"end_line":9,"file":"src/lib.rs","kind":"weakly_gripped","source_id":"96a1ba968d49a327","start_line":9}],"receipt_command":null,"recommended_repair":"Inspect static limitation `rust_framework_oracle_unresolved` via `analysis/oracle-semantics-audit-fixes`.","related_test":{"file":"src/lib.rs","line":18,"name":"record_oracle","reason":"direct_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[{"category":"rust_framework_oracle_unresolved","reason":"rust_framework_oracle_unresolved: `record_oracle` (src/lib.rs:18) compares the owner's result with an insta snapshot under settings or redactions that ripr does not read; Original discrimination: Strongest oracle for seam kind `field_construction` is `medium` (kind-match false)","repair_route":"analysis/oracle-semantics-audit-fixes","stage":"discriminate","state":"weak"}],"verify_command":null,"why":"whether the framework oracle notices the changed field is unresolved"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed 1 concrete activation value(s) for seam `items: items.iter().count()`"},"discriminate":{"confidence":"medium","state":"weak","summary":"rust_framework_oracle_unresolved: `record_oracle` (src/lib.rs:18) compares the owner's result with an insta snapshot under settings or redactions that ripr does not read; Original discrimination: Strongest oracle for seam kind `field_construction` is `medium` (kind-match false)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `output_field` sink is yes"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::make_record`: record_oracle"}},"grip_class":"weakly_gripped","headline_eligible":true,"location":{"file":"src/lib.rs","line":9},"missing_discriminators":[],"observed_values":[{"context":"function_argument","line":19,"text":"let record = make_record(\"ord\", &[1, 2]);","value":"\"ord\""}],"owner":"src/lib.rs::make_record","presentation_text":null,"raw_findings":[{"evidence_record_ref":"96a1ba968d49a327","expression":"items: items.iter().count()","file":"src/lib.rs","kind":"weakly_gripped","language":"rust","language_status":"stable","line":9,"probe_kind":"field_construction","source_id":"96a1ba968d49a327"}],"recommendation":{"action":"inspect_static_limitation","assertion_shape":null,"candidate_values":[{"reason":"observed function_argument value from existing tests","value":"\"ord\""}],"nearest_test_to_imitate":{"evidence_summary":"snapshot oracle","file":"src/lib.rs","line":18,"name":"record_oracle","oracle_kind":"snapshot","oracle_semantics":{"missing":"a small explicit discriminator if the snapshot is too broad to review","observes":"a snapshot of rendered or debug output","upgrade_suggestion":"add an exact assertion for the changed field or value when the snapshot is broad"},"oracle_strength":"medium","relation_confidence":"high","relation_reason":"direct_owner_call"},"reason":"whether the framework oracle notices the changed field is unresolved","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"snapshot oracle","file":"src/lib.rs","line":18,"name":"record_oracle","oracle_kind":"snapshot","oracle_semantics":{"missing":"a small explicit discriminator if the snapshot is too broad to review","observes":"a snapshot of rendered or debug output","upgrade_suggestion":"add an exact assertion for the changed field or value when the snapshot is broad"},"oracle_strength":"medium","relation_confidence":"high","relation_reason":"direct_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"96a1ba968d49a327","seam_kind":"field_construction","static_limitations":[{"category":"rust_framework_oracle_unresolved","reason":"rust_framework_oracle_unresolved: `record_oracle` (src/lib.rs:18) compares the owner's result with an insta snapshot under settings or redactions that ripr does not read; Original discrimination: Strongest oracle for seam kind `field_construction` is `medium` (kind-match false)","repair_route":"analysis/oracle-semantics-audit-fixes","stage":"discriminate","state":"weak"}]}
+    },
+    {
+      "seam_id": "fa333824e4848170",
+      "kind": "return_value",
+      "file": "src/lib.rs",
+      "line": 11,
+      "column": 5,
+      "end_line": 11,
+      "end_column": 11,
+      "owner": "src/lib.rs::make_record",
+      "expression": "record",
+      "grip_class": "weakly_gripped",
+      "headline_eligible": true,
+      "evidence": {
+        "reach": "yes",
+        "activate": "yes",
+        "propagate": "yes",
+        "observe": "yes",
+        "discriminate": "weak"
+      },
+      "related_tests_total": 1,
+      "related_tests": [
+        {"name": "record_oracle", "file": "src/lib.rs", "line": 18, "oracle_kind": "snapshot", "oracle_strength": "medium", "evidence_summary": "snapshot oracle", "relation_reason": "direct_owner_call", "relation_confidence": "high"}
+      ],
+      "observed_values": ["\"ord\""],
+      "missing_discriminators": [],
+      "evidence_record": {"actionability":{"class":"static_limitation","has_concrete_guidance":false,"reason":"producer-owned missing discriminator fact: return_value","signals":{"assertion_shape":false,"candidate_value":true,"missing_discriminator":false,"recommended_test_target":true,"related_test":true,"verification_command":false}},"calibration":{"agreement":"no_runtime_data","availability":"not_imported","confidence":"unknown"},"canonical_gap_group_size":1,"canonical_gap_id":"gap:b5634290ef128619","canonical_gap_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","canonical_item":{"actionability":"static_limitation","canonical_gap_id":"gap:b5634290ef128619","canonical_item_kind":"limitation","command_specs":{"receipt":null,"verify":null},"confidence":{"basis":"static_only","notes":["no imported runtime calibration data","static limitation: missing_discriminator_evidence"]},"evidence_class":"return_value","gap_state":"static_limitation","group_reason":"same owner, seam kind, flow sink, missing discriminator, and assertion shape","primary_anchor":{"file":"src/lib.rs","kind":"weakly_gripped","line":11,"reason":"canonical_group_primary_raw_finding","source_id":"fa333824e4848170"},"raw_group_size":1,"raw_spans":[{"end_line":11,"file":"src/lib.rs","kind":"weakly_gripped","source_id":"fa333824e4848170","start_line":11}],"receipt_command":null,"recommended_repair":"Inspect static limitation `missing_discriminator_evidence` via `analysis/producer-evidence-discriminator`.","related_test":{"file":"src/lib.rs","line":18,"name":"record_oracle","reason":"direct_owner_call"},"repair_command":null,"repair_route":null,"static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: return_value","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}],"verify_command":null,"why":"producer-owned missing discriminator fact: return_value"},"evidence_path":{"activate":{"confidence":"medium","state":"yes","summary":"Observed 1 concrete activation value(s) for seam `record`"},"discriminate":{"confidence":"medium","state":"weak","summary":"Strongest oracle for seam kind `return_value` is `medium` (kind-match false)"},"observe":{"confidence":"medium","state":"yes","summary":"Observation evidence is `yes`"},"propagate":{"confidence":"low","state":"yes","summary":"Static propagation to `return_value` sink is yes"},"reach":{"confidence":"medium","state":"yes","summary":"Related tests appear to reach `src/lib.rs::make_record`: record_oracle"}},"grip_class":"weakly_gripped","headline_eligible":true,"location":{"file":"src/lib.rs","line":11},"missing_discriminators":[],"observed_values":[{"context":"function_argument","line":19,"text":"let record = make_record(\"ord\", &[1, 2]);","value":"\"ord\""}],"owner":"src/lib.rs::make_record","presentation_text":null,"raw_findings":[{"evidence_record_ref":"fa333824e4848170","expression":"record","file":"src/lib.rs","kind":"weakly_gripped","language":"rust","language_status":"stable","line":11,"probe_kind":"return_value","source_id":"fa333824e4848170"}],"recommendation":{"action":"inspect_static_limitation","assertion_shape":null,"candidate_values":[{"reason":"observed function_argument value from existing tests","value":"\"ord\""}],"nearest_test_to_imitate":{"evidence_summary":"snapshot oracle","file":"src/lib.rs","line":18,"name":"record_oracle","oracle_kind":"snapshot","oracle_semantics":{"missing":"a small explicit discriminator if the snapshot is too broad to review","observes":"a snapshot of rendered or debug output","upgrade_suggestion":"add an exact assertion for the changed field or value when the snapshot is broad"},"oracle_strength":"medium","relation_confidence":"high","relation_reason":"direct_owner_call"},"reason":"producer-owned missing discriminator fact: return_value","recommended_test":null,"verify_command":null},"related_tests":[{"evidence_summary":"snapshot oracle","file":"src/lib.rs","line":18,"name":"record_oracle","oracle_kind":"snapshot","oracle_semantics":{"missing":"a small explicit discriminator if the snapshot is too broad to review","observes":"a snapshot of rendered or debug output","upgrade_suggestion":"add an exact assertion for the changed field or value when the snapshot is broad"},"oracle_strength":"medium","relation_confidence":"high","relation_reason":"direct_owner_call"}],"related_tests_total":1,"schema_version":"0.1","seam_id":"fa333824e4848170","seam_kind":"return_value","static_limitations":[{"category":"missing_discriminator_evidence","reason":"the repair route is missing evidence: producer-owned missing discriminator fact: return_value","repair_route":"analysis/producer-evidence-discriminator","stage":"discriminate","state":"unknown"}]}
+    }
+  ]
+}

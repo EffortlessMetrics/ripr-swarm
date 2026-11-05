@@ -14,6 +14,7 @@
 mod boolean_boundary_pin;
 mod call_budget;
 mod claims_payload_pin;
+mod framework_snapshot;
 mod owner_result_binding;
 mod panic_outcome;
 mod reach_limit;
@@ -110,10 +111,21 @@ pub(crate) struct TestGripEvidence {
 }
 
 impl TestGripEvidence {
-    /// Whether any stage summary names the typed static `limit`: the evidence
-    /// record's own marker that a named limitation, not a missing test,
-    /// explains the stage (#10703).
+    /// Whether the producer names the typed static `limit` (#10703).
+    /// Panic and framework uncertainty have a reserved discriminator prefix:
+    /// a source identifier mentioned by another stage is not that marker.
     pub(crate) fn names_static_limit(&self, limit: crate::domain::StaticLimitKind) -> bool {
+        if matches!(
+            limit,
+            crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved
+                | crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved
+        ) {
+            return self
+                .discriminate
+                .summary
+                .strip_prefix(limit.as_str())
+                .is_some_and(|rest| rest.starts_with(": "));
+        }
         [
             &self.reach,
             &self.activate,
@@ -827,6 +839,17 @@ fn evidence_for_seam_with_context(
         context.index,
     );
     panic_outcome::withhold(seam, &mut evidence, &panicking);
+    // #13278: the shared field-snapshot reader sees every direct relation,
+    // before a rendered related-test cap can hide a deciding oracle.
+    framework_snapshot::withhold(
+        seam,
+        &mut evidence,
+        owner_fn,
+        related_with_reason
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| indexed.test),
+    );
     evidence
 }
 
@@ -2606,6 +2629,16 @@ pub(crate) fn compact_evidence_for_seam(
         context.index,
     );
     panic_outcome::withhold(seam, &mut evidence, &panicking);
+    // #13278: use the full ranked set, not the compact display projection.
+    framework_snapshot::withhold(
+        seam,
+        &mut evidence,
+        owner_fn,
+        ranked
+            .iter()
+            .filter(|(_, reason)| *reason == RelationReason::DirectOwnerCall)
+            .map(|(indexed, _)| indexed.test),
+    );
     evidence
 }
 
@@ -5688,3 +5721,6 @@ fn sort_value_facts(values: &mut Vec<ValueFact>) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::panic_marker::panic_marker_test_entries;

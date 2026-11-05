@@ -604,6 +604,11 @@ pub(crate) fn actionability_for(
                 .names_static_limit(StaticLimitKind::RustPanicOutcomeUnresolved)
             {
                 "the changed code's role in the expected panic is unresolved"
+            } else if entry
+                .evidence
+                .names_static_limit(StaticLimitKind::RustFrameworkOracleUnresolved)
+            {
+                "whether the framework oracle notices the changed field is unresolved"
             } else {
                 "static evidence is opaque or unknown for this seam"
             },
@@ -1036,6 +1041,9 @@ pub(crate) fn is_static_limited(entry: &ClassifiedSeam) -> bool {
         || entry
             .evidence
             .names_static_limit(StaticLimitKind::RustPanicOutcomeUnresolved)
+        || entry
+            .evidence
+            .names_static_limit(StaticLimitKind::RustFrameworkOracleUnresolved)
         || matches!(entry.class, SeamGripClass::Opaque)
         || [
             &entry.evidence.reach,
@@ -1393,10 +1401,17 @@ fn push_stage_limitation(
     evidence: &StageEvidence,
     entry: &ClassifiedSeam,
 ) {
+    let framework_unresolved = stage == "discriminate"
+        && entry
+            .evidence
+            .names_static_limit(StaticLimitKind::RustFrameworkOracleUnresolved);
+    let panic_unresolved = stage == "discriminate"
+        && entry
+            .evidence
+            .names_static_limit(StaticLimitKind::RustPanicOutcomeUnresolved);
     if matches!(evidence.state, StageState::Unknown | StageState::Opaque)
-        || evidence
-            .summary
-            .contains(StaticLimitKind::RustPanicOutcomeUnresolved.as_str())
+        || panic_unresolved
+        || framework_unresolved
     {
         let state = evidence.state.as_str();
         // RIPR-SPEC-0236 example 23: a reach limitation that already names a
@@ -1405,8 +1420,11 @@ fn push_stage_limitation(
         // "macro" mention as `macro_generated_value` and would otherwise
         // steal this row. Honor the producer token only on the reach stage so
         // examples 21/22 (snapshot/mock/generated name inference) stay out.
-        let category = if stage == "reach" && rust_macro_reach_limitation_reason(&evidence.summary)
-        {
+        let category = if panic_unresolved {
+            StaticLimitKind::RustPanicOutcomeUnresolved.as_str()
+        } else if framework_unresolved {
+            StaticLimitKind::RustFrameworkOracleUnresolved.as_str()
+        } else if stage == "reach" && rust_macro_reach_limitation_reason(&evidence.summary) {
             "opaque_static_evidence"
         } else {
             let base_category = static_limitation_category(stage, state, &evidence.summary);
@@ -1432,9 +1450,7 @@ fn rust_macro_reach_limitation_reason(reason: &str) -> bool {
 
 fn static_limitation_category(stage: &str, state: &str, reason: &str) -> &'static str {
     let reason = reason.to_ascii_lowercase();
-    if reason.contains(StaticLimitKind::RustPanicOutcomeUnresolved.as_str()) {
-        StaticLimitKind::RustPanicOutcomeUnresolved.as_str()
-    } else if reason.contains(StaticLimitKind::RustCallFactBudget.as_str()) {
+    if reason.contains(StaticLimitKind::RustCallFactBudget.as_str()) {
         // #8600: the producer named the typed call-fact budget limit; the
         // substring classifier below must not rename it from its prose.
         StaticLimitKind::RustCallFactBudget.as_str()
@@ -1519,6 +1535,7 @@ fn static_limitation_repair_route(category: &str) -> &'static str {
         "macro_generated_value" => "analysis/macro-generated-value-fixtures",
         "opaque_helper_call" => "analysis/oracle-semantics-audit-fixes",
         "rust_panic_outcome_unresolved" => "analysis/oracle-semantics-audit-fixes",
+        "rust_framework_oracle_unresolved" => "analysis/oracle-semantics-audit-fixes",
         "dynamic_dispatch" => "calibration/runtime-fixtures-v3",
         "unsupported_mock_shape" => "analysis/oracle-semantics-audit-fixes",
         "snapshot_field_unknown" => "analysis/oracle-semantics-audit-fixes",

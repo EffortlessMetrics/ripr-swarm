@@ -431,7 +431,29 @@ and reason even when every stage remains `yes` or `no`. The raw grip class and
 stage states remain unchanged, while actionability is `static_limitation` and
 the canonical item is a limitation without a focused repair command. Pilot
 and agent brief consumers withhold the seam using the same static-limitation
-decision (#12977).
+decision (#12977). Full and compact producers reserve the exact
+`rust_panic_outcome_unresolved: ` discrimination-summary prefix (#13291).
+The shared marker reader governs admission and projection together: source
+identifiers in another stage or later in a summary cannot manufacture this
+category or an expected-panic warning. The producer preserves its deciding
+test explanation and the original discrimination summary. A later framework
+field-snapshot adaptation preserves an already-established panic marker.
+
+Owner-bound field snapshots use the same rule for the producer-named
+`rust_framework_oracle_unresolved` limitation (#13278). Full and compact
+repository evidence consult the existing framework reader before related-test
+display caps. The record preserves the original field grip class, all five
+stage states and the discrimination reason, even when the stages are concrete.
+The producer reserves the `rust_framework_oracle_unresolved: ` prefix of the
+discrimination summary; the shared reader of this marker requires that exact
+prefix. Merely mentioning the code in a test name or another stage does not
+create a limitation or change selection. Its limitation category is
+`rust_framework_oracle_unresolved`, with route
+`analysis/oracle-semantics-audit-fixes`. Pilot, agent brief and repair admission
+withhold the field seam. An otherwise identical unmarked entry remains
+selectable. Literal redactions that name the changed field keep their gap;
+unread snapshot bytes or configuration receive no positive credit. This rule
+does not apply the marker to return-value seams or other framework idioms.
 
 The activation limitation category `field_assignment_value_unresolved` routes
 to `analysis/field-assignment-value-resolution`. It names a direct field write
@@ -467,6 +489,7 @@ count by itself and it does not claim mutation execution.
 | Record carries identity, evidence path, recommendation, actionability, and calibration placeholder | `evidence_record_carries_identity_path_guidance_and_calibration_placeholder` |
 | Unknown stages become static limitations | `evidence_record_names_static_limitations_from_unknown_stages` |
 | A producer-named panic limitation preserves its stage, state, reason, category and route without reclassifying the seam | `named_panic_limit_withholds_pilot_and_brief_without_reclassifying` |
+| A named field-snapshot limitation alone withholds recommendation and repair while preserving class, stages and reason | `a_named_field_snapshot_limit_alone_withholds_pilot_brief_and_repair` |
 | Opaque classification is static limitation work | `evidence_record_marks_opaque_seams_as_static_limitation_work` |
 | Unsupported direct field assignments use their named limitation and analyzer route | `evidence_record_normalizes_static_limitation_categories` |
 | Repo exposure schema and metrics remain present | `json_carries_schema_version_scope_and_metrics` |
