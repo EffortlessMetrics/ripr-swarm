@@ -233,20 +233,38 @@ pub(super) fn load_root_input_and_config(root: &Path) -> Result<(CheckInput, Rip
 /// underlying write small enough to avoid that limit. Write errors are
 /// returned as `Err` rather than panicking, so a failed write surfaces as
 /// a normal CLI error instead of aborting the process.
+///
+/// Test builds must publish through the capture-aware `print!` path. libtest
+/// intercepts only the macro route; raw Write-handle bytes reach the real
+/// stdout, where an in-process command document interleaves with a concurrent
+/// `test NAME ... ok` row and the fail-closed windows-advisory summarizer
+/// rejects the whole run as an unrecognized observation (nightly
+/// 41778491177, run 1, #9272: `test cli::commands::check::tests::
+/// enclosing_workspace_does_not_claim_a_nested_repository ... {`). Production
+/// keeps the handle path: a closed stdout stays a returned `Err` instead of a
+/// `print!` panic, and the chunked writes stay bounded for the console limit.
 pub(super) fn write_stdout_chunked(text: &str) -> Result<(), String> {
     crate::analysis::cancellation::begin_cli_publication()?;
-    use std::io::Write;
-    const CHUNK: usize = 16 * 1024;
-    let stdout = std::io::stdout();
-    let mut handle = stdout.lock();
-    for chunk in text.as_bytes().chunks(CHUNK) {
-        handle
-            .write_all(chunk)
-            .map_err(|err| format!("write to stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))?;
+    #[cfg(test)]
+    {
+        print!("{text}");
+        Ok(())
     }
-    handle
-        .flush()
-        .map_err(|err| format!("flush stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))
+    #[cfg(not(test))]
+    {
+        use std::io::Write;
+        const CHUNK: usize = 16 * 1024;
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        for chunk in text.as_bytes().chunks(CHUNK) {
+            handle
+                .write_all(chunk)
+                .map_err(|err| format!("write to stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))?;
+        }
+        handle
+            .flush()
+            .map_err(|err| format!("flush stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))
+    }
 }
 
 /// Typed refusal for a [`load_for_root`] failure (#6834, shared #7331).
@@ -725,6 +743,79 @@ mod tests {
         assert!(error.contains("\"x.\" normalizes to \"x\""), "{error}");
         assert!(error.contains("\"y.\" normalizes to \"y\""), "{error}");
         assert!(error.contains("pass a path without them"), "{error}");
+        Ok(())
+    }
+
+    // Probe child for `stdout_publication_is_captured_in_test_builds`: it
+    // publishes a marker document through the shared stdout owner. Inside a
+    // captured harness run the bytes must land in libtest's capture buffer —
+    // dropped for a passing test — never in the piped stdout the parent reads.
+    #[test]
+    fn stdout_capture_probe_writes_a_document() -> Result<(), String> {
+        write_stdout_chunked("{\"probe\":\"stdout-capture\",\"run_status\":\"captured\"}\n")
+    }
+
+    // The fail-closed windows-advisory summarizer parses `test NAME ... ok`
+    // rows out of the streamed cargo log (#9272). libtest intercepts only the
+    // macro publication route, so raw Write-handle stdout bytes from an
+    // in-process command run interleave with a concurrent row and the
+    // summarizer refuses the whole run as an unrecognized observation
+    // (nightly 41778491177, run 1: `test cli::commands::check::tests::
+    // enclosing_workspace_does_not_claim_a_nested_repository ... {`). The
+    // test-build owners route through the capture-aware macro path; this pin
+    // re-executes this test harness as a child whose stdout is a pipe (the
+    // established re-exec pattern: git.rs flood/hang, cli_smoke stdin_probe)
+    // and fails when document bytes escape into it. Renaming a pinned child
+    // test requires renaming its exact name here with it.
+    #[test]
+    fn stdout_publication_is_captured_in_test_builds() -> Result<(), String> {
+        let harness = std::env::current_exe()
+            .map_err(|err| format!("resolve the current test harness: {err}"))?;
+        let children: [(&str, &[&str]); 2] = [
+            (
+                // Direct call into the shared publication owner.
+                "cli::commands_context::tests::stdout_capture_probe_writes_a_document",
+                &["\"probe\":\"stdout-capture\"", "run_status"],
+            ),
+            (
+                // The real streamed repo-exposure publication site.
+                "cli::commands::check::tests::check_repo_exposure_json_streams_output",
+                &["\"content_sha256\"", "\"seam_kind\""],
+            ),
+        ];
+        for (child_test, markers) in children {
+            let output = std::process::Command::new(&harness)
+                .args(["--exact", child_test, "--test-threads=1"])
+                // The pin is about capture; an ambient nocapture switch would
+                // print the marker through the macro route and false-fail it.
+                .env_remove("RUST_TEST_NOCAPTURE")
+                .output()
+                .map_err(|err| format!("spawn capture child harness for {child_test}: {err}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "capture child harness failed for {child_test} ({}): {}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // The exact success row, not the summary line: `test result: ok`
+            // also follows an ignored child, which would false-pass the pin.
+            let success_row = format!("test {child_test} ... ok");
+            if !stdout.contains(&success_row) {
+                return Err(format!(
+                    "the pinned child test did not pass in the child harness (rename it here with the source): {stdout}"
+                ));
+            }
+            for marker in markers {
+                if stdout.contains(marker) {
+                    return Err(format!(
+                        "raw document bytes escaped libtest capture into the child harness stdout (marker {marker} present); \
+                         the test-build stdout publication must keep the capture-aware macro route (see write_stdout_chunked): {stdout}"
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 }
