@@ -112,6 +112,18 @@ pub(crate) fn vendored_ripr_crate(
 
 fn rehearse(scratch: &Path, version: &str) -> Result<(), String> {
     let (contract_crate, ripr_crate) = vendored_ripr_crate(scratch, version)?;
+    // Leave the packaged crates where `cargo package` would put them, so
+    // callers (CI release-proof) can consume the exact rehearsed archives.
+    let package_out = Path::new("target/package");
+    fs::create_dir_all(package_out)
+        .map_err(|e| format!("cannot create {}: {e}", package_out.display()))?;
+    for krate in [&contract_crate, &ripr_crate] {
+        let name = krate
+            .file_name()
+            .ok_or_else(|| format!("crate path has no file name: {}", krate.display()))?;
+        fs::copy(krate, package_out.join(name))
+            .map_err(|e| format!("cannot copy {}: {e}", krate.display()))?;
+    }
 
     let extract = scratch.join("extract");
     let contract_dir = format!("ripr-contract-{version}");

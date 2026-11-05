@@ -573,8 +573,8 @@ fn pr_owned_step_allowance_is_exact_and_job_scoped() {
 fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult {
     for (name, _) in JOBS {
         assert_eq!(
-            without_pr_owned_steps(name, run_blocks(payload_job(name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
-            run_blocks(job(ORIGINAL, name)).iter().map(|script| script.replace(
+            without_pr_owned_steps(name, run_blocks(payload_job(name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).map(|script| if script.contains("unlocked-target") { "cargo publish -p ripr --dry-run".to_owned() } else { script }).collect::<Vec<_>>(),
+            run_blocks(job(ORIGINAL, name)).iter().filter(|script| !script.contains("unlocked-target")).map(|script| script.replace(
                 "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
                 "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
             )).collect::<Vec<_>>(),
@@ -803,9 +803,9 @@ fn unlocked_install_and_readiness_preserve_each_native_failure() -> TestResult {
     "#;
     for (name, commands) in [
         (
-            "Unlocked install resolution",
+            "Publish dry-run",
             &[
-                "cargo-package",
+                "cargo-xtask",
                 "cargo-pkgid",
                 "tar",
                 "cd",
@@ -847,14 +847,20 @@ fn unlocked_install_and_readiness_preserve_each_native_failure() -> TestResult {
             );
             let trace = String::from_utf8(output.stderr)?;
             assert!(trace.contains("reached:cargo-pkgid"));
-            for downstream in [
-                "reached:tar",
-                "reached:cd",
-                "reached:rm",
-                "reached:cargo-generate-lockfile",
-                "reached:cargo-check",
-                "reached:cargo-xtask",
-            ] {
+            // Commands after the pkgid call in this step. The publish step's
+            // own xtask rehearsal runs before pkgid, so it is not downstream.
+            let downstream_commands: &[&str] = if name == "Publish dry-run" {
+                &[
+                    "reached:tar",
+                    "reached:cd",
+                    "reached:rm",
+                    "reached:cargo-generate-lockfile",
+                    "reached:cargo-check",
+                ]
+            } else {
+                &["reached:cargo-xtask"]
+            };
+            for downstream in downstream_commands {
                 assert!(
                     !trace.contains(downstream),
                     "ran {downstream} after pkgid failed: {name}"
@@ -935,11 +941,11 @@ fn removing_the_declared_shell_reproduces_masked_pkgid_failures() -> TestResult 
         cd() { return 0; }
         rm() { return 0; }
     "#;
-    // Main's unlocked-install form assigns `cargo pkgid` directly, so even
-    // the implicit shell fails closed there; the readiness pipeline through
-    // `sed` still masks a pkgid failure without pipefail.
+    // The publish step's unlocked-install tail assigns `cargo pkgid`
+    // directly, so even the implicit shell fails closed there; the readiness
+    // pipeline through `sed` still masks a pkgid failure without pipefail.
     for (name, downstream, masked) in [
-        ("Unlocked install resolution", "reached:check", false),
+        ("Publish dry-run", "reached:check", false),
         ("Release readiness", "reached:xtask", true),
     ] {
         let step = named_step(&implicit, "release-proof", name);
@@ -991,7 +997,7 @@ fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestR
             }
         }
     }
-    assert_eq!(count, 5, "four release steps and receipt upload");
+    assert_eq!(count, 4, "three release steps and receipt upload");
     Ok(())
 }
 
