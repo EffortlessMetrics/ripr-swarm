@@ -4981,6 +4981,10 @@ marker = "libtest_mimic::Trial"
     #[test]
     fn streamed_review_releases_raw_source_before_evidence_on_cold_and_warm_cache()
     -> Result<(), String> {
+        // The cold and warm passes must share one effective seam limit: a
+        // concurrent pilot or repair test moving the cap would key the two
+        // passes differently and break the warm comparison (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         struct Consumer(Vec<(usize, ClassifiedSeam)>);
         impl ScopedEvidenceConsumer for Consumer {
             fn in_first_stage(&self, _: &RepoSeam) -> bool {
@@ -8746,6 +8750,10 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
     #[test]
     fn fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs()
     -> Result<(), String> {
+        // The stored distinct payload is served warm only under one effective
+        // seam limit: a concurrent pilot or repair test moving the cap would
+        // key the reader differently and force a cold pass (#12421).
+        let _seam_limit_mutators = hold_seam_limit_mutators();
         use crate::analysis::seams::SeamGripClass;
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/owner_return_pin_fallible_literal/input");
