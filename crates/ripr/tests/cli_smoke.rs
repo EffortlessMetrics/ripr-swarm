@@ -26336,7 +26336,7 @@ fn check_format_agent_drill_in_stays_compact_and_scoped() -> Result<(), String> 
     run_git(&root, &["commit", "-m", "initial"])?;
     // The levy predicate is reachable through a weak oracle (a full-value
     // assertion that any threshold satisfies), so the run carries one open
-    // gap with an explain drill-in; `one` stays untested (no_static_path).
+    // gap with an explain drill-in; `one` stays uncovered (no_static_path).
     std::fs::write(
         root.join("src/lib.rs"),
         "pub fn one() -> i32 { 1 }\n\npub fn levy(pct: u32) -> bool {\n    pct >= 50\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn levy_at_full_passes() {\n        assert!(super::levy(100));\n    }\n}\n",
