@@ -125,12 +125,11 @@ compile remain the separate requirements of their existing owners. Supplied serv
 untrusted-only or multiroot-only selections are refused before this work.
 
 `ci-full` retains its local review, workspace checks/tests, policy,
-fixture/golden/evidence and package dry-run ownership. A failure in that aggregate,
-including its known package-publication dry-run limitation tracked in #13107,
-stops the preset with an incomplete result. The coordinator does not omit it or
-reinterpret it as success. The first failed native command retains its status
-and cause; later stages remain `not_run`. Do not repeat the canonical suite
-through both `npm test` and `npm run test:e2e`: those are aliases. No full preset
+fixture/golden/evidence and package-validation ownership. A failure in that
+aggregate stops the preset with an incomplete result. The first failed native
+command retains its status and cause; later stages remain `not_run`. Do not repeat
+the canonical suite through both `npm test` and `npm run test:e2e`: those are
+aliases. No full preset
 is added to the ordinary editor qualification job.
 
 Each explicit attempt first invalidates only
