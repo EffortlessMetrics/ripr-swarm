@@ -1,0 +1,635 @@
+{
+  "after_repair": false,
+  "producer_sha256": "64d0745536076dc3b567e67b3959a96cbd504d3ac78af6d9d69aac97634cf5db",
+  "analyzer_version": "0.11.0+147d1968ab4ff0d9739c0c328a1a50a274073f76+languages:rust=1,typescript=1,python=1,perl=0",
+  "identity_command": [
+    "/workspace/12010-proof/target/debug/ripr",
+    "check",
+    "--root",
+    "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject",
+    "--format",
+    "repo-exposure-json"
+  ],
+  "rows": [
+    {
+      "method": "first",
+      "case": "direct_external",
+      "classes": [
+        "weakly_exposed",
+        "weakly_exposed"
+      ],
+      "correct_source_sha256": "6e9f1c2e7b99ceac83dfa8830adf9447722cfddb41fdaf02f68b830b8079bc18",
+      "producer_command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject",
+        "--diff",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json"
+      ],
+      "metadata_command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "metadata",
+        "--offline",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml"
+      ],
+      "runtime": [
+        {
+          "wrong": false,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling external_first v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/external)\n   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.21s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        },
+        {
+          "wrong": true,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused variable: `order_id`\n  --> src/lib.rs:17:43\n   |\n17 | pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n   |                                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_order_id`\n   |\n   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib) generated 1 warning (1 duplicate)\nwarning: `subject` (lib test) generated 1 warning (run `cargo fix --lib -p subject --tests` to apply 1 suggestion)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.50s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        }
+      ]
+    },
+    {
+      "method": "first",
+      "case": "own_name_external",
+      "classes": [
+        "exposed",
+        "exposed"
+      ],
+      "correct_source_sha256": "713499dd1a4482fed63babc16f80d9213032e25e42e43bd46221f839fc46d45d",
+      "producer_command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject",
+        "--diff",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json"
+      ],
+      "metadata_command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "metadata",
+        "--offline",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml"
+      ],
+      "runtime": [
+        {
+          "wrong": false,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        },
+        {
+          "wrong": true,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused variable: `order_id`\n  --> src/lib.rs:17:43\n   |\n17 | pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n   |                                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_order_id`\n   |\n   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib) generated 1 warning (run `cargo fix --lib -p subject` to apply 1 suggestion)\nwarning: `subject` (lib test) generated 1 warning (1 duplicate)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        }
+      ]
+    },
+    {
+      "method": "first",
+      "case": "alloc_external",
+      "classes": [
+        "exposed",
+        "exposed"
+      ],
+      "correct_source_sha256": "c38944fbf9acb097107250785ec20a2bca72c5af9010ec49cf895b6126f9cb34",
+      "producer_command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject",
+        "--diff",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json"
+      ],
+      "metadata_command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "metadata",
+        "--offline",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml"
+      ],
+      "runtime": [
+        {
+          "wrong": false,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        },
+        {
+          "wrong": true,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused variable: `order_id`\n  --> src/lib.rs:17:43\n   |\n17 | pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n   |                                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_order_id`\n   |\n   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib) generated 1 warning (run `cargo fix --lib -p subject` to apply 1 suggestion)\nwarning: `subject` (lib test) generated 1 warning (1 duplicate)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.27s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        }
+      ]
+    },
+    {
+      "method": "first",
+      "case": "internal_crate",
+      "classes": [
+        "exposed",
+        "exposed"
+      ],
+      "correct_source_sha256": "1137430c234f6916b92e706532b9a3c9b3aa97ce31ebc2dbf13d6848dc88e348",
+      "producer_command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject",
+        "--diff",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json"
+      ],
+      "metadata_command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "metadata",
+        "--offline",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml"
+      ],
+      "runtime": [
+        {
+          "wrong": false,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused import: `crate::First`\n  --> src/lib.rs:25:5\n   |\n25 | use crate::First;\n   |     ^^^^^^^^^^^^\n   |\n   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib test) generated 1 warning (run `cargo fix --lib -p subject --tests` to apply 1 suggestion)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.50s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        },
+        {
+          "wrong": true,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 101,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... FAILED\n\nfailures:\n\n---- tests::process_order_sends_exact_order_id stdout ----\n\nthread 'tests::process_order_sends_exact_order_id' (730102) panicked at src/lib.rs:31:1:\nassertion failed: matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\"))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    tests::process_order_sends_exact_order_id\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused import: `crate::First`\n  --> src/lib.rs:25:5\n   |\n25 | use crate::First;\n   |     ^^^^^^^^^^^^\n   |\n   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\n\nwarning: unused variable: `order_id`\n  --> src/lib.rs:17:43\n   |\n17 | pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n   |                                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_order_id`\n   |\n   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib) generated 1 warning (1 duplicate)\nwarning: `subject` (lib test) generated 2 warnings (run `cargo fix --lib -p subject --tests` to apply 2 suggestions)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.30s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\nerror: test failed, to rerun pass `--lib`\n"
+        }
+      ]
+    },
+    {
+      "method": "first",
+      "case": "unused_external",
+      "classes": [
+        "exposed",
+        "exposed"
+      ],
+      "correct_source_sha256": "1e1b3630abd52db68697fbedd93c71c96b979ca3fcb5515fcdcc69dcf6e1af0c",
+      "producer_command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject",
+        "--diff",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json"
+      ],
+      "metadata_command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "metadata",
+        "--offline",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml"
+      ],
+      "runtime": [
+        {
+          "wrong": false,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.30s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        },
+        {
+          "wrong": true,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 101,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... FAILED\n\nfailures:\n\n---- tests::process_order_sends_exact_order_id stdout ----\n\nthread 'tests::process_order_sends_exact_order_id' (730381) panicked at src/lib.rs:31:1:\nassertion failed: matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\"))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    tests::process_order_sends_exact_order_id\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused variable: `order_id`\n  --> src/lib.rs:17:43\n   |\n17 | pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n   |                                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_order_id`\n   |\n   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib) generated 1 warning (run `cargo fix --lib -p subject` to apply 1 suggestion)\nwarning: `subject` (lib test) generated 1 warning (1 duplicate)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\nerror: test failed, to rerun pass `--lib`\n"
+        }
+      ]
+    },
+    {
+      "method": "last",
+      "case": "direct_external",
+      "classes": [
+        "weakly_exposed",
+        "weakly_exposed"
+      ],
+      "correct_source_sha256": "0b7c389e6e56eaf6c6740aceedb7f8ca57b370a5008c3d18b35ebf12f0296ea9",
+      "producer_command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject",
+        "--diff",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json"
+      ],
+      "metadata_command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "metadata",
+        "--offline",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml"
+      ],
+      "runtime": [
+        {
+          "wrong": false,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.54s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        },
+        {
+          "wrong": true,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused variable: `order_id`\n  --> src/lib.rs:17:43\n   |\n17 | pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n   |                                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_order_id`\n   |\n   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib) generated 1 warning (1 duplicate)\nwarning: `subject` (lib test) generated 1 warning (run `cargo fix --lib -p subject --tests` to apply 1 suggestion)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.29s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        }
+      ]
+    },
+    {
+      "method": "last",
+      "case": "own_name_external",
+      "classes": [
+        "exposed",
+        "exposed"
+      ],
+      "correct_source_sha256": "156779e23727bf7e93ebcb8b550f3164cf92fa79c3ae9a90a8faab3967714a5e",
+      "producer_command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject",
+        "--diff",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json"
+      ],
+      "metadata_command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "metadata",
+        "--offline",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml"
+      ],
+      "runtime": [
+        {
+          "wrong": false,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        },
+        {
+          "wrong": true,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused variable: `order_id`\n  --> src/lib.rs:17:43\n   |\n17 | pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n   |                                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_order_id`\n   |\n   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib) generated 1 warning (1 duplicate)\nwarning: `subject` (lib test) generated 1 warning (run `cargo fix --lib -p subject --tests` to apply 1 suggestion)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.34s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        }
+      ]
+    },
+    {
+      "method": "last",
+      "case": "alloc_external",
+      "classes": [
+        "exposed",
+        "exposed"
+      ],
+      "correct_source_sha256": "b4ac0123953378d7ecdba74e4192cbacfd5f0319e8ef2aa63b11f6593b8b3b25",
+      "producer_command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject",
+        "--diff",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json"
+      ],
+      "metadata_command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "metadata",
+        "--offline",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml"
+      ],
+      "runtime": [
+        {
+          "wrong": false,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        },
+        {
+          "wrong": true,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused variable: `order_id`\n  --> src/lib.rs:17:43\n   |\n17 | pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n   |                                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_order_id`\n   |\n   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib) generated 1 warning (run `cargo fix --lib -p subject` to apply 1 suggestion)\nwarning: `subject` (lib test) generated 1 warning (1 duplicate)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        }
+      ]
+    },
+    {
+      "method": "last",
+      "case": "internal_crate",
+      "classes": [
+        "exposed",
+        "exposed"
+      ],
+      "correct_source_sha256": "835207375ad36bf3d6b0d5c2613c1e974aca40ffbf9dd0ee75580476f36d4ff4",
+      "producer_command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject",
+        "--diff",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json"
+      ],
+      "metadata_command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "metadata",
+        "--offline",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml"
+      ],
+      "runtime": [
+        {
+          "wrong": false,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused import: `crate::First`\n  --> src/lib.rs:25:5\n   |\n25 | use crate::First;\n   |     ^^^^^^^^^^^^\n   |\n   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib test) generated 1 warning (run `cargo fix --lib -p subject --tests` to apply 1 suggestion)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        },
+        {
+          "wrong": true,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 101,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... FAILED\n\nfailures:\n\n---- tests::process_order_sends_exact_order_id stdout ----\n\nthread 'tests::process_order_sends_exact_order_id' (732207) panicked at src/lib.rs:31:1:\nassertion failed: matches!(notifier.sent.borrow().last().map(String::as_str), Some(\"order-42\"))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    tests::process_order_sends_exact_order_id\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused variable: `order_id`\n  --> src/lib.rs:17:43\n   |\n17 | pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n   |                                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_order_id`\n   |\n   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: unused import: `crate::First`\n  --> src/lib.rs:25:5\n   |\n25 | use crate::First;\n   |     ^^^^^^^^^^^^\n   |\n   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib) generated 1 warning (run `cargo fix --lib -p subject` to apply 1 suggestion)\nwarning: `subject` (lib test) generated 2 warnings (1 duplicate) (run `cargo fix --lib -p subject --tests` to apply 1 suggestion)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.32s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\nerror: test failed, to rerun pass `--lib`\n"
+        }
+      ]
+    },
+    {
+      "method": "last",
+      "case": "unused_external",
+      "classes": [
+        "exposed",
+        "exposed"
+      ],
+      "correct_source_sha256": "bd39c1dd1faf71f881f4ce9bf256d30be2fa4e8d86248518ea2e7aeb0560ebe7",
+      "producer_command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject",
+        "--diff",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/diff.patch",
+        "--mode",
+        "fast",
+        "--format",
+        "json"
+      ],
+      "metadata_command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+        "metadata",
+        "--offline",
+        "--format-version",
+        "1",
+        "--manifest-path",
+        "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml"
+      ],
+      "runtime": [
+        {
+          "wrong": false,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 0,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.35s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\n   Doc-tests subject\n"
+        },
+        {
+          "wrong": true,
+          "command": [
+            "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+            "test",
+            "--offline",
+            "--manifest-path",
+            "/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject/Cargo.toml",
+            "--",
+            "--test-threads=1"
+          ],
+          "exit": 101,
+          "stdout": "\nrunning 1 test\ntest tests::process_order_sends_exact_order_id ... FAILED\n\nfailures:\n\n---- tests::process_order_sends_exact_order_id stdout ----\n\nthread 'tests::process_order_sends_exact_order_id' (732787) panicked at src/lib.rs:31:1:\nassertion failed: matches!(notifier.sent.borrow().last().map(String::as_str), Some(\"order-42\"))\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    tests::process_order_sends_exact_order_id\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+          "stderr": "   Compiling subject v0.0.0 (/workspace/011-integration-proof/compat-diagnostics/crate-alias-replay/subject)\nwarning: unused variable: `order_id`\n  --> src/lib.rs:17:43\n   |\n17 | pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n   |                                           ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_order_id`\n   |\n   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default\n\nwarning: `subject` (lib) generated 1 warning (run `cargo fix --lib -p subject` to apply 1 suggestion)\nwarning: `subject` (lib test) generated 1 warning (1 duplicate)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.27s\n     Running unittests src/lib.rs (011-integration-proof/compat-diagnostics/crate-alias-replay/target/debug/deps/subject-c216ecbfb71353be)\nerror: test failed, to rerun pass `--lib`\n"
+        }
+      ]
+    }
+  ]
+}

@@ -281,6 +281,94 @@ index 41c65ebce..92e421fb1 100644
        "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
        "workspace_root_hash": "…",
        "files_content_hash": "…",
+diff --git a/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json b/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json
+index 486ca8065..6d783f2bb 100644
+--- a/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json
++++ b/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json
+@@ -20,7 +20,7 @@
+       "worktree": "dirty"
+     },
+     "canonicalization": "raw_json_placeholder_v1",
+-    "content_sha256": "sha256:5aace09a74faa5f001ef786d8f8dc535eab93c5cc9a98b57b8806c1c2023bfb9",
++    "content_sha256": "sha256:45a61630683e8218dc3de89ad93f2f8e92c997cb3525dcd94f7383ed26be7e84",
+     "kind": "repo_exposure",
+     "producer": {
+       "tool": "ripr",
+@@ -415,7 +415,7 @@
+       "analyzed_production_files": [
+         "src/lib.rs"
+       ],
+-      "cache_schema_version": "1.162",
++      "cache_schema_version": "1.163",
+       "files_content_hash": "16ab297ea99e68bf",
+       "scope": "rust_workspace"
+     },
+diff --git a/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json b/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json
+index 2f76b2142..0a42305d9 100644
+--- a/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json
++++ b/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json
+@@ -10,12 +10,12 @@
+   "provenance": {
+     "after_artifact": {
+       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+-      "sha256": "sha256:1fab13e319f62248425564e68a9fb0932ba6cbd4928d8e2a9ed3516ab22cb799"
++      "sha256": "sha256:523aff9f18bbccb21abd3f7222000d5cfdcb0b857ec8bd380f1ab567082088d4"
+     },
+     "after_class": "weakly_gripped",
+     "before_artifact": {
+       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+-      "sha256": "sha256:1fab13e319f62248425564e68a9fb0932ba6cbd4928d8e2a9ed3516ab22cb799"
++      "sha256": "sha256:523aff9f18bbccb21abd3f7222000d5cfdcb0b857ec8bd380f1ab567082088d4"
+     },
+     "before_class": "weakly_gripped",
+     "command_template_version": "0.1",
+@@ -32,7 +32,7 @@
+     "seam_id": "67fc764ba37d77bd",
+     "verify_artifact": {
+       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
+-      "sha256": "sha256:6fd862cb9ab7849782cabc70b2a59c09eed28a6b751cfc3669ea842434d3da5d"
++      "sha256": "sha256:3c58127477050d403367be199dad80f21adbcc90c23b915cacd207082e608f29"
+     },
+     "workflow_artifact": null
+   },
+diff --git a/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json b/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json
+index 5e67a4cd4..807c9d1d0 100644
+--- a/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json
++++ b/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json
+@@ -5,9 +5,9 @@
+   "changed_seams": [],
+   "inputs": {
+     "after": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+-    "after_content_sha256": "sha256:5aace09a74faa5f001ef786d8f8dc535eab93c5cc9a98b57b8806c1c2023bfb9",
++    "after_content_sha256": "sha256:45a61630683e8218dc3de89ad93f2f8e92c997cb3525dcd94f7383ed26be7e84",
+     "before": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+-    "before_content_sha256": "sha256:5aace09a74faa5f001ef786d8f8dc535eab93c5cc9a98b57b8806c1c2023bfb9"
++    "before_content_sha256": "sha256:45a61630683e8218dc3de89ad93f2f8e92c997cb3525dcd94f7383ed26be7e84"
+   },
+   "new_gaps": [],
+   "resolved_gaps": [],
+diff --git a/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json b/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json
+index 486ca8065..6d783f2bb 100644
+--- a/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json
++++ b/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json
+@@ -20,7 +20,7 @@
+       "worktree": "dirty"
+     },
+     "canonicalization": "raw_json_placeholder_v1",
+-    "content_sha256": "sha256:5aace09a74faa5f001ef786d8f8dc535eab93c5cc9a98b57b8806c1c2023bfb9",
++    "content_sha256": "sha256:45a61630683e8218dc3de89ad93f2f8e92c997cb3525dcd94f7383ed26be7e84",
+     "kind": "repo_exposure",
+     "producer": {
+       "tool": "ripr",
+@@ -415,7 +415,7 @@
+       "analyzed_production_files": [
+         "src/lib.rs"
+       ],
+-      "cache_schema_version": "1.162",
++      "cache_schema_version": "1.163",
+       "files_content_hash": "16ab297ea99e68bf",
+       "scope": "rust_workspace"
+     },
 diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
 index 55ea29c0a..dcfd11f5a 100644
 --- a/xtask/src/tests/rust_corpus_projection.rs

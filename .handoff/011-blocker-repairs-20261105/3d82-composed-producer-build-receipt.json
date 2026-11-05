@@ -1,0 +1,44 @@
+{
+  "stage": "composed-producer-build",
+  "candidate": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+  "tree": "7ccb0143bf76b2dbd902291a42f11d10142ebc35",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "build",
+    "--locked",
+    "-p",
+    "ripr",
+    "--bin",
+    "ripr"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 10.03,
+  "counts": null,
+  "log_sha256": "270cf76de0ee6d48302e78667916f5ec42910215ce355e87572d1e5f250b9abc",
+  "peak_cgroup_memory_bytes": 3186188288,
+  "samples": [
+    {
+      "utc": "2026-11-05T17:07:57.371957+00:00",
+      "stage": "composed-producer-build",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 857437,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3186188288,
+      "workspace_free_bytes": 21531803648,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

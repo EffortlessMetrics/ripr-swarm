@@ -1,0 +1,59 @@
+{
+  "source_candidate": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+  "producer_sha256": "55707fc9640681279c390a7f987f0ba9595f746512e72f684e8cb47cbaafd219",
+  "producer_version": "ripr 0.11.0 (3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045)",
+  "commands": [
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--root",
+        "fixtures/boundary_gap/input",
+        "--format",
+        "repo-exposure-json"
+      ],
+      "exit": 0,
+      "seconds": 0.209,
+      "stdout_sha256": "29e3ed08916efaba73e4e70208c2e4cd468007199cc59015bd46a5e6a3de5b01",
+      "stderr": "ripr: repo-exposure-json is the full-repo audit path: a cold run analyzes every seam in the workspace and can take minutes on large repositories; no seam-facts cache present yet; the first run on this workspace pays the full walk.\nripr: no usable cache entry for this workspace state; running the full classified walk\n"
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "agent",
+        "verify",
+        "--root",
+        ".",
+        "--before",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+        "--after",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+        "--json"
+      ],
+      "exit": 0,
+      "seconds": 0.112,
+      "stdout_sha256": "3c58127477050d403367be199dad80f21adbcc90c23b915cacd207082e608f29",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "agent",
+        "receipt",
+        "--root",
+        ".",
+        "--verify-json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json"
+      ],
+      "exit": 0,
+      "seconds": 0.52,
+      "stdout_sha256": "3b438559dee7db90dd162eaa00fdf56fcee958b86e8d2fc1389a004532c691f8",
+      "stderr": ""
+    }
+  ],
+  "normalization": "Only portable boundary fixture root/revision/worktree, generated_at, three declared machine identity values and derived content commitment; receipt volatile identity/diagnostic/outcome normalized with actual artifact digests retained. Raw honesty reports are unmodified producer bytes.",
+  "result": "four boundary chain artifacts refreshed;21 raw report captures retained from6c producer; expected corpus assertions unchanged; qualification still pending"
+}
