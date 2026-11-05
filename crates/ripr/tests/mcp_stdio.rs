@@ -1162,7 +1162,11 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
         ("help", help.as_str()),
     ] {
         let text = normalized(text);
-        for required in ["findings and inventory", "agree", "item gates"] {
+        for required in [
+            "findings and inventory",
+            "agree",
+            "readiness depends on item gates",
+        ] {
             if !text.contains(required) {
                 failures.push(format!("{surface} omitted {required:?}"));
             }
@@ -1174,6 +1178,7 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
             "always repair-ready",
             "all worktree items are ready",
             "worktree cards are always available",
+            "cards and readiness require",
         ] {
             if text.contains(forbidden) {
                 failures.push(format!("{surface} has blanket claim {forbidden:?}"));

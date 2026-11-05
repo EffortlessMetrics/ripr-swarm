@@ -89,8 +89,8 @@ the shared check authority; its optional `base` argument selects another
 revision. By default, staged and unstaged tracked edits and untracked files
 are outside the analyzed scope. Opt in with `source: "worktree"` to include
 saved staged and unstaged tracked edits; unsaved buffers and untracked files
-remain outside. Worktree cards and readiness require findings and inventory to agree on
-consumed Rust bytes and the item gates to pass; refresh after edits. Its warm cache lives
+remain outside. Worktree cards require findings and inventory to agree on consumed Rust
+bytes; readiness depends on item gates; refresh after edits. Its warm cache lives
 under the root's `target/ripr/`. `ripr check` defaults to the working tree
 when staged or unstaged tracked edits exist; shared check authority does not
 mean identical input. Use `ripr check --committed` for committed input, or
