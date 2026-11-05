@@ -241,7 +241,13 @@ A repository that completes again after an incomplete baseline sample has no
 value to compare, so it is listed as "completed again" and left out of the
 compared worst.
 Metrics the baseline measured that a run cannot compare, such as ingested
-metrics without a receipt, are listed as not compared. Wall-time and memory
+metrics without a receipt, are listed as not compared. One exception: when
+every selected metric has no value this run and nothing comparable (as
+when an ingest board runs without
+any receipt), the gate fails and names the board in
+`gate.zero_evidence_boards` — a pass on zero measured evidence would be a
+false pass. A measured-but-incomparable metric (runner class, population,
+or grain mismatch) still only lists as not compared. Wall-time and memory
 metrics compare only against a baseline from the
 same runner class: host, OS, architecture, CPU count and, on Linux, the CPU
 model from `/proc/cpuinfo` (for example

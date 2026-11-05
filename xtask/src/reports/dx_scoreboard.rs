@@ -2171,6 +2171,43 @@ pub(crate) fn build_report(
         .map(|row| json!({"metric": row["id"], "reason": row["baseline"]["reason"]}))
         .collect();
     let ceiling_breaches = ceiling_breaches(config, boards, samples, context);
+    // Boards whose selected metrics produced no evidence at all this run:
+    // nothing comparable with the baseline and no measured value (e.g. an
+    // ingest board run without its receipt). A measured-but-incomparable
+    // metric (runner class, population, or grain mismatch) is listed as
+    // uncompared and does not count here — that pass is a pinned contract.
+    // A gate that passes when nothing it selected was even measured is a
+    // false pass, so a run where every selected metric is value-less fails
+    // and names those boards.
+    let zero_evidence_boards: Vec<Value> = boards
+        .iter()
+        .filter(|board| {
+            let rows: Vec<&Value> = metrics
+                .iter()
+                .filter(|row| row["board"].as_str() == Some(board.as_str()))
+                .collect();
+            !rows.is_empty()
+                && rows
+                    .iter()
+                    .all(|row| row["baseline"]["comparable"] != true && row["value"].is_null())
+        })
+        .map(|board| json!(board))
+        .collect();
+    let no_comparable_evidence = baseline.is_some()
+        && !metrics.is_empty()
+        && metrics
+            .iter()
+            .all(|row| row["baseline"]["comparable"] != true && row["value"].is_null());
+    // The field names the boards the gate failed for, so it is populated
+    // only in that case. A mixed run that passes keeps it empty rather than
+    // printing a no-evidence board beside a passing gate; per-board failure
+    // would also fail the nightly, which selects every board without the
+    // ingest receipts several boards need.
+    let zero_evidence_boards = if gate && no_comparable_evidence {
+        zero_evidence_boards
+    } else {
+        Vec::new()
+    };
     let gate_status = if !gate {
         "not_run"
     } else if !ceiling_breaches.is_empty() {
@@ -2181,6 +2218,8 @@ pub(crate) fn build_report(
         } else {
             "fail"
         }
+    } else if no_comparable_evidence {
+        "fail"
     } else if regressions.is_empty() && failed.is_empty() && comparison_failures.is_empty() {
         "pass"
     } else {
@@ -2210,6 +2249,7 @@ pub(crate) fn build_report(
             "failed_instruments": failed,
             "failed_comparisons": comparison_failures,
             "ceiling_breaches": ceiling_breaches,
+            "zero_evidence_boards": zero_evidence_boards,
             "review": review,
             "uncompared": uncompared,
         },
@@ -2938,6 +2978,16 @@ fn gate_failure_message(report: &Value) -> String {
             breach["reason"].as_str().unwrap_or("?")
         ));
     }
+    for board in report["gate"]["zero_evidence_boards"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        lines.push(format!(
+            "  no measured evidence for board {}: no selected metric was measured this run or could be compared with the baseline",
+            board.as_str().unwrap_or("?")
+        ));
+    }
     lines.push("see target/ripr/reports/dx-scoreboard.md".to_string());
     lines.join("\n")
 }
@@ -2986,6 +3036,16 @@ pub(crate) fn render_markdown(report: &Value) -> String {
             "\n**Comparison failed** `{}`: {}\n",
             item["metric"].as_str().unwrap_or("?"),
             item["reason"].as_str().unwrap_or("missing evidence")
+        ));
+    }
+    for board in report["gate"]["zero_evidence_boards"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&format!(
+            "\n**No measured evidence** for board `{}`: no selected metric was measured this run or could be compared with the baseline.\n",
+            board.as_str().unwrap_or("?")
         ));
     }
     let uncompared = report["gate"]["uncompared"]

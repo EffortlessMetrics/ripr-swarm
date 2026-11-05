@@ -515,6 +515,80 @@ fn gate_fails_on_a_broken_instrument_even_without_baseline() -> Result<(), Strin
 }
 
 #[test]
+fn gate_fails_when_no_selected_metric_is_comparable() -> Result<(), String> {
+    let config = parse_config(MINIMAL)?;
+    let boards = vec!["first_run".to_string()];
+    let baseline = build_report(
+        &config,
+        &boards,
+        &[sample(
+            "first_run.friction_events",
+            None,
+            SampleOutcome::Value(0.0),
+        )],
+        &context("r"),
+        None,
+        false,
+    );
+    // No ingest receipt this run: the only selected metric is not measured,
+    // so the gate has zero comparable evidence and must not pass.
+    let report = build_report(&config, &boards, &[], &context("r"), Some(&baseline), true);
+    assert_eq!(report["gate"]["status"].as_str(), Some("fail"));
+    assert_eq!(report["gate"]["zero_evidence_boards"], json!(["first_run"]));
+    assert!(gate_failure_message(&report).contains("first_run"));
+    // A comparable selected metric keeps the gate passing as before.
+    let measured = build_report(
+        &config,
+        &boards,
+        &[sample(
+            "first_run.friction_events",
+            None,
+            SampleOutcome::Value(0.0),
+        )],
+        &context("r"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(measured["gate"]["status"].as_str(), Some("pass"));
+    // A mixed run passes when another selected board was measured, and the
+    // zero-evidence field stays empty: it names only boards the gate
+    // failed for, never a board beside a passing gate.
+    let mixed_boards = vec!["first_run".to_string(), "ci".to_string()];
+    let mixed_baseline = build_report(
+        &config,
+        &mixed_boards,
+        &[sample(
+            "ci.workflow_lines",
+            None,
+            SampleOutcome::Value(100.0),
+        )],
+        &context("r"),
+        None,
+        false,
+    );
+    let mixed = build_report(
+        &config,
+        &mixed_boards,
+        &[sample(
+            "ci.workflow_lines",
+            None,
+            SampleOutcome::Value(100.0),
+        )],
+        &context("r"),
+        Some(&mixed_baseline),
+        true,
+    );
+    assert_eq!(mixed["gate"]["status"].as_str(), Some("pass"));
+    assert_eq!(mixed["gate"]["zero_evidence_boards"], json!([]));
+    // An ungated run never names zero-evidence boards either: the field is
+    // the gate's failure record, so `not_run` keeps it empty.
+    let ungated = build_report(&config, &boards, &[], &context("r"), Some(&baseline), false);
+    assert_eq!(ungated["gate"]["status"].as_str(), Some("not_run"));
+    assert_eq!(ungated["gate"]["zero_evidence_boards"], json!([]));
+    Ok(())
+}
+
+#[test]
 fn repo_view_groups_per_repo_samples() -> Result<(), String> {
     let config = parse_config(MINIMAL)?;
     let samples = vec![sample(
