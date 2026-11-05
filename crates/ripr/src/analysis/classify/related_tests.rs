@@ -11196,6 +11196,8 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             }],
             ..Index::default()
         };
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(std::path::Path::new("src/lib.rs"), Some(source.as_bytes()));
         let admit = |scip: &Index| -> Result<ScipReferenceBindings, String> {
             let bytes = scip.encode_to_vec();
             let index_path = root.join("index.scip");
@@ -11209,8 +11211,13 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 "source_files":[{"relative_path":"src/lib.rs", "source_sha256":format!("{:x}",Sha256::digest(source.as_bytes()))}]
             });
             std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
-            ScipReferenceBindings::from_admitted_index(&root, &index_path, &manifest_path)
-                .map_err(|e| e.reason())
+            ScipReferenceBindings::from_admitted_index(
+                &root,
+                &index_path,
+                &manifest_path,
+                &consumed,
+            )
+            .map_err(|e| e.reason())
         };
         let (adjacency, prefixes) = crate_a_dependency_context();
         let resolves = |bindings: &ScipReferenceBindings| {

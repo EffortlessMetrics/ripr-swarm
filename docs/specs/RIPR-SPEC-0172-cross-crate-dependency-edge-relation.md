@@ -382,3 +382,12 @@ Admitted SCIP relation consumers must retain the exact validated decoded index
 and companion project root in one owned snapshot. They must not reread either
 file after admission and treat the replacement as admitted authority. A fresh
 admission independently rejects changed digests or a project root escape.
+
+The enrichment constructor must also compare the retained raw Rust source
+commitments captured with the analysis index to the admitted manifest digests.
+Observed mismatches, failed captures and conflicting captures refuse enrichment.
+Documents outside the captured analysis subset contribute no binding authority;
+a broader valid SCIP index need not force unrelated source capture. Both the
+call document and definition document must remain in the matched subset. Later
+live edits cannot replace a matching retained capture. The facts-only admission
+API retains its original scope independently of this analysis binding contract.

@@ -71,11 +71,39 @@ pub(crate) struct AdmittedScipSnapshot {
     facts: AdmittedScipFacts,
     index: Index,
     project_root_relative: String,
+    source_files: Vec<ScipSourceFileManifest>,
 }
 
 impl AdmittedScipSnapshot {
-    pub(crate) fn into_index_and_project_root(self) -> (Index, String) {
-        (self.index, self.project_root_relative)
+    pub(crate) fn into_index_for_consumed_sources(
+        mut self,
+        consumed: &crate::analysis::consumed_source::ConsumedRustSources,
+    ) -> Result<(Index, String), ScipAdmissionError> {
+        let mut captured_documents = BTreeSet::new();
+        for source in &self.source_files {
+            // Manifest/root paths already passed admission. Normalize the
+            // harmless `.` prefix to the raw capture owner's relative key.
+            let relative = Path::new(&self.project_root_relative)
+                .join(&source.relative_path)
+                .components()
+                .filter(|part| !matches!(part, std::path::Component::CurDir))
+                .collect::<PathBuf>();
+            if !consumed.was_observed(&relative) {
+                // A broader SCIP document has no authority over this analysis
+                // until its raw bytes were actually consumed here.
+                continue;
+            }
+            if consumed.digest(&relative).as_deref() != Some(source.source_sha256.as_str()) {
+                return Err(ScipAdmissionError::SourceDigestMismatch {
+                    path: source.relative_path.clone(),
+                });
+            }
+            captured_documents.insert(source.relative_path.as_str());
+        }
+        self.index
+            .documents
+            .retain(|document| captured_documents.contains(document.relative_path.as_str()));
+        Ok((self.index, self.project_root_relative))
     }
 }
 
@@ -183,6 +211,7 @@ pub(crate) fn admit_scip_snapshot(
         facts,
         index,
         project_root_relative: manifest.project_root_relative,
+        source_files: manifest.source_files,
     })
 }
 

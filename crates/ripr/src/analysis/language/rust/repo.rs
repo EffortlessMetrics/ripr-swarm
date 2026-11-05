@@ -147,6 +147,7 @@ impl RustAdapter {
                     &options.root,
                     index_path,
                     manifest_path,
+                    &rust_consumed_sources,
                 )
                 .map_err(|error| format!("scip reference bindings: {}", error.reason()))?,
             )),

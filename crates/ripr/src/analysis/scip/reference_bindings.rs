@@ -23,17 +23,20 @@ impl ScipReferenceBindings {
         workspace_root: &Path,
         index_path: &Path,
         manifest_path: &Path,
+        consumed: &crate::analysis::consumed_source::ConsumedRustSources,
     ) -> Result<Self, ScipAdmissionError> {
-        Ok(Self::from_admitted_snapshot(admit_scip_snapshot(
-            workspace_root,
-            index_path,
-            manifest_path,
-        )?))
+        Self::from_admitted_snapshot(
+            admit_scip_snapshot(workspace_root, index_path, manifest_path)?,
+            consumed,
+        )
     }
 
-    fn from_admitted_snapshot(snapshot: AdmittedScipSnapshot) -> Self {
-        let (index, project_root_relative) = snapshot.into_index_and_project_root();
-        Self::from_index(&project_root_relative, &index)
+    fn from_admitted_snapshot(
+        snapshot: AdmittedScipSnapshot,
+        consumed: &crate::analysis::consumed_source::ConsumedRustSources,
+    ) -> Result<Self, ScipAdmissionError> {
+        let (index, project_root_relative) = snapshot.into_index_for_consumed_sources(consumed)?;
+        Ok(Self::from_index(&project_root_relative, &index))
     }
 
     fn from_index(project_root_relative: &str, index: &Index) -> Self {
@@ -442,6 +445,9 @@ mod tests {
             ],
             ..Index::default()
         };
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(Path::new("owner.rs"), Some(b"pub fn score() -> u32 { 1 }"));
+        consumed.record(Path::new("test.rs"), Some(source.as_bytes()));
         let resolves = |index: &Index| -> Result<bool, String> {
             use sha2::{Digest, Sha256};
             let bytes = index.encode_to_vec();
@@ -459,9 +465,13 @@ mod tests {
                 "project_root_relative": ".", "source_files": source_files,
             });
             std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
-            let bindings =
-                ScipReferenceBindings::from_admitted_index(&project, &index_path, &manifest_path)
-                    .map_err(|error| error.reason())?;
+            let bindings = ScipReferenceBindings::from_admitted_index(
+                &project,
+                &index_path,
+                &manifest_path,
+                &consumed,
+            )
+            .map_err(|error| error.reason())?;
             Ok(bindings
                 .call_resolves_to_owner(&project, &test, 1, source, "score", &owner, "score", 1))
         };
@@ -532,6 +542,8 @@ mod tests {
         std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
         // Capture successful admission before either caller-controlled file
         // changes. Binding construction must consume these owned facts only.
+        let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+        consumed.record(Path::new("owner.rs"), Some(source.as_bytes()));
         let snapshot =
             admit_scip_snapshot(&project, &index_path, &manifest_path).map_err(|e| e.reason())?;
         let mut replacement = index;
@@ -542,14 +554,20 @@ mod tests {
         replacement_manifest["project_root_relative"] = serde_json::json!("..");
         std::fs::write(&manifest_path, replacement_manifest.to_string())
             .map_err(|e| e.to_string())?;
-        let bindings = ScipReferenceBindings::from_admitted_snapshot(snapshot);
+        let bindings = ScipReferenceBindings::from_admitted_snapshot(snapshot, &consumed)
+            .map_err(|error| error.reason())?;
         assert!(
             bindings.call_resolves_to_owner(&project, &file, 2, line, "score", &file, "score", 1),
             "retained validated index/root must survive file replacement"
         );
         assert!(
-            ScipReferenceBindings::from_admitted_index(&project, &index_path, &manifest_path)
-                .is_err(),
+            ScipReferenceBindings::from_admitted_index(
+                &project,
+                &index_path,
+                &manifest_path,
+                &consumed
+            )
+            .is_err(),
             "fresh admission must reject replaced manifest/index"
         );
         // Isolate index identity: restore the original manifest, keeping the
@@ -559,6 +577,140 @@ mod tests {
             admit_scip_snapshot(&project, &index_path, &manifest_path),
             Err(ScipAdmissionError::IndexDigestMismatch)
         ));
+        std::fs::remove_dir_all(project).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn binding_authority_requires_matching_raw_source_capture() -> Result<(), String> {
+        use crate::analysis::consumed_source::ConsumedRustSources;
+        use sha2::{Digest, Sha256};
+        let project = tempfile_dir("captured-source")?;
+        let owner = "pub fn score() -> u32 { 1 }\n";
+        let old = "use beta::score;\n#[test] fn t() { score(); }\n";
+        let current = old.replace("beta::score", "alpha::score");
+        let call_line = old.lines().nth(1).ok_or("missing call line")?;
+        assert_eq!(Some(call_line), current.lines().nth(1));
+        let call = call_line.find("score()").ok_or("missing call")?;
+        let symbol = "scip rust-analyzer cargo alpha 0.1.0 alpha/score().";
+        let index = Index {
+            documents: vec![
+                Document {
+                    relative_path: "owner.rs".into(),
+                    occurrences: vec![Occurrence {
+                        symbol: symbol.into(),
+                        range: vec![0, 7, 12],
+                        symbol_roles: SymbolRole::Definition as i32,
+                        ..Occurrence::default()
+                    }],
+                    ..Document::default()
+                },
+                Document {
+                    relative_path: "test.rs".into(),
+                    position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
+                    occurrences: vec![Occurrence {
+                        symbol: symbol.into(),
+                        range: vec![1, call as i32, (call + 5) as i32],
+                        ..Occurrence::default()
+                    }],
+                    ..Document::default()
+                },
+                // Broader valid SCIP input need not force unrelated captures.
+                Document {
+                    relative_path: "unrelated.rs".into(),
+                    ..Document::default()
+                },
+            ],
+            ..Index::default()
+        };
+        let mut stale = ConsumedRustSources::default();
+        stale.record(Path::new("owner.rs"), Some(owner.as_bytes()));
+        stale.record(Path::new("test.rs"), Some(old.as_bytes()));
+        std::fs::write(project.join("owner.rs"), owner).map_err(|e| e.to_string())?;
+        std::fs::write(project.join("test.rs"), &current).map_err(|e| e.to_string())?;
+        std::fs::write(project.join("unrelated.rs"), "").map_err(|e| e.to_string())?;
+        let bytes = index.encode_to_vec();
+        let index_path = project.join("index.scip");
+        let manifest_path = project.join("manifest.json");
+        std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
+        let manifest = serde_json::json!({
+            "schema_version":"ripr-scip-admission-manifest-v1",
+            "index_sha256":format!("{:x}",Sha256::digest(&bytes)),
+            "producer":{"name":"capture-source-regression","version":"1"},
+            "project_root_relative":".",
+            "source_files":[
+                {"relative_path":"owner.rs","source_sha256":format!("{:x}",Sha256::digest(owner.as_bytes()))},
+                {"relative_path":"test.rs","source_sha256":format!("{:x}",Sha256::digest(current.as_bytes()))},
+                {"relative_path":"unrelated.rs","source_sha256":format!("{:x}",Sha256::digest(b""))}
+            ]
+        });
+        std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
+        let admit = |consumed: &ConsumedRustSources| {
+            ScipReferenceBindings::from_admitted_index(
+                &project,
+                &index_path,
+                &manifest_path,
+                consumed,
+            )
+        };
+        assert!(
+            matches!(
+                admit(&stale),
+                Err(ScipAdmissionError::SourceDigestMismatch { .. })
+            ),
+            "new import cannot supply binding authority to an older source capture"
+        );
+        let mut matching = ConsumedRustSources::default();
+        matching.record(Path::new("owner.rs"), Some(owner.as_bytes()));
+        matching.record(Path::new("test.rs"), Some(current.as_bytes()));
+        let bindings = admit(&matching).map_err(|e| e.reason())?;
+        let resolves = |bindings: &ScipReferenceBindings| {
+            bindings.call_resolves_to_owner(
+                &project,
+                &project.join("test.rs"),
+                2,
+                call_line,
+                "score",
+                &project.join("owner.rs"),
+                "score",
+                1,
+            )
+        };
+        assert!(
+            resolves(&bindings),
+            "matching capture keeps genuine binding despite unrelated broader document"
+        );
+        for missing in ["owner.rs", "test.rs"] {
+            let mut partial = ConsumedRustSources::default();
+            if missing != "owner.rs" {
+                partial.record(Path::new("owner.rs"), Some(owner.as_bytes()));
+            }
+            if missing != "test.rs" {
+                partial.record(Path::new("test.rs"), Some(current.as_bytes()));
+            }
+            assert!(
+                !resolves(&admit(&partial).map_err(|e| e.reason())?),
+                "uncaptured {missing} cannot contribute authority"
+            );
+        }
+        let mut conflicting = matching.clone();
+        conflicting.record(Path::new("test.rs"), Some(old.as_bytes()));
+        assert!(
+            admit(&conflicting).is_err(),
+            "conflicting raw observations must refuse"
+        );
+        let mut unavailable = ConsumedRustSources::default();
+        unavailable.record(Path::new("owner.rs"), Some(owner.as_bytes()));
+        unavailable.record(Path::new("test.rs"), None);
+        assert!(
+            admit(&unavailable).is_err(),
+            "failed capture is not an unrelated uncaptured document"
+        );
+        std::fs::write(project.join("test.rs"), old).map_err(|e| e.to_string())?;
+        assert!(
+            resolves(&bindings),
+            "later mutation does not replace matching retained capture"
+        );
         std::fs::remove_dir_all(project).map_err(|e| e.to_string())?;
         Ok(())
     }

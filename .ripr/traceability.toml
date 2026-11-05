@@ -13240,6 +13240,7 @@ spec = "docs/specs/RIPR-SPEC-0172-cross-crate-dependency-edge-relation.md"
 tests = [
   "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::same_line_pointer_reference_does_not_resolve_an_unrelated_call",
   "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::bindings_use_the_admitted_snapshot_after_index_and_manifest_replacement",
+  "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::binding_authority_requires_matching_raw_source_capture",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::scip_consumer_uses_retained_source_columns_with_indentation_and_unicode",
   "crates/ripr/src/analysis/scip/reference_bindings.rs::tests::callee_spans_and_document_positions_preserve_unicode_and_refuse_ambiguity",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_ambiguous_owner_when_cross_crate_dependent_test_calls_owner_then_edge_admits",
