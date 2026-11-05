@@ -153,6 +153,67 @@ storage evidence for #4978; it does not establish the dominant producer or
 repair the capacity failure by itself. The existing failure-profile adapter
 and LCOV upload remain in place.
 
+### Coverage build debug information
+
+Only the Generate coverage step sets `CARGO_PROFILE_TEST_STRIP=debuginfo`.
+Ordinary builds, the plain spawned-binary prebuild and the diagnostic preflight
+retain their normal configuration. The full workspace/all-features command,
+profile pattern, test population and strict report generation stay unchanged.
+This setting removes linked debug information; it preserves ordinary symbols.
+Coverage binaries therefore lose debugger line information even though their
+coverage source mappings must remain usable.
+
+This is a bounded response to measured build pressure, not an attribution of
+the final ENOSPC write. In diagnostic run
+[42015956653](https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/42015956653),
+the last complete sample recorded 57,278,578,688 allocated bytes in
+`instrumented_build` and 93,016,064 in `raw_profiles`. The log ended before the worker's
+terminal ENOSPC failure, so subsequent growth remains unobserved. The bucket
+does not identify the share occupied by debug information. A smaller fixture
+does not establish a particular workspace reduction or sufficient capacity;
+acceptance still requires a complete native coverage run, its test results and
+LCOV artifact, with the same population and comparable storage measurements.
+
+The mandatory diagnostics preflight includes
+`native_test_profile_strip_preserves_coverage_and_reduces_fixture_size`. It
+builds the same dependency-free Cargo test fixture with explicit `none` and
+`debuginfo` strip modes, separate target directories and identical explicit
+coverage instrumentation. Child-only compiler/wrapper/encoded-flag overrides
+prevent the outer cargo-llvm-cov environment from changing either comparison.
+The native compiler invocation must show the expected coverage/debug flags and
+candidate strip setting. The baseline binary must contain line tables; the
+candidate must contain no debug sections and be smaller.
+
+Each variant runs the exact test twice, with a post-assertion acknowledgement,
+one-test success and a fresh nonempty profile per invocation. Matching-sysroot
+LLVM tools must merge both profiles without warnings, match each merged
+profile's ID to its own executable, and export usable JSON and LCOV. The
+control requires identical owned source regions and line counts, the known
+function count of two, a hot return count of two and a cold return count of
+zero. IDs may differ between the two binaries. Tool absence, malformed output,
+zero selection, warning-only partial merging and missing source evidence fail
+the Linux control. Existing malformed-profile and size-bound controls remain
+selected by the same preflight.
+
+The finite native commands use the observer's non-reaping process owner,
+30-second per-command deadlines and 256 KiB per-stream capture limits. Fixture
+outputs and captures stay under the owned root; the commands preserve the
+parent environment and clean their owned groups before reaping. A compact
+native receipt records actual tool versions, sizes, IDs and expected counts.
+These bounds apply to the control; they do not shorten the coverage workload's 45-minute limit.
+Before explicit success cleanup, the native fixture retains and reports its
+root on an error or panic, including uncertain child cleanup. Removal follows
+successful commands and assertions, before the passed receipt is emitted.
+
+The pinned interface basis is Rust 1.95.0
+[`strip` codegen documentation](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/src/doc/rustc/src/codegen-options/index.md#strip),
+its Cargo revision's
+[profiles](https://github.com/rust-lang/cargo/blob/f2d3ce0bd7f24a49f8f72d9000448f8838c4e850/src/doc/src/reference/profiles.md#strip)
+and [profile environment variables](https://github.com/rust-lang/cargo/blob/f2d3ce0bd7f24a49f8f72d9000448f8838c4e850/src/doc/src/reference/environment-variables.md),
+and [cargo-llvm-cov 0.9.1](https://github.com/taiki-e/cargo-llvm-cov/blob/v0.9.1/src/main.rs).
+Native execution, including the matching LLVM 22.1.2 tools on the pinned
+workflow, remains the compatibility authority.
+
 ### Validate locally
 
 On Linux, before adopting a newer Rust toolchain, run the small diagnostics package with

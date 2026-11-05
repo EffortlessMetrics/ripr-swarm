@@ -14,5 +14,7 @@ tests = [
   "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::full_schema_keeps_all_buckets_and_escaped_profile_entries_in_atomic_records",
   "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::descendant_status_accepts_only_vanished_tasks_and_preserves_other_errors",
   "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::normal_exit_cleanup_stops_a_confirmed_separate_descendant",
+  "tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::native_test_profile_strip_preserves_coverage_and_reduces_fixture_size",
   "tools/repo-policy/src/workflow_tests.rs::coverage_failure_capture_preserves_original_command_and_failure",
+  "tools/repo-policy/src/workflow_tests.rs::coverage_strip_is_generate_only_and_requires_native_controls",
 ]
