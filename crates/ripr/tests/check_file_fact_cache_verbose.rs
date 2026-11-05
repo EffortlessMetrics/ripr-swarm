@@ -145,6 +145,12 @@ fn blocked_file_fact_store_still_reports_check_with_failure_fact() -> Result<(),
     if cache_fact["store_errors"].as_u64().unwrap_or(0) == 0 {
         return Err(format!("expected store_errors > 0: {cache_fact}"));
     }
+    let receipt = cache_fact.to_string();
+    for private_path in [&root, &cache] {
+        if receipt.contains(&private_path.to_string_lossy().into_owned()) {
+            return Err(format!("cache receipt leaked a host path: {receipt}"));
+        }
+    }
     if !report.stderr.contains("repo file fact cache store failure") {
         return Err(format!(
             "expected store failure disclosure on stderr: {}",

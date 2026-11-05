@@ -737,7 +737,7 @@ pub(crate) fn file_fact_store_failure_rows(stats: &FileFactCacheStats) -> Vec<se
             serde_json::json!({
                 "path": portable_store_failure_path(&failure.path),
                 "stage": failure.stage,
-                "error": failure.error,
+                "error": portable_store_failure_error(&failure.error),
             })
         })
         .collect()
@@ -796,13 +796,26 @@ pub(crate) fn file_fact_cache_receipt(stats: &FileFactCacheStats) -> serde_json:
 fn portable_store_failure_path(path: &Path) -> Option<String> {
     let mut parts = Vec::new();
     for component in path.components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return None;
+        }
         let part = component.as_os_str().to_str()?;
-        if part.contains('\\') {
+        if part.contains('\\') || (parts.is_empty() && part.as_bytes().get(1) == Some(&b':')) {
             return None;
         }
         parts.push(part);
     }
-    Some(parts.join("/"))
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+/// Store errors are normally path-free, but an unexpected producer message
+/// must not disclose a host path through the public receipt or stderr.
+fn portable_store_failure_error(error: &str) -> &str {
+    if error.contains(['/', '\\']) {
+        "details withheld: error contains a path separator"
+    } else {
+        error
+    }
 }
 
 fn cache_store_status_label(reason: &str) -> String {
@@ -4452,6 +4465,65 @@ mod tests {
         assert_eq!(value["store_failures"][1]["path"], expected_bar);
         assert_eq!(value["store_failures"][1]["stage"], "encode");
         assert_eq!(value["store_failures_dropped"], 0);
+    }
+
+    #[test]
+    fn cache_failure_projection_refuses_host_paths_and_preserves_safe_details() {
+        let mut stats = FileFactCacheStats::zero_work();
+        for (path, message) in [
+            (
+                "/home/user/cache/secret",
+                "write /home/user/cache/secret failed",
+            ),
+            ("../outside.rs", "permission denied"),
+            (
+                "C:\\Users\\user\\cache",
+                "write C:\\Users\\user\\cache failed",
+            ),
+            ("src/lib.rs", "permission denied"),
+        ] {
+            stats.record_store_failure(
+                PathBuf::from(path),
+                super::super::seam_cache::FileFactStoreError {
+                    stage: super::super::seam_cache::FileFactStoreStage::Write,
+                    message: message.to_string(),
+                },
+            );
+        }
+        let receipt = file_fact_cache_receipt(&stats);
+        let rows = &receipt["store_failures"];
+        for index in 0..3 {
+            assert!(rows[index]["path"].is_null());
+        }
+        assert_eq!(rows[3]["path"], "src/lib.rs");
+        assert_eq!(rows[3]["error"], "permission denied");
+        let rendered = format!("{receipt} {:?}", file_fact_store_failure_summary(&stats));
+        assert!(!rendered.contains("/home/user"));
+        assert!(!rendered.contains("Users"));
+    }
+
+    #[test]
+    fn merged_cache_failure_snapshots_keep_cap_order_and_denominator() {
+        let mut merged = FileFactCacheStats::zero_work();
+        for batch in 0..3 {
+            let mut source = FileFactCacheStats::zero_work();
+            for index in 0..if batch == 1 { 40 } else { 20 } {
+                source.record_store_failure(
+                    PathBuf::from(format!("src/{batch}-{index}.rs")),
+                    super::super::seam_cache::FileFactStoreError {
+                        stage: super::super::seam_cache::FileFactStoreStage::Write,
+                        message: "blocked".to_string(),
+                    },
+                );
+            }
+            merged.merge_from(&source);
+        }
+        let receipt = file_fact_cache_receipt(&merged);
+        assert_eq!(receipt["store_errors"], 80);
+        assert_eq!(receipt["store_failures"].as_array().map(Vec::len), Some(32));
+        assert_eq!(receipt["store_failures_dropped"], 48);
+        assert_eq!(receipt["store_failures"][0]["path"], "src/0-0.rs");
+        assert_eq!(receipt["store_failures"][31]["path"], "src/1-11.rs");
     }
 
     #[test]
