@@ -483,11 +483,17 @@ impl GapItem {
             })
         } else if let Some(code) = self.repair_readiness.ineligibility {
             let seam_owned = self.repair_readiness.seam_detail.is_some();
-            // Only a saved-worktree snapshot is retryable without a source
-            // change: re-refreshing on committed input re-evaluates it.
+            // A custody refusal can describe either source. Its retained
+            // detail already carries the source- and cause-specific remedy
+            // from the custody owner; the shared code alone cannot choose a
+            // refresh source without sending a dirty committed snapshot back
+            // through the same refusal.
             let retryable = code == crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE;
             let recovery = if retryable {
-                "call ripr_refresh with the default committed source (omit `source: \"worktree\"`), then re-read this limitation".to_string()
+                format!(
+                    "{}; keep the snapshot's explicit `base`, if any, in the refresh request, then re-read this limitation against the new snapshot",
+                    self.repair_readiness.detail()
+                )
             } else if let Some(step) = advisory_next_step {
                 format!("{step}; then {refresh_recovery}")
             } else {
@@ -2123,7 +2129,7 @@ mod tests {
 
     /// #1898: with no producer static limit the first failing readiness gate
     /// is the limitation; the shared seam validator's refusal outranks the
-    /// finding gates and is attributed to `seam_admission`; a saved-worktree
+    /// finding gates and is attributed to `seam_admission`; a source-custody
     /// withhold is the one retryable-without-edit limitation.
     #[test]
     fn limitation_reports_the_first_failing_readiness_gate_with_its_owner() -> Result<(), String> {
@@ -2158,14 +2164,57 @@ mod tests {
         worktree.repair_readiness =
             ready_readiness().with_seam_verdict(Some(&SeamVerdict::Refused {
                 code: crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE,
-                detail: "worktree snapshot".to_string(),
+                detail: super::super::workspace::worktree_card_withheld_detail("source moved"),
             }));
         let document = worktree.limitation_document("snapshot:sha256:abc");
         assert_eq!(
             document.pointer("/limitation/retryable"),
             Some(&Value::Bool(true))
         );
-        assert!(limitation_field(&document, "recovery")?.contains("committed source"));
+        assert!(
+            limitation_field(&document, "recovery")?.contains("Edits settle by refreshing again")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn limitation_custody_recovery_preserves_the_source_owner_remedy() -> Result<(), String> {
+        let committed = super::super::workspace::committed_card_withheld_detail(
+            "the checkout has uncommitted Rust source or test files",
+        );
+        let worktree = super::super::workspace::worktree_card_withheld_detail(
+            "a saved source file moved between producers",
+        );
+        let moved_head = super::super::workspace::committed_card_withheld_detail(
+            "the repository head the findings producer observed does not match the head the seam inventory bound",
+        );
+        for (detail, expected_route) in [
+            (committed, "source `worktree` to analyze saved edits"),
+            (worktree, "Edits settle by refreshing again"),
+            (moved_head, "once the repository head settles"),
+        ] {
+            let mut item = GapItem::from_finding(&finding()?, Path::new("."))?;
+            item.repair_readiness =
+                ready_readiness().with_seam_verdict(Some(&SeamVerdict::Refused {
+                    code: crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE,
+                    detail: detail.clone(),
+                }));
+            let document = item.limitation_document("snapshot:sha256:custody");
+            let recovery = limitation_field(&document, "recovery")?;
+            assert!(recovery.starts_with(&detail));
+            assert!(recovery.contains(expected_route));
+            assert!(recovery.contains("keep the snapshot's explicit `base`"));
+            assert!(recovery.contains("against the new snapshot"));
+            assert!(!recovery.contains("omit `source: \"worktree\"`"));
+            assert_eq!(limitation_field(&document, "reason")?, detail);
+            assert_eq!(limitation_field(&document, "stage")?, "seam_admission");
+            assert_eq!(document["limitation"]["retryable"], true);
+            assert_eq!(
+                document["limitation"]["restart"]["snapshot_id"],
+                "snapshot:sha256:custody"
+            );
+            assert!(!item.repair_readiness.ready);
+        }
         Ok(())
     }
 
