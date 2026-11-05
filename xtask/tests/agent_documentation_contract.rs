@@ -83,7 +83,9 @@ fn dispatch_route_guard_rejects_removed_examples_and_wrong_routes() -> Result<()
             DISPATCH.replace(command, "ripr agent packet --root . --seam-id ID --json")
         );
         if check_routes(&changed).is_ok() {
-            return Err(format!("wrong `{id}` example was rescued by a prose mention"));
+            return Err(format!(
+                "wrong `{id}` example was rescued by a prose mention"
+            ));
         }
     }
     Ok(())
@@ -179,9 +181,8 @@ fn require_one_pass(output: &Output) -> Result<(), String> {
     let text = String::from_utf8_lossy(&output.stdout);
     if !output.status.success()
         || !text.contains("test threshold_contract ... ok")
-        || !text.contains(
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
-        )
+        || !text
+            .contains("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
     {
         return Err(format!(
             "the documented test did not execute and pass ({})\n{text}\n{}",
