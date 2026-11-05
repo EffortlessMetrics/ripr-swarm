@@ -211,7 +211,10 @@ fn agent_dispatch_keeps_partial_gaps_and_complete_controls() -> Result<(), Strin
         "{text}"
     );
     assert!(text.contains("|id=probe:gap\n"), "{text}");
-    assert!(text.contains("next=ripr explain probe:gap\n"), "{text}");
+    assert!(
+        text.contains("next=ripr explain --format agent probe:gap\n"),
+        "{text}"
+    );
     assert!(
         !text.contains("\ndone=") && !text.contains("\nstop="),
         "{text}"
@@ -235,7 +238,10 @@ fn agent_dispatch_keeps_partial_gaps_and_complete_controls() -> Result<(), Strin
         &outcome_output(CompleteWithFindings, vec![weak_gap("probe:gap", 2)])?,
         &config,
     )?;
-    assert!(text.contains("next=ripr explain probe:gap\n"), "{text}");
+    assert!(
+        text.contains("next=ripr explain --format agent probe:gap\n"),
+        "{text}"
+    );
     assert!(
         !text.contains("analysis=incomplete") && !text.contains("\ndone="),
         "{text}"
@@ -296,8 +302,37 @@ fn top_gap_carries_location_missing_value_test_id_and_next_command() {
         lines[2],
         "t1=tests/t.rs:3 discount_runs relational_check `assert!(discount(10, 100) > 0);` miss=weak_assertion"
     );
-    assert_eq!(lines[3], "next=ripr explain probe:a");
+    assert_eq!(lines[3], "next=ripr explain --format agent probe:a");
     assert_eq!(lines.len(), 4, "{text}");
+}
+
+/// #13157: the agent surface's drill-in carries exactly one `--format agent`,
+/// inserted before the (possibly quoted) selector, while the human
+/// navigation keeps the flag-free command. The legacy navigation pins the
+/// insertion point; scoped drill-ins are pinned end-to-end in cli_smoke.
+#[test]
+fn agent_drill_in_carries_the_compact_format_before_the_selector() {
+    let navigation = crate::app::FindingNavigation::legacy();
+    assert_eq!(
+        navigation.explain_command_compact("probe:a"),
+        "ripr explain --format agent probe:a"
+    );
+    // Quoting is host-dependent (single quotes off-Windows, double quotes on
+    // Windows consoles), so derive the expected rendering from the same
+    // `shell_arg` helper the production call site uses.
+    let spaced = "probe:my gap";
+    assert_eq!(
+        navigation.explain_command_compact(spaced),
+        format!(
+            "ripr explain --format agent {}",
+            crate::agent::loop_commands::shell_arg(spaced)
+        )
+    );
+    // Human navigation is unchanged (negative control).
+    assert_eq!(
+        navigation.explain_command("probe:a"),
+        "ripr explain probe:a"
+    );
 }
 
 #[test]
@@ -355,7 +390,7 @@ fn open_test_side_gap_suppresses_stop_when_selected_finding_is_limited() {
     );
     assert!(
         text.lines()
-            .any(|line| line == "next=ripr explain probe:gap"),
+            .any(|line| line == "next=ripr explain --format agent probe:gap"),
         "{text}"
     );
     assert!(text.contains("\nlimits=static_unknown:1\n"), "{text}");
@@ -412,7 +447,7 @@ fn reach_limit_with_weak_assertion_row_does_not_stop() {
     );
     assert!(
         text.lines()
-            .any(|line| line == "next=ripr explain probe:fortnight"),
+            .any(|line| line == "next=ripr explain --format agent probe:fortnight"),
         "{text}"
     );
 }

@@ -431,6 +431,20 @@ impl FindingNavigation {
         format!("{} {}", self.explain_prefix, shell_arg(selector))
     }
 
+    /// The `check --format agent` drill-in (#13157): the same scope-bound
+    /// prefix with the compact explain format inserted before the selector,
+    /// so an agent following the printed `next=` command stays on the
+    /// compact surface instead of silently switching to verbose human
+    /// output. The human navigation keeps the flag-free
+    /// [`explain_command`](Self::explain_command).
+    pub(crate) fn explain_command_compact(&self, selector: &str) -> String {
+        format!(
+            "{} --format agent {}",
+            self.explain_prefix,
+            shell_arg(selector)
+        )
+    }
+
     pub(crate) fn context_command(&self, selector: &str) -> String {
         format!("{} --at {}", self.context_prefix, shell_arg(selector))
     }

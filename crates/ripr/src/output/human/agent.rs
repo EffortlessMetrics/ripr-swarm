@@ -343,11 +343,15 @@ fn render_open_limited(
     }
     push_limits(&mut out, considered, &[]);
     if let Some(first) = open.first() {
+        // #13157: the agent surface's drill-in stays compact — the printed
+        // command carries `--format agent` so following it does not switch
+        // to verbose human output. The scope-bound prefix (root, base or
+        // diff, worktree, mode) is the navigation's own.
         out.push_str(&match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => {
-                format!("next={}\n", navigation.explain_command(&first.id))
+                format!("next={}\n", navigation.explain_command_compact(&first.id))
             }
-            None => format!("next=ripr explain {}\n", first.id),
+            None => format!("next=ripr explain --format agent {}\n", first.id),
         });
     }
     out
@@ -458,11 +462,14 @@ fn next_line(
     provenance: CheckDiffProvenance,
 ) -> Option<String> {
     if let Some(gap) = gaps.first() {
+        // #13157: the agent surface's drill-in keeps the compact format and
+        // the full navigation scope; the human surfaces keep the flag-free
+        // command from FindingNavigation::explain_command.
         return Some(match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => {
-                format!("next={}", navigation.explain_command(&gap.id))
+                format!("next={}", navigation.explain_command_compact(&gap.id))
             }
-            None => format!("next=ripr explain {}", gap.id),
+            None => format!("next=ripr explain --format agent {}", gap.id),
         });
     }
     let action =
