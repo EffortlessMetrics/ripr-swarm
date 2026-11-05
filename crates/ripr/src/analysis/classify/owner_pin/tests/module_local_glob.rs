@@ -8,6 +8,7 @@ use super::*;
 const GLOBS: &str = "src/globs.rs";
 const SUITE: &str = "src/suite.rs";
 const SUITE_TESTS: &str = "src/suite/tests.rs";
+const INLINE_TESTS: &str = "src/suite/inline/tests.rs";
 const ROOT_LIB: &str = "mod globs;\nmod suite;\npub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
 const GLOB: &str =
     "use rayon::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n";
@@ -128,6 +129,65 @@ fn an_ancestor_glob_still_blocks_a_descendant_a_glob_chain_can_reach() {
         (SUITE_TESTS, child),
     ]);
     assert!(is_binding(&refusal_of(&broken, SUITE_TESTS)), "unparsed");
+}
+
+#[test]
+fn a_deep_glob_can_skip_an_intermediate_module() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    for import in ["use crate::*;", "use super::super::*;", "use crate::{*};"] {
+        let child = format!("{import}\n#[test] fn weighs() {{ assert_eq!(2 + 2, 4); }}\n");
+        let indexed = index(&[(LIB, lib), (SUITE, "mod tests;\n"), (SUITE_TESTS, &child)]);
+        assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)), "{import}");
+    }
+    let inline = "mod inner { use crate::*; #[test] fn weighs() { assert_eq!(2 + 2, 4); } }";
+    let indexed = index(&[(LIB, lib), (SUITE, "mod tests;\n"), (SUITE_TESTS, inline)]);
+    assert!(
+        is_binding(&refusal_of(&indexed, SUITE_TESTS)),
+        "inline module"
+    );
+    let generated = "emit_glob!(); #[test] fn weighs() { assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[
+        (LIB, lib),
+        (SUITE, "mod tests;\n"),
+        (SUITE_TESTS, generated),
+    ]);
+    assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)), "item macro");
+}
+
+#[test]
+fn a_named_import_in_an_inline_module_can_reach_an_out_of_line_child() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let suite = "mod inline { use crate::assert_eq; mod tests; }";
+    let child = "use super::*; #[test] fn weighs() { assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (INLINE_TESTS, child)]);
+    assert!(is_binding(&refusal_of(&indexed, INLINE_TESTS)));
+}
+
+#[test]
+fn an_unknown_derive_may_emit_a_glob_into_an_intermediate_module() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let suite = "#[derive(inject::Emit)] struct Marker; mod tests;";
+    let child = "use super::*; #[test] fn weighs() { assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
+    assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)));
+}
+
+#[test]
+fn a_shadowed_test_attribute_may_emit_an_intermediate_glob() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let suite = "use inject::test; #[test] fn marker() {} mod tests;";
+    let child = "use super::*; #[test] fn weighs() { assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
+    assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)));
+}
+
+#[test]
+fn inert_attributes_do_not_create_a_glob_chain() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let suite = "/// documentation\n#[allow(dead_code)] struct Marker; mod tests;";
+    let child = "use super::*; #[test] fn weighs() { assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
+    assert_eq!(refusal_of(&indexed, SUITE_TESTS), None);
 }
 
 #[test]

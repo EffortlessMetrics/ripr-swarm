@@ -2573,14 +2573,15 @@ receiving call is itself resolved.
   visibility, outside any inline module or block) is visible only in its own
   module and the modules declared beneath it, so it reaches a test only when
   the test's file is the glob's file, or a file the glob's file declares,
-  directly or through further `mod` edges, and every module file entered
-  along that path may carry the glob down: it holds a glob `use`
-  (`use super::*;`, `use crate::*;`), an item-position macro call that could
-  emit one, or does not parse cleanly (#13269). A private `use` is not
-  inherited by a child module, so a crate-root `use colored::*;` does not
-  refuse a descendant test when no module between holds a glob; any path
-  that can carry it keeps the refusal. A glob in a sibling or unrelated file of the same
-  crate no longer refuses the test. The confinement needs established
+  directly or through further `mod` edges. A single-parent glob chain may
+  carry the import down across those edges; a qualified glob such as
+  `use crate::*` or `use super::super::*` may skip intermediate files and
+  keeps the refusal. Named assertion-macro imports, item-position macro calls,
+  unknown attributes and unparsed files also retain the refusal (#13269).
+  A private `use` is not inherited by a child module,
+  so a crate-root `use colored::*;` does not refuse a descendant when no
+  import can carry it there. A glob in a sibling or unrelated file of the
+  same crate no longer refuses the test. The confinement needs established
   composition on both ends: the glob's file has an execution context (so it
   is no `include!` fragment and nothing above it is unresolved), the test's
   file has one, and no `include!` or `#[path]` is unresolved anywhere in the
@@ -2591,6 +2592,9 @@ receiving call is itself resolved.
   `a_glob_in_the_tests_own_file_still_blocks_it`,
   `an_ancestor_glob_does_not_reach_a_descendant_with_no_glob_chain`,
   `an_ancestor_glob_still_blocks_a_descendant_a_glob_chain_can_reach`,
+  `a_deep_glob_can_skip_an_intermediate_module`,
+  `a_named_import_in_an_inline_module_can_reach_an_out_of_line_child`,
+  `an_unknown_derive_may_emit_a_glob_into_an_intermediate_module`,
   `a_glob_reaches_a_child_test_module_file_through_use_super`,
   `a_path_attribute_mount_is_a_module_of_its_declarer`,
   `an_include_fragment_glob_lands_in_its_includer_and_stays_workspace_wide`,
