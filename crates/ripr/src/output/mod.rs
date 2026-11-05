@@ -138,7 +138,7 @@ const _: fn(
 const _: fn(
     &crate::domain::RiprInterventionStudyV1,
     &crate::domain::RiprInterventionStudyV1,
-) -> Result<(), crate::domain::RiprInterventionStudyError> =
+) -> Result<(), crate::domain::InterventionStudyError> =
     crate::domain::RiprInterventionStudyV1::validate_successor;
 const _: &str = crate::domain::RIPR_INTERVENTION_STUDY_SCHEMA_VERSION;
 
