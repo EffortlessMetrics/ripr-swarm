@@ -50,7 +50,7 @@ class API:
         self.r = page('workflow_runs', run())
         self.j = page('jobs', job())
         self.c = page('check_runs', check())
-        self.prs = [dict(state='open', draft=False, head={'sha': HEAD}, mergeable=True, mergeable_state='clean') for _ in range(2)]
+        self.prs = [dict(state='open', draft=False, title=TITLE, body=MESSAGE, head={'sha': HEAD}, mergeable=True, mergeable_state='clean') for _ in range(2)]
         self.mutations = []
     def pr(self): return self.prs.pop(0)
     def runs(self, head): return copy.deepcopy(self.r)
@@ -127,6 +127,25 @@ class Tests(unittest.TestCase):
                 with self.assertRaises(g.Refusal): api.merge(HEAD)
                 self.assertEqual(transport.call_count, 1)
                 self.assertNotIn('PUT', transport.call_args.args[0])
+
+    def test_explicit_message_preserves_source_coauthor_credit(self):
+        source = 'Co-authored-by: External <external@example.org>\nCo-authored-by: Claude <noreply@anthropic.com>'
+        commits = [attribution_commit(message=source)]
+        for body in ('', 'Co-authored-by: External <external@example.org>'):
+            with self.assertRaisesRegex(g.Refusal, 'omits source co-author'):
+                g.require_attribution(commits, HEAD, TITLE, body)
+        g.require_attribution(commits, HEAD, TITLE, source.upper())
+
+    def test_bad_generated_pr_metadata_never_reaches_put(self):
+        for field in ('title', 'body'):
+            pr = dict(state='open', draft=False, head={'sha': HEAD},
+                      mergeable=True, mergeable_state='clean', title=TITLE, body=MESSAGE)
+            pr[field] = 'Co-authored-by: Bad <x@x>'
+            api = g.Gh(g.AUDITED_REPO, 42, TITLE, '')
+            with patch.object(api, 'api', side_effect=[[[attribution_commit()]], pr]) as transport:
+                with self.assertRaises(g.Refusal): api.merge(HEAD)
+                self.assertEqual(transport.call_count, 2)
+                self.assertTrue(all('PUT' not in c.args[0] for c in transport.call_args_list))
 
     def test_success_and_unstable_do_not_add_advisory_gate(self):
         for state in ('clean', 'unstable'):
