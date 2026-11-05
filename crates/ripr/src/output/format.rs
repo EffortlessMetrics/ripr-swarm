@@ -15,6 +15,14 @@ pub enum OutputFormat {
     /// for machine/agent consumers (#13103). Parsed values are identical;
     /// only insignificant whitespace differs.
     JsonCompact,
+    /// The same findings, verdicts and identity fields as
+    /// [`OutputFormat::Json`], semantically compacted for token-priced LLM
+    /// consumers: repeated prose templates in `evidence_path`/`evidence`/
+    /// `missing`/`assertion_texts` become legend codes, and same-value alias
+    /// fields are emitted once. The full strings are recoverable from the
+    /// document-head `evidence_legend`; nothing is silently dropped. See
+    /// `docs/OUTPUT_SCHEMA.md` "json-terse".
+    JsonTerse,
     /// Unbounded `json` check findings with the producer `artifact` identity
     /// envelope (ADR 0020 amendment), so a gap-keyed verify can reject a
     /// fabricated, edited or incomplete snapshot.
@@ -146,6 +154,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
     OutputFormatSpec {
         format: OutputFormat::JsonCompact,
         cli_names: &["json-compact"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
+        format: OutputFormat::JsonTerse,
+        cli_names: &["json-terse"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
         is_repo_seam_inventory: false,
@@ -383,6 +398,7 @@ impl OutputFormat {
         match self {
             Self::Json
             | Self::JsonCompact
+            | Self::JsonTerse
             | Self::CheckFindingsJson
             | Self::Sarif
             | Self::SarifCompact
@@ -469,6 +485,7 @@ mod tests {
         for (name, machine) in [
             ("json", true),
             ("json-compact", true),
+            ("json-terse", true),
             ("sarif", true),
             ("sarif-compact", true),
             ("repo-sarif-compact", true),
