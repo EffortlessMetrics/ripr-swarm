@@ -6112,6 +6112,25 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.showRouteQuality'));
   });
 
+  test('workspace cockpit commands honor controller removal quarantine (#13133)', async () => {
+    const context = createControllerTestContext({
+      lspResult: { kind: 'repair_packet', verify_command: 'ripr --root . verify' }
+    });
+    try {
+      await context.controller.start();
+      context.controller.quarantineRemovedWorkspaceRoot();
+
+      await context.controller.copyTopVerifyCommand();
+
+      assert.deepStrictEqual(context.client.requests, []);
+      assert.deepStrictEqual(context.clipboardWrites, []);
+      assert.strictEqual(context.infoMessages.at(-1),
+        'The ripr workspace session changed or is switching. Run the command again when the current workspace is ready.');
+    } finally {
+      await context.dispose();
+    }
+  });
+
   // Replaces the four no-client tests that previously asserted hung-server
   // wording (`not responding`) for showReceiptStatus, copyReceiptCommand,
   // openAttemptLedger, and showRouteQuality. Those assertions encoded #5099.
