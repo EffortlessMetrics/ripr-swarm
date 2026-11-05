@@ -98,6 +98,61 @@ pushes, manual dispatches, and same-repo pull requests. Fork pull requests still
 generate `lcov.info` and upload the `rust-lcov` artifact, but skip Codecov
 upload because repository secrets are unavailable.
 
+### Storage observations during coverage
+
+The Linux workflow invokes the prebuilt repo-policy run-coverage adapter. It
+runs exactly cargo llvm-cov --workspace --all-features --lcov --output-path
+lcov.info with inherited stdin, stdout, stderr and environment. The native
+exit code is preserved; a signal is recorded and returned as shell status
+128 plus that signal. Observation errors and sampling limits do not stop
+Cargo. The existing 45-minute workflow timeout remains the execution limit.
+
+Before the command, at most 46 times at 60-second intervals, and at completion,
+the adapter emits coverage_storage.v1 records prefixed ripr-coverage-storage.
+Summary, bucket, inspected-profile-entry and end records share a sequence
+number. Each record starts on a new line, uses one write of at most 4 KiB, and
+flushes immediately so it stays identifiable beside concurrent test output.
+A complete sample uses at most 16 KiB; all 48 possible samples use at most
+768 KiB. Oversized records, omitted buckets and short writes remain explicit.
+Missing end records mean the sample was interrupted. Worker loss can still
+prevent delivery of a final record.
+
+The metadata-only scan separates plain build output, instrumented build/state,
+direct raw profiles, target/ripr artifacts, fixture native-target directories,
+and remaining target scratch. Cargo force-routes temporary files into target,
+so these fixture roots are separate from raw profiles that outlive fixture
+cleanup. Other declared roots are the checkout Git directory, Cargo home,
+Rustup home and RUNNER_TEMP when available. Root labels and device IDs connect
+the measurements without dumping environment values. These fixed roots are
+not a whole-filesystem inventory and do not discover arbitrary Cargo config
+overrides or every fixture-specific output directory.
+
+Allocated bytes use filesystem blocks and count each device/inode once across
+the sample, assigning shared allocation to its first inspected bucket.
+Logical file bytes count regular-file directory entries, including hard links;
+duplicate-inode counts explain that distinction. Capacity reports available
+bytes and inodes from fstatvfs on each observed device, with checked block-size
+multiplication; available blocks exclude space reserved from ordinary users.
+The eight largest inspected raw-profile entries retain only bounded names
+and metadata, never profile contents or producer attribution.
+
+Each sample inspects at most 100,000 directory entries, descends at most
+32 levels, and checks a five-second elapsed budget before processing entries.
+Capacity uses a safe query on a held directory, at most once per observed device; it
+spawns no process. Filesystem operations are not individually preempted.
+Directory descriptors and no-follow opens prevent following filesystem
+symlinks; the trusted proc descriptor namespace anchors traversal.
+Missing roots, detected races, errors, overflow and exhausted limits make the
+sample partial. Counts then describe inspected entries rather than totals,
+and an absent bucket is not a measured zero. All samples are non-atomic observations
+while the workload continues writing.
+
+The observer creates no diagnostic files, removes nothing and changes no
+profile pattern, test selection, threshold or runner capacity. It supplies
+storage evidence for #4978; it does not establish the dominant producer or
+repair the capacity failure by itself. The existing failure-profile adapter
+and LCOV upload remain in place.
+
 ### Validate locally
 
 On Linux, before adopting a newer Rust toolchain, run the small diagnostics package with

@@ -64,7 +64,7 @@ jobs:
 
       - name: Generate coverage
         id: generate-coverage
-        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+        run: target/debug/repo-policy run-coverage
 
       - name: Retain bounded failed-profile diagnostics
         if: ${{ failure() && steps.generate-coverage.outcome == 'failure' }}
