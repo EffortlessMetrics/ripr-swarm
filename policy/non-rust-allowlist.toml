@@ -554,7 +554,7 @@ kind = "editor_setup_diagnostic"
 owner = "lsp/editor"
 surface = "editor"
 classification = "tooling"
-reason = "#13201: dependency-free read-only checkout observations before Rust/TypeScript builds. Explicit verification preflight alone resets its two named setup evidence files; no subprocess, network or installation authority. Native verification stays in the TypeScript editor owner."
+reason = "#13201/#13212: default dependency-free read-only checkout observations; explicit editor verification resets only its named evidence. Opt-in Linux full validation serially delegates existing activation, profile, editor and Rust owners through lspCompatibility's bounded process runner and retains bounded per-attempt evidence. No installer or new process-containment owner."
 covered_by = ["cd editors/vscode && npm run test:e2e"]
 
 [[allow]]

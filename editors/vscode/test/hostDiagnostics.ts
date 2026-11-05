@@ -31,6 +31,9 @@ const PEM_END_ONLY = /-----END [A-Z0-9 ]+-----/g;
 const GITHUB_TOKEN = /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/g;
 const GITHUB_PAT = /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g;
 const ACCESS_TOKEN_URL = /x-access-token:[^@\s]+/gi;
+// Retained process transcripts may include proxy/download failures. Remove URL
+// userinfo before any byte clipping, while retaining scheme/endpoint/path context.
+const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)([^/\s?#]+)@/gi;
 
 export interface RetainHostDiagnosticsInput {
   artifactRoot: string;
@@ -92,7 +95,10 @@ export function redactHostDiagnosticsText(text: string): string {
   return redacted
     .replace(GITHUB_TOKEN, '[redacted-token]')
     .replace(GITHUB_PAT, '[redacted-token]')
-    .replace(ACCESS_TOKEN_URL, 'x-access-token:[redacted]');
+    .replace(ACCESS_TOKEN_URL, 'x-access-token:[redacted]')
+    .replace(URL_USERINFO, (_url, scheme: string, userinfo: string) =>
+      `${scheme}${userinfo.toLowerCase().startsWith('x-access-token:')
+        ? 'x-access-token:[redacted]' : '[redacted-userinfo]'}@`);
 }
 
 /** Redact before applying the final UTF-8 byte cap, without splitting characters. */

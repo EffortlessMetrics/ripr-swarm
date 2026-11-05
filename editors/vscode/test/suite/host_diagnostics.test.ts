@@ -12,6 +12,8 @@ import {
   USER_DATA_DIR_NAME,
   finalizeHostRun,
   redactHostDiagnosticsText,
+  redactHostDiagnosticsPrefix,
+  redactHostDiagnosticsTail,
   resetHostLogDir,
   resolveHostDiagnosticsDir,
   resolveLogDir,
@@ -29,6 +31,25 @@ suite('VS Code test host diagnostics', () => {
 
   teardown(() => {
     fs.rmSync(root, { force: true, recursive: true });
+  });
+
+  test('redacts ordinary URL userinfo before prefix and tail byte caps without hiding the endpoint', () => {
+    const input = '🙂'.repeat(30) + ' https://private-user:p%40ss%3Aword@proxy.example:8080/path\n'
+      + 'HTTPS://another-user:password@secure.example/ ftp://username@files.example/\n'
+      + 'https://ordinary.example/path/user@host';
+    const redacted = redactHostDiagnosticsText(input);
+    for (const secret of ['private-user', 'p%40ss%3Aword', 'another-user', 'password', 'username']) {
+      assert.ok(!redacted.includes(secret), secret);
+    }
+    assert.ok(redacted.includes('proxy.example:8080/path'));
+    assert.ok(redacted.includes('https://ordinary.example/path/user@host'));
+    for (const clip of [redactHostDiagnosticsPrefix, redactHostDiagnosticsTail]) {
+      const bytes = clip(input, 160);
+      assert.ok(bytes.length <= 160);
+      assert.ok(!bytes.toString('utf8').includes('private-user'));
+      assert.ok(!bytes.toString('utf8').includes('p%40ss%3Aword'));
+      assert.strictEqual(Buffer.from(bytes.toString('utf8')).compare(bytes), 0);
+    }
   });
 
   test('pins a known user-data, log, and diagnostics folder under the artifact root', () => {

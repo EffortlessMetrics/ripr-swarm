@@ -180,6 +180,18 @@ The commands below inventory applicable checks. `cargo xtask ci-full` composes
 the complete local review/evidence/package pass; choose the aggregate for the
 intended proof without repeating its constituent commands.
 
+For an explicit prepared Linux source-checkout validation across Rust and the
+editor, use `cd editors/vscode && npm run setup:verify-full` under a supported
+live display (or a provisioned `xvfb-run -a`). The
+[full-development preset](../CONTRIBUTING.md#explicit-full-development-validation)
+checks prerequisites, delegates the existing serial owners, retains the first
+native failure and marks later stages `not_run`. It invokes the canonical editor
+suite once, then packages its compiled output. This on-demand preset is not run
+inside the ordinary editor CI job; its controlled orchestration tests are
+discovered normally and use isolated tool fixtures. Those controls establish
+sequencing and failure handling, not a real SDK, native host, full setup pass,
+saved-environment restoration or measured resource envelope.
+
 ```bash
 cargo xtask shape
 cargo xtask fix-pr

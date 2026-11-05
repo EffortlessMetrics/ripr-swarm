@@ -92,27 +92,74 @@ to start Node or to invalidate the named files is not a completed setup attempt.
 
 ### Explicit full-development validation
 
-After those prerequisites pass, run the existing full local aggregate and editor
-commands sequentially in the same activated environment:
+On a prepared Linux source checkout, the opt-in coordinator invokes the existing
+owners in order. Install the locked editor dependencies and provision Rust,
+compiler-matched LLVM, Nextest, Git, Bash, and the native display prerequisites
+first; this command installs none of them. Ordinary startup still stops at
+activation and `setup:check`.
 
 ```bash
-# Repository root:
-cargo xtask ci-full
-# Only after that succeeds:
 cd editors/vscode
-npm run compile
-npm run package
-xvfb-run -a npm run test:e2e
+xvfb-run -a npm run setup:verify-full
 ```
 
-Use the live-display form of the last command on a desktop. `ci-full` owns its
-local review, workspace checks/tests, policy, fixture/golden/evidence and package
-dry-run sequence. Do not launch its constituent Cargo work in parallel or repeat
-the full suite through both `npm test` and `npm run test:e2e`: those are aliases.
-The canonical editor runner rechecks its current native host before producing
-the genuine queue, and runs the e2e suite once. Existing hosted required gates
-retain their own nextest, feature and artifact contract; this local sequence
-does not substitute for protected PR qualification.
+Use `npm run setup:verify-full` directly on a supported live desktop display.
+The selected Node major and dependency versions come from the checked workflow
+and lockfile. The activation helper validates an explicit `--toolchain SELECTOR`
+first, otherwise the inherited `RUSTUP_TOOLCHAIN`, otherwise the repository pin;
+an intentional compiler mismatch remains a refusal. For example,
+`npm run setup:verify-full -- --toolchain stable` explicitly chooses installed
+stable. Only the helper's eight activation fields are returned to the coordinator
+and merged into its child environment. The parent shell is unchanged.
+
+Before broad Cargo work, the preset checks source/runtime/dependency facts and
+writable work paths, observes actual tool versions, runs the small selected-compiler
+real-profile control, then invokes `setup:verify-editor`. It next runs `cargo policy
+preflight`, `cargo xtask ci-full`, one `npm run test:e2e`, and `npm run package`.
+Cargo work is serial. The canonical editor owner performs its normal server
+build/archive checks and required TypeScript compile, so a separate `npm run
+compile` is unnecessary; packaging uses those compiled outputs. Its later fresh
+host smoke remains distinct from the early prerequisite smoke after a potentially
+long Rust build. The earlier setup-only TypeScript compile and later full editor
+compile remain the separate requirements of their existing owners. Supplied servers/queues, filtered suites, alternative fixtures,
+untrusted-only or multiroot-only selections are refused before this work.
+
+`ci-full` retains its local review, workspace checks/tests, policy,
+fixture/golden/evidence and package dry-run ownership. A failure in that aggregate,
+including its known package-publication dry-run limitation tracked in #13107,
+stops the preset with an incomplete result. The coordinator does not omit it or
+reinterpret it as success. The first failed native command retains its status
+and cause; later stages remain `not_run`. Do not repeat the canonical suite
+through both `npm test` and `npm run test:e2e`: those are aliases. No full preset
+is added to the ordinary editor qualification job.
+
+Each explicit attempt first invalidates only
+`target/ripr/setup-full-development.json` (under `RIPR_TEST_ARTIFACT_ROOT` when
+selected), then writes a new bounded result and a unique `setup-full-*` evidence
+directory. Completed stage logs and the separate early/canonical host receipts
+survive a later failure. Stage transcripts merge stdout and stderr through a
+fixed literal-argv capture wrapper; activation metadata uses a separate
+allowlisted channel and is not retained wholesale. Logs are capped at 64 KiB per
+stage; failures retain a redacted error summary and the terminal output tail so
+build progress cannot displace the useful native error. Each native command has
+a 16 MiB output cap, and the result is capped at
+128 KiB. The attempt deadline defaults to two hours; use `--timeout-ms N` for an
+explicit budget of at most twelve hours. Timeout/cancellation still uses the
+existing process-tree owner. Artifact and test-time-budget configuration is
+preserved. Relative artifact overrides resolve from the invocation directory;
+the observed Cargo target is shared by the serial children.
+
+Malformed command syntax is a usage error and does not start a new attempt.
+Once a full attempt is parsed, semantic option refusals are recorded as current
+preflight failures, with prior full-result evidence invalidated.
+
+A passing result covers only the named Linux source-checkout workflows in that
+actual invocation. It records Git HEAD as an observation, not a clean-tree proof;
+tool output, requirement hashes, native outcomes, available counts and receipt
+paths retain their separate scopes. Existing hosted required gates retain their
+own nextest, feature and artifact contracts; this local preset does not substitute
+for protected PR qualification. Native macOS/full Windows GUI equivalence is not
+claimed by this Linux preset.
 
 Ordinary startup stops at activation and cheap observations. Cold provisioning,
 repeat provisioning reuse and a genuinely fresh saved task need their own
