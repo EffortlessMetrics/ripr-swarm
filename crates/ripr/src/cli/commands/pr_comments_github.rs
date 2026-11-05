@@ -3,7 +3,7 @@
 //! Neither command reads a token or the network; the workflow step that
 //! holds `GH_TOKEN` makes every call.
 
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 use crate::output::pr_inline_comment_github::{existing_comments, publish_requests};
 use crate::output::pr_summary_comment::summary_request;
@@ -44,13 +44,17 @@ pub(super) fn parse_pr_comments_existing_options(
         raw: PathBuf::from(DEFAULT_RAW),
         out: PathBuf::from(DEFAULT_EXISTING_OUT),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
             "--root" => {
-                options.root = PathBuf::from(non_empty_string_arg(args, i, flag, EXISTING)?)
+                let value = non_empty_string_arg(args, i, flag, EXISTING)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, EXISTING)?;
+                options.root = reconciled;
+                root_explicit = true;
             }
             "--raw" => options.raw = PathBuf::from(non_empty_string_arg(args, i, flag, EXISTING)?),
             "--out" => options.out = PathBuf::from(non_empty_string_arg(args, i, flag, EXISTING)?),
@@ -120,13 +124,17 @@ pub(super) fn parse_pr_comments_requests_options(
         pull_request: String::new(),
         head_sha: String::new(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
             "--root" => {
-                options.root = PathBuf::from(non_empty_string_arg(args, i, flag, REQUESTS)?)
+                let value = non_empty_string_arg(args, i, flag, REQUESTS)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, REQUESTS)?;
+                options.root = reconciled;
+                root_explicit = true;
             }
             "--plan" => {
                 options.plan = PathBuf::from(non_empty_string_arg(args, i, flag, REQUESTS)?)
@@ -292,12 +300,18 @@ pub(super) fn parse_pr_comments_summary_options(args: &[String]) -> Result<Summa
         head_sha: String::new(),
         run_url: String::new(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
-            "--root" => options.root = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?),
+            "--root" => {
+                let value = non_empty_string_arg(args, i, flag, SUMMARY)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, SUMMARY)?;
+                options.root = reconciled;
+                root_explicit = true;
+            }
             "--pr-guidance" => {
                 options.pr_guidance = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?)
             }

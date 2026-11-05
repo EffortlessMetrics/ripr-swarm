@@ -20,7 +20,7 @@ use crate::cli::commands_agent_support::{
 use crate::cli::commands_numeric::parse_positive_u64;
 use crate::cli::commands_options::ReviewCommentsOptions;
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::domain::LanguageId;
@@ -1049,6 +1049,7 @@ fn preview_language_changed_files(
 
 fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut base: Option<String> = None;
     let mut head: Option<String> = None;
     let mut gap_ledger = None;
@@ -1061,7 +1062,14 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "review-comments",
+                )?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--base" => {
                 i += 1;

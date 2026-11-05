@@ -3,6 +3,7 @@
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 use crate::cli::help;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::{Path, PathBuf};
@@ -193,6 +194,7 @@ fn typescript_false_actionable(args: &[String]) -> Result<(), String> {
 
 fn parse_report_packet_index_options(args: &[String]) -> Result<ReportPacketIndexOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut reports_dir = PathBuf::from("target/ripr/reports");
     let mut review_dir = PathBuf::from("target/ripr/review");
     let mut receipts_dir = PathBuf::from("target/ripr/receipts");
@@ -208,7 +210,15 @@ fn parse_report_packet_index_options(args: &[String]) -> Result<ReportPacketInde
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "reports index")?;
+                let value = non_empty_string_arg(args, i, "--root", "reports index")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "reports index",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--reports-dir" => {
                 i += 1;
@@ -267,6 +277,7 @@ fn parse_report_packet_index_options(args: &[String]) -> Result<ReportPacketInde
 
 fn parse_gap_decision_ledger_options(args: &[String]) -> Result<GapDecisionLedgerOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut records = None;
     let mut repo_exposure = None;
     let mut check_output = None;
@@ -278,7 +289,15 @@ fn parse_gap_decision_ledger_options(args: &[String]) -> Result<GapDecisionLedge
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "reports gap-ledger")?;
+                let value = non_empty_string_arg(args, i, "--root", "reports gap-ledger")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "reports gap-ledger",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--records" => {
                 i += 1;
@@ -359,6 +378,7 @@ fn parse_typescript_limitations_options(
     args: &[String],
 ) -> Result<TypeScriptLimitationsOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut check_output = None;
     let mut out = PathBuf::from(output::typescript_limitations::DEFAULT_TYPESCRIPT_LIMITATIONS_OUT);
     let mut out_md =
@@ -369,7 +389,15 @@ fn parse_typescript_limitations_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "reports ts-limitations")?;
+                let value = non_empty_string_arg(args, i, "--root", "reports ts-limitations")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "reports ts-limitations",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--check-output" => {
                 i += 1;
@@ -409,6 +437,7 @@ fn parse_typescript_false_actionable_options(
     args: &[String],
 ) -> Result<TypeScriptFalseActionableOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut corpus = None;
     let mut out =
         PathBuf::from(output::typescript_false_actionable::DEFAULT_TYPESCRIPT_FALSE_ACTIONABLE_OUT);
@@ -421,7 +450,15 @@ fn parse_typescript_false_actionable_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "reports ts-false-actionable")?;
+                let value = non_empty_string_arg(args, i, "--root", "reports ts-false-actionable")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "reports ts-false-actionable",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--corpus" => {
                 i += 1;

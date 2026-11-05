@@ -3,6 +3,7 @@ use crate::analysis::seam_cache::{
     inspect_cache_root,
 };
 use crate::cli::help;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use serde_json::json;
@@ -119,16 +120,21 @@ fn split_root_arg(
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "--root" {
-            if root.is_some() {
-                return Err(format!("{command} repeats --root"));
-            }
             let value = iter
                 .next()
                 .filter(|value| !value.is_empty() && !value.starts_with("--"))
                 .ok_or_else(|| {
                     format!("{command} --root requires a path; pass the path right after --root")
                 })?;
-            root = Some(PathBuf::from(value));
+            // #9008/#10542: a conflicting repeat refuses with both values; an
+            // identical repeat is absorbed for scripted double-root use.
+            let reconciled = reconcile_root(
+                root.as_deref().unwrap_or(Path::new(".")),
+                root.is_some(),
+                value,
+                command,
+            )?;
+            root = Some(reconciled);
         } else {
             rest.push(arg.clone());
         }
@@ -779,8 +785,26 @@ fn parse_export_args(args: &[String]) -> Result<(Option<PathBuf>, PathBuf), Stri
     let mut output = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
+        if arg == "--root" {
+            // #9008/#10542: a conflicting repeat refuses with both values;
+            // an identical repeat is absorbed for scripted double-root use.
+            let value = args
+                .next()
+                .filter(|value| !value.is_empty() && !value.starts_with("--"))
+                .ok_or_else(|| {
+                    "cache export --root requires a path; pass the path right after --root"
+                        .to_string()
+                })?;
+            let reconciled = reconcile_root(
+                root.as_deref().unwrap_or(Path::new(".")),
+                root.is_some(),
+                value,
+                "cache export",
+            )?;
+            root = Some(reconciled);
+            continue;
+        }
         let slot = match arg.as_str() {
-            "--root" => &mut root,
             "--out" => &mut output,
             other => return Err(unknown_argument("cache export", other)),
         };

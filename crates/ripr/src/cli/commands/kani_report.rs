@@ -1,7 +1,7 @@
 //! CLI projection of an explicitly supplied Kani result and its source binding.
 //! Import and native-result decisions belong to the app/domain owners; this command only reads bounded artifacts, writes reports, and never runs Kani.
 
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 use crate::output;
 use std::path::{Path, PathBuf};
@@ -80,8 +80,29 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut index = 0usize;
     while index < args.len() {
         let flag = args[index].as_str();
+        if flag == "--root" {
+            // #9008/#10542: `--root` reconciles duplicates instead of the
+            // generic slot refusal — a conflicting repeat is a usage error
+            // naming both values, an identical repeat is absorbed for
+            // scripted double-root invocations.
+            index += 1;
+            let value = expect_value(args, index, flag)?;
+            if value.trim().is_empty() {
+                return Err(format!(
+                    "reports kani {flag} requires a non-empty path; see `{pointer}`"
+                ));
+            }
+            let reconciled = reconcile_root(
+                root.as_deref().unwrap_or(Path::new(".")),
+                root.is_some(),
+                value,
+                "reports kani",
+            )?;
+            root = Some(reconciled);
+            index += 1;
+            continue;
+        }
         let slot = match flag {
-            "--root" => &mut root,
             "--input" => &mut input,
             "--binding" => &mut binding,
             "--out" => &mut out,
@@ -275,11 +296,19 @@ mod tests {
             "hand-written errors must share the unknown-flag help pointer"
         );
         for flag in ["--input", "--binding", "--root", "--out", "--out-md"] {
+            // #9008/#10542: `--root` reconciles duplicates instead of the
+            // generic refusal — a conflicting repeat is a usage error naming
+            // both values, an identical repeat is absorbed.
+            let duplicate_error = if flag == "--root" {
+                "reports kani takes --root once (got 'first' and 'second')".to_string()
+            } else {
+                format!(
+                    "reports kani does not accept duplicate {flag}; see `ripr reports kani --help`"
+                )
+            };
             assert_eq!(
                 parse_options(&args(&[flag, "first", flag, "second"])),
-                Err(format!(
-                    "reports kani does not accept duplicate {flag}; see `ripr reports kani --help`"
-                ))
+                Err(duplicate_error)
             );
             assert_eq!(
                 parse_options(&args(&[flag, " "])),

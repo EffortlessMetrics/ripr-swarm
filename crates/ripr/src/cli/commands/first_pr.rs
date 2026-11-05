@@ -1,6 +1,7 @@
 //! Thin CLI adapter for `ripr first-pr` (#4854 extraction).
 
 use crate::cli::help;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::unknown_argument;
 use crate::output::first_pr::{FIRST_PR_HELP, FirstPrOptions, first_pr_with_options};
 
@@ -17,12 +18,21 @@ pub(crate) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
         preflight: true,
         ..FirstPrOptions::default()
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = non_empty_arg(args, i, "--root")?.to_string();
+                let value = non_empty_arg(args, i, "--root")?.to_string();
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&options.root),
+                    root_explicit,
+                    &value,
+                    "first-pr",
+                )?;
+                options.root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--base" => {
                 i += 1;

@@ -3,6 +3,7 @@ use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::help;
 use crate::cli::parse::{
     base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
+    reconcile_root,
 };
 use crate::cli::suggest::{unknown_argument, unknown_value};
 #[cfg(test)]
@@ -1062,6 +1063,7 @@ fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
 
 fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut out = PathBuf::from("target/ripr/reports/evidence-health.json");
     let mut out_md = PathBuf::from("target/ripr/reports/evidence-health.md");
     let mut mutation_calibration: Option<PathBuf> = None;
@@ -1073,7 +1075,14 @@ fn parse_evidence_health_options(args: &[String]) -> Result<EvidenceHealthOption
             "--quiet" => quiet = true,
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "evidence-health",
+                )?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--out" => {
                 i += 1;
@@ -1380,6 +1389,7 @@ fn parse_pr_evidence_ledger_options(args: &[String]) -> Result<PrEvidenceLedgerO
 
 fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut pr_guidance = None;
     let mut existing_comments = None;
     let mut mode = output::pr_inline_comment_publish_plan::CommentMode::Off;
@@ -1401,7 +1411,15 @@ fn parse_pr_comments_plan_options(args: &[String]) -> Result<PrCommentsPlanOptio
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "pr-comments plan")?;
+                let value = non_empty_string_arg(args, i, "--root", "pr-comments plan")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "pr-comments plan",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--pr-guidance" => {
                 i += 1;
@@ -1511,6 +1529,7 @@ fn parse_pr_review_front_panel_options(
     args: &[String],
 ) -> Result<PrReviewFrontPanelOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut pr_guidance = None;
     let mut first_action = None;
     let mut assistant_proof = None;
@@ -1532,7 +1551,15 @@ fn parse_pr_review_front_panel_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "pr-review front-panel")?;
+                let value = non_empty_string_arg(args, i, "--root", "pr-review front-panel")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "pr-review front-panel",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--pr-guidance" => {
                 i += 1;
@@ -2037,7 +2064,13 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &options.root,
+                    options.root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "diff",
+                )?;
+                options.root = reconciled;
                 options.root_explicit = true;
             }
             "--base" => {
@@ -2224,7 +2257,10 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             }
             "--root" => {
                 i += 1;
-                input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let value = expect_value(args, i, "--root")?;
+                let reconciled =
+                    reconcile_root(&input.root, root_explicitly_provided, value, "explain")?;
+                input.root = reconciled;
                 root_explicitly_provided = true;
             }
             "--base" => {

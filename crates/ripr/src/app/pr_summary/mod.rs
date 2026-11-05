@@ -23,7 +23,7 @@ use render::{SummaryRenderInput, render_pr_evidence_summary};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::cli::{expect_value, unknown_argument};
+use crate::cli::{expect_value, reconcile_root, unknown_argument};
 
 use super::subcommand::resolve_selected_root;
 
@@ -137,6 +137,7 @@ fn summary_text(repo: &Path) -> String {
 
 fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut check = false;
     let mut baseline: Option<String> = None;
     let mut index = 0;
@@ -168,7 +169,12 @@ fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
                     }
                 }
                 if arg == "--root" {
-                    root = PathBuf::from(path);
+                    // #9008/#10542: an identical repeat is absorbed for
+                    // scripted double-root invocations; a conflicting value
+                    // is a usage error naming both values.
+                    let reconciled = reconcile_root(&root, root_explicit, path, "pr-summary")?;
+                    root = reconciled;
+                    root_explicit = true;
                 } else {
                     baseline = Some(path.to_string());
                 }
@@ -366,12 +372,21 @@ mod tests {
         Ok(())
     }
 
+    /// #9008: a conflicting repeated `--root` refuses with both values named;
+    /// #10542: an identical repeat is silently absorbed so scripted
+    /// double-root invocations keep working.
     #[test]
-    fn parse_last_root_wins_regardless_of_flag_order() -> Result<(), String> {
-        let args = ["--check", "--root", "a", "--root", "b"].map(str::to_string);
-        let options = parse_options(&args)?;
-        if options.root.as_path() != Path::new("b") || !options.check {
-            return Err(format!("unexpected options: {options:?}"));
+    fn parse_refuses_a_conflicting_second_root_and_absorbs_an_identical_one() -> Result<(), String>
+    {
+        let conflicting = ["--check", "--root", "a", "--root", "b"].map(str::to_string);
+        match parse_options(&conflicting) {
+            Err(error) if error == "pr-summary takes --root once (got 'a' and 'b')" => {}
+            other => return Err(format!("conflicting repeat was not refused: {other:?}")),
+        }
+        let identical = ["--check", "--root", "a", "--root", "a"].map(str::to_string);
+        let options = parse_options(&identical)?;
+        if options.root.as_path() != Path::new("a") || !options.check {
+            return Err(format!("identical repeat was not absorbed: {options:?}"));
         }
         Ok(())
     }
