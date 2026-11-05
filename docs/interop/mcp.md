@@ -762,7 +762,15 @@ in `error.data`, because no tool ran and no tool result exists. The
 object. Null, arrays and scalar values receive a correlated Invalid Params
 (`-32602`) response before tool dispatch, including for `ripr_refresh` and
 the no-argument status tool. Unknown
-methods use Method Not Found (`Method not found: <method>`). `ripr_list_gaps`
+methods use Method Not Found (`-32601`, `Method not found: <method>`).
+Names through 128 Unicode scalar values retain that exact message and no
+error data. Longer names use the first 128 scalar values, mark the message
+as truncated, and add `error.data.method`, `method_truncated: true`, and
+`method_bytes` (the original UTF-8 byte length before JSON escaping).
+Routing still compares the complete method name. This keeps an admitted
+long name from replacing Method Not Found with a generic response-limit
+error (#13220).
+`ripr_list_gaps`
 rejects a `language` filter that is not a language wire string (`rust`,
 `typescript`, `javascript`, `python`, `perl`) with an `invalid_argument` failure listing the
 allowed values, instead of returning an indistinguishable empty page.
