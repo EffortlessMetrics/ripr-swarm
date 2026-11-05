@@ -11,6 +11,9 @@ pub enum OutputFormat {
     HumanFull,
     /// Versioned JSON report for automation.
     Json,
+    /// The same versioned report and findings budget as `Json`, with only
+    /// insignificant whitespace removed and one final newline (#13103).
+    JsonCompact,
     /// Unbounded `json` check findings with the producer `artifact` identity
     /// envelope (ADR 0020 amendment), so a gap-keyed verify can reject a
     /// fabricated, edited or incomplete snapshot.
@@ -133,6 +136,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
+        format: OutputFormat::JsonCompact,
+        cli_names: &["json-compact"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
         format: OutputFormat::CheckFindingsJson,
         cli_names: &["check-findings-json"],
         is_full_repo_analysis: false,
@@ -210,8 +220,7 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         cli_names: &["repo-badge-plus-json"],
         // #5263 review: the measured repo ripr+ path renders the same full
         // classified walk as repo-badge-json when a test-efficiency report
-        // exists, so it discloses the same cost class; the neutral
-        // missing-report path stays cheap and merely over-discloses.
+        // exists (#5263 review), so it discloses too.
         is_full_repo_analysis: true,
         is_seam_fact_cache_backed: true,
         is_repo_seam_inventory: true,
@@ -350,6 +359,7 @@ impl OutputFormat {
     pub(crate) fn is_machine_readable(&self) -> bool {
         match self {
             Self::Json
+            | Self::JsonCompact
             | Self::CheckFindingsJson
             | Self::Sarif
             | Self::BadgeJson
@@ -426,6 +436,26 @@ impl OutputFormat {
 #[cfg(test)]
 mod tests {
     use super::{FORMAT_SPECS, OutputFormat};
+
+    #[test]
+    fn json_compact_is_opt_in_diff_scoped_and_machine_readable() -> Result<(), String> {
+        let format = OutputFormat::parse_cli_name("json-compact")
+            .ok_or("json-compact must be accepted by the shared format parser")?;
+        if format != OutputFormat::JsonCompact || format.primary_cli_name() != "json-compact" {
+            return Err("compact format identity did not round-trip".to_string());
+        }
+        if !format.is_machine_readable()
+            || format.is_repo_scope()
+            || format.is_full_repo_analysis()
+            || format.is_seam_fact_cache_backed()
+        {
+            return Err("compact JSON must retain the diff-scoped JSON cost/progress class".to_string());
+        }
+        if OutputFormat::parse_cli_name("json") != Some(OutputFormat::Json) {
+            return Err("the existing json spelling must stay unchanged".to_string());
+        }
+        Ok(())
+    }
 
     /// #11598: the machine/human split decides whether piped progress is off
     /// by default, so pin both sides by CLI name.
