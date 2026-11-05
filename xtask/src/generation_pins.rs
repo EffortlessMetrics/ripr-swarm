@@ -31,10 +31,10 @@
 //! On an ordinary checkout the claim surface is the working tree and the fork
 //! is `git merge-base <base> HEAD`. On GitHub's synthetic PR merge ref
 //! (`refs/pull/<n>/merge`) HEAD is a merge commit whose first parent is the
-//! base tip; evaluating HEAD there would alias fork and base tip and hide the
-//! sibling-collision class, so the gate verifies hosted context and that shape,
-//! then evaluates the PR head tree (the merge commit's second parent) against
-//! its true fork instead.
+//! base tip at merge creation; evaluating HEAD there would alias fork and base
+//! tip and hide the sibling-collision class. The gate verifies hosted identity
+//! and ancestry, then evaluates the PR head tree (the second parent) against
+//! its fork with the merge's first parent, even if the fetched base advances.
 
 use std::cmp::Ordering;
 use std::path::Path;
@@ -245,8 +245,8 @@ struct ResolvedBase {
 /// Where to read the claim surface and the fork for one gate run. On an
 /// ordinary checkout the claim surface is the working tree and the fork is
 /// the merge-base of the base ref and HEAD. On GitHub's synthetic PR merge
-/// ref (`refs/pull/<n>/merge`), HEAD is a merge commit whose first parent is
-/// the base tip: evaluating HEAD directly would alias fork and base tip and
+/// ref (`refs/pull/<n>/merge`), HEAD is a merge commit whose first parent was
+/// the base tip at creation: evaluating HEAD directly would alias fork and base tip and
 /// hide the sibling-collision class — a sibling that merged generation `X`
 /// plus this PR claiming the same `X` produces a clean merge with
 /// `head == fork == base_tip == X`, which must still fail. Only explicit hosted
@@ -267,18 +267,26 @@ fn hosted_pr_merge_commit(
     event: Option<&str>,
     reference: Option<&str>,
     commit: Option<&str>,
-) -> Option<String> {
+) -> Result<Option<String>, String> {
     if actions != Some("true") || event != Some("pull_request") {
-        return None;
+        return Ok(None);
     }
-    let number = reference?
-        .strip_prefix("refs/pull/")?
-        .strip_suffix("/merge")?;
-    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
+    let number = reference
+        .and_then(|value| value.strip_prefix("refs/pull/"))
+        .and_then(|value| value.strip_suffix("/merge"));
+    if !number
+        .is_some_and(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err(format!(
+            "check-generation-pins: hosted pull_request requires GITHUB_REF=refs/pull/<number>/merge, got {reference:?}; refusing ordinary evaluation"
+        ));
     }
-    let commit = commit?;
-    is_sha(commit).then(|| commit.to_string())
+    match commit {
+        Some(commit) if is_sha(commit) => Ok(Some(commit.to_string())),
+        _ => Err(format!(
+            "check-generation-pins: hosted pull_request requires a full GITHUB_SHA, got {commit:?}; refusing ordinary evaluation"
+        )),
+    }
 }
 
 fn resolve_evaluation_points(root: &Path, base: &ResolvedBase) -> Result<EvaluationPoints, String> {
@@ -291,7 +299,7 @@ fn resolve_evaluation_points(root: &Path, base: &ResolvedBase) -> Result<Evaluat
         event.as_deref(),
         reference.as_deref(),
         commit.as_deref(),
-    );
+    )?;
     resolve_evaluation_points_with_hosted_merge(root, base, hosted_merge.as_deref())
 }
 
@@ -300,30 +308,45 @@ fn resolve_evaluation_points_with_hosted_merge(
     base: &ResolvedBase,
     hosted_merge: Option<&str>,
 ) -> Result<EvaluationPoints, String> {
-    let ordinary = || EvaluationPoints {
-        head_ref: None,
-        fork_commit: base.head_merge_base.clone(),
-    };
     let Some(hosted_merge) = hosted_merge else {
-        return Ok(ordinary());
+        return Ok(EvaluationPoints {
+            head_ref: None,
+            fork_commit: base.head_merge_base.clone(),
+        });
     };
-    if git_rev_parse(root, "HEAD")?.as_deref() != Some(hosted_merge) {
-        return Ok(ordinary());
+    let checkout = git_rev_parse(root, "HEAD")?;
+    if checkout.as_deref() != Some(hosted_merge) {
+        return Err(format!(
+            "check-generation-pins: hosted merge {hosted_merge} does not match checkout HEAD {checkout:?}; refusing ordinary evaluation"
+        ));
     }
-    let Some(second_parent) = git_rev_parse(root, "HEAD^2")? else {
-        return Ok(ordinary());
-    };
+    let second_parent = git_rev_parse(root, "HEAD^2")?.ok_or_else(|| {
+        "check-generation-pins: hosted PR merge has no second parent; refusing ordinary evaluation"
+            .to_string()
+    })?;
     let first_parent = git_rev_parse(root, "HEAD^1")?
         .ok_or_else(|| "HEAD has a second parent but no first parent".to_string())?;
-    if first_parent == base.base_tip_commit {
-        let fork_commit = git_merge_base_commit(root, &second_parent, &first_parent)?;
-        Ok(EvaluationPoints {
-            head_ref: Some(second_parent),
-            fork_commit,
-        })
-    } else {
-        Ok(ordinary())
+    if git_rev_parse(root, "HEAD^3")?.is_some() {
+        return Err(
+            "check-generation-pins: hosted PR merge has more than two parents; refusing ordinary evaluation"
+                .to_string(),
+        );
     }
+    // A fetch can observe a newer base than the admitted merge's first
+    // parent. Keep that merge's true PR fork; never fall back to its aliased
+    // working tree. Refuse a rewritten or unrelated base instead of guessing.
+    let shared_base = git_merge_base_commit(root, &first_parent, &base.base_tip_commit)?;
+    if shared_base != first_parent {
+        return Err(format!(
+            "check-generation-pins: accepted base {} @ {} does not descend from hosted merge first parent {first_parent}; refusing ordinary evaluation",
+            base.base_ref, base.base_tip_commit
+        ));
+    }
+    let fork_commit = git_merge_base_commit(root, &second_parent, &first_parent)?;
+    Ok(EvaluationPoints {
+        head_ref: Some(second_parent),
+        fork_commit,
+    })
 }
 
 /// The verdict for one family. `Collision` is the #10326/#10845 class (the
@@ -1036,11 +1059,24 @@ mod tests {
     /// claiming the same 7.7 must fail as a collision, not pass as NoClaim.
     #[test]
     fn merge_ref_resolution_surfaces_sibling_collision_in_a_real_repo() -> Result<(), String> {
+        assert_merge_ref_sibling_collision(false)
+    }
+
+    #[test]
+    fn merge_ref_resolution_keeps_collision_when_base_advances() -> Result<(), String> {
+        assert_merge_ref_sibling_collision(true)
+    }
+
+    fn assert_merge_ref_sibling_collision(advance_base: bool) -> Result<(), String> {
         use super::{
             EvaluationPoints, ResolvedBase, production_blob_reader, resolve_base,
             resolve_evaluation_points_with_hosted_merge,
         };
-        let root = crate::tests::temp_dir("generation-pins-merge-ref");
+        let root = crate::tests::temp_dir(if advance_base {
+            "generation-pins-merge-ref-base-advanced"
+        } else {
+            "generation-pins-merge-ref"
+        });
         let run = |args: &[&str]| -> Result<String, String> {
             super::git_capture(&root, args, &format!("git {args:?}"))
                 .map(|text| text.trim().to_string())
@@ -1091,25 +1127,44 @@ mod tests {
         ])?;
         run(&["reset", "--hard", &merge_commit])?;
 
+        if advance_base {
+            // The workflow still checks out its original admitted merge SHA,
+            // while its full-history fetch can observe a newer base tip.
+            run(&["checkout", "--detach", &main_tip])?;
+            std::fs::write(root.join("unrelated.txt"), "base moved after admission\n")
+                .map_err(|error| error.to_string())?;
+            run(&["add", "unrelated.txt"])?;
+            run(&[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-m",
+                "unrelated base advance",
+            ])?;
+            let advanced_tip = run(&["rev-parse", "HEAD"])?;
+            run(&["update-ref", "refs/remotes/origin/main", &advanced_tip])?;
+            run(&["reset", "--hard", &merge_commit])?;
+            assert_ne!(advanced_tip, main_tip, "base must actually advance");
+            assert_eq!(run(&["rev-parse", "HEAD"])?, merge_commit);
+        }
+
         let resolved: ResolvedBase = resolve_base(&root, None)?;
         let hosted = super::hosted_pr_merge_commit(
             Some("true"),
             Some("pull_request"),
             Some("refs/pull/123/merge"),
             Some(&merge_commit),
-        );
+        )?;
         let points: EvaluationPoints =
             resolve_evaluation_points_with_hosted_merge(&root, &resolved, hosted.as_deref())?;
-        let head_ref = points
-            .head_ref
-            .clone()
-            .ok_or("the synthetic merge ref must select merge-ref mode")?;
         let reader = production_blob_reader(&root);
         let violations = claimed_generation_violations(
             &reader,
             &resolved.base_ref,
             &points.fork_commit,
-            Some(&head_ref),
+            points.head_ref.as_deref(),
         );
         let violation = violations
             .first()
@@ -1123,6 +1178,7 @@ mod tests {
             violation.contains("collision class") && violation.contains("7.7"),
             "the collision must name the claimed value and class: {violation}"
         );
+        assert_eq!(points.head_ref.as_deref(), Some(pr_head.as_str()));
         // The fork is the PR's true fork (value 5.5), not the aliased base tip.
         assert_eq!(
             points.fork_commit, base,
@@ -1134,6 +1190,18 @@ mod tests {
             fork_value, "5.5",
             "the classified fork generation must not alias the base tip"
         );
+        // A ref that shares history but does not contain the admitted base
+        // parent is not a valid advanced base. It must fail closed too.
+        run(&["update-ref", "refs/remotes/origin/main", &pr_head])?;
+        let incompatible_base = resolve_base(&root, None)?;
+        let refusal = resolve_evaluation_points_with_hosted_merge(
+            &root,
+            &incompatible_base,
+            hosted.as_deref(),
+        )
+        .err()
+        .ok_or("an incompatible hosted base must not fall back to ordinary evaluation")?;
+        assert!(refusal.contains("does not descend"), "{refusal}");
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
@@ -1218,10 +1286,16 @@ mod tests {
             violations[0].contains("4.4") && violations[0].contains("stale"),
             "{violations:?}"
         );
-        // An unrelated advertised hosted SHA also cannot select HEAD^2.
-        let mismatched =
-            super::resolve_evaluation_points_with_hosted_merge(root, &base, Some(&"a".repeat(40)))?;
-        assert!(mismatched.head_ref.is_none());
+        // An unrelated advertised hosted SHA cannot silently discard the
+        // expected hosted check and fall back to the working tree.
+        let refusal =
+            super::resolve_evaluation_points_with_hosted_merge(root, &base, Some(&"a".repeat(40)))
+                .err()
+                .ok_or("mismatched hosted identity must fail closed")?;
+        assert!(
+            refusal.contains("does not match checkout HEAD"),
+            "{refusal}"
+        );
         Ok(())
     }
 
@@ -1250,7 +1324,7 @@ mod tests {
     }
 
     #[test]
-    fn hosted_merge_context_requires_actions_pr_merge_ref_and_sha() {
+    fn hosted_merge_context_requires_actions_pr_merge_ref_and_sha() -> Result<(), String> {
         let sha = "b".repeat(40);
         assert_eq!(
             super::hosted_pr_merge_commit(
@@ -1258,7 +1332,7 @@ mod tests {
                 Some("pull_request"),
                 Some("refs/pull/123/merge"),
                 Some(&sha)
-            ),
+            )?,
             Some(sha.clone())
         );
         for (actions, event, reference, commit) in [
@@ -1286,33 +1360,58 @@ mod tests {
                 Some("refs/pull/123/merge"),
                 Some(sha.as_str()),
             ),
-            (
-                Some("true"),
-                Some("pull_request"),
-                Some("refs/heads/main"),
-                Some(sha.as_str()),
-            ),
-            (
-                Some("true"),
-                Some("pull_request"),
-                Some("refs/pull/123/head"),
-                Some(sha.as_str()),
-            ),
-            (
-                Some("true"),
-                Some("pull_request"),
-                Some("refs/pull/nope/merge"),
-                Some(sha.as_str()),
-            ),
-            (
-                Some("true"),
-                Some("pull_request"),
-                Some("refs/pull/123/merge"),
-                Some("invalid"),
-            ),
         ] {
-            assert!(super::hosted_pr_merge_commit(actions, event, reference, commit).is_none());
+            assert!(super::hosted_pr_merge_commit(actions, event, reference, commit)?.is_none());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_hosted_identity_is_refused_instead_of_disabling_the_gate() {
+        let sha = "b".repeat(40);
+        for (reference, commit) in [
+            (None, Some(sha.as_str())),
+            (Some("refs/heads/main"), Some(sha.as_str())),
+            (Some("refs/pull/123/head"), Some(sha.as_str())),
+            (Some("refs/pull/nope/merge"), Some(sha.as_str())),
+            (Some("refs/pull//merge"), Some(sha.as_str())),
+            (Some("refs/pull/123/merge"), Some("invalid")),
+            (Some("refs/pull/123/merge"), None),
+        ] {
+            assert!(
+                super::hosted_pr_merge_commit(
+                    Some("true"),
+                    Some("pull_request"),
+                    reference,
+                    commit,
+                )
+                .is_err(),
+                "malformed hosted identity must fail closed: {reference:?} {commit:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hosted_merge_requires_two_parents() -> Result<(), String> {
+        let root = ordinary_merge_fixture("generation-pins-single-parent")?;
+        let single_parent_head =
+            super::git_rev_parse(&root, "HEAD^2")?.ok_or("the fixture must start from a merge")?;
+        super::git_capture(
+            &root,
+            &["checkout", "--detach", &single_parent_head],
+            "select single-parent head",
+        )?;
+        let base = super::resolve_base(&root, None)?;
+        let refusal = super::resolve_evaluation_points_with_hosted_merge(
+            &root,
+            &base,
+            Some(&single_parent_head),
+        )
+        .err()
+        .ok_or("an expected hosted merge must not silently accept a single-parent head")?;
+        assert!(refusal.contains("no second parent"), "{refusal}");
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
     }
 
     /// Synthetic per-family texts: every defining file declares each of its
