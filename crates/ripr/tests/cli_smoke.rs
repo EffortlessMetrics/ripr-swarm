@@ -1211,7 +1211,12 @@ fn normalize_agent_receipt_fixture_for_root(
             return None;
         }
         let normalized_path = if windows {
-            path.replace('\\', "/")
+            let path = path.replace('\\', "/");
+            if let Some(share) = path.strip_prefix("//?/UNC/") {
+                format!("//{share}")
+            } else {
+                path.strip_prefix("//?/").unwrap_or(&path).to_string()
+            }
         } else {
             path.to_string()
         };
@@ -1317,7 +1322,14 @@ fn receipt_fixture_normalization_preserves_missing_outcome_guidance()
     );
     assert_eq!(
         expected,
-        normalize(&make_receipt(r"\\?\C:\work\repo", r"\"), "//?/C:/work/repo")?
+        normalize(&make_receipt(r"\\?\C:\work\repo", r"\"), "C:/work/repo")?
+    );
+    assert_eq!(
+        expected,
+        normalize(
+            &make_receipt(r"\\?\UNC\server\share\repo", r"\"),
+            "//server/share/repo"
+        )?
     );
     let guidance = expected["summary"]["next_recommendation"]
         .as_str()
@@ -1349,6 +1361,29 @@ fn receipt_fixture_normalization_preserves_missing_outcome_guidance()
             expected,
             normalize(&changed, "/tmp/one")?,
             "lost change {from:?}"
+        );
+    }
+    let mut wrong_status = make_receipt("/tmp/one", "/");
+    wrong_status["status"] = serde_json::json!("complete");
+    assert_ne!(
+        expected,
+        normalize(&wrong_status, "/tmp/one")?,
+        "lost status-only change"
+    );
+    for (from, to) in [
+        ("do not include it in review", "include it in review"),
+        ("rerun analysis", "skip analysis"),
+    ] {
+        let mut wrong_guidance = make_receipt("/tmp/one", "/");
+        let recommendation = wrong_guidance["summary"]["next_recommendation"]
+            .as_str()
+            .ok_or("guidance")?
+            .replace(from, to);
+        wrong_guidance["summary"]["next_recommendation"] = serde_json::json!(recommendation);
+        assert_ne!(
+            expected,
+            normalize(&wrong_guidance, "/tmp/one")?,
+            "lost guidance-only change {from:?}"
         );
     }
     // A path outside the workspace, including an adjacent prefix, is not normalized.
