@@ -211,10 +211,21 @@ fn deleted_or_uncommitted_external_test_cannot_become_an_empty_baseline() -> Res
                 .map_err(|e| e.to_string())?,
             _ => {}
         }
-        assert!(
-            capture_attempt_baseline(&fixture.root, &external_policy()?).is_err(),
-            "{state}"
-        );
+        let result = capture_attempt_baseline(&fixture.root, &external_policy()?);
+        if state == "directory" {
+            // The repository snapshot owner makes non-regular targets
+            // incomparable rather than turning them into empty source text.
+            let baseline = result?;
+            assert!(baseline.ambiguous);
+            assert!(baseline.external_test_file_region.is_none());
+            let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+                &baseline,
+                HeadMovement::RequireBaselineHead,
+            )?;
+            assert_eq!(verdict.status, EditCageVerdictStatus::Incomparable);
+        } else {
+            assert!(result.is_err(), "{state}");
+        }
     }
     Ok(())
 }
