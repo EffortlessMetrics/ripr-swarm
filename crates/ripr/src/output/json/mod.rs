@@ -86,8 +86,7 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&compact)
                 .map_err(|error| error.to_string())?,
-            serde_json::from_str::<serde_json::Value>(pretty)
-                .map_err(|error| error.to_string())?
+            serde_json::from_str::<serde_json::Value>(pretty).map_err(|error| error.to_string())?
         );
         assert!(compact.len() < pretty.len(), "{compact}");
         assert!(!compact.contains("\n  "), "{compact}");
