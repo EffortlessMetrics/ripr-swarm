@@ -219,9 +219,9 @@ fn product_gate_definitions() -> Vec<ProductGateDefinition> {
             ProductGateId::AllFeaturesCheck,
             ProductGateRole::Required,
             rust.clone(),
-            "cargo check -p ripr --all-targets --all-features",
-            "feature-gated ripr targets, including tests, type-check",
-            "does not run or lint feature-gated tests",
+            "cargo clippy -p ripr --all-targets --all-features -- -D warnings",
+            "all-feature ripr targets, including tests, type-check and satisfy the configured lint contract",
+            "does not execute feature-gated tests or check every feature combination",
         ),
         gate(
             ProductGateId::Clippy,

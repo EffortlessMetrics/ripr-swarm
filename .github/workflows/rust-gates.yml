@@ -392,12 +392,12 @@ jobs:
         id: network_policy
         run: cargo xtask check-network-policy
 
-      # Feature-gated test modules (lang-perl and other previews) compile only
-      # under their features; without this step two green PRs can break main
-      # together (#6854, #6879).
-      - name: All-features ripr target check
+      # Lint optional-feature code as well as type-checking it (#13152).
+      # Keep the default-feature workspace pass below: cfg(not(feature = ...))
+      # branches are absent from this all-features build.
+      - name: Strict all-features ripr Clippy
         id: all_features_check
-        run: cargo check -p ripr --all-targets --all-features
+        run: cargo clippy -p ripr --all-targets --all-features -- -D warnings
 
       - name: Strict workspace Clippy
         id: clippy

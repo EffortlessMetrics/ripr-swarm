@@ -51,6 +51,31 @@ A panic-family call site is acceptable only if it satisfies **both rails**.
 - `unsafe_code = "forbid"` workspace-wide. Adding an unsafe island requires
   a separate, dedicated PR and review.
 
+## Required feature coverage
+
+The required Rust lane keeps two strict Clippy invocations:
+
+```bash
+cargo clippy -p ripr --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+The first lints optional RIPR code, including `lang-perl`, and replaces the
+previous all-features `cargo check` step. Its retained `all_features_check`
+step ID preserves the existing receipt identity; the command now applies
+Clippy diagnostics as well as type checking.
+
+The second retains default-feature workspace coverage. Both are necessary:
+an all-features build omits `#[cfg(not(feature = "lang-perl"))]` branches
+that still need linting in the default build. Warning denial applies to both
+commands, and both include test and example targets.
+
+This does not execute optional-feature tests, lint every possible feature
+combination, or establish native-platform coverage beyond the runner used.
+Local impact-selected `precommit`, `check-fast`, and `check-pr` still run
+default-feature Clippy; run the first command above when changing optional
+RIPR code. Advisory future-lint scans retain their separate policy.
+
 ## Active lints
 
 The authoritative source is `[workspace.lints.*]` in Cargo.toml. A reviewable
