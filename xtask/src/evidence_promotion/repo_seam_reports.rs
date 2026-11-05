@@ -891,9 +891,13 @@ mod tests {
             "owner": "src/lib.rs::check", "expression": "a > b",
             "category": "rust_framework_oracle_unresolved"
         });
-        super::super::evidence_promotion_parse_assertion("field", 0, &assertion).unwrap_err();
+        if super::super::evidence_promotion_parse_assertion("field", 0, &assertion).is_ok() {
+            return Err("missing `present` must be rejected".to_string());
+        }
         assertion["present"] = json!("true");
-        super::super::evidence_promotion_parse_assertion("field", 0, &assertion).unwrap_err();
+        if super::super::evidence_promotion_parse_assertion("field", 0, &assertion).is_ok() {
+            return Err("non-boolean `present` must be rejected".to_string());
+        }
         assertion["present"] = json!(true);
         super::super::evidence_promotion_parse_assertion("field", 0, &assertion)?;
         let mut case = json!({"id": "field", "assertions": [assertion]});
