@@ -115,6 +115,16 @@ remain observable; an exhausted observation budget never stops the command.
 The fixed full-workspace/all-features LCOV builder inherits all streams and
 environment variables. Controls require its exact arguments, a confirmed
 separate descendant, loss-of-custody refusal and cleanup on owner drop.
+The environment control seeds a dedicated variable only in an isolated exact
+libtest child. The observed command must inherit that variable without an
+explicit override; the parent environment is never changed. Absence of
+ambient HOME is exercised in that child. Require its successful native
+status, exact nonempty test selection and a fresh acknowledgement written
+only after the original exit, phase, stream and profiling assertions pass.
+Require the inner final receipt to explicitly confirm successful cleanup.
+The parent bounds the child to 30 seconds and each captured stream to 16 KiB.
+All witnesses remain under its owned root; errors or panics retain them,
+and deletion requires confirmed cleanup and completed validation.
 Bounded records use one write of at most 4 KiB and flush immediately; a short
 write is an error. The prerequisite uses this owner only in native controls;
 the Generate step still directly invokes the fixed Cargo command.
@@ -170,10 +180,14 @@ passed and one post-assertion acknowledgement per invocation, plus a fresh,
 nonempty bounded raw profile. The matching compiler-sysroot LLVM tools must
 merge both profiles without warnings, match the merged profile ID to that
 mode's own executable and export both JSON and LCOV for the exact source.
-Require nonempty source regions, the known function count of two, a hot-line
-count of two and a cold-line count of zero, plus equality of source mapping
-and all owned line counts between modes. Different image IDs across modes
-remain valid. Missing tools, malformed records, duplicate/absent subjects and
+Require nonempty source regions and an execution count of two for each
+authored fixture function, a hot-line count of two and a cold-line count of
+zero. Compare the complete owned JSON file record, both authored function
+records after removing only their mangled names, and all owned LCOV line
+counts between modes. Other exported files and unrelated functions are
+outside this compatibility probe; it does not qualify the LLVM exporter or
+require whole-export equality. Different image IDs across modes remain valid.
+Missing tools, malformed records, duplicate/absent subjects and
 zero test selection are errors, not skipped proof. Existing genuine malformed
 profile refusal and diagnostic size limits remain exercised.
 

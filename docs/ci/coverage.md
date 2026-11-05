@@ -168,12 +168,25 @@ Each variant runs the exact test twice, with a post-assertion acknowledgement,
 one-test success and a fresh nonempty profile per invocation. Matching-sysroot
 LLVM tools must merge both profiles without warnings, match each merged
 profile's ID to its own executable, and export usable JSON and LCOV. The
-control requires identical owned source regions and line counts, the known
-function count of two, a hot return count of two and a cold return count of
-zero. IDs may differ between the two binaries. Tool absence, malformed output,
+control compares the complete owned JSON file record, both authored function
+records after removing only their mangled names, and all owned LCOV line
+counts. Each authored function must execute twice, with a hot return count
+of two and a cold return count of zero. Other exported files and unrelated
+functions are outside this fixture control; it does not qualify the LLVM
+exporter or require whole-export equality.
+IDs may differ between the two binaries. Tool absence, malformed output,
 zero selection, warning-only partial merging and missing source evidence fail
 the Linux control. Existing malformed-profile and size-bound controls remain
 selected by the same preflight.
+
+The command-environment control re-enters its exact libtest identity in an
+isolated child with a dedicated inherited variable and no HOME. The observed
+coverage command receives no explicit override for that variable. A successful
+native status, nonempty exact selection, explicit successful inner cleanup
+receipt and fresh post-assertion acknowledgement are required. The parent
+bounds the child to 30 seconds and each captured stream to 16 KiB. All witnesses
+share its retained root; deletion follows confirmed cleanup and completed
+validation. The parent's environment stays unchanged.
 
 The finite native commands use the private non-reaping process owner,
 30-second per-command deadlines and 256 KiB per-stream capture limits. Fixture
