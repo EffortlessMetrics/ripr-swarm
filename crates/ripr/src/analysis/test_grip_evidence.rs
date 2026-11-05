@@ -691,7 +691,7 @@ fn credited_related_tests<'a>(
             owner_fn.map(|owner| {
                 #[cfg(test)]
                 CREDITED_OWNER_REACH_BUILDS.with(|count| count.set(count.get() + 1));
-                context.transitive_reach.owner_reach(&owner.name)
+                (owner, context.transitive_reach.owner_reach(&owner.name))
             })
         })
         .flatten();
@@ -699,17 +699,16 @@ fn credited_related_tests<'a>(
         .iter()
         .map(|(test, reason)| {
             let mut view = std::borrow::Cow::Borrowed(*test);
-            if let Some(owner_reach) = owner_reach.as_ref()
+            if let Some((owner, owner_reach)) = owner_reach.as_ref()
                 && (reason.is_proximity_only()
                     || *reason == RelationReason::AssertionTargetAffinity)
-                && test
-                    .assertions
-                    .iter()
-                    .any(|oracle| owner_reach.assertion_pins_other_function(&oracle.text))
+                && test.assertions.iter().any(|oracle| {
+                    owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                })
             {
-                view.to_mut()
-                    .assertions
-                    .retain(|oracle| !owner_reach.assertion_pins_other_function(&oracle.text));
+                view.to_mut().assertions.retain(|oracle| {
+                    !owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                });
             }
             // #12394 item 3: the claims statements `ripr check` credits
             // through the owner pin join the view the stages read.

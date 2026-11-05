@@ -31,6 +31,11 @@ path = "junit.xml"
 filter = 'binary(=source_promotion_workflow_contract) & test(=green_historical_diagnostics_are_rejected_by_the_real_final_gate)'
 threads-required = "num-test-threads"
 
+# Retain the real SDK identities and opposing-pin observation for #13123.
+[[profile.ci.overrides]]
+filter = 'package(=xtask) & binary(=rust_activation) & test(=installed_rustup_activation_keeps_the_exact_fixture_compiler)'
+junit.store-success-output = true
+
 # #2695: Fast iteration path for local development.
 # Skip slow server-spawning tests with:
 #   cargo nextest run --skip framed_lsp_ --skip editor_agent_loop_

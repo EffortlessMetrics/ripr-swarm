@@ -953,7 +953,7 @@ fn fact_matches_fed_literals(value: &str, fed: &[(String, String)]) -> bool {
 /// past their spelling (`10u32` and `10`, `1_000` and `1000`); a hex, octal,
 /// binary, float or other form must match exactly, since a partial reader
 /// would equate `0x10` with `0`.
-fn same_scalar_literal(fed: &str, literal: &str) -> bool {
+pub(in crate::analysis) fn same_scalar_literal(fed: &str, literal: &str) -> bool {
     fed == literal
         || decimal_integer_value(fed)
             .is_some_and(|value| Some(value) == decimal_integer_value(literal))
@@ -975,6 +975,13 @@ fn decimal_integer_value(text: &str) -> Option<String> {
     ];
     (!digits.is_empty() && !rest.starts_with('_') && integer_suffix.contains(&suffix))
         .then(|| format!("{sign}{digits}"))
+}
+
+/// #13037: whether `text` is exactly one whole decimal integer literal
+/// (optional sign, `_` separators, integer type suffix), the only scalar
+/// shape the multi-exit scalar return gates read past its spelling.
+pub(in crate::analysis) fn is_whole_decimal_literal(text: &str) -> bool {
+    decimal_integer_value(text).is_some()
 }
 
 /// The helper call's arguments when each is a whole scalar literal and no

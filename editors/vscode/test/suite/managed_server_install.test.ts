@@ -156,6 +156,83 @@ suite('Managed Server Installation', () => {
     assert.deepStrictEqual(versionEntries, []);
   });
 
+  for (const executableName of ['ripr', 'ripr.exe']) {
+    const layouts = [
+      { name: 'in sibling directories', paths: [`a/${executableName}`, `z/${executableName}`], contents: ['first candidate', 'second candidate'] },
+      { name: 'at the root and nested', paths: [executableName, `nested/${executableName}`], contents: ['first candidate', 'second candidate'] },
+      { name: 'nested with identical bytes', paths: [`nested/${executableName}`, `nested/deeper/${executableName}`], contents: ['same bytes', 'same bytes'] }
+    ];
+
+    for (const [index, layout] of layouts.entries()) {
+      test(`duplicate ${executableName} ${layout.name} refuses before executable writes and preserves the prior cache`, async () => {
+        const priorRequest = installRequest(root, '3.0.0');
+        const prior = await installManagedServer(priorRequest, operations('prior-known-good', '3.0.0'));
+        const request = { ...installRequest(root, `3.1.${index}`), executableName };
+        const candidate = operations('unused', request.version);
+        candidate.extractArchive = async (_archivePath, destination) => {
+          for (const [entryIndex, relative] of layout.paths.entries()) {
+            const file = path.join(destination, relative);
+            await fs.promises.mkdir(path.dirname(file), { recursive: true });
+            await fs.promises.writeFile(file, layout.contents[entryIndex]);
+          }
+        };
+
+        await assertSelectionRefusesWithoutExecutableWrites(
+          request,
+          candidate,
+          `Downloaded archive contains multiple files named ${executableName}; expected exactly one server executable.`
+        );
+        assert.deepStrictEqual(await fs.promises.readdir(path.join(request.serversRoot, request.version)), []);
+
+        const retained = await readManagedServerInstallation(priorRequest);
+        assert.ok(retained);
+        assert.strictEqual(retained.executablePath, prior.executablePath);
+        assert.strictEqual(await fs.promises.readFile(retained.executablePath, 'utf8'), 'prior-known-good');
+      });
+    }
+
+    test(`one nested ${executableName} remains eligible and a same-name directory is not an executable`, async () => {
+      const request = { ...installRequest(root, '3.2.0'), executableName };
+      const candidate = operations('unused', request.version);
+      candidate.extractArchive = async (_archivePath, destination) => {
+        await fs.promises.mkdir(path.join(destination, executableName));
+        await fs.promises.writeFile(path.join(destination, executableName, 'README'), 'not an executable');
+        const release = path.join(destination, 'release', 'bin');
+        await fs.promises.mkdir(release, { recursive: true });
+        await fs.promises.writeFile(path.join(release, executableName), 'unique nested binary');
+      };
+      let probeCalls = 0;
+      candidate.probeExecutable = async (file) => {
+        probeCalls += 1;
+        assert.strictEqual(await fs.promises.readFile(file, 'utf8'), 'unique nested binary');
+        return 'ripr 3.2.0';
+      };
+
+      const installed = await installManagedServer(request, candidate);
+
+      assert.strictEqual(probeCalls, 1);
+      assert.strictEqual(installed.receipt.binaryVersion, 'ripr 3.2.0');
+      assert.strictEqual(await fs.promises.readFile(installed.executablePath, 'utf8'), 'unique nested binary');
+      assert.ok(await readManagedServerInstallation(request));
+    });
+
+    test(`a directory named ${executableName} preserves the missing-executable refusal`, async () => {
+      const request = { ...installRequest(root, '3.3.0'), executableName };
+      const candidate = operations('unused', request.version);
+      candidate.extractArchive = async (_archivePath, destination) => {
+        await fs.promises.mkdir(path.join(destination, executableName));
+        await fs.promises.writeFile(path.join(destination, executableName, 'README'), 'not an executable');
+      };
+
+      await assertSelectionRefusesWithoutExecutableWrites(
+        request,
+        candidate,
+        `Downloaded archive did not contain ${executableName}.`
+      );
+      assert.deepStrictEqual(await fs.promises.readdir(path.join(request.serversRoot, request.version)), []);
+    });
+  }
+
   test('rejects traversal and rooted version forms before any filesystem mutation', async () => {
     const invalidVersions = [
       '../escaped',
@@ -520,6 +597,61 @@ suite('Managed Server Installation', () => {
     assert.strictEqual(guide.includes('sha256.txt'), false);
   });
 });
+
+async function assertSelectionRefusesWithoutExecutableWrites(
+  request: ManagedServerInstallRequest,
+  candidate: ManagedServerInstallOperations,
+  message: string
+): Promise<void> {
+  const copyFile = fs.promises.copyFile;
+  const chmod = fs.promises.chmod;
+  const writeFile = fs.promises.writeFile;
+  const rename = fs.promises.rename;
+  const finalDir = path.resolve(request.serversRoot, request.version, request.platformTarget);
+  let copyCalls = 0;
+  let chmodCalls = 0;
+  let probeCalls = 0;
+  let receiptWrites = 0;
+  let promotionCalls = 0;
+  fs.promises.copyFile = async (...args: Parameters<typeof fs.promises.copyFile>) => {
+    copyCalls += 1;
+    return copyFile(...args);
+  };
+  fs.promises.chmod = async (...args: Parameters<typeof fs.promises.chmod>) => {
+    chmodCalls += 1;
+    return chmod(...args);
+  };
+  fs.promises.writeFile = async (...args: Parameters<typeof fs.promises.writeFile>) => {
+    if (path.basename(String(args[0])) === 'install-receipt.json') {
+      receiptWrites += 1;
+    }
+    return writeFile(...args);
+  };
+  fs.promises.rename = async (...args: Parameters<typeof fs.promises.rename>) => {
+    if (path.resolve(String(args[1])) === finalDir) {
+      promotionCalls += 1;
+    }
+    return rename(...args);
+  };
+  candidate.probeExecutable = async () => {
+    probeCalls += 1;
+    return 'ripr unexpected-probe';
+  };
+  try {
+    await assert.rejects(installManagedServer(request, candidate), { message });
+    assert.strictEqual(copyCalls, 0, 'no candidate was copied into an executable path');
+    assert.strictEqual(chmodCalls, 0, 'no candidate was made executable');
+    assert.strictEqual(probeCalls, 0, 'no candidate was launched');
+    assert.strictEqual(receiptWrites, 0, 'no completed install receipt was written');
+    assert.strictEqual(promotionCalls, 0, 'no candidate was promoted to the final cache directory');
+    assert.strictEqual(await readManagedServerInstallation(request), undefined, 'no eligible completed receipt');
+  } finally {
+    fs.promises.copyFile = copyFile;
+    fs.promises.chmod = chmod;
+    fs.promises.writeFile = writeFile;
+    fs.promises.rename = rename;
+  }
+}
 
 function installRequest(root: string, version: string): ManagedServerInstallRequest {
   return {

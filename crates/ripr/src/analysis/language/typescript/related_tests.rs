@@ -66,6 +66,18 @@ pub(crate) struct ReExportIndex {
     /// Actual imports (not re-exports) used to finish a canonical enum chain.
     enum_imports: HashMap<String, Vec<TypeScriptImport>>,
     unstable_enum_roots: HashSet<(String, String)>,
+    /// Lazily derived adjacency over `star_edges`: module -> sorted unique
+    /// `export *` targets. The resolvers used to scan every star edge for
+    /// every frame they walked (O(total edges) per hop — the dominant
+    /// warm-run cost on barrel-heavy workspaces, #11676); this view answers
+    /// the same per-module question in one lookup. The graph fields are
+    /// immutable once the index is constructed, so a derived view cannot go
+    /// stale.
+    star_sources_by_module: std::sync::OnceLock<HashMap<String, Vec<String>>>,
+    /// Lazily derived: module -> sorted unique exported names held in
+    /// `entries` for that module, so `enum_exported_names` stops scanning
+    /// every entry key per graph visit.
+    entry_names_by_module: std::sync::OnceLock<HashMap<String, Vec<String>>>,
 }
 
 /// Outcome of resolving one exported name through the re-export graph.
@@ -262,7 +274,48 @@ impl ReExportIndex {
             enum_bindings,
             enum_imports,
             unstable_enum_roots,
+            star_sources_by_module: std::sync::OnceLock::new(),
+            entry_names_by_module: std::sync::OnceLock::new(),
         }
+    }
+
+    /// This module's `export *` targets, sorted and de-duplicated — exactly
+    /// the multiset `resolve_export_frame` and `resolve_namespace_export_hop`
+    /// used to collect by scanning all of `star_edges` per frame.
+    fn star_sources(&self, module: &str) -> &[String] {
+        let by_module = self.star_sources_by_module.get_or_init(|| {
+            let mut by_module: HashMap<String, Vec<String>> = HashMap::new();
+            for (from, to) in &self.star_edges {
+                by_module.entry(from.clone()).or_default().push(to.clone());
+            }
+            for targets in by_module.values_mut() {
+                targets.sort();
+                targets.dedup();
+            }
+            by_module
+        });
+        by_module.get(module).map_or(&[], Vec::as_slice)
+    }
+
+    /// The exported names `entries` records for this module, sorted and
+    /// de-duplicated — the same set `enum_exported_names` used to collect by
+    /// scanning every entry key per visited module.
+    fn entry_names(&self, module: &str) -> &[String] {
+        let by_module = self.entry_names_by_module.get_or_init(|| {
+            let mut by_module: HashMap<String, Vec<String>> = HashMap::new();
+            for (source, name) in self.entries.keys() {
+                by_module
+                    .entry(source.clone())
+                    .or_default()
+                    .push(name.clone());
+            }
+            for names in by_module.values_mut() {
+                names.sort();
+                names.dedup();
+            }
+            by_module
+        });
+        by_module.get(module).map_or(&[], Vec::as_slice)
     }
 
     /// Strict rule-15 identity, layered over the existing bounded export
@@ -521,18 +574,12 @@ impl ReExportIndex {
             if let Some(exports) = self.local_exports.get(&module) {
                 names.extend(exports.iter().map(String::as_str));
             }
-            names.extend(
-                self.entries
-                    .keys()
-                    .filter(|(source, _)| source == &module)
-                    .map(|(_, name)| name.as_str()),
-            );
+            names.extend(self.entry_names(&module).iter().map(String::as_str));
             if hops < MAX_REEXPORT_HOPS {
                 pending.extend(
-                    self.star_edges
+                    self.star_sources(&module)
                         .iter()
-                        .filter(|(source, _)| source == &module)
-                        .map(|(_, target)| (self.canonical_module(target), hops + 1)),
+                        .map(|target| (self.canonical_module(target), hops + 1)),
                 );
             }
         }
@@ -724,19 +771,13 @@ impl ReExportIndex {
         if name == "default" {
             return ExportResolution::NotFound;
         }
-        let mut star_sources: Vec<&String> = self
-            .star_edges
-            .iter()
-            .filter(|(from, _)| from == module)
-            .map(|(_, to)| to)
-            .collect();
+        let star_sources = self.star_sources(module);
         if star_sources.is_empty() {
             return ExportResolution::NotFound;
         }
         if hops >= MAX_REEXPORT_HOPS {
             return ExportResolution::Unknown;
         }
-        star_sources.sort();
         let mut found: Option<(String, String)> = None;
         for star_source in star_sources {
             match self.resolve_export_with_context(
@@ -903,7 +944,7 @@ impl ReExportIndex {
             return None;
         }
         let mut found: Option<String> = None;
-        for (_, star_source) in self.star_edges.iter().filter(|(from, _)| from == module) {
+        for star_source in self.star_sources(module) {
             // Another star source that exports `name` as an ordinary binding
             // makes the name ambiguous, whichever source binds a namespace.
             if !matches!(
@@ -6294,5 +6335,72 @@ mod spy_binding_unicode_tests {
         };
         // Must not panic, and must read the same as the ASCII spelling.
         assert_eq!(name("évi"), name("evi"));
+    }
+}
+
+#[cfg(test)]
+mod adjacency_view_tests {
+    use super::*;
+
+    /// The lazily derived per-module views must hold exactly the sorted,
+    /// de-duplicated multiset the resolvers used to collect by scanning all
+    /// of `star_edges` / `entries` per frame (#11676): the indexed fast path
+    /// is only sound if it cannot diverge from the raw scan it replaced.
+    #[test]
+    fn star_sources_view_matches_the_raw_scan() {
+        let index = ReExportIndex::from_parts(
+            vec![],
+            vec![
+                ("barrel".to_string(), "b".to_string()),
+                ("barrel".to_string(), "a".to_string()),
+                ("barrel".to_string(), "c".to_string()),
+                ("a".to_string(), "leaf1".to_string()),
+            ],
+            vec![],
+        );
+        let mut expected: Vec<String> = index
+            .star_edges
+            .iter()
+            .filter(|(from, _)| from == "barrel")
+            .map(|(_, to)| to.clone())
+            .collect();
+        expected.sort();
+        expected.dedup();
+        assert_eq!(index.star_sources("barrel"), expected.as_slice());
+        assert_eq!(index.star_sources("unstarred"), &[] as &[String]);
+        // Modules whose only edge is incoming have no sources.
+        assert_eq!(index.star_sources("leaf1"), &[] as &[String]);
+    }
+
+    #[test]
+    fn entry_names_view_matches_the_raw_scan() {
+        let index = ReExportIndex::from_parts(
+            vec![
+                (
+                    ("m".to_string(), "z".to_string()),
+                    ("z".to_string(), "m".to_string()),
+                ),
+                (
+                    ("m".to_string(), "a".to_string()),
+                    ("a".to_string(), "m".to_string()),
+                ),
+                (
+                    ("other".to_string(), "x".to_string()),
+                    ("x".to_string(), "other".to_string()),
+                ),
+            ],
+            vec![],
+            vec![],
+        );
+        let mut expected: Vec<String> = index
+            .entries
+            .keys()
+            .filter(|(source, _)| source == "m")
+            .map(|(_, name)| name.clone())
+            .collect();
+        expected.sort();
+        expected.dedup();
+        assert_eq!(index.entry_names("m"), expected.as_slice());
+        assert_eq!(index.entry_names("noentries"), &[] as &[String]);
     }
 }

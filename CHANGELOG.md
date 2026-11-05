@@ -1348,6 +1348,111 @@ qualification and publication histories.
 - The editor hover, repair code-action packet and test skeleton comment say "the missing check" in the Python stop condition "Stop if the expected value for the missing check is ambiguous." The producer string in JSON, SARIF and agent output is unchanged (#12214).
 - Test coverage for the plain-words Python stop condition: hover, repair code-action packet and test skeleton render it end to end, and a drift test pins the producer sentence to its editor rewrite (#12214). No user-visible output changes.
 - The editor hover's plain-words pass now leaves bracketed literal lists and the test names after "No test is seen calling ..." untouched, and a test fails if a protected producer wording drifts (#12284). No JSON, SARIF or CLI output changes.
+- The claims assertion macros (`assert_ok_eq!`, `assert_some_eq!`, `assert_ok!`, `assert_some!`, `assert_err!`, `assert_none!`) are described in one table that the import scan, the drop-in crate lookup, the payload route and the equality nomination all read, so a new claims macro is a single row. No finding changes (#12394).
+- `ripr cache export` now names which input changed when it refuses with "workspace inputs changed during export" (for example the seam limit or the analyzed file list), instead of only saying something changed (#12421).
+- Add compile-time distinct `AnalysisAttemptId`, `CompletedAnalysisSnapshotId`, `DiagnosticResultId`, and `ContinuationId` wrappers with fail-closed cross-class parsing (#4807).
+- Repo-seam ranking builds match-arm owner reach once per seam instead of once
+  per related test, so the reverse walk is not repeated on a busy arm (#12478).
+- A bounded `.map(owner)` iterator chain whose bare path resolves to the changed owner and whose `assert_eq!` names the matching literal `Vec` now credits through the owner-return pin; unresolved paths, shadowed bindings and foreign same-name modules stay fail-closed, and the verdict-corpus row `shape-hostile-owner-as-path-value` is credited (#9478, #12482).
+- Seam-capped native `repo-badge-json` and `repo-badge-plus-json` outputs carry the `RIPR_REPO_EXPOSURE_SEAM_LIMIT` repair route in `warnings` without duplicating it when report persistence retries (#12508).
+- Python preview findings now carry a per-finding `confidence_basis` and
+  `confidence_why_capped` explanation, derived in the classifier at parity with
+  TypeScript, so human and JSON output explain the capped score; classifications
+  and confidence values are unchanged (#12547).
+- Wrapper-call shadow checks in classification reuse the memoized callee-uniqueness and per-test import-defeat answers across call lines instead of rescanning them per call; findings are unchanged (#7088, #12548).
+- A diff that changes no analyzable Rust file no longer walks or indexes the Rust workspace under Instant, Draft, or Fast; Deep and Ready still select the whole workspace, generated-file skip counts stay on the changed paths, and a real Rust edit still walks (#8547, #12552).
+- Repo-wide runs that read the seam-facts cache now say on stderr when the cache has no usable entry and the full walk will run, and the audit-path notice only promises faster warm reruns when a stored cache entry exists; otherwise it says the first run on the workspace pays the full walk (#12505, #12553).
+- A test that pins a literal neither the owner before the diff nor the owner after it returns for the call's literal arguments no longer earns the owner-return credit: `assert_eq!(checked_div(17, 5), Ok(9))` and `assert_ok_eq!(checked_div(17, 5), 9)` when the tail moved from `Ok(a / b + 1)` to `Ok(a / b)`, or a pin on `Ok(0)` when both versions take the `Err` guard exit. The test fails on both versions, so it cannot notice the change. A literal pinned to the old or the new value still credits. A closed evaluator reads integer arithmetic over literal arguments in the parameter type; anything it cannot evaluate (a name, an expression argument, a method, a cast, an overflow, a diff with no old line) keeps the current reading (#12716).
+- A bounded `.map(owner)` chain now credits the owner pin when the change is invisible at the first literal input but visible at a later one; a change invisible at every input still reads `static_unknown` (#12841).
+- Added xtask output-edge property tests (#12919): over generated Rust workspaces and diffs, every renderer emits only the static class vocabulary and none of the gate's runtime-outcome words, finding ids are unique and stable under diff reordering and unrelated line shifts, and JSON/SARIF output validates against `check.schema.json` and a SARIF 2.1.0 envelope subset. Test-only; no product output changes.
+- An empty `ripr check` range on the comparison base now says the diff is empty instead of blaming the language, prints the paste-ready `ripr check --base HEAD~1`, and a range with changed files but no checkable behavior hints that the base probably already includes the production change (#13036).
+- The default `ripr check` missing-check line no longer says "No strong assertion was detected" next to a next step that says a related test already has an exact assertion; it says no assertion was tied to the changed value (#13037). JSON and `human-full` keep the classifier wording.
+- `ripr evidence-health` now shows the same stderr stage lines and heartbeats as `ripr check` while it walks the workspace, so a long run on a very large source file no longer looks like a hang; `--quiet` (or `RIPR_QUIET`) silences them (#13055).
+- Semantic `ripr.toml` validation failures now print `path:line:column` on the CLI, and `ripr doctor --json` exposes structured `checks[].validation` coordinates for the same diagnostic (#2624).
+- The wheel and Windows shard qualification workflows accept an optional
+  `candidate_sha` dispatch input, so every exact-candidate qualification lane
+  can be dispatched from `main` against the release candidate commit (#2769).
+- LSP backend: the open-document store, save digests and last published diagnostics now live in an owned `QuarantineLedger` (lsp/state.rs) with the digest and quarantine-marker transitions as methods; behavior is unchanged (#2941).
+- LSP backend: the config-pull epoch, lifecycle state, coalescing flags and scope root now live in one owned `ConfigPullCoordinator` (lsp/state.rs); behavior is unchanged (#2942).
+- Moved the evidence-promotion semantic-assertion and corpus tests out of `xtask/src/tests.rs` into `xtask/src/tests/evidence_promotion_semantics.rs`, a behavior-preserving split with the same 27 tests (#2948).
+- Added the shared `LanguageAvailabilityReport` DTO and effective-enablement resolver in `domain`, separating detection, compiled availability, configured intent and effective enablement with remediation steps for each state that needs user action (available states carry none). Check, doctor and editor consumers follow in later slices; no effective default changes (#2959, #2615).
+- The `languages.enabled` unavailable-adapter config error and the preview-language advisory's build-gap recovery now come from the shared `LanguageAvailabilityReport` resolver instead of re-deriving availability from `is_available`; message text is unchanged. Check/JSON/diff-report text is unaffected; per-surface exposure of the full report follows in later slices (#2960, #2615).
+- LSP `ripr/analysisStatus` and workspace status now project `availability_state` and ordered `remediation` from the shared `LanguageAvailabilityReport` on each `unavailable_languages` row, while keeping the editor recovery sentence for setup actions (#2962, #2615).
+- VS Code setup diagnosis and language-not-enabled status prefer the server remediation steps when building the next safe action (#2962).
+- LSP: the pure workspace-root resolution-to-authority derivation moved from `Backend` onto `WorkspaceRootAuthority::from_resolution` in `lsp/state.rs`, with direct tests; no behavior change (#3020).
+- LSP: moved the command-payload production free functions (gap-record context packet, receipt status, repair packet, evidence context packet) out of `lsp/backend.rs` into `lsp/backend/command_handler.rs`; no behavior change (#3021).
+- The activation classifier now recognises builder-style setter lines through a typed `BuilderPattern` matcher instead of an inline string predicate; behavior is unchanged and pinned by a differential test (#3022).
+- Perl complete-packet findings now disclose `perl_coordinate_line_basis` and `perl_change_provenance_refs` on the evidence path, and declared `coordinate_line_basis` values govern diff line settlement, change currentness, and unowned-line coverage (#3221).
+- `ripr rerun --gap` prepares the Rust workspace and cache-backed index once per
+  invocation when several ledger scopes need Rust recomputation, and reports
+  shared file-fact cache work once instead of once per scope (#3862).
+- The back-sync verification receipt now retains `path_record_count` and a NUL-terminated `path_record_sha256` for its development-surface, source-publication and source-authority path inventories, so an omitted or newline-split path changes the retained denominator (#4006).
+- The LSP repair packet sentinel `analysis_snapshot_stale` now also carries `refresh_state` (`in_flight`, `no_snapshot`, `terminal` or `stale_snapshot`), `attempt_state` and a `recovery` hint, so a client can tell a refresh in progress (retry shortly) from no snapshot yet, a failed, cancelled or superseded refresh, or a stale snapshot (recover); the packet is still withheld in every case, and the VS Code copy command shows only the recovery hint (#4427).
+- The installed Python journey test now pins the `first-pr` receipt route: the `Receipt path:` line equals the printed command's `--out`, the status step names `not_run`, `passed` and `failed`, and each status is recorded separately without static closure (#4518).
+- `review-comments` now resolves an optional prepared-workspace handoff at the canonical-analysis boundary, records the documented compatibility recompute route when `--check-output` carries no `analysis_index_handoff`, and can evaluate streamed inventory from a supplied prepared workspace without rebuilding the index (#4692).
+- Shallow language detection (`detect_languages` and the Perl project probe) moved from the `doctor` CLI command into `config::language_detection`, so `first-pr` output no longer imports the CLI, and `check-architecture` now rejects `output` → `cli` imports. Detection results are unchanged (#5193).
+- `output` no longer imports the CLI for unknown-value wording or `first-pr` argv: the near-miss suggestion authority moved to a shared `accepted_value` module that `cli::suggest` reuses, and `first-pr` argument parsing and help now live in the CLI adapter. Command output is unchanged (#5193).
+- The Rust macro-reach fallback visits only tests that call a reaching name
+  or invoke an owner-mentioning macro, and replays the forward witness walk
+  only for those candidate callees, so a common owner name inside a
+  `macro_rules!` body no longer costs a walk per test (#5376).
+- TypeScript/JavaScript preview surfaces now select the family-relevant related test (headline, preview card, JSON oracle summary, verify command, and repair-packet target row) from producer oracle evidence only when that row matches the missing-check family; an oracle-ref that names a later equal-strength same-file test no longer displaces a better family/boundary match (#5505, RIPR-SPEC-0224).
+- Python related-test rows whose strong oracle observes a different sink no longer carry `miss: observation_unconfirmed` or the "ripr could not confirm" line in `check.json` and the human output. The miss stays empty until `assertion_not_observing` is emitted; sink alignment is now evaluated per row and the finding-wide alignment is derived from those rows, so exposure classes are unchanged (#5574, #5491).
+- The `.github/actions/ripr-check` composite Action's `Install ripr` step now
+  follows the same installer contract as the generated workflow: Windows x64
+  installs the release's zip (verified SHA-256, flat-root listing check, the
+  `tar.exe` Windows ships, `ripr.exe` run by absolute path), Windows ARM64
+  reports an explicit unsupported error, a missing or mismatched checksum, bad
+  archive or wrong payload exits 1 with no `cargo install` fallback, and the
+  installed `ripr` must report exactly the requested version (a look-alike such
+  as `0.10.00` or `0.10.0-rc.1` is refused). The already-on-PATH shortcut and
+  `cargo install` for an unmapped runner or an undownloadable archive are
+  unchanged (#6245).
+- The generated `ripr init --ci github` workflow's `Install ripr` step now
+  installs the release's Windows x64 zip on Windows runners instead of building
+  with `cargo install`: it verifies the published SHA-256 before extracting,
+  extracts into `$RUNNER_TEMP/ripr-bin` with the `tar.exe` Windows ships, runs
+  `ripr.exe` by absolute path and requires it to report the pinned version.
+  A missing or mismatched checksum, a malformed or unsafe archive or a wrong
+  payload now fails the step on every platform instead of falling back to
+  `cargo install`, and Windows ARM64 reports an explicit unsupported error.
+  Regenerate the workflow to pick this up (#6245).
+- Pinned what ripr reads today for each `claims`, `approx` and `float-cmp` assertion macro family (presence, direct payload equality, payload extraction, tolerance equality and inequality, debug-only), and added a fixture proving the inequality tolerance next step end to end. Findings and credit are unchanged (#6645).
+- A finding limited by an `approx` or `float-cmp` tolerance assertion macro (`assert_relative_eq!`, `assert_abs_diff_eq!`, `assert_ulps_eq!`, `assert_approx_eq!`) now says the macro reads like a floating-point tolerance comparison whose tolerance and effect ripr cannot establish, and points at checking the tolerance against the smallest difference the change can make, instead of the generic "custom assertion macro" step. Classification and credit are unchanged (#6645).
+- `ripr check --format repo-exposure-json` collects named files during seam rendering instead of parsing each seam's JSON back, so large repo-exposure reports render faster with identical output (#8643).
+- `ripr check --format repo-exposure-json` (and other repo-inventory
+  formats) project `processed_<n>_of_<total>` on stderr progress and
+  heartbeats once the evidence walk has an honest seam denominator, so a
+  multi-minute full-repo audit can be told from a hang without
+  `RIPR_REPO_EXPOSURE_LATENCY_TRACE` (#8643).
+- `ripr check` skips the per-callee macro-item parse when the test source has
+  no `!`, or when the callee name never appears and the file has no
+  `macro_rules!`. Classification answers stay the same; an unparsable file
+  that holds `macro_rules!` remains undecided (#9217).
+- Evidence value facts intern identifier and literal strings once per test
+  file, so tests in the same file share one copy of a let-binding instead of
+  allocating it per test (#9494).
+- The Windows hang hunt takes a `runner` input (`windows-latest` or `windows-2022`) so probe timing (#9631) can be compared across hosted images. Diagnostic workflow only; default unchanged.
+- Windows hang-hunt probe timing is now a validated instrument: monotonic clock, per-probe deadline with a recorded cleanup outcome, verified target output and exit or start-failure markers, round and position labels, and target, wrapper-module and PowerShell identities in `shardN-probe-timing.json` (schema 2). Diagnostic only; prerequisite to the ADR 0024 latency criterion (#9631).
+- `docs/ADOPTING_IN_CI.md` explains why a new gap can stay `advisory` under `baseline-check` (an incomplete repair route, most often no strong related test to imitate, or a test changed beside the gap) and where the exact reason is written, so a team does not read an advisory result as a broken workflow (#11206).
+- `ripr agent card` and `ripr agent packet` accept any ID `ripr check` or `ripr pilot` prints (a `probe:` finding ID, a `gap:` ID or a `file:line`) through the same resolver `ripr agent repair` uses, and their missing-ID hint says so. For an eligible seam the output is byte-identical to the exact seam ID run. A translated ID is as strict as `ripr agent repair`: ambiguous, ineligible and stale IDs refuse with this command's own retry, while the exact seam ID is still served for a policy-admitted seam. A resolver failure (such as a broken `ripr.toml`) stays an operational failure, and `agent packet` names a truncated seam inventory instead of "not found" (#12420).
+- The `ripr-check` composite Action installs a checksum-verified prebuilt ripr (a `version` input pinned to the latest release, with a `cargo install --version` fallback) instead of compiling an unversioned `cargo install ripr` or trusting whatever `ripr` was on PATH, and derives the pull request base from `GITHUB_BASE_REF`, fetching that branch when the checkout lacks it. `docs/CI.md` documents the Action (#11540).
+- The generated `ripr init --ci github` workflow no longer re-runs on unrelated label events in advisory and `visible-only` mode, and a label event can no longer cancel an analysis already running for a push; `labeled` and `unlabeled` each get their own concurrency group (#11753).
+- The CI job summary's "Start here" block no longer opens with five generic bullets (safe next action, recovery states, proof rail, preview boundary, gate authority); the first-run status and artifact glance below already carry each with its concrete value (#11585).
+- The "Nothing to check" headline of `ripr check` no longer lists Rust, Python and TypeScript only; it says no changed source file in a language ripr analyzes was available. The docs-only stderr note now names the skipped file types and says nothing was analyzed, leaving the explanation to the headline instead of giving a second one (#11396).
+- `ripr --help` names its repair row "Repair a Rust gap" instead of using the internal word "seam". `ripr agent card` and `ripr agent packet` without an id say to get an id from `ripr pilot --root <dir>`. `ripr check --diff HEAD` (a revision, not a file) now points at `--base REV` in its error (#11570 items 2, 3 and 8).
+- `ripr status` prints a one-line shell note instead of the long Bash/PowerShell quoting paragraph when the next command runs unchanged in PowerShell. A test pins that a Python-only and a TypeScript-only root keep the `ripr pilot` route (#11570 item 5, #11395).
+- MCP: argument errors on a known tool are now `isError: true` `invalid_argument` tool results instead of JSON-RPC `-32602` (unknown tools stay protocol errors); `ripr_list_gaps` `limit` is capped at the 500-item working-set bound; opt-in `RIPR_MCP_TEXT_CONTENT=brief` (one line per gap) and `RIPR_MCP_TOOLS_LIST=slim` (no `outputSchema`) shrink what a host reads; the repair-card description drops its duplicated failure-code list (#11621).
+- MCP: a `ripr_prepare_repair` refusal for `seam_not_found` or `seam_ambiguous` now carries `next.stub_route`, the `ripr agent stub --at FILE:LINE --kind FAMILY` route `ripr check` and `ripr repair` already name, so prepare does not dead-end where the CLI does not (#11622).
+- MCP: a `superseded` repair-attempt or receipt read for a session transaction still in memory now carries `data.canonical_id`, `data.item_in_current_snapshot` and a `data.next` route (re-prepare the same item, or list the current items), so prepare, edit, refresh does not end in a dead failure (#11622).
+- MCP: a `ripr_prepare_repair` refusal for an `infection_unknown` predicate item that carries a typed producer static limit now returns `next.kind: terminal_static_limit` with the limit and a `ripr_get_top_limitation` route, instead of an edit-and-recheck route that cannot change it (#11622).
+- The DX scoreboard now carries runner-independent ratchet ceilings on the `ripr-swarm` and `ripr-swarm-2026-10` rows (warm check time and memory; cold pilot time and memory on `ripr-swarm-2026-10`). With `--gate`, a sample above its ceiling, or a selected ceilinged row that produced no value for that metric, fails the run instead of reading as below target (#12947).
+- Added an advisory, `workflow_dispatch`-only `Pilot Measure` workflow that builds a release `ripr` on a hosted runner, reports the byte sizes, exit code and `run_status` of `ripr pilot` on this repository, and prints the agent-format `open=`/`stop=` state on the pinned humantime fortnight commit, so #11951 and #12058 can be confirmed on a current-main release binary; it asserts nothing (#11951, #12058).
+- `Pilot Measure` now builds `ripr` into a runner-temp target directory outside the pilot root, takes a `timeout_ms` dispatch input (default 1800000, clamped to 2700000 so the job cap leaves room for the timeout packet) for `ripr pilot --timeout-ms`, echoes its summary to the job log, and reports whether `repo-exposure.json` was written and its size (#11951).
+- `ripr pilot` now writes at most 3 packets to `agent-seam-packets.json` by default, actionable packets first, instead of 2-4 MB of mostly static-limitation packets; the file reports the cut in `limitations[]`, and `RIPR_PILOT_PACKET_BUDGET=0` writes every packet (#11951).
+- In the `ripr pilot` copy of `agent-seam-packets.json`, `packets_total` now means the number of packets written, not the number of packet-eligible seams; `limitations[].packets_eligible` carries the eligible count when the bound cuts (#11951).
+- Docs: `RIPR_PILOT_SEAM_BUDGET` now states that it bounds seam count, not bytes, with the measured `repo-exposure.json` scale (13.1 MB at the default 2000-seam budget on this repository, about 6.6 KB per seam) and points agents at `agent-seam-packets.json` and `pilot-summary.json` instead (#11951).
+- Default `ripr` text now says "gap" where it said "seam", and "assertion" where it said "discriminator", in the help screens (`--help`, `help pilot`, `help repair`, `help agent`), the `ripr check` Evidence row, legend and observed-assertion label, repair and status refusals, and the "no repair start offered" lines. The `ripr agent card` brief is titled "Repair brief for this gap" and shows the id `--seam-id` takes on its own `Repair ID:` row; messages that list ids now say "repair IDs". Boundary: producer prose shared with JSON (for example "No strong discriminator was detected") still says "discriminator" in the default check output. JSON fields, machine tokens, flag spellings and exit codes are unchanged (#10692, #10693).
 
 ### Added
 
@@ -2194,6 +2299,61 @@ qualification and publication histories.
   `check --format agent` line style with an explicit `done=` / `open=` /
   `stop=` terminal line and a `next=` `ripr context` command. `--format json`
   is refused with a pointer to `ripr context`, which stays JSON (#12104).
+- Python: an annotation-driven in-package may-reach call graph (return, parameter and attribute annotations, `self.method` as a union over in-package subclasses) with a measured false-edge report on click and Flask. It is built and measured only; no verdict, relation or `no_static_path` row reads it yet (#11425).
+- `ripr::provider_contract` exposes the versioned cross-language edge registry
+  DTOs, validation, semantic digest, and `subjects_related_by_registered_edge`
+  helper for producer-owned cross-language relation edges (#6481, #12333).
+- Python and TypeScript unit tests pin named fixtures only: two Python rebind inputs and three TypeScript floating-promise inputs read `static_unknown` (not `exposed`), beside `exposed` controls, and none of the fixtures reads `propagation_unknown` (Python also not `reachable_unrevealed` or `infection_unknown`). They do not enumerate every classifier entry point (#12922 slice 1).
+- `ripr check --format json-compact` renders the same versioned JSON report
+  as `--format json`, minified for machine and agent consumers; parsed
+  values are identical and the `json` output is byte-unchanged (#13103).
+- Domain `TestCandidateSet` projects related-test rows into producer-backed
+  vs context-only candidate channels with bounded discovery totals (#1664).
+- `ripr mcp --stdio` adds the read-only `ripr_get_top_limitation` tool and the `ripr://gap/{canonical_id}/limitation` resource: the earliest committed producer limitation for one canonical item (`kind`, `stage`, `reason`, `recovery`, `retryable`, `restart` identity and the prohibited stronger claim), reusing the shared static-limit and repair-readiness vocabulary. An item with no limiting fact returns the explicit `no_limitation_established` kind instead of `null` (#1898).
+- The crate root exports `RiprError`, `RiprErrorCategory`, and typed `try_check_workspace` / `try_check_workspace_with_config` entry points that preserve existing CLI string errors while exposing stable categories and refusal codes for embedders (#1986).
+- `ripr init --ci gitlab` writes an advisory merge-request `.gitlab-ci.yml`
+  that installs ripr, runs `ripr check` and `ripr review-comments`, and
+  uploads `target/ripr/**` job artifacts (#2019).
+- `ripr.toml` accepts optional `[[overrides]]` rows so one workspace crate
+  (Cargo package name or path glob) can override `[severity]` and `[oracles]`
+  without changing the repo-wide default. Most specific match wins; unknown
+  crate names fail closed. Existing configs without the section are unchanged
+  (#2671).
+- `ripr doctor --json` `detected_languages[]` entries now carry `availability_state` and ordered `remediation` from the shared language-availability report, so a detected language that is disabled or not compiled names its next step (#2961).
+- `ripr agent verify` JSON now carries additive `before_produced_from_dirty` / `after_produced_from_dirty` fields (emitted only as `true`) so an artifact produced from a dirty worktree keeps that fact after it is classified historical. The pair `artifact_currentness` tokens are unchanged (#3056).
+- `ripr gate evaluate` and gap-ledger repair routes carry a distinct
+  `proposed` repair target for producer-owned InlineUnit and Integration
+  new-test proposals, instead of reporting those routes as missing
+  `repair_target` (#3162).
+- PR-evidence packets now carry optional `summary.changed_files_sha256` and `summary.changed_files_recipe`, a NUL-framed sorted-deduplicated digest of the changed paths, so an omitted or substituted path is detectable beyond the count. Older packets without the fields still validate (#4006).
+- `ripr: Start Current Repair` runs the shared `ripr agent repair --phase before`
+  flow when the LSP exposes a validated seam-bound repair handoff, shows the
+  bounded edit-cage summary (including every `must_not_change` rule), and
+  idempotently resumes only inventory rows whose disposition is `resumable`
+  (#4645).
+- External `fixtures/packaged_repair_parity` manifest and typed cross-channel parity receipt gate for #4648 / #2929.
+- Diagnostic catalog entries now carry producer-owned recovery, actionability,
+  and profile defaults (`FixInstructionState`, closed recovery kinds, visibility,
+  severity source, freshness preconditions, and non-claims). Unknown codes and
+  unlisted recovery kinds stay typed unavailable; client capability can hide
+  presentation but cannot change catalog state. Emitted diagnostic `code`
+  strings are unchanged (#4675).
+- `FixInstructionSummary` may now carry optional `instruction_semantic_id` and `instruction_instance_id` fields when producer context supplies canonical item and completed-snapshot facts; additive JSON only (#4805).
+- Rust index now records parser-backed `include_str!` / `include_bytes!` resource
+  dependency edges (exact or opaque) as an internal producer slice; no public
+  output changes (#5171, advances; known limit #13046).
+- Document the normative PHP preview evidence and support contract as RIPR-SPEC-0392, including capability registry cells and support-map registration, without shipping a PHP analyzer adapter yet (#5620).
+- Accepted RIPR-SPEC-0402: Haskell preview contract for Cabal/Stack package and component roles, distinct class/instance owners, separate example-test (Hspec/Tasty/HUnit) and property (QuickCheck/Hedgehog) capability cells, evaluation-demand boundaries, typed limitations, and FFI edges under shared cross-language architecture (#5887, #5596).
+- `ripr::provider_contract` loads cross-language edge registries with bound
+  semantic digests, evaluates currentness/effective relations, and compares
+  base/head movement for impact analysis (#6484).
+- SCIP index admission core (#8115): pinned `scip.proto`, checked-in prost bindings (no build-time protoc for default installs), manifest-bound index and source digests, workspace-bound project roots, and production unit tests for path-escape, source-swapped, and tampered-index controls. CLI wiring and diagnostic disclosure follow in a later slice.
+- Pin method-hop field-read hit/trap activation infection witnesses in the
+  `method_hop_field_read_activation` integration target (#9603 item 3).
+- `ripr init --agents claude|codex|cursor|all` writes a short, verified ripr loop (find a gap, write a test, verify, explicit done and stop rules) into `CLAUDE.md`, `AGENTS.md` or `.cursor/rules/ripr.mdc` as a marked section: it appends to your file, never rewrites your content, is idempotent, supports `--dry-run`, and refuses symlinks and unterminated markers; with `cursor`, `--mcp` also writes `.cursor/mcp.json`. New `docs/AGENT_QUICKSTART.md` is linked from `ripr --help` and the README, whose "Agent instructions" link no longer points users at the developer-only `AGENTS.md` (#11575, #11658).
+- Kani bounded-model-checking harnesses (`cfg(kani)`, no effect on normal builds) prove the `bounded_input` limit arithmetic (exact accept/reject at `limit`, no overflow at `u64::MAX`, exact MiB figure) and the `needs_terminal_escape` character policy behind `terminal_text` (every control, bidi and tag character is flagged; the escape spelling alphabet is never re-escaped) (#11811).
+- Kani bounded-model-checking harnesses (`cfg(kani)` only, no effect on normal builds) prove the exposure classification decision is total over the seven-class vocabulary, that unknown/opaque/missing stages never promote to `exposed`, that stronger oracle evidence never lowers the class, and that oracle strength ranking and the self-computed cap are ordered and monotone (#11624).
+- Propose ADR 0026 and add RIPR-SPEC-0320: one guarded test-only assertion replacement class with versioned `ExactTestEditPrecondition` / `GuardedEditUnavailable` DTOs and a corpus-backed fail-closed builder (#1902). ADR 0026 stays proposed; no LSP edit emission in this slice.
 
 [Full development diff since v0.10.0](https://github.com/EffortlessMetrics/ripr/compare/v0.10.0...main).
 
@@ -6069,6 +6229,455 @@ shell, unbounded, or otherwise unsupported subprocess shapes.
   fails on the real entry-row values, instead of a synthetic `"0"` probe that
   could misname a value-dependent fold (`items / items` at 3 vs 0). The class
   stays `infection_unknown`; only the named argument can change (#12000).
+- Rust: `assert_ok_eq!(owner(..), literal)` and `assert_some_eq!(owner(..), literal)`
+  from the `claims` crate now pin an `Ok`/`Some` tail like the unwrapped
+  `assert_eq!`, only under the manifest-verified `use claims::..` import. The
+  related test reads `exact_value` / strong in that case; no import evidence, a
+  rename, a local rebind, a non-literal expected operand or the wrong
+  direction keep the line `unknown` with the macro limitation (#12304).
+- An assertion such as `assert_eq!(Result::or(parse(..), Err(MyError::V)).unwrap_err(), MyError::V)`
+  no longer counts as an exact error-variant pin. The test wrote the `Err(V)`
+  itself and hands it to `or`, `and`, `ok_or`, `unwrap_or`, `map_err` and the
+  like, so it passed whatever the owner returned. Direct `Err(..)` comparisons
+  and `matches!(.., Err(..))` keep their credit (#12359).
+- `ripr pilot` and `ripr agent brief`: a seam whose evidence stages are opaque or unknown is withheld as a static limitation and no longer ranked as a repair, so the top-10 list is not filled with picks ripr cannot ground. An unknown activation behind an absent reach does not count as a limitation by itself. On the pilot-ranking answer key, top-10 precision moves from 28.0% to 37.5% (top-5 from 17.6% to 22.2%) at the cost of one confirmed pick; the 0.6 target is still unmet (#5497, #12377).
+- TypeScript: a `typeof` clause on a line of a multi-line `return`, a conditional arm or a returned object property no longer reads `exposed` when every asserted call takes the same value under the old and the changed expression; the statement-level expression is evaluated on the asserted inputs instead of the continuation line alone (#12380).
+- The repo-wide audit now reads `assert_ok_eq!(call, literal)` / `assert_some_eq!(call, literal)`
+  through the same owner-pin decision `ripr check` uses, so the owner's `Ok(..)` / `Some(..)`
+  return-value seam reads `strongly_gripped` instead of `reachable_unrevealed`. A refused
+  import, direction, expected operand, owner call or a literal the owner does not return stays
+  uncredited (#12394).
+- A claims `assert_ok_eq!(..)` or `assert_some_eq!(..)` written over several lines now earns the same owner-return credit as its one-line form, when its closing line holds only the `;` and a comment. A second statement on the closing line, a path-qualified macro or a non-literal expected operand still reads `unknown` (#12394).
+- The experimental `riprAgent` contract is dispositioned as private VS Code-bounded compatibility (#1896), with `cargo xtask check-ripr-agent-disposition` binding each ledger element to its disposition, fencing each verification README schema row, and rejecting generic-client support wording (#12403).
+- Whole-test contradictory-fold withholding now survives composition with
+  unrelated file-mate tests: the infection-stage withholding disclosure fires
+  when no credited related test establishes reach to the changed owner
+  (`RelationReason::establishes_reach`), not merely when the credited set is
+  empty, so adding same-file tests that never call the owner can no longer
+  raise a `infection_unknown` finding to `exposed` by crediting proximity
+  (#12412). Lone contradictory-test and mates-only `no_static_path` shapes are
+  pinned in the RIPR-SPEC-0108 corpus.
+- Agent seam packets, agent brief, and repo-exposure JSON no longer emit `discriminate: yes` when the same seam is `weakly_gripped` with missing discriminators; the evidence block now projects `weak` at render time (#12415).
+- `ripr lsp` no longer lets a no-scope analysis read as an all-clear: `ripr/listActionableItems` now carries the typed `analysis_outcome` plus a `scope_disclosure` sentence (the same not-all-clear fact MCP's `empty_scope_hint` emits, with the `baseRef`/`ripr.refresh` recovery), the refresh completion log names `analysis_outcome={kind}` and discloses an empty scope once per distinct sentence, and a hover in a session that analyzed nothing renders the cause and set-a-base recovery instead of generic analyzed advice (#12416).
+- `ripr continue` run from a directory that no workspace, package or Git repository encloses now refuses at once and says so, instead of reading the whole directory for minutes with no output (#12417).
+- The repair spellings `ripr repair`, `ripr continue`, `ripr status` and their `agent` counterparts now refuse at once when no workspace, package or Git repository anchors the current directory, instead of reading or answering about an unrelated tree (`repair`/`continue` exit 3 with code `unanchored_root`; `agent` spellings keep their root-error exit). An explicit `--root` skips the gate (#12417).
+- The first-run `ripr check` ignore note now names the exact bound `git rm --cached` command when ripr's artifact files are already tracked (#12432), and the tracked-cache advisory (`repo file fact cache entry ignored`) carries that cure and reports once per run instead of once per index build; the advisory names the command only when every Git-indexed file under the cache base sits in a ripr-owned cache layer, and stdout and machine formats are unchanged.
+- A repo-exposure predicate boundary no longer takes an oracle from a test that only pins another function by proximity, as a match arm already did, once a test that runs the owner is related, so such a test lends `none` to the boundary row; with no test tied to the owner by a reach-establishing relation the seam stays `activation_unknown` and keeps its read (#12434).
+- A doc example no longer registers as a test when a `#[cfg(..)]` that is not provably true under the package's default features sits on an enclosing `mod`, `impl` or `trait`, on the `mod name;` declaration that reaches its file (including the `#[path]` form), or as an inner `#![cfg(..)]` on a declaring file. An enclosing gate is read by the same rule as the item's own (#12453).
+- A `use claims::assert_ok;` (or `assert_some`, `assert_err`, `assert_none`) now resolves the macro only where Rust would: in its own module, in the test's own body, or in an ancestor module that each module down to the test re-imports with `use super::*;`. An import in another function, in a sibling module, in a child module that does not re-import it, or under any `cfg` other than `cfg(test)` no longer credits the test (#12462).
+- A TypeScript preview finding whose related test already has a strong exact-value or snapshot check now says the check is strong but cannot be tied to the changed line and asks for an input that flips the branch, instead of asking for another exact-value assertion; a field update that no input can flip keeps the generic step (RIPR-SPEC-0027, #12463).
+- Git diff stdout decoding for analysis loaders moves valid UTF-8 bytes into
+  the owned diff text without a second complete payload buffer on the accepted
+  path (#5000).
+- A comment after the closing `;` of a TypeScript table-test callback (`expect(f(x)).toBe(y); // note`) no longer demotes the row to `weakly_exposed`, and cached TypeScript table results are refreshed after the callback-comment fixes (cache schema 1.141). A new end-to-end fixture pins line, block and trailing comments (RIPR-SPEC-0243, #12494).
+- TypeScript object-row `test.each` callbacks: line and block comments inside an
+  otherwise lone `expect(..).matcher(..)` body no longer block row literal
+  substitution, so pinned boundary rows stay `exposed` instead of
+  `weakly_exposed` (#12494).
+- Uncased match-arm variant reads (`Kind::A`) no longer treat a name as a variant when the owner function, or an item in its body, carries a proc-macro attribute or a custom derive that may declare a local `Kind`; a compiler builtin on the owner, or the same attribute on a sibling function, still reads (RIPR-SPEC-0229, #7692).
+- `ripr check --timeout` help, stderr disclosure, and `analysis_timeout` refusals now distinguish pre-worker git work and post-analysis rendering from git-backed diff loading inside the analysis worker, and name `RIPR_GIT_TIMEOUT` as the per-invocation git bound (#12508).
+- The Python warm check no longer scans every workspace attribute write for every test (tests x writes), which made `ripr check` on pandas and django about four times slower (#12515).
+- Recognize nested `src/bin/<name>/main.rs` binary targets for owner-pin macro routing so unrelated library integration tests are not refused by a nested binary's macro site (#6916, #12522).
+- Python Hypothesis `@example(...)` rows are admitted as concrete input facts
+  only when static `@settings(phases=...)` on the test still includes
+  `Phase.explicit`; omitted or unresolvable phase lists withhold the example
+  rows instead of treating them as parametrized witnesses (#12544).
+- When a changed side effect is a push into a collection the test reads back, the recommended next step and the LSP hover now ask for an exact check of the full contents instead of suggesting a mock expectation first, matching the repair-route contents-check refusal (#12456, #12549, RIPR-SPEC-0412).
+- TypeScript Vitest `test.for` / `it.for` registrations the extractor cannot
+  index are now disclosed through `typescript_test_extraction_partial` instead
+  of being silently dropped; empty tables, skipped options and unrelated `.for`
+  helpers are unchanged (#12554).
+- `ripr lsp --stdio` exits when its launching parent dies without closing stdio (Unix parent-reparenting probe; Windows not covered) (#12575).
+- A Python `isinstance` guard is read as unknown, and keeps fail-open credit, when the file rebinds a builtin through the builtins module as a `for` target, a `with ... as` target or a comprehension target (`for b.isinstance in items:`, `with ctx() as b.isinstance:`); a plain `for x in items:` or `with ctx() as x:` and a read of the attribute in the iterable still leave the guard readable (#12591).
+- A Python `isinstance` guard is read as unknown, and keeps fail-open credit, when the file aug-assigns through a builtins-module alias or subscript (`b.isinstance += 1`, `builtins['isinstance'] |= f`, …) (#12592).
+- A Python `isinstance` guard is read as unknown, and keeps fail-open credit, when a builtins-module rebinding uses a tuple/list target or backslash continuation split across physical lines (#12593).
+- An assertion whose `Err(..)` the test hands to a value-supplying adapter (`or`, `ok_or`, `map_err`, ..) is now a weak relation instead of an exact value, so a boundary row on the owner no longer takes `discriminate: yes` from a test that passes whatever the owner returns (#12610).
+- Pilot and agent packet recommendations suffix `_2`, `_3`, … when the derived
+  new-test name already exists among related tests in the same file (#4217).
+- Python changed-sink credit no longer treats an assertion on a different
+  receiver as observing the changed attribute sink when only the asserted
+  value and attribute name coincide, and nested Python functions now get
+  qualified owners instead of attributing their changes to the outer
+  function (#1267).
+- A same-file test that asserts on another indexed function no longer lends a returned-value repo seam (for example `Ok(n)`) a strong oracle once a test that runs the owner is related, matching the match-arm and predicate-boundary refusals. A seam with no reach-establishing test keeps its `activation_unknown` read (#12600, #12671).
+- The Rust cold pilot on large workspaces no longer re-parses the same test body for every owner-shadow check, which had roughly doubled its time since #10167 (#12710).
+- For a changed push into a vector or string the test passes in and counts,
+  the `ripr repair` brief now suggests an exact check of that collection's
+  full contents (`assert_eq!(buf, expected_buf)`), the check `ripr agent stub`
+  writes, instead of "Suggested assertion: none". The suggested test name and
+  the stub's test name now end in `full_contents` instead of
+  `side_effect_observer` (#12711). The suggestion text also appears in `ripr agent card`, the card's JSON
+  assertion goal and the targeted test outline's assertion guidance. That
+  outline feeds the editor hover's suggested test shape, the targeted brief
+  text (the editor's copy-brief action and the pilot `targeted_test_brief`
+  field), the editor command's `suggested_test.assertion_shape` and the pilot
+  output.
+  The new test name (and the `cargo test` command that uses it) also appears
+  in the agent packet, `agent-brief.json`, the workflow output and the
+  evidence record. These carry the name only, not the suggestion text.
+  All of this applies only to a route that was already ready to repair, not
+  one already checked, suppressed or intentional. A contents-check stub
+  written earlier under the old `<owner>_side_effect_observer` name
+  (including a numbered `_2` name) is still reported as already written.
+- Canonical base/head comparison keeps unknown gap evidence visibly unresolved
+  instead of inferring improvement, regression, or unchanged evidence from
+  oracle rank or item presence; established gap transitions retain their
+  existing meaning (#12714).
+- A bare `assert_snapshot!`-style call in a Rust test now counts as `insta`'s only when no file in the
+  workspace defines a macro of that name. A `#[macro_use]` definition in another file shadows the `use insta`
+  import, so a missing `.snap` no longer demotes a seam asserted through that local macro (#12720).
+- An exact error-variant assertion is no longer published as a strong oracle on the same owner's returned-value seam (`Ok(n)`) when it does not name the `Err(..)` that seam constructs; the related-test record now matches the weak grade the seam already carried (#12722).
+- A seam whose only related assertion is an exact error-variant pin on a different arm now reads the same in the discriminate stage and the related-test record: the discriminate stage no longer reports a strong oracle (`kind-match false`) while the related-test record credits none, so such a seam reads `reachable_unrevealed` instead of `weakly_gripped`. This applies to returned-value seams only; an `Err(..)` seam of its own error-variant kind is unchanged (#12733). The related test says its exact error-variant assertion pins a different arm than the seam's returned value instead of "no oracle in test body", and it is no longer offered as the nearest test to imitate in the evidence record (#12734). Other surfaces that pick a related test by their own rule can still name that test; they are tracked in #12825.
+- The 17 `rust-inherent-*` honesty reports that no case read, and that were pinned at cache `1.74`, `1.77` and `1.78`, are now judged: each has a corpus case with a `report_subject` Cargo subject, is recaptured at the current cache generation with `ripr check --mode draft --format repo-exposure-json`, and is regenerated by `check-evidence-promotion-honesty` on every run, so the cache-schema gate covers it on every bump. `report_cache_schema_pins` is now empty. Grip classes, stage states and related tests were unchanged across the three generations (#12739).
+- The Rust cold pilot no longer walks a test body's whole syntax tree once per assertion to look for an owner-shadowing item when the body has no `fn` of that name and no `use` item, which cut the regex pilot about a third on top of #12710 (#12741).
+- The DX scoreboard's `vscode-typescript` row declares the typed `language_scope_unsupported` partial outcome its pinned diff actually produces, so its warm-check speed ceilings are measured on the hosted nightly instead of leaving the row incomplete (#12743).
+- TypeScript root `tsconfig.json` / `jsconfig.json` path aliases no longer resolve for an importer
+  whose nearest config declares its own `compilerOptions.paths` (with or without `baseUrl`):
+  the root map is withheld there instead of crediting the wrong owner, and the existing
+  `typescript_path_alias_unresolved` disclosure covers the miss. Root fallback is unchanged when
+  no nearer config declares `paths` (#12754).
+- A test that invokes a macro imported with `use claims::assert_ok_eq as ok_eq;` (or any `use ..::assert_* as name`, plain or in a brace list) now names `rust_macro_wrapped_assertion_unresolved` (verdict `limited`) instead of reading as a gap that asks for an assertion the test already has (#12779). A rename of a non-assertion item, an unused rename and an invocation with no import keep their verdicts. The classified seam cache moves to `1.151`.
+- A repair attempt interrupted between linking an artifact into place and removing its `.tmp-<pid>-<nonce>` staging name no longer leaves the repository permanently ambiguous: the edit cage accepts exactly that two-name pair inside one directory, while any other extra hard link stays refused (#12791).
+- Rust owner pins now read a method called on a tuple-constructor receiver (`Money(2).add(..)`) and a `.0` read of a one-field integer tuple struct the changed tail builds whole, under an explicitly imported standard operator trait, so a test that pins `r.0` of an `.add(` result is credited instead of reading `weakly_exposed` (#12796).
+- Bare `ripr repair` shares one `ripr check` run between its already-noticed screen and its recommended-start choice (#12831).
+- Bare `ripr repair` now starts the repair `ripr check` recommends for your change when several repairs are eligible, instead of asking you to repeat check's choice. When check names no start for the change, or the change cannot be scoped to changed lines, the choice prompt is unchanged (#12831).
+- Diagnostic catalog self-checks are now real: closed-vocabulary labels must be
+  distinct, non-empty snake_case (compile-time assert), and an entry's recovery
+  declaration must be duplicate-free with a typed unavailable reason exactly
+  when it lists no recovery. Both have negative tests. Emitted codes are
+  unchanged (#12832).
+- Bare `ripr repair` no longer lists repair starts for spots `ripr check` reads as already noticed or cannot judge; it says why for each and, when none remain, refuses instead of asking you to choose (#12849).
+- A bare `ripr repair` refusal for a change with open spots that cannot start a repair now ends on "write that test by hand" for the spots listed, instead of sending you on a repository tour and back to `ripr check` (#12861).
+- `ripr repair` no longer starts an attempt when its handoff card cannot be produced (a repair that would begin in a proposed new test file); it says there is no existing test to extend and to write the test by hand, and creates no attempt (#12867). `ripr agent start` and the MCP repair admission refuse the same seams, since they share the gate.
+- The ordinary-loop process-reaping test treats `ESRCH` from reading `/proc/<pid>/stat` of an exiting process as already stopped, instead of failing with "No such process" (#12874, #12878).
+- The `rust-repo-exposure-uncalled-sibling` honesty report carried no `content_sha256` and was in neither the required nor the exempt digest list. It is recaptured with `ripr check --mode draft --format repo-exposure-json` at the current cache generation, now carries its digest and is in `report_digest_required`, so a hand edit fails the digest check as well as the regeneration guard. Seam ids, grip classes, evidence-path stage states and related tests are unchanged from the earlier capture. The text that moved is the current analyzer's wording: the `self.0 as f64 / 1000.0` seam's static limitation is now `missing_discriminator_evidence` at the `discriminate` stage (repair route `analysis/producer-evidence-discriminator`) where the old capture had `activation_owner_call_absent_same_file_only` at `activate`, with its actionability and recommendation reasons reading "producer-owned missing discriminator fact: return_value", and the `Size::as_kib` reach summary reads `conversions` where it read `conversions, zero_size` (#12890).
+- A managed Perl exporter that dies by SIGINT during an interrupted
+  `ripr check` is now reported as the interruption, not as an exporter
+  failure ("exited with status ... other languages continue"). The decision
+  waits a bounded moment for the CLI's own interrupt flag instead of
+  depending on which process observed the group signal first (#12935).
+- The flake ledger now has rows for 16 open intermittent-test issues, and `xtask/tests/flake_ledger.rs` joins it to a hand-curated, checked-in issue snapshot (not auto-complete: issues missing from the snapshot are not detected), failing when an open flaky snapshot issue has no ledger row or a row disagrees with its issue's recorded state; wall-clock-bound rows carry `timing_dependent = true` (#12936).
+- TypeScript preview no longer credits an array-length assertion as observing a changed pushed string in a bounded direct fresh-array case (#12949).
+- Python module constant edits can receive exact-value credit through a reader
+  returning a bounded f-string of string values, with no conversions or format
+  specifications. Weak substring checks still receive no such credit (advances #12950).
+- A `ripr repair` refusal for a changed struct field now names the `ripr agent stub ... --kind field_construction` route, or says why no stub can be written (for example a by-value `self` setter) and to write the test by hand (#12959).
+- `ripr pilot` and `ripr agent brief` withhold seams whose `#[should_panic]`
+  outcome remains unresolved, matching repair eligibility. Pilot counts the
+  withheld limitations, and evidence records preserve their named reason and
+  analyzer repair route without changing the seam class or stage states (#12977).
+- `ripr agent repair --phase before` no longer records an ambiguous (unscorable)
+  baseline once earlier retained attempts under `target/ripr/repair-attempts`
+  exceed the 64 MiB exact-capture budget; large retained artifacts (over 1 MiB,
+  such as `before.repo-exposure.json`) now use the bounded identity other
+  ignored files use, while manifests and receipts stay exact (#13079).
+- `ripr init --agents` now requires a successful, complete analysis of the selected
+  input and full finding counts before calling the static repair loop done.
+  Empty scope, missing evidence, truncated output and unanalyzed saved changes
+  instead stop with their limitation (#13125).
+- MCP top-limitation recovery retains the source-custody owner's remedy, so a
+  committed refresh over dirty Rust files recommends committing them or analyzing
+  saved edits instead of repeating the same committed refusal (#13127).
+- Compact agent check output now names incomplete analysis and its recovery
+  before retained findings, and no longer reports `done` for partial,
+  unsupported or failed analysis with empty or fully exposed findings (#13138).
+- MCP keeps `invalid_argument` errors and recovery guidance when a request
+  contains a large unknown argument name, with an explicitly bounded name
+  preview and the original UTF-8 byte length (#13154).
+- `ripr doctor --profile source-build` checks the compiler selected by `RUSTC`
+  or `CARGO_BUILD_RUSTC`, retaining executable paths with spaces and reporting
+  broken overrides instead of crediting a different PATH compiler (#13186).
+- LSP code actions use the shared fix-instruction summary to gate repair handoffs (#1663).
+- The Perl verdict corpus now pins the perl-ripr-facts producer that no longer treats `eval { ... }` in a test file as a dynamic boundary and grades `like($@, MATCHER)` as an exception observer bound to the callee in the preceding eval block. Block eval in a source file and every string eval still fail closed. `perl-testexception-eval-like-dollar-at` now abstains as `static_unknown` through the strong exception observer rule instead of the boundary (its missed-credit reason is updated), `eval-ok-no-error` and `lives-and-weak-ok` move from `static_unknown` to the correct `reachable_unrevealed` gap, and the Perl corpus holds at 0 false verdicts of 94 (#18498).
+- The Perl verdict corpus now pins the perl-ripr-facts producer that grades `throws_ok` and `like(dies {...}, ...)` by their literal matcher and advertises `oracle_matcher_grading`. Three rows (`perl-test2-format-entry-like`, `perl-testexception-close-out-dies-ok`, `perl-testmore-round-cents-like`) move from `static_unknown` to the correct `reachable_unrevealed` gap, with no false verdicts (#18499).
+- `ripr agent status`, the repair-start gate and MCP reads now use the same widened seam cap as `ripr repair`, so a 10,000 to 20,000 seam repository (tokio at 12,754) is no longer withheld there while `ripr repair` starts. Widened reruns now hold the process-wide cap exclusively, so concurrent MCP workers cannot strand it. A test over a generated repository above 10,000 seams pins the plain cut, the widened repair inventory, the gate and the cap restore (#1887, #1985)
+- The diff parser now enforces a language-neutral changed-line budget
+  (`RIPR_MAX_DIFF_CHANGED_LINES`, default 100,000) while streaming, so one
+  accepted file can no longer accumulate unbounded added/removed line payloads
+  for any language. Over the limit it stops at the first line past the ceiling
+  with the existing `diff_scope_oversized` failure; an invalid value fails
+  closed. The stricter per-language limits are unchanged (#2398).
+- VS Code Show Status now reports when diagnostic delivery overflowed the LSP budget, including selected/omitted counts or a serialized-byte cap warning, and names the governed retrieval route (#2596).
+- A derived-local tuple match-arm finding is no longer promoted to `exposed`
+  from assertions placed after a conditional or diverging exit in the related
+  test (`if ... { return; }`, `?`, `break`, `panic!`/`unreachable!`/`todo!`
+  or `process::exit`). The projection oracle now leaves such a test
+  unverified, so the arm stays `weakly_exposed`; a complete test with no early
+  exit is still promoted (#4135).
+- A TypeScript relative import resolved from an absolute test path now keeps its leading `/`, matching the alias branch and owner module identity (#4207).
+- `ripr review-comments` now captures Git range diff stdout under
+  `RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES` while the child runs, refusing with
+  `review_guidance_oversized` before unbounded ingress allocation (#4388,
+  #5000).
+- LSP: workspace-folder membership and root-disclosure strings are now capped at
+  reviewed limits (entry count, per-URI/path bytes, aggregate bytes, and
+  bounded list summaries). Over-limit initialize lists, deltas and
+  reconciliation replacements are rejected with `membership_capacity_exceeded`
+  before mutating stored folder state (#4483).
+- Python doctest examples are now read as tests of their owner when the only signal is a `tox.ini` `[testenv]` `commands` line that runs a bare `pytest --doctest-modules` (the boltons shape). The read stays closed when any pytest configuration exists, when a `pyproject.toml` pytest table is present, or when the command names a target, ignores a path or chains another command (#4561).
+- Add the diff-scoped `Ripr Windows Gate Result` workflow (#5088): an always-reporting
+  check that pass-as-skips when a pull request cannot touch `cfg(windows)` surfaces and
+  otherwise runs the three-class Windows subset (gap artifacts, cache-warning smoke,
+  ripr clippy) on `windows-latest`. Promotion to branch protection remains a separate
+  owner step.
+- `agent verify` on `check-findings-json` artifacts now peeks producer identity before typed deserialization, so a missing or older `producer.version` fails with the PATH-substitution diagnostic instead of an opaque serde `missing field` error (#5115).
+- `ripr agent verify` reads a repo-exposure artifact's producer stamp
+  (`schema_version` and `artifact.producer.version`) before deserializing the
+  full shape, so a missing or older RIPR producer fails closed with a PATH
+  substitution diagnostic instead of serde `missing field` (#5115).
+- `ripr: Show Status` opens the output channel only, without a duplicate
+  information toast. The main status-bar item stays hidden when the server is
+  unavailable (the missing-server warning already names the recovery) and when
+  `ripr.enabled` is false; it still shows `ripr: open workspace` with no folder
+  open (#5319).
+- Pilot’s default deadline now treats the 30 s budget plus its automatic extension as one total wall-clock limit from run start, and `ripr help pilot` states the 270 s worst case plus cancel grace (#5322).
+- Python preview parse-budget refusals on probable fixture or data paths now name the file and point to `[languages.python] excluded_file_patterns` instead of advising a source rewrite; TypeScript preview indexing honors `[languages.typescript] excluded_file_patterns` (#5380).
+- Python related-test rows can now carry `missing_exact_assertion` with row-owned discriminator support when a strong assertion observes the changed sink but does not pin the finding's exact discriminator (#5575).
+- `ripr agent stub` now refuses with `owner_unsupported` when an out-of-line owner file is reached only through a parent `mod` declaration gated by a cfg a plain `cargo test` build may not enable (#5616).
+- Same-line sibling `mod` scopes no longer taint a neighboring `#[test]`'s
+  `assert_eq!`, while a borrowed oracle from a one-line check helper with its
+  own scoped `assert_eq!` rebinding stays refused (#5695).
+- A `#[macro_use] mod NAME;` written inside a registry `cfg_if::cfg_if!` no longer makes ripr refuse every `assert_eq!`/`assert!` in the workspace: when the `cfg-if` dependency is a verified plain registry requirement, the module file resolves beside the declaring crate-root or `mod.rs` file, and the macro's arguments carry nothing else that could rebind a macro (an `extern crate`, a call nested in an inline module, a glob or `cfg_if` `use`, an `include!`, an inline module body, a `#[path]`, `no_implicit_prelude`, or a mention of the assertion), the item is judged like the same module written directly (#5993).
+- Pinned with a regression test that a changed function called by a module-qualified path (`crate::m1::f1(x)`, `super::m1::f1(x)`) is followed by the transitive caller walk like an imported bare call, while std-rooted and type-qualified same-named calls are not credited (#6296).
+- The inline test-module repair cage now compares a staged or committed copy of the target file with the exact validated bytes (`git hash-object --no-filters`), so a repository-local clean filter can no longer make a different blob match. A `hash-object` failure is refused as its own `git_object_unreadable` reason instead of a differing copy. Under `core.autocrlf=true`, a staged or committed CRLF target is refused (fail closed) because git normalizes it to LF (#6310). The before-phase "target is at HEAD" check keeps Git's filters on purpose (it must agree with `git status` under autocrlf); accepted residual: a normalizing clean filter can make a raw uncommitted worktree edit read as at HEAD in that phase, because the edit then joins the captured before text and later staged or committed copies are compared raw.
+- Human check output and limitation edges now describe guard-shaped assertion refusals with conditional-return wording instead of blaming standard-macro identity (#6541).
+- Effect-state carrier admission now bounds free `callee(self, ..)` helpers, refuses whole-object credit after compared-binding reassignment, and scopes binding-rewrite gates to the compared receiver (#6579).
+- Python preview analysis now records `assert_awaited`, `assert_awaited_once`,
+  `assert_awaited_with`, and `assert_awaited_once_with` on async mocks as
+  `mock_expectation` oracles instead of unknown custom helpers (#6585, #12312).
+- `ripr check --perl-facts` on an empty Rust diff no longer fails outcome validation with `NoScope requires every count to be zero` when the supplied Perl fact packet projects findings; the run now completes with `complete_with_findings` so the RIPR-SPEC-0108 corpus regeneration command can succeed on a clean checkout (#6606).
+- Seam grip unresolved-reach witnesses and opaque LSP Problems text now stay
+  path-aware per owner when same-named rivals share a file, including inline
+  sibling modules and macro-only reach paths (#6621).
+- TypeScript preview: a test whose `skip`/`todo` option is a shadowed `undefined` stays withheld without a partial-extraction gap. The finder now uses the same scope-aware option fence as the extractor, so that inactive registration is not reported as a dropped `test`/`it` call (#6631).
+- A private generic helper whose whole body is `if cond { a } else { b }` over two different parameters (for example a `capped(value, cap)` helper) now has the condition as its return sink, so a boundary change tested through an exact forwarding wrapper reads `exposed` instead of `propagation_unknown` (#6694).
+- Inline test modules' `use super::*` no longer make ripr treat every bare lowercase match binding as a possible constant import for the whole file: only a file-root `use super::*` (which may import another module's items) still demotes binding-arm selection (#6722).
+- Changed-test and diff-scoped inventory now derive the workspace cache key from the same bounded index read instead of hashing the corpus twice (#6758).
+- TypeScript assertion admission no longer treats AVA tests, thenable
+  `reject` aliases, import-shadowing describe parameters, or sibling-test
+  enclosing writes as an established absence of assertions (#6889).
+- A float exponent literal (`1e5`, `1E-5f64`) and a cast that changes the value (`300 as u8`) no longer read as other input values in activation; such an argument yields no exact value, so it cannot credit or demand a boundary the test never passes (#6912).
+- Proc-macro derive reach witnesses no longer treat file-wide `#[derive(Name)]`
+  text: each derive must sit on a live `struct`/`enum`/`union` item, ignoring
+  `cfg(any())`-disabled items, inactive enclosing `cfg`, and derive-shaped tokens
+  inside macro delimiters such as `stringify!` (#6932).
+- RIPR-SPEC-0096 / #6991: exact-equality `.any()` membership over a captured `log::` sink now confirms observation in reveal, and gap admission admits the shape with one compared literal (residual #7120 observation gate). Re-blessed rust verdict-corpus rows `cell-0096-log-info-captured`, `cell-0231-log-raw-literal-captured`, and `cell-0231-log-targeted-record-captured` from limited to credited.
+- Same-test boundary pairing no longer voids a live `let`-bound name for post-assertion mutation, comment/string interiors, or inner-block shadow mutations (#7042 items 1–3, RIPR-SPEC-0186).
+- Effect-state carrier whole-object admission now tokenizes each test body once per carrier instead of once per assertion (#7049 item 2).
+- Effect-state whole-object observers that read a SCREAMING_CASE static or const root (`*LOG.lock()`, `TABLE[0]`) are no longer refused when the deleted callee may have written that state (#7070 item 1).
+- Tightened the free-function receiver guard so nested `fn r#name` declarations and Unicode-prefixed receiver method names no longer keep false direct-owner credit against an established free function (#7092).
+- Unit-struct receiver typing now refuses when the workspace invokes an item- or statement-position macro whose definition is outside the indexed source, since expansion may emit unread rival items (#7160).
+- MCP `ripr_get_repair_card` no longer serves a card labeled current over source that changed after `ripr_refresh`: each read re-verifies the captured digests of only the files the card's evidence is bound to and refuses with `stale_snapshot`, naming the changed path and telling the agent to run `ripr_refresh` again. Unrelated edits keep the card (#7357).
+- TypeScript: a local bound to an owner call that nests another owner call (`const result = price(price(6000, 0), 7)`) now reads the outer call's arguments, as the direct `expect(price(price(6000, 0), 7))` form already did, so the dropped-term and instance-class pin credits are no longer withheld from it (#7470).
+- TypeScript: the shared literal masker no longer reads the `/` in `n! / 2` (a non-null assertion followed by division) as a regex start, so a later binding on the same line is no longer hidden from name scans (#7483).
+- A builder chain that applies a non-setter method after a verified setter
+  (`RetryBuilder::new().attempts(5).reset().build()`) no longer counts as an
+  override of that field, so the read is not treated as a false
+  `weakly_exposed` gap. A method before the setter, and the conventional
+  zero-argument `.build()` terminal, keep the existing override reading
+  (#7557).
+- Qualified drop-in assertion macros such as `pretty_assertions::assert_eq!` no longer earn parser oracle credit in files with a glob import that may bind the root from another module without a crate dependency (#7641).
+- Preserve distinct source-value origins for literal Unix backslash filenames
+  and directory paths in human source evidence without changing assertion
+  admission or classification (#7838).
+- Perl fact-packet classification no longer treats equal sink text as
+  observation of a changed returned-list element when the only aligned
+  strong oracle is a Test::More `is(scalar ...)` (last-element only) or a
+  self-comparison. A literal-list `is_deeply` still aligns. Packets whose
+  sink text itself names `scalar` or `wantarray` keep the existing
+  wantarray-exact credit. RIPR still consumes packets only; it does not
+  parse Perl (#7851).
+- Rust workspace macro ownership keeps an explicitly listed `[workspace]
+  members` path even when the same path is listed in `exclude`; exclusions
+  still apply to glob-expanded members (#7904).
+- A whitespace reformat beside a real edit no longer widens the changed
+  span past an opaque callee. The #7956 repro (space before the index
+  brackets, `50` becoming `51`) covers the literal `51`, not the whole
+  indexed call. String-literal whitespace is still a change (#7956).
+- Match-arm selection decodes standard char-literal escapes (`\n`, `\x41`, `\u{…}`, and related forms) so escaped char patterns compare by decoded scalar value (#7990).
+- Variant-field pattern credit no longer treats a foreign glob `use` as cleared by a renamed own-package import, and the foreign-glob defeat applies only to bare callee names—not `crate`/`self`/`super`-qualified owner calls (#8053, RIPR-SPEC-0225 decision 8).
+- Reject unsupported collection assertions before parsing their owner while
+  preserving binding authority and collection-field observation (#8082).
+- Rust owner matching reuses compact function nesting facts for identical indexed
+  source while preserving line ranges, ambiguity and conditional scopes (#8082).
+- Share immutable nesting facts through `Arc` when composing with the run-scoped
+  owner-pin mutex, preserving source-identity invalidation (#8082).
+- Skip irrelevant module candidates when test-context construction checks calls
+  that cannot contain a crate-qualified owner spelling (#8082).
+- Rust literal JSON admission reuses the eligibility parse for identical freshly
+  read root-manifest bytes while retaining live configuration and dependency
+  identity checks (#8082).
+- Rust assertion-context analysis avoids whole-file JSON import scans for macro
+  operands that do not need literal JSON authority, preserving existing refusal
+  and binding decisions (#8082).
+- Reuse workspace binding checks during collection-field observation without
+  carrying answers across changed source snapshots (#8082).
+- Preserve the landed context-owned syntax sharing while ranking and producing
+  seam evidence; retain the unique discarded-oracle short circuit and its
+  cache-isolation controls when composing the caller candidate (#8082).
+- Skip unused matching checks when selecting related-test oracles for non-field
+  seams (#8082).
+- Array `return_value` findings demote to `weakly_exposed` when constructing
+  the owner's single-array return may exit before the test reaches its
+  assertion, matching the indexed sibling exit refusal (#8084).
+- The reveal side refuses a non-`mut` `static` (and an annotated `let`) by its declared type: `static C: AtomicUsize = ZERO;` and `static C: Cell<u32> = make();` are no longer followed to their initializer, and a scalar `static X: u32 = { .. AtomicUsize .. }` is no longer refused for words in its initializer. Detection needs a known interior-mutable type name in the declared type or the initializer; a user type that only holds an atomic with no such name stays unrecognized. A scalar declared type is trusted only when the file does not rebind the primitive name (`type`/`struct`/`use`/`extern crate` of it, or any glob import); remaining limits: `include!`, `#[path]`, macro-generated types and aliases such as `type Slot = AtomicUsize` (checked by initializer text only) (#8112).
+- Owner-pin tests now pin the `#8928` control that `Counter::new(weight(4))` stays admitted when the initializer text names no interior-mutable type; other precision gaps from that issue remain open (#8928).
+- Proximity-only reach no longer names tests linked only by a name token
+  (`weak_token_substring`) in its look-text, so unrelated `next`/`fold`
+  neighbours cannot lead "where to look" while a same-diff test stays
+  unmentioned (#8387).
+- On macOS, a git-spelled NFC changed path now matches the NFD on-disk name from the workspace walk, so Instant no longer drops the file. Linux and Windows keep byte-distinct NFC/NFD names as different files. Display still uses git's spelling (#8419).
+- `ripr agent stub --at … --kind return_value` no longer substitutes the nearest in-function return-value gap when the requested line holds none; it emits a direct stub for that line's return probe or an explicit refusal (#8444).
+- TypeScript same-class entry graph: record edges for synchronous method references (`this.helper` in array callbacks, or `.call`/`.apply`/immediate `.bind(this)()`), so related tests can reach helpers with weak tier-2 reach instead of `no_static_path` (#8567).
+- Payload-bound VS Code commands (targeted-test and agent-loop quick fixes) no
+  longer appear in the command palette; they remain available from ripr code
+  actions only (#8586).
+- The per-thread Rust parse memo now retains files up to 2 MiB (was 512 KiB),
+  so a large analyzer file such as `owner_pin.rs` is parsed once per distinct
+  source instead of on every `parse_clean_source_file` call (#8629).
+- Doc examples on items gated by `#[cfg(..)]`, `#[cfg_attr(..)]`, or an inner `#![cfg(..)]` no longer register as tests unless the only cfg between the comment and the item is `#[cfg(doctest)]`, which rustdoc enables when running doctests (#8639).
+- An inherent method called on a bare enum variant brought in by exactly one non-aliased `use Enum::*` or `use Enum::Variant` now resolves to the enum's own impl. The two serde-derive rename rows therefore reach the `rust_inherent_receiver_unestablished` withhold and read `static_unknown` instead of a false gap, and their known-false entries are removed (#8782).
+- The routed Rust Result's eligibility recheck now annotates the job log with the stage that refused (admission binding, pull request state, review decision and threads, or same-head succession) instead of failing with only an exit code. Which conditions refuse is unchanged (#8858).
+- The routed Rust router retries the runner inventory query up to three times with short backoff before recording `runner_api_failed`, and reports the attempt count and any digit-only HTTP status in the step summary without raw stderr (#8858).
+- The routed Rust router now emits a distinct warning when the runner inventory query is rejected with HTTP 401 or 403 (token expired or missing scope) while still falling back to the hosted leg, and the Result's eligibility recheck explains a re-run of an earlier attempt's request instead of failing silently. Routing and refusal conditions are unchanged (#8858).
+- TypeScript preview extraction no longer credits `.resolves` / `.rejects`
+  matchers returned from callbacks whose value is discarded (for example
+  synchronous `forEach` bodies), while runner-returned, awaited, and
+  synchronous equality returns in the same shapes stay unchanged (#8933).
+- Rust: a `to_string()` or formatting macro the test can never run (a literal `if false` / `while false` block, `#[cfg(any())]`, code after `return`, a closure or nested fn nothing calls) no longer counts as reaching a changed `Display`/`Debug` `fmt`; dropped results and unknown conditions still do (#8999, RIPR-SPEC-0297).
+- Rust: a test in a dependent workspace member that formats a root-package type no longer reaches a changed helper called only by that type's `Display`/`Debug` `fmt`; the helper-entry route now uses the same in-package rule as the inherent method entry (#8999, RIPR-SPEC-0297).
+- Rust: a removed-only probe on a line inside a function the diff deletes entirely no longer borrows a neighbouring surviving function as owner through the projected new-side coordinate (#9168).
+- A Python change to one arm of a conditional expression (`a if c else b`) no
+  longer reads `exposed` when every strong related test call provably leaves
+  that arm unevaluated, for example `loud` is omitted and defaults to `False`
+  while the `loud` arm changed. The finding reports `weakly_exposed` naming the
+  condition a call would need to satisfy. A changed condition, a rebound
+  parameter, nested expressions, comments and unreadable call arguments keep
+  the existing verdict (#9184).
+- A Python message-only edit to the string literal of a multi-line
+  `raise Exc(\n    "message"\n)` no longer reads `exposed` when every strong
+  related error assertion pins the exception with a literal `match=` pattern
+  that fits the old and the new message alike. The finding reports
+  `weakly_exposed` naming the changed message. F-strings, bytes literals,
+  implicit concatenation, keyword arguments, non-`raise` openings and unreadable
+  patterns keep the existing verdict (#9185).
+- Python preview: `import click as <alias>` now qualifies `@<alias>.command` / `@<alias>.group` owners and same-file group subcommands for the weak reach-only `cli_runner_invoke` relation when the alias is the module's sole stdlib `click` binding and is not rebound; never `exposed` (#9226).
+- Human handoff lines that still printed a `/* ... */` placeholder assertion
+  as if it were paste-ready now label it a shape and say to replace each
+  comment with a real test value. The editor hover no longer calls that string
+  an `assertion template` (#9244).
+- Windows test expectations follow the host quoting and root spelling `ripr` prints (double-quoted arguments, forward-slash roots and custody paths), the nested `cargo build -p ripr` that Windows refuses while a test runs `ripr.exe` is retried for about a minute, and a retained-gap binding refusal now names which of its three halves failed (#9272).
+- Retained-gap binding compares canonical forms of both the recorded and the live root, so a Windows verbatim-prefix path from `canonicalize` no longer refuses an unmoved root (#9272).
+- First-PR root comparison treats a Windows verbatim-prefix (`\\?\`) ledger root as the same directory as its plain form, so a canonically recorded ledger is no longer reported as `wrong_root` (#9272).
+- Windows test launches retry a briefly missing `ripr`/`xtask` binary while a sibling test rebuilds it, which ended two sharded runs with `os error 2` on `calls_that_are_not_the_owner_do_not_observe_it` and `malformed_completion_is_not_completion_evidence` (#9272)
+- The MCP stale-card test reads the refusal's native `tests\pricing.rs` spelling as the same file as `tests/pricing.rs` (#9272)
+- A scoped `ripr check --path`/`--exclude` run now prints those flags on its
+  explain, context, and `check --json` drill-in commands, and `ripr explain`
+  and `ripr context` accept the same flags, so a paste re-analyzes the scoped
+  files instead of the full oversized diff (#9340).
+- Evidence-health Markdown now ends with a `Recommended Next Steps` section that maps each reported risk row to an advisory command or review hint (for example `ripr calibrate cargo-mutants` for `uncalibrated_records`) without changing JSON output (#9376).
+- A Rust gap whose only refusal is that ripr cannot verify the standard assertion macro around an inherent-method call, because target-root placement is unavailable (an unresolved `include!` such as a build-script output, or `#[path]`), now reads `static_unknown` with the new `rust_inherent_receiver_unestablished` limit instead of `weakly_exposed` or `reachable_unrevealed`. Nothing is credited; a wrong receiver, or a rebound `std` while placement is available, keeps its gap (RIPR-SPEC-0352, #9611).
+- The `rust_inherent_receiver_unestablished` withhold applies to an assertion whose assertions over the owner are all strong (a weak or relational oracle keeps its gap), judges only the finding's related tests, and lifts only the placement-dependent macro doubt: a `std`/`core` path skips the placement lookup, and a bare name is refused only by sites in the test's own scope (its package, files its resolved `mod` declarations mount, and packages it imports, with a renamed or ambiguous import reaching every package), so a same-file macro and a rebound root keep the gap while another crate's glob re-export or exported macro is part of the doubt. Cached seam generations are unchanged because no cached `ClassifiedSeam` is produced by this finding post-pass (RIPR-SPEC-0352, #9611).
+- A method-hop receiver constructor argument that is a name bound by exactly one immutable `let NAME = <decimal>;` in the calling test (`let count = 1; check("1 big", Size::kib(count), true)`) now reads as that literal, so the changed boundary is credited instead of staying `infection_unknown`. A `mut`, reassigned, shadowed, non-literal or parameter-bound name still withdraws every row (#9619).
+- Rust: a test that pins a public entry on an exact literal now reads infection through a chain edge whose argument is a closed integer expression over the caller's own parameter (`add_fee(items * 10)` with `public_total(3)`), so the `tokens-add-fee-integration-api` row reads `exposed` instead of `infection_unknown`. Only wide integer parameters never rebound in the caller fold; calls, casts, suffixes, constants, overflow, narrow or generic types, macro hops and non-literal inputs keep the abstention. The shared binder also feeds the predicate lens: a folded row that lands on the boundary now credits, and an off-boundary folded row stays `infection_unknown` (#9638).
+- A return-value owner behind a free-call chain is now also pinned when the integration test names the entry through the package's own library path with no `use` (`assert_eq!(crate_pin::plus_one(5), 11)`, `crate_pin::tiers::bumped(3)`), so that pin reads `exposed` instead of `weakly_exposed`/`no_static_path`. The spelling is the one the relation already establishes (the test is a `tests/` crate root of the root package, the entry an item of its library at that module path, and nothing in the file rebinds the crate name); a local module, import, rename, glob, item macro, a name two modules declare, a trait method, a swallowed or reshaped result and a non-pinning assertion keep the abstention (#9638).
+- A Rust exact pin in a test module that sits under the same `#[cfg(feature = "..")]` gate as the changed owner (the `#[cfg(feature = "v4")] pub mod v4 { fn stamp .. #[cfg(test)] mod tests { .. } }` shape) now reads `static_unknown` with `rust_assertion_context_unresolved` instead of a `reachable_unrevealed` gap: the test is compiled whenever the changed code is, and ripr cannot know which feature set a run enables. A gate only the test carries, a different or provably disabled gate, and an `#[ignore]` test keep the gap (#9643).
+- Keep the unresolved Rust assertion-macro limit when a bare owner call sits beside an expected-value macro, preserve complete oracle-scope evidence across the display cap, and direct users to inspect the existing macro and test (#9644).
+- Exact receiver pins can read nonempty literal tuples from a same-file fixture helper into a returned numeric projection sum; unreadable or attributed data, competing receiver methods, coincident projection totals, unsupported old pipelines and unrelated fields retain their conservative result (#9766).
+- A Python `assert f(g(x)) == g(x)` now credits a change to `f` when `g(x)` is independent; a change to `g` stays `weakly_exposed` (#9814).
+- A changed `let` whose binding is returned unmodified is evaluated against related tests that compare the owner call to a literal, so `let result = helper(amount * 9); result` with `assert_eq!(score(10), 10)` reads `exposed` instead of `static_unknown`. A rebound, shadowed, partially used, or transformed return, a preceding early exit, a foreign same-name import, or a renamed binding stays unread (RIPR-SPEC-0096 example 2, #9871).
+- TypeScript committed-snapshot: a Jest or Vitest config whose root object
+  spreads an unread base (`...require("./jest.base")`, `...baseConfig`) or
+  uses a variable-computed key no longer keeps the strong snapshot credit,
+  because the base may carry a snapshot override (#9940). Array and
+  nested-object spreads are unaffected.
+- A Python protocol-entry receiver named by a `global r`, `del r` or
+  `type r = ...` statement in the test body is no longer credited `exposed`
+  through `protocol_entry_call`; the rebind scan now reads those keywords like
+  `nonlocal`. A `del` or `global` that lists the name after another target
+  (`del x, r`) is a known limit tracked with #9531 and keeps its credit
+  (#9992).
+- Plain helpers that never invoke a closure parameter no longer lend assertions when the test passes a name bound to a boxed call-making closure or an alias chain (up to four hops) of a named call-making closure (#9997).
+- A finding whose changed source ripr could not find on the candidate side (`base_deleted` or `moved_or_renamed`) now says so in the editor hover, and the CLI, JSON and SARIF next step names that it is not a candidate edit target instead of telling you to add an assertion (#11905).
+- A changed `const` whose every same-file reader is just a `format!` of it is now reported as the change to those readers' returned values, so `ripr check` and `ripr repair` offer the same repair when a test checks that value only loosely; any other shape keeps its previous answer with no repair offered (#11400).
+- VS Code extension: controller-owned post-start crash recovery with bounded
+  exponential retries, typed `circuit_open`, re-resolution on retry, and
+  explicit `ripr: Restart Server` circuit reset (#1744).
+- A module-level free function that no test calls now reads `ungripped` when its only mentions are same-named associated functions or methods (`ByteSize::kb(..)`, `x.kb()`) or prose, instead of `activation_unknown` (#13080). On the five-repo cargo-mutants spot-check this moves bytesize's 13 conversion helpers that no test calls, and the ungripped share of runtime-missed mutants rises from about 12% to about 27% with no caught mutant in an ungripped seam. A bare call, a `module::name` path, a fn-pointer use, an import or a doctest call still keeps reach undecided.
+- `ripr gate evaluate` now fails closed on an unknown gate status (exit 2, could-not-complete) instead of silently exiting 0; only `pass`, `advisory`, and `acknowledged` pass, while `blocked` keeps exit 3 (#13105).
+- LSP: a changed function that no test calls no longer leaves the editor on an
+  empty list with `withheld_findings.count = 0`. Candidate-actionable
+  `no_static_path`, `weakly_exposed` and `reachable_unrevealed` findings that
+  the default `actionable` profile does not publish are now counted in
+  `ripr/analysisStatus` `withheld_findings` (new `gap_count`, so `count`
+  reconciles with `analysis_outcome.counts.finding_count`), named by the pull
+  disclosure and the refresh log (`withheld_gap=N`), and disclosed by the
+  existing passive Hint `ripr-diagnostic-preview-withheld` ("ripr: N
+  changed-behavior finding(s) with no static test path found or weak static
+  evidence not shown under the actionable profile; set diagnosticProfile: full
+  or run `ripr check`"). The Hint carries no finding data and offers only
+  refresh. Which findings publish, severities and eligibility are unchanged;
+  `full` still publishes them with no marker (#11798).
+- `ripr agent stub --kind return_value` at a probe line builds again after the #12322 and #12357 merge race left main with a stale `rust_test_stub` call; the direct stub now passes the package root so the cfg-gated parent check applies there too.
+- A match arm is no longer read `exposed` because a test that only shares its file asserts a different function's result of the same enum variant. A proximity test whose variant assertion calls an indexed function with no call or macro path to the owner (`TokenBucket::reduce` asserting `OverConsumption` for the `RateLimiter::consume` arm) no longer confirms the arm through an unrelated unindexed call such as `.unwrap()`. The firecracker `304718526` arm moves from `exposed` to `weakly_exposed`; two Rust verdict-corpus rows move from `limited` to the labeled `gap` (#11552).
+- `cargo install ripr` without `--locked` no longer fails to compile `ra-ap-rustc_lexer`. `unicode-properties` 0.1.5 moved to a newer Unicode version than the pinned `unicode-ident` 1.0.24, which trips the lexer's const assert, so the manifest now pins `unicode-properties = "=0.1.4"` beside `unicode-ident` (#11817).
+- Python: a test whose autouse, requested or `usefixtures` fixture, `setUp` hook, class decorator or conftest hook replaces the changed function (`monkeypatch.setattr`, `mocker.patch`, `unittest.mock.patch`, `setattr`, module attribute assignment) is no longer credited `exposed`; it keeps the `mocked_module` static limit like an inline patch. Fixtures that only build data or set the environment keep their credit. (#11809)
+- A Python `self` field or module-object field write by an owner whose body
+  holds no `return` or `yield` is no longer credited `exposed` through the
+  owner-result branches (for example `assert_equal(rec.last, rec.note("x") or
+  None)` or `assert rec.note("x") is None`). The call hands back only the
+  implicit `None`, so only an assertion that reads the field after the
+  completed call earns credit. An owner with any `return` keeps its prior
+  reading (#10178).
+- App-layer refusal and parse errors (agent brief, gap packet, receipts, status, workflow, annotations, check artifacts, PR evidence/summary, repair card, task-first and related) now name the next step to take, and their baseline entries in `policy/refusal-next-step.d/` are removed (#11707).
+- Output-layer refusal and parse errors (gate, baseline, policy and PR-evidence renderers, first-pr, gap decision ledger, review-comments receipt and related) now name the next step to take, and their baseline entries in `policy/refusal-next-step.d/` are removed (#11716).
+- `ripr agent receipt`, `ripr agent verify-execute` and the repair-attempt
+  store refusals now say what to do next: start a new attempt with `ripr agent
+  repair`, pass the matching `--store`, fix the `--result-json` path, or
+  regenerate the packet, instead of only describing the failure (#11539).
+- `ripr repair` on a seam that a test calls directly but whose input ripr cannot show reaches the changed branch now names that test and says to check the input by hand, instead of listing missing evidence with no next step (#11895).
+- `ripr repair file:line` on a line with several seams now describes each candidate by kind, expression and owner next to its seam ID, so the right one can be picked without a separate lookup (#11466).
+- `ripr repair` on an opaque seam with no related test now says why the path is unresolved (trait dispatch or macro, and which test mentions the type) instead of the bare "no automatic repair for this kind of finding" (#11466).
+- `ripr repair` on a predicate seam whose only missing fact is a test input that reaches the code now names the `ripr agent stub` route (its skeleton calls the code), instead of a refusal with no next step (#11895).
+- `ripr repair` on a changed return value or error whose only blocker is a missing test module now names the `ripr agent stub` route, which adds the module (#11466).
+- `ripr repair` on a seam whose changed value ripr cannot follow to an assertion now names the test that calls the code, so the refusal points at the test to strengthen (#11466).
+- Repository-mode analysis of a file that holds a `verus! { .. }` region now names the same Verus limitation the diff path names, instead of reporting nothing for the region; no test is credited and none is requested (#12006).
+- Classified-seam cache loads now read through the encoded shard byte ceiling, so a corrupt or hostile oversized cache file degrades to a rebuild instead of being allocated whole into memory (#13183).
+- A warm TypeScript `ripr check` no longer parses every test file again to
+  decide whether the extractor dropped a registration shape. The verdict is a
+  function of the file's bytes, so it is stored beside the test extraction (fact
+  store schema 6) and served on later runs. Warm VS Code (5,328 files) drops
+  from 36 s to 26 s with an identical report (#11676).
+- On a TypeScript workspace larger than the in-memory facts cache (2,048
+  entries), the re-export index no longer re-parses every file the cache
+  dropped while phase 1 ran. It builds from the export facts phase 1 already
+  derived, so a warm `ripr check` on VS Code (5,328 files) drops from 91 s to
+  36 s with a byte-identical report (#11676).
+- TypeScript preview: row-local changed-sink observation is tri-state (#5528),
+  so related-test rows can carry `assertion_not_observing` only when another
+  resolved sink is established and keep unresolved flows on
+  `observation_unconfirmed`. Aggregate exposure classification is unchanged.
+- TypeScript and JavaScript preview analysis retains the supported assertion
+  credit of promises implicitly returned by expression-bodied test arrows,
+  while discarded callback promises keep their existing limits. Inline
+  receiver shadows cannot supply that credit; bindings in independent nested
+  scopes do not suppress a supported assertion. Function-scoped `var` shadows
+  are refused even when declared inside a nested callback block (#6798).
+- TypeScript preview: the changed-boundary selector no longer names a
+  comparison clause when two or more tokens were replaced inside one clause or
+  when the edit added a comparison clause, so neither starts a repair packet.
+  A pure operand swap with the mirrored operator (`total >= 100` to
+  `100 <= total`) still names its clause (#11442).
+- TypeScript preview: a flipped `typeof` guard (`typeof input === "function"`
+  to `!==`) is no longer offered as a repair start when a test already passes
+  an input of another written kind (`resolveValue(42)`) and asserts the result
+  exactly. Negating the operator sends every input down the other branch, so
+  that test already notices the edit and the finding reads `exposed`. This
+  holds only when the guard is the whole condition of the owner's first
+  statement; a guard after an earlier statement, a negated clause joined by
+  `&&` / `||`, or an edit that changes the kind name, still needs an input of
+  that kind (#12281).
+- Assertion-refusal evidence text now renders file paths with the stable slash spelling on every host, so `cargo xtask goldens check` passes on native Windows instead of drifting on `tests\api.rs`-style separators (#13115).
 
 ### Docs
 
@@ -6392,6 +7001,45 @@ shell, unbounded, or otherwise unsupported subprocess shapes.
   Context Packet prose states that `witness` is `null` (not omitted) when an exposed
   finding has no unresolved discriminator (#5082).
 - Release docs now name the publish environments `vs-marketplace-publish` and `open-vsx-publish`, describe `VSCE_PAT` and `OVSX_PAT` as environment secrets, and record the tag-only deployment rule and the single-channel dispatch contract (#9303).
+- New `RIPR-SPEC-0411` documents every `StopReason` wire value with its trigger, class impact and owning spec, marks `max_depth_reached`, `external_crate_boundary` and `feature_unknown` as reserved and never emitted on current main, and adds registry tests that fail if a production site starts pushing a reserved token (#5514, #12546).
+- RIPR's roadmap now connects installed-use checkpoints, governed repair
+  acceptance, current plan owners, and repository-fact coverage; retained plan
+  history and blocked work no longer imply current execution or completion (#2324).
+- RIPR roadmaps now lead with current user outcomes, existing issue owners,
+  dependencies, and exit evidence; dated campaigns, experience measurements,
+  and release assumptions are clearly separated from current work (#2324).
+- **Docs:** clarify in `docs/OUTPUT_SCHEMA.md` that check JSON schema `0.2` consumers must tolerate additive unknown fields while `cargo xtask check-verification-contracts` remains the same-commit internal gate (#5080).
+- `docs/OUTPUT_SCHEMA.md` now lists `ripr context --json` in the command-to-version map and documents the context packet `version` bump policy (#5081).
+- **Docs:** document the `ripr diff --json` (`kind: ripr_diff`, schema `0.1`) field contract in `docs/OUTPUT_SCHEMA.md` and register it with `check-output-contracts` (#5083).
+- **Docs:** add proposed [RIPR-SPEC-0414](docs/specs/RIPR-SPEC-0414-go-preview-static-facts.md) Go preview static-facts contract (build and module law, control-flow oracle model, focused `-count=1` routes, fail-closed limitations); register capability and doc-artifact indexes; no adapter shipped (#5533).
+- **Docs:** add proposed [RIPR-SPEC-0391](docs/specs/RIPR-SPEC-0391-ruby-preview-static-facts.md) Ruby preview static-facts contract (RSpec/Minitest activation, oracle law, probe spans, fail-closed dynamism limits); register capability and doc-artifact indexes; no adapter shipped (#5606).
+- Accepted [RIPR-SPEC-0393](docs/specs/RIPR-SPEC-0393-dotnet-shared-project-and-language-evidence-contracts.md)
+  defines shared .NET project facts and separate C#, F#, and Visual Basic
+  evidence contracts (#5632, #5585); preview/advisory only, no adapter enablement.
+- Added RIPR-SPEC-0394, a normative spec-only contract for JVM shared
+  build/classpath substrate facts and separate Java, Kotlin, and Scala semantic
+  and test/oracle evidence law; no adapters ship in this change (#5646).
+- Add RIPR-SPEC-0395, the normative Apple shared-project plus separate Swift and Objective-C preview evidence contract for epic #5590 (#5682). Spec and index registration only; no adapters or enablement.
+- Added RIPR-SPEC-0399, the normative native translation-unit substrate and separate
+  C/C++ test, UB, and FFI evidence contract for epic #5599; spec-only with no adapter
+  enablement (#5696).
+- Added RIPR-SPEC-0403, a normative spec-only contract for PowerShell edition,
+  module, pipeline, stream, Pester, and system-effect preview evidence law; no
+  adapters ship in this change (#5710).
+- Document the normative POSIX/Bash/Bats shell preview evidence contract as
+  RIPR-SPEC-0400 (dialect, expansion, pipeline/process, Bats activation, and
+  system-effect bounds); spec-only, no adapter enablement (#5723).
+- Added RIPR-SPEC-0396, the Dart/Flutter preview static-facts contract separating
+  `package:test` and `flutter_test` capability cells, async/widget fact families,
+  and typed platform/generated limits (#5839).
+- Add proposed RIPR-SPEC-0401 R preview package/testthat/numerical/data boundary contract and register it in traceability, capabilities, and doc artifacts (#5850).
+- **Docs:** add proposed [RIPR-SPEC-0405](docs/specs/RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md) Julia preview contract (package roles, method-signature identity, standard `Test` activation, numerical/array/native/GPU boundaries); register capability and doc-artifact indexes; no adapter shipped (#5862).
+- Added RIPR-SPEC-0398, the normative Lua preview contract for dialect/Busted/table/metatable/host/native boundaries (#5899, #5597). Documentation and registration only; no adapter enablement.
+- Registered RIPR-SPEC-0398 as out-of-scope in all per-language verdict-corpus spec-scopes ledgers so acceptance examples do not fail verdict-corpus check-all (#5899).
+- Added RIPR-SPEC-0406, a normative spec-only contract for Terraform module,
+  native-test, plan/apply, provider, value, state, and external-edge preview
+  boundaries; no adapters ship in this change (#5969).
+- Align the per-probe incremental analysis design note with the merged probe-read-trace CLI fixture that asserts a `foreign_entry_import` memo read (#9784).
 
 ### Internal / CI
 
@@ -6830,6 +7478,251 @@ shell, unbounded, or otherwise unsupported subprocess shapes.
 - A repo-policy test now renders the `ci.yml` run-name selection tail and the routed Result's `REQUEST_SELECTION` expression and requires them to match, so drift fails at review instead of as a 20 minute fail-closed wait (#12255).
 - `cargo xtask dogfood` passes on main again: the generated-pr-ci-review-workflow scenario checked the CI summary for the Start here and Gate authority bullets that #11585 removed on purpose, so it now checks the current Start here text and the `ripr gate evaluate` pass/fail authority boundary (#12261).
 - Recapture the `proximity-other-function` honesty report at cache generation 1.148 so `check-evidence-promotion-honesty` passes on main again after #12731 bumped the cache (#12293).
+- `verdict-corpus` now requires `fixtures/perl-verdict-corpus/spec-coverage.toml` like the other verdict corpora; a Perl corpus without that ledger fails validation instead of scoring rows without the spec-example coverage gate (#8775).
+- The sharded Windows lane now runs with `CARGO_BUILD_JOBS=2` and `--test-threads 2`. Zero hosted-runner wedges in 80 shard-jobs at this setting, against 12 in 152 (7.9%) at the default; cost is about +9 minutes per shard. Cause of the wedge is still not established (#12338).
+- Added the passive verification run snapshot binding model and hostile corpus for requested/prepared shared snapshot compatibility (#6347).
+- Add the first slice of the first-hour repair funnel (`first_hour_repair_funnel.v1`): `cargo xtask repair-funnel-report`, planted control corpus, and dx-scoreboard `repair` ingest metrics. Advances #6308.
+- LSP refresh prepare and commit now share one immutable `Arc`-backed diagnostic generation across snapshot inspection, refresh planning, rollback and committed state, and apply quarantine as a sparse per-URI overlay instead of deep-cloning the full diagnostic map; published diagnostic bytes are unchanged (#12369, advances #4998).
+- Move the report-navigation CLI adapters (`reports` index, gap ledger, TypeScript limitations and false-actionable reports) out of `cli/commands.rs` into `cli/commands/reports.rs` with no behavior change (#4854, #12411).
+- Gate three LSP test helpers to `cfg(all(test, unix))`, matching their only callers, so `cargo clippy --workspace --all-targets -- -D warnings` no longer fails on Windows with `dead_code` (#12433).
+- Added an interim, fail-closed history-sync profile for history-preserving merges between `ripr` and `ripr-swarm` under the existing `merge-ready` request, valid until queue-only enforcement (#12437; successor under #4984, #4838, #4840). A same-repository PR whose `history-sync` label was applied by an admin or maintainer, and whose body declares a source commit on the other repository's default branch and a destination base, both ancestors of the PR head, with the source not already in that base, is admitted past the size caps as `history_sync_admitted`. Every gate still runs; only the diff-scoped PR-evidence producers record `not_applicable:history_sync:<head>`, after binding the tested merge commit to the same head, base and source, and `Ripr Rust Small Result` accepts that record only for that admission of the same head. No workflow trigger is added and the merge queue path is unchanged.
+- Move the `assistant-loop`, `first-pr`, and `first-action` CLI adapters out of `cli/commands.rs` into focused `cli/commands/` modules with no behavior change (#4854, #12454).
+- `cargo xtask kani` reports ambiguous discovered harness names and duplicate
+  matching result blocks as NOT-ESTABLISHED instead of borrowing the first
+  verdict or verification time; unrelated unique results retain their meaning
+  (#12468).
+- The Kani verification lane refuses a successful aggregate after a nonzero,
+  missing or timed-out native process exit while retaining each observed
+  harness verdict separately (#12470).
+- Kani lane process controls exercise the actual command with a synthetic
+  cargo child, pinning abnormal exit refusal, ambiguous result attribution,
+  persisted reports and partial-timeout handling without running a verifier
+  (#12470).
+- The PR user-text gate can compile an exact, known-broken first-parent base
+  after an attestable compiler-only repair, while retaining the original
+  base-owned matcher and all its required judgments (#12495).
+- Wire the review-disposition verifier into `routed-rust.yml`: a `merge-ready` request is refused at request time without a current-head source review attestation, and the Result job re-reads it from the immutable trusted bundle before the eligibility recheck (#8157, #12503).
+- The isolated policy-facade check now prints a start and finish line (with elapsed seconds) for each test-valued `covered_by` Cargo command that `check-file-policy` runs, so a timeout on a slow Windows runner names the command it was inside (#12510).
+- The isolated policy-facade test no longer gives its child a 15-minute deadline that is shorter than the 30-minute Cargo build budget `check-file-policy` itself allows; Windows runs finished in about 14 of 15 minutes and timed out on a slow runner (#12510).
+- `cargo xtask native-libtest` compiles one libtest target through Cargo JSON
+  `--no-run`, binds the exact executable into a `ripr_native_libtest_build.v1`
+  receipt, and replays that binary on the same worker without Cargo (#12543).
+- The sharded Windows advisory lane's nextest watchdog now ends at the earlier
+  of 44 minutes and the time left before the 80-minute job cap minus an
+  8-minute summarize/upload reserve, and writes a SLOW/TIMEOUT/FAIL heartbeat
+  so a shard that would otherwise be cancelled at the runner cap still leaves a
+  named in-flight test and an `always()` artifact (#12338).
+- A macro-generated Rust test pinned to its macro invocation line now takes the name scopes (imports, module path) visible at that invocation, for an indented invocation too. Generated-versus-authored provenance travels on the test fact, so a same-name `fn` on the invocation line is never lent to a generated test, and invocation scopes are borrowed only when the invocation line holds exactly one item-position macro call and the expansion declares no `use` or item, binds no name outside a `let` (closure or function parameter, `for`, `if let`, `match` arm) and its body calls no macro other than a bare std expression macro such as `assert_eq!` (an attribute macro on the generated `fn` is not inspected; see #12857); any other generated test takes no invocation scopes rather than risk crediting the wrong owner. The six `macro_export` verdict-corpus rows still read `limited`; they wait for call identity to consume the invocation-site scope (Advances #12320, #12550).
+- Bump `pulldown-cmark` 0.13.5 to 0.13.6 in `Cargo.lock` so `cargo-deny` advisories pass again on main (#12542).
+- `cargo xtask check-cli-exit-contract` pins numeric `process::exit` literals in the CLI control paths to counted entries in `policy/cli_exit_literal_allowlist.toml`, and `check-process-policy` now runs it, so an undocumented exit code fails the enforced gate (#12505, #12553).
+- Add authored Kani boundary-transition inputs and ordinary exhaustive fixture controls; native verification and installed analyzer qualification remain separate. (#12598)
+- `check-evidence-promotion-honesty` now recomputes the `content_sha256` of every committed report in the evidence-promotion honesty corpus and fails when a file was edited after it was generated; a report with a canonicalization the check does not know is reported as unverified, not passed (#12602).
+- The sharded Windows lane's real-ACL step now runs `--workspace --exclude xtask` and then `-p xtask`, the same package selections the shard step built, instead of one `--workspace` run that rebuilt the workspace for about 17 of the step's 20 minutes (#12659).
+- The Windows advisory workspace test runs set `CARGO_LOG=cargo::core::compiler::fingerprint=info`, so the retained log records Cargo's per-unit fingerprint reasons when the policy `covered_by` enumeration rebuilds a unit on the shared target directory (#12668). This is diagnostic only; the reasons are evidence toward the cause, not the fix.
+- Hosted test shards build the workspace test binaries without `xtask` first and then add it, so the `ripr` lib test and `xtask` bin test compiles (about 9-11 GB each) never overlap on the 16 GB runner. Those overlaps ended shards with "runner received a shutdown signal" (exit 143) or "lost communication". The nextest command, the shard verifier and the Result are unchanged, and the build step logs a memory trace (#12704, #12703).
+- The hosted test shard build step now prints its peak memory sample; the first version of the trace passed `sort` a separator the runner rejected, so the line came out empty (#12704, #12703).
+- The `assert_ok_eq` / `assert_some_eq` import-scope rule (#12564) now has caller-level rows: a file-root import and one inside the test credit, the same import inside another function, a sibling module, a nested block used outside it, or under `#[cfg(any())]` or `#[cfg(not(test))]` does not, while `#[cfg(test)]` still credits (#12705). No product behavior changes.
+- RIPR-SPEC-0197's pinned-literal rule for `matches!` (#12716) now has its own integration rows: a literal `matches!` pattern equal to the owner's old or new value stays credited, one equal to neither (single-line, multi-line, guard exit, `Ok(..)` and `Some(..)`) is withheld, and an expression argument keeps today's reading. No product behavior changes.
+- Hosted test shards add 8 GB of swap before the test build and the memory trace now reports swap use. The `ripr` lib test compile alone holds about 11 GB before codegen starts and peaks near 14 GB, and the compile split left only 1.1 to 2.2 GB free on a 16 GB runner (#12719). No check is relaxed; a swap setup failure is logged and the build still runs.
+- Found `ripr-contract`, an internal support crate published in lockstep with
+  `ripr` (ADR 0027): the domain DTOs and value-origin shells moved out of the
+  monolithic `ripr` rustc unit behind the unchanged `ripr::domain` facade, as
+  the first measured step toward the 8 GB largest-rustc target (#12726, #8382).
+- `cargo xtask ripr-pr` withholds a base or head snapshot that repeats a `canonical_gap_id` as unavailable, with a reason naming the side, instead of letting the last duplicate row win the lookup and report the earlier row as resolved under complete coverage; the downstream rejection of duplicate output ids is now pinned by a regression test (#12727).
+- Added controls showing a Python `for` or `with ... as` target that holds the builtins attribute only as a subscript key, and a same-line loop body that reads it, still leave the `isinstance` guard readable (#12728).
+- `cargo xtask` native libtest compile no longer reports a valid Windows test executable as escaping its private target directory (the check compared a canonical `\\?\` path with a non-canonical one), and two xtask tests (`admit_options_reject_version_mismatch`, `fixture_compile_identifies_json_executable_and_replays_without_cargo`) now pass on Windows: the fake candidate is a `.cmd` file there, and the decoy's mtime is set through a writable handle (#12735).
+- Candidate admission now treats the `rust-inherent-*.json` and `rust-repo-exposure-*.json` captures under `fixtures/evidence-promotion-honesty-corpus/reports/` as generated, so recapturing them after a cache bump no longer counts as review burden (#12739). Only those two capture families are declarable: `check-evidence-promotion-honesty` now requires each such file to be the `source_report` of a case that regenerates it from a Cargo subject, or a full capture pinned in `report_cache_schema_pins`, so a hand-written file cannot borrow the name (#12859); and the case file that carries its provenance stays counted.
+- Declares the `rust-inherent-*.json` and `rust-repo-exposure-*.json` captures under `fixtures/evidence-promotion-honesty-corpus/reports/` as generated in `.gitattributes`, now that candidate admission and the honesty gate accept that family (#12739, #12859). The case file that carries their provenance stays counted.
+- `check-evidence-promotion-honesty` now fails a committed full repo-exposure capture that carries no `artifact.content_sha256`, naming the file, so deleting the digest no longer evades the check; the eight historical pre-stamp inherent-receiver captures are listed in the corpus's `report_digest_exemptions`, and an exemption that names a stamped or missing capture fails. RIPR-SPEC-0108 now states that the digest is self-sealing: it detects a stale or hand-edited capture and is not an authenticity check (#12745).
+- The corpus now also lists in `report_digest_required` every report that carries a digest, so stripping both `artifact` and `source_subject.corpus` from a stamped capture fails too. A stamped report missing from the list, or a missing or non-array list, now fails instead of silently weakening the guard (#12816).
+- Covered the last 12 uncovered Rust verdict-corpus spec examples (RIPR-SPEC-0168 #2, 0231 #38-44, 0263 #7, 0360 #7-9): eleven new authored crates with cargo-mutants truth, plus citations on existing `lib-test-case-*` and `shape-async-await-accumulate` cases. Spec-example coverage reads 330/330 and the lock protects all of them (#12763).
+- Retain hosted test-build memory samples and phase-separated elapsed time, largest-process RSS and native exit status in the existing shard artifacts, without adding builds or changing test selection. Missing measurements remain unavailable, not zero (#12767).
+- Hosted Rust tests use four stable hash partitions with an explicit Nextest
+  version; their run, list, and receipt commands retain the complete-suite
+  identity and failure checks (#12777).
+- Kani fixture policy pointers now select a public CLI integration target that
+  checks both upstream contract examples and all eight retained native captures,
+  preserving the existing private tests without requiring their library test
+  preparation for those pointers. Net CI savings remain to be measured (#12790).
+- The Windows advisory summarizer no longer rereads the runner's own stall diagnostics ("last output" replay) as test observations — a timeout replay used to manufacture a duplicate-observation provenance error that failed the nightly lane as `incomplete_evidence` (run 41583153155) — and the advisory run 1 deadline now covers the cold compile pass (110 minutes, #12804). The nightly's `issued_history` os-error-183 race and the cache-export seam-limit witness row are recorded as `open` flake ledger entries owned by #12805 and #12421.
+- Harden the review-disposition verifier before it is wired into admission: the readiness marker line admits only a closed vocabulary of real review-of-record tails (anything else refuses), retraction or blocker text refuses even inside fenced blocks, a trusted reviewer's negative comment refuses despite another reviewer's ready comment, any submitted review without `submitted_at` refuses, malformed review pages refuse with a refusal line, and 18 full real review bodies are fixtures (#8157, #12814).
+- Generated each diagnostic-catalog closed vocabulary (enum, `as_str`, label list) from one declaration so a new variant cannot skip the label well-formedness check (#12853); no behavior change.
+- The scale remeasurement test uses local sample state and checks interleaved measurements without changing the growth limits (#12871).
+- The `cli::interrupt` isolated-child test that raises an unregistered SIGINT no longer fails when the test process was started with SIGINT ignored or blocked (a detached background job, `nohup`, some CI and IDE runners): the child now restores the default action before raising, so it still dies by SIGINT and the harness still reports it (#12875).
+- `cargo xtask mutation-spot-check` now reports recall of runtime-missed mutants as two labelled figures, the strict `ungripped_share_of_missed` and `flagged_or_unknown_share_of_missed` (ungripped, weakly_gripped, activation_unknown, opaque), with a `by_language` split (Rust established; Python and TypeScript `not_established` until a real-mutant corpus exists) and a recorded `language` per repo; `--rederive-summaries` refreshes the committed receipt offline (#12901).
+- `cargo xtask slow-test-report` reads the nextest `ci` JUnit XML and writes the 50 slowest tests with per-test seconds to `target/ripr/reports/slow-tests.{md,json}`, judged against the per-test budget in `policy/test-time-budget.toml`. The budget is advisory by decision; the policy records the ratchet and a baseline allowlist of the 20 tests over 30s in test-analytics run 41867428230 so it can be enforced later without a flood of failures (#12905, slice 1).
+- Removed the nextest test `test_covered_by_production_wrapper_enumerates_through_cargo` (~108 s), which repeated the real-Cargo covered_by enumeration that `cargo xtask check-file-policy` already runs in the blocking Repository policy preflight; the cheap failure-path pin stays and the slow-test baseline allowlist drops the entry (#12916).
+- Added a proptest metamorphic suite over generated Rust diff and test pairs that checks stage derivation feeding classification: adding a discriminator never lowers the class, removing the only one never raises it, unrelated edits are invariant, and unseen inputs read `*_unknown`, never `exposed`. It runs at a small case count in the default test profile and at 400 in `fuzz.yml` (#12917).
+- Added a generated metamorphic relation suite (`crates/ripr/tests/metamorphic_relations.rs`) running the library `check` entry over Rust, Python and TypeScript boundary and error-path seeds, asserting comment/whitespace, local-rename, unrelated-test, test-order and oracle-strength relations on exposure class and finding identity (#12923).
+- `cargo xtask dx-scoreboard` now takes `--samples N` (default 3) measured warm-check runs after the warm-up and reports `speed.warm_check_p50_ms` and `speed.warm_check_p95_ms` (nearest rank; p95 is the maximum below 20 samples), keeps `speed.warm_check_ms` as the p50, and reports `speed.warm_check_peak_rss_mb` as the maximum over the samples. Corpus entries name a `size_tier` whose release-ladder peak-memory bar becomes their ceiling, with dated `memory_ratchet` notes for the two rows still above it (#12947).
+- The relative-root cache export test holds the shared cwd lock, so parallel tests that change the working directory can no longer make its root disappear (#12989).
+- `cargo xtask` gains a repository-orientation proof (#2331): a committed corpus of nine pinned synthetic scenarios with expected orientation dispositions, plus a check that the roadmap and command catalog agree with the reported current state.
+- `cargo xtask current-state` reads the crate version and MSRV from the `[workspace.package]` table instead of the first `version = ` / `rust-version = ` line anywhere in the workspace `Cargo.toml` (#13048).
+- `cargo xtask current-state` names the repository from the checkout's configured `origin` instead of a hardcoded `ripr-swarm`, so the inventory stays correct after the step-2 sync into `ripr` (#13049).
+- The repository-orientation proof requires the exact pinned scenario set (unique ids, no substitution) and derives its receipt authorities and source-release routing check from the repository constants instead of copying the corpus expectation (#13074).
+- `cargo xtask check-network-policy` now scans tracked Python files for
+  `urllib.request`, `urlopen`, `import socket`, and `http.client`, so Python
+  network surfaces require an explicit allowlist entry like other languages
+  (#13092).
+- Coverage diagnostics read LLVM raw profile v10 and v11 binary IDs using the
+  correct header sizes, retain explicit unsupported and partial results, and
+  compile with stable Clippy while preserving Rust 1.95 compatibility. A focused
+  advisory stable-toolchain job checks real profile generation and matching LLVM
+  tools and isolated workflow fixtures before future upgrades. Historical
+  profiles remain captured when newer LLVM reports a raw profile version
+  mismatch (#13116).
+- The VS Code test runner acquires its editor host before preparing the genuine
+  actionable-queue fixture, so blocked downloads fail before invoking that
+  producer. Contributor instructions clarify the equivalent full-suite commands
+  and host prerequisites (#13122).
+- `cargo xtask eval-sweep refresh` rejects malformed analyzer output before
+  completeness and stability scoring, keeps the failure reason in execution
+  receipts, and preserves valid empty findings and exact first-pass raw bytes (#13132).
+- `cargo xtask dx-scoreboard` and the public proof page keep partially measured
+  metrics out of fully met tallies and disclose their coverage without changing
+  target or regression gate decisions (#13136).
+- `cargo xtask help check-fast`, `cargo xtask help --all` and `cargo xtask commands` now list `check-fast` with its local-only scope, the committed `origin/main...HEAD` selector, and its report paths (#13145).
+- `cargo xtask check-fast` appears in exhaustive help and the command catalog,
+  with detailed help explaining its committed-diff selection, local reports,
+  build cost, and limits alongside broader validation (#13145).
+- Bound genuine editor fixture preparation with a finite Cargo deadline,
+  cancellation through the existing process owner, visible phase progress and
+  retained failure output, while preserving the exact producer receipt (#13175).
+- Bounded unified-diff parse env and metadata failures now travel through the
+  shared `CoreError` boundary with String compatibility wrappers retained for
+  legacy callers (`Advances #2293`).
+- `cargo xtask check-tool-capabilities` parses the versioned
+  `.ripr/tool-capabilities.toml` schema as a report-only registry of capability
+  IDs, claim IDs, control semantics, and injectable dual-run expiry (#2355).
+- Moved 26 evidence-promotion semantic-assertion tests out of `xtask/src/tests.rs` into `xtask/src/tests/evidence_promotion_semantic_assertions.rs`, a behavior-preserving split with the same 26 tests (#2948).
+- LSP gap-state consumers (actions, diagnostic budget, repair packet) now decide actionability through the typed `EvidenceState` instead of inline "actionable" string comparisons; wire values and behavior are unchanged (#2956).
+- TypeScript adapter gap states (`static_limitation`, `already_observed`) are produced from the typed `EvidenceState` instead of inline literals; emitted evidence text is unchanged. The adapter-only `advisory` state has no `EvidenceState` variant and is tracked separately (#2957).
+- `check-architecture` now ratchets inline consumer gap-state literals: production lines that spell `actionable`, `already_observed`, `internal_only`, `static_limitation` or `unknown` next to `gap_state` are counted per file against `policy/evidence-state-literals.txt`; new copies fail and the ceilings only fall (#2958).
+- `cargo xtask check-verification-contracts --check` now validates every committed producer document bound by `VERIFICATION_CORPUS_BINDINGS` on the working tree and reports discovered versus validated counts, instead of relying on hand-maintained subject rows alone (#3919).
+- `cargo xtask fold-changelog --write --release-cut` is the one cut-day command: it folds every fragment (it cannot be combined with `--limit` or `--keep-fragments`), deletes them, warns when the PR would exceed the 160-file admission cap, and then requires `check-changelog-fragments --release-cut` to pass (#3921).
+- The TypeScript preview repair-loop dogfood corpus retains a positive
+  `already_observed_unchanged` case and `must_not_claim_already_observed` guards
+  that fail closed when live preview evidence spuriously promotes to
+  `already_observed` (#4152).
+- Retired the 0.11 release-notes non-claim, cut-checklist row 31 and `lsp-stale-evidence-reason` release-selection defer now that #11766 landed the #4427 repair-packet refresh guidance on main (#4427).
+- Termination qualification path-glob corpus v3 adds generated-file adjacent `**` rows, repository-root `lib.rs` fixtures for both consumers, and suppression-policy refusal rows for leading `/` and backslash selectors (#4513).
+- Pin the #4914 MCP stdio investigation NOT_ESTABLISHED owner disposition, stage contract, and one bounded Linux observation witness for the historical exact unsupported-inline-version stdio case (#4914).
+- Prepare callable exact-subject feature and release qualification with frozen
+  request selections and failed or missing child rejection, retaining production
+  triggers until combined caller integration (#4987).
+- Declare Bash for release metadata pipelines and derive regression shell modes
+  from workflow declarations so failed package-ID producers stop qualification
+  (#4987).
+- Prepare an exact-subject callable printed-command qualification leaf with a 20-minute job limit while retaining scheduled, manual and legacy PR triggers until admitted caller integration (#4987).
+- Reject empty or malformed Windows subset evidence and fail status/log capture
+  writes while preserving nonzero native test verdicts as advisory (#4987).
+- Let the reusable Rust gate accept an optional admitted exact-subject tuple and
+  verify it before proof, defaulting to the unchanged legacy profile (#4987).
+  The qualification profile takes a caller-supplied constituent identity and
+  never reads the pull_request payload (#11988).
+- Add the Windows subset qualification leaf (workflow oracle pin, convergence fixtures and leaf contract test) split out of #8082; the explicit native merge-ready admission caller wiring lands in later slices (#4987).
+- Add a staged exact-subject callable Python wheel qualification path, preserving
+  legacy production events and independent manual MCP evidence (#4987).
+- Use a measured four-unit release codegen recipe for Python wheels while
+  retaining full LTO, release optimization and all qualification controls. The
+  setting applies to all maturin targets; only Linux x86_64 was measured (#4987).
+- Run Python wheel source-contract checks alongside release compilation while
+  requiring both results before pip and uv consumer qualification (#4987).
+- Add `cargo xtask check-admission-incident-route` and a committed
+  `admission_incident.v1` continuation-route corpus with skill markers for
+  bounded repair, retry, and handoff plans (#5076).
+- Track post-0.11 `oxc_*`/`sha2` dependency deferrals with owner #5084, linked #3811 revisit triggers, and `check-dependencies` enforcement (#5084).
+- Added `cargo xtask fold-changelog [--dry-run | --write] [--limit N]`, a repo-owned fold of `changelog.d/` fragments into `CHANGELOG.md` `Unreleased` (dry run by default, deterministic, refuses malformed fragments by file name), so the release cut no longer depends on an external fold kit (#5114).
+- PR A change-to-verification plan corpus contract (#5173): typed mechanics validator, committed synthetic falsification matrix, and `cargo xtask verification-plan-corpus check|report` with honest empty real denominators (RIPR-SPEC-0420).
+- Cancelled evidence passes now release generation-local shared related-test
+  memos instead of retaining provisional records until the pass is dropped (#5341).
+- `cargo clippy -p xtask --all-targets -- -D warnings` now passes on Windows:
+  Unix-only harness helpers in `exact_candidate_harness` and
+  `termination_qualification` are cfg-gated instead of surfacing as unused
+  imports and dead code on non-Unix hosts (#5427).
+- The printed-command paste harness pairs multi-line adjacent `bash` and
+  `powershell` code fences by position, rejects mismatched line counts with an
+  actionable error, and ingests stderr when stdout is JSON (#5434).
+- Perl v2 fact packets (`ripr-perl-facts-v2`) now map row-owned participation, oracle relevance, activation, framework, reach, and scope facts onto shared `RelatedTestMiss` / `RelatedTestMissSupport` via ID-based joins without changing exposure class, finding IDs, or actionability (#5562).
+- Production-path pin: both of the #6297 `from_str_fortnight` assertion shapes keep the `seconds` `Unit::Fortnight` match-arm class `weakly_exposed`; editing that same-file test cannot move it.
+- Add slice-1 `#6307` first-hour next-action conformance harness (`cargo test -p ripr --test next_action_conformance`) with a deterministic JSON report DTO, initial CLI route rows, and root/diff controls; LSP/MCP/editor projection rows remain follow-ups under the same issue (#6307).
+- Add the adapter-to-shared-witness projection contract (`LanguageWitnessProjectionV1`) and native-extension envelope with contract tests (#6405).
+- Python diff and repo production findings now run the shared behavior-evidence witness retain hook on publish, matching the Rust adapter path (#6426).
+- Verdict corpus: graduate #7117 f64 `Render` trait-shadow shapes into the honesty and verdict corpora with per-case fixture files (#7117, #12532).
+- Added own-scope integration controls and mutation experiments for the RIPR-SPEC-0352 receiver-unestablished withhold (#7415).
+- Help-proof scratch roots keep a process-wide sequence in the exclusive
+  directory name so concurrent same-tick allocations, including nested
+  process-group cleanup captures, do not fail with EEXIST (#7545).
+- Repo-exposure tests pin RIPR-SPEC-0236 example 17 as
+  `actionable_related_test_extension` and example 23 as
+  `opaque_static_evidence` without `macro_generated_value` (#7958).
+- `check-traceability` admits accepted contracts with explicit planned test
+  obligations while preserving current path validation and advisory symbol
+  handling; planned mappings do not claim implementation or executed evidence (#8002).
+- Bind advisory preflight reuse to the executed source tree, base, command plan
+  and observed local context; retain original execution identity when carrying
+  results across source-equivalent commits (#8024).
+- Refuse advisory receipt reuse when command exit evidence contradicts its
+  status or the producer has not explicitly declared reuse available (#8024).
+- Isolate the policy-facade test's CWD and cooperative Linux cleanup session,
+  retaining nested Cargo inventories, native deadlines and unrelated processes
+  while checking independently grouped descendants before reaping (#8082).
+- Match pending qualification titles and exact heads in the alert-only watchdog,
+  and align maintained finish guidance with selected late CI and the owner’s
+  separate protected-merge judgment (#8082).
+- Bind Windows subset source-contract controls to the current live-base and
+  prior-origin programs, retaining missing-guard and subject-bypass controls
+  instead of stale stored-base syntax (#8082).
+- Optimize the JSON parser dependency in dev and inherited test builds while
+  preserving complete retained input validation and failure controls (#8082).
+- Retain both editor test host profiles and the multi-root acceptance receipt
+  under the shared diagnostics limit, and record code-action cancellation
+  observations without retrying or suppressing the failed request (#8082).
+- PR evidence prepares one shared analyzer binary and logs separate build,
+  canonical snapshot, scoped check and packet timings with snapshot availability
+  retained; canonical snapshots and scoped checks share the invoking analysis
+  root cache while preserving explicit cache overrides (#8082).
+- Optimize Rust parser and syntax-tree dependencies in dev and inherited test
+  builds while retaining complete source scans and parser diagnostics (#8082).
+- PR evidence shares successful analyzer preparation while retaining the scoped
+  check's independent recovery attempt after a preparation failure (#8082).
+- Optimize the SHA-2 dependency in dev and inherited test builds so retained
+  fixture integrity checks keep their full byte and digest coverage without
+  paying unoptimized archive hashing costs (#8082).
+- Add the shared source-review disposition verifier (`review_disposition.py`) and its repo-policy test; it refuses narrative readiness tokens and quoted examples. Workflow wiring follows in a separate PR because an admission change is judged by the base-SHA bundle (#8157).
+- Review procedures distinguish source attestation from final integration
+  readiness, preserve evidence-only follow-ups, and point Result retries to
+  the installed run/attempt binding contract (#8157).
+- Include directive extraction during index build now runs in parallel over candidate files while preserving the same edge order, limitation order, and edge-limit cutoff as the former serial loop (#9214).
+- The `policy_all` leaf comparison now prints both the rerun leaf stderr and the aggregate stderr when they disagree, so an intermittent Windows `leaf error changed` failure names its cause instead of only the check (#9272).
+- The disk-equality cache test moves the file mtime explicitly after a same-length rewrite, so it no longer depends on filesystem timestamp resolution (#9272).
+- The Windows isolated-target path test and the support-tier fast-route fixture match what the Windows host prints; the fixture uses a short private clone path so the real `cargo fmt --check` command line stays under Windows' 32,767-character limit (about 27.5k characters against 35.4k before) (#9272).
+- After a normal primary exit, xtask `capture_output_sampled` ends the remaining owned process tree before draining pipes, so a Windows Job Object descendant cannot hold the capture for the post-exit grace; Unix still uses the bounded truncation diagnostic when a post-reap group cannot be signalled (#9323).
+- The Windows force-terminated-owner control now also ends the unbound owned primary it leaves behind, so the test no longer holds the harness's output pipe for the primary's remaining 40 s and nextest stops reporting it as LEAK (#9564).
+- The scheduled `cargo-deny` run on main is now daily and opens one `deny-red` tracking issue when it fails (closing it on the next green run), so a new RUSTSEC advisory is a single findable record before it turns every PR red (#11529).
+- `cargo xtask dx-scoreboard --gate` now fails when every selected metric
+  has no current value and none is comparable with the baseline, naming the
+  zero-evidence boards in `gate.zero_evidence_boards` instead of passing on
+  unmeasured evidence alone (#13101).
+- The prebuilt-archive install check (`first-run-archive.yml`) now also runs weekly and, with no version input, installs the version the QUICKSTART snippets pin, failing if the Linux/macOS and Windows snippets disagree (#13039).
+- `policy/flaky-tests.toml` is now the flake ledger for intermittent test failures found in CI history, and `xtask/tests/flake_ledger.rs` fails if a fixed entry loses its guard test, an open entry has no owning issue, or any nextest profile enables retries. The first three entries (TypeScript parse-worker injection leak, `Text file busy` on copied binaries, Perl variant shared-binary stamp) record fixes that landed in #11338, #11463 and #11346 (#11602, #11604).
+- Added `cargo xtask install-receipt`, which turns the published-install matrix results into a checked-in receipt (`metrics/install/receipt.json`) with per-platform install seconds, a disposition for each channel the matrix cannot check, and the R0 install verdict against the 300 s ceiling (#13064).
+- Added Kani bounded-model-checking harnesses (`#[cfg(kani)]`, never compiled in normal builds) for the actionability flip: the canonical next-action selector runs a command only when the route is admitted, the mode is not manual, the effect is named, heads are bound and equal, configs do not diverge, no limitation is declared and the check and card agree; the repair-card route gate and budget validation; and the repair-guidance reason/recovery tables that keep staleness exclusive. Run with `cargo kani -p ripr --harness <name>`. (#11823)
+- Add a Kani bounded-model-checking lane: `cargo xtask kani` reports VERIFIED, FAILED or NOT-ESTABLISHED per harness and never passes by absence, a nightly and merge-ready `kani.yml` workflow, `cfg(kani)` check-cfg, and a smoke harness for the actionability predicate (RIPR-SPEC-0371) (#11787).
+- The Perl verdict corpus's missed-credit ledger now names the measured cause of
+  each producer-packet abstention (no related test listed, matcher-graded error
+  oracle, no changed observable, or a fail-closed static limit) in place of the
+  retired-ceiling boilerplate. No verdict, rate or gate changes (#12764).
+- The two Perl producer-failure tests in `preview_analyzed_outcome.rs` (lang-perl only, so only Test Analytics runs them) accept either the cache-containment refusal added in #11601 or the original `create_dir_all` failure as the real cause, keeping the check that the config advice is not repeated (#11822).
+- Refresh the public proof receipts so `Public Proof Drift` passes again: the verdict-corpus receipt was 676 cases behind a 807-case corpus, and the regenerated page now shows the Trust wrong-verdict bar as missed (5.6%, two serde-derive rename rows tracked in #8782). (#11356)
+- Added the weekly, read-only `published-install-matrix.yml` lane. It installs the public crates.io, PyPI and npm packages on Linux x86-64/ARM64, macOS ARM64/Intel and Windows, starts each in a fresh Cargo project, and reports documented unavailable cells as known gaps (#12931).
+- Termination qualification expands the Python deep-syntax corpus with multiline and backslash-continuation operator runs and exercises each row on `ripr check --format json`, `ripr check --format sarif`, and `ripr pilot` naming the Python diff-first check route (#4512).
+- The installed Python journey now consumes the receipt route after the gap closes: the bound verify document issues the receipt at its `--out` path, and a missing, forged or edited verify document is refused with no receipt written (#4518).
+- `cargo xtask readiness-snapshot --sha <rev>` projects readiness evidence from versioned no-publish rehearsal receipts and existing supply-chain report paths without building or publishing (#4640).
+- Replaced the retired-ceiling boilerplate on 101 Rust `missed-credit.toml` entries with the diagnosed stage-level cause and its tracking issue (#12766, causes #12769-#12776). No row, verdict or count changed.
+- Test Analytics now sets `RIPR_FIXTURE_BINARY_ISOLATE=1`, so the fixture corpus builds its default-feature `ripr` in `target/fixture-variants/default` instead of relinking the `--all-features` `target/debug/ripr` the nextest suite is executing. The required lane leaves the variable unset and is unchanged (#11602).
+- Pinned that repository-mode analysis seeds no expression probe inside `verus! { .. }` (RIPR-SPEC-0369, #10747); no behavior change.
+- Moved the VS Code extension e2e into the reusable `vscode-e2e.yml`, which the routed `merge-ready` run calls as its own job and the Result requires through `needs` (#12252). The cross-workflow check-run correlation and the `CI merge-ready request` run title are retired; `CI` keeps running the same workflow on `main` pushes and manual dispatch.
 
 ### Removed
 
@@ -6845,6 +7738,9 @@ shell, unbounded, or otherwise unsupported subprocess shapes.
 - RIPR remains static mutation-exposure analysis; this analysis does not execute
   subprocesses, prove runtime subprocess safety, run mutation testing, or add a
   network client.
+- `ripr-contract` now carries `#![forbid(unsafe_code)]` in its crate root, so
+  the unsafe ban survives standalone/published builds that do not inherit the
+  workspace lint table (#12726).
 
 ## 0.10.0 - Honest-by-construction evidence and downstream gate adoption
 

@@ -152,6 +152,33 @@ Stop at once when a repository identity, owner, version, exact input, receipt,
 expected head, policy state, or publication authorization is ambiguous. Green
 CI, a ship packet, J, or K is evidence only; none authorizes publication.
 
+## Operator discipline during the transaction
+
+The transaction reuses this repository's standing operator contracts. They are
+restated here only as pointers; their semantics stay with their owners:
+
+- Any repair PR created during the transaction, and every queued PR
+  dispositioned in section 1, converges through the ordinary PR qualification
+  route: exactly one required context, earned by a fresh `merge-ready` label
+  event on the exact head, never by an in-place rerun; resolve conflicts
+  before re-firing the label. See
+  [the PR convergence runbook](agent-context/convergence-runbook.md).
+- Several autonomous actors may converge on the same transaction PR. Record
+  one `Converging this PR: <actor id>` claim comment and respect an existing
+  actor's claim ([PR automation](PR_AUTOMATION.md#multi-actor-ownership-signaling));
+  the queue disposition above never closes another owner's live work to make
+  the queue look empty.
+- The section 3 qualification worktree may run on any host, but golden
+  expected-files are arbitrated on Linux. Never bless or hand-edit golden
+  files from a Windows host; route a re-bless through the WSL Ubuntu pinned
+  toolchain
+  ([validation](agent-context/validation.md#golden-fixtures-and-the-blessing-platform)).
+- Between stages, main health is monitored by the scheduled main-health
+  sentinel, not by the cancelled main push runs. Its `main-red` tracker issue
+  is advisory evidence to reconcile before relying on unpinned main state;
+  the sentinel is a probe and holds no branch-protection or ruleset authority
+  ([CI](CI.md#main-health-sentinel)).
+
 ## 1. Reset truth and pre-cut queue observations
 
 Use fresh checkouts. Ordinary source-repository development PRs are drift:

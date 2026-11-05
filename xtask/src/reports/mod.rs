@@ -85,6 +85,7 @@ mod spec_receipts;
 mod targeted_rerun;
 mod targeted_test;
 mod test_oracles;
+mod token_cost;
 mod verdict_corpus;
 mod verdict_corpus_perl_edit_replay;
 mod verdict_corpus_relabel;
@@ -242,6 +243,7 @@ pub(crate) use test_oracles::{test_efficiency_report, test_oracle_report};
 pub(crate) use test_oracles::{
     test_oracle_report_impl_for_roots, test_oracle_report_json, test_oracle_report_markdown,
 };
+pub(crate) use token_cost::token_cost;
 pub(crate) use verdict_corpus::{
     expected_report as verdict_corpus_expected_report,
     render_report_json as render_verdict_corpus_report, verdict_corpus,

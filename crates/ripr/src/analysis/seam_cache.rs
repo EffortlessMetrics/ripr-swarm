@@ -686,7 +686,13 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.160`: compose #7490 boundary pairing with #12010 assertion-local sink identity
 /// and return-delta confirmation; neither independent `1.159` is reusable.
 /// `1.161`: external imported observers cannot inherit collection sink identity.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.161";
+/// `1.159`: a cloned call-making callback cannot borrow an unrelated plain
+/// helper assertion (#13219). Raw file facts are unchanged; helper credit is
+/// recomputed after loading them.
+/// `1.160`: same-named receiver and free calls no longer lend one another an
+/// assertion oracle; real opposite-kind wrappers retain reach uncertainty (#12234).
+/// `1.162`: compose successor 1.161 with main callback/call-kind semantics.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.162";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -890,7 +896,10 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.161";
 /// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
 /// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
 /// `0.163`: same external-observer refusal as full `1.161`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
+/// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+/// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.164`: composed successor and main semantics, matching full 1.162.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1096,7 +1105,10 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
 /// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
 /// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
 /// `0.163`: same external-observer refusal as full `1.161`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
+/// `0.161`: same cloned-callback withholding as full `1.159` (#13219).
+/// `0.162`: same assertion call-kind refusal as full `1.160` (#12234).
+/// `0.164`: composed successor and main semantics, matching full 1.162.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.164";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1323,6 +1335,11 @@ pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_STORE_LIMIT_ENV: &str =
 pub(crate) const CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_ENV: &str =
     "RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES";
+/// Load ceiling for the single module-tree scan bundle (`scans.json`). The
+/// bundle holds one small edge list per distinct source text, so a file
+/// above this is corrupt, legacy, or hostile. Not a process-RSS guarantee.
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV: &str = "RIPR_MODULE_TREE_SCAN_CACHE_BYTES";
 pub(crate) const CLASSIFIED_SEAM_CACHE_STORE_IO_BUFFER_BYTES: usize = 64 * 1024;
 const CACHE_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:CacheEnvelope:v1";
 const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1";
@@ -1572,6 +1589,14 @@ fn parse_positive_seam_cache_store_limit(value: &str, env_name: &str) -> Result<
         return Err(format!("{env_name} must be a positive integer"));
     }
     Ok(parsed)
+}
+
+pub(crate) fn module_tree_scan_cache_max_bytes() -> Result<usize, String> {
+    seam_cache_store_limit_from_env(
+        std::env::var(MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV),
+        MODULE_TREE_SCAN_CACHE_MAX_BYTES_ENV,
+        MODULE_TREE_SCAN_CACHE_MAX_BYTES,
+    )
 }
 
 pub(crate) fn classified_seam_cache_encoded_shard_ceiling_bytes() -> Result<usize, String> {
@@ -2358,7 +2383,13 @@ impl RepoModuleTreeScanCache {
         {
             return BTreeMap::new();
         }
-        let Ok(bytes) = std::fs::read(self.entry_path()) else {
+        // Bounded read: a bundle above the ceiling is never allocated
+        // whole; it degrades to a cold rebuild like any unusable bundle.
+        // An unparseable ceiling env falls back to the default ceiling.
+        let ceiling =
+            module_tree_scan_cache_max_bytes().unwrap_or(MODULE_TREE_SCAN_CACHE_MAX_BYTES);
+        let Ok(bytes) = crate::bounded_input::read_with_limit(self.entry_path(), ceiling as u64)
+        else {
             return BTreeMap::new();
         };
         let Ok(envelope) = serde_json::from_slice::<ModuleTreeScanEnvelope>(&bytes) else {
@@ -4249,6 +4280,20 @@ pub(crate) fn semantic_body_digest<T: serde::Serialize>(
     });
     Ok(format!("sha256:{:x}", writer.0.finalize()))
 }
+/// Digest of an already-serialized body. Byte-identical to
+/// [`semantic_body_digest`] of the value that produced `bytes` when `bytes`
+/// is that value's compact serialization, so a reader can verify integrity
+/// over the stored bytes it already read instead of re-serializing the
+/// decoded body on every warm read.
+pub(crate) fn semantic_digest_for_bytes(domain: &str, bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(domain.as_bytes());
+    hasher.update([0]);
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
 pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
@@ -5215,7 +5260,10 @@ mod tests {
         // 1.158 -> 1.159: boundary and oracle must be paired in the same test (#7490).
         // 1.159 -> 1.160: both independent predecessor semantics must be invalidated.
         // 1.160 -> 1.161: unread external collection-observer interception.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.161");
+        // 1.158 -> 1.159: cloned callbacks cannot borrow plain-helper oracles (#13219).
+        // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+        // Composed main and successor invalidate both predecessor branches.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.162");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5358,8 +5406,10 @@ mod tests {
         // 0.160 -> 0.161: same boundary-oracle pairing as full 1.159 (#7490).
         // 0.161 -> 0.162: compose both independent semantic generations.
         // 0.162 -> 0.163: same external-observer refusal as full 1.161.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
+        // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+        // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.164");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.164");
     }
 
     #[test]
@@ -5685,6 +5735,7 @@ mod tests {
             ("7490-boundary-pairing", "1.159", "0.161"),
             ("12010-sink-identity", "1.159", "0.161"),
             ("external-observer-interception", "1.160", "0.162"),
+            ("pre-main-composition", "1.161", "0.163"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -5758,7 +5809,7 @@ mod tests {
     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
         for previous in [
             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
-            "0.161", "0.162",
+            "0.161", "0.162", "0.163",
         ] {
             for compact in [false, true] {
                 let scratch = integrity_scratch("property-shard-generation")?;
@@ -8467,6 +8518,36 @@ mod tests {
 
         std::fs::write(&path, b"{not json").map_err(|error| error.to_string())?;
         assert!(cache.load().is_empty(), "undecodable bundle reads as empty");
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn module_tree_scan_bundle_above_the_byte_ceiling_reads_as_empty() -> Result<(), String> {
+        // Memory bound: a bundle file above the load ceiling is never
+        // allocated whole; the load degrades to a cold rebuild. Trailing
+        // spaces keep the oversized file decodable, so only the byte
+        // ceiling can explain an empty read.
+        let dir = isolated_dir("module-tree-scans-oversized");
+        ignore_remove_dir_all(&dir);
+        let cache = RepoModuleTreeScanCache::at_dir(dir.clone());
+        let scans = sample_module_tree_scans();
+        cache.store(&scans)?;
+        assert_eq!(cache.load(), scans, "control: the stored bundle loads");
+
+        let path = cache.entry_path();
+        let mut bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        let ceiling = module_tree_scan_cache_max_bytes()
+            .map_err(|error| format!("ceiling must resolve: {error}"))?;
+        if bytes.len() > ceiling {
+            return Err("control: stored bundle already exceeds the ceiling".to_string());
+        }
+        bytes.resize(ceiling + 1, b' ');
+        std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+        assert!(
+            cache.load().is_empty(),
+            "a bundle above the byte ceiling reads as empty, not allocated whole"
+        );
         ignore_remove_dir_all(&dir);
         Ok(())
     }

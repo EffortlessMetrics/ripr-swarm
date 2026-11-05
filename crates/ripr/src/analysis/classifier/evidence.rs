@@ -255,6 +255,15 @@ impl ClassifiedProbeEvidence {
         })
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::early_return_literal_witness(
+                    context.probe,
+                    owner,
+                    &flow_sinks,
+                )
+            })
+        })
+        .or_else(|| {
+            context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::concat_tail_witness(
                     context.probe,
                     owner,
@@ -1226,7 +1235,7 @@ impl ClassifiedProbeEvidence {
                         );
                         owner_reach
                             .get_or_init(|| proximity_reach.owner_reach(&owner.name))
-                            .assertion_pins_other_function(&text)
+                            .assertion_pins_other_function(owner, test, assertion, &text)
                     })
                 },
                 owner_parameters: &owner_parameters,

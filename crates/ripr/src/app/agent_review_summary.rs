@@ -1140,6 +1140,7 @@ mod tests {
             state: "awaiting_edit",
             head_current: Some(true),
             disposition: "resumable",
+            baseline: crate::app::repair_attempt::RepairAttemptBaselineReading::Unambiguous,
             manifest: String::new(),
             command: None,
             start_withheld: false,
