@@ -169,26 +169,12 @@ fn items(scope: &SyntaxNode) -> Vec<ast::Item> {
 
 /// The shared macro authority supplies scoped imports/definitions, opaque
 /// macro preludes and expansion bindings; derive spelling alone proves nothing.
-fn standard_derive_binding_holds(attr: &ast::Attr) -> bool {
-    standard_derive_binding_holds_with(attr, None)
-}
-
-fn standard_derive_binding_holds_with(attr: &ast::Attr, index: Option<&RustIndex>) -> bool {
-    let Some(names) = standard_derive_names(attr) else {
-        return false;
-    };
-    // The macro scan deliberately leaves crate/self/super globs to its caller.
-    // This bounded type proof does not resolve names imported by those globs.
-    if enclosing_scopes(attr.syntax())
-        .iter()
-        .any(|scope| !name_scope_for_items(&items(scope)).globs.is_empty())
-    {
-        return false;
-    }
-    let Some(file) = attr.syntax().ancestors().last() else {
-        return false;
-    };
-    let source = file.text().to_string();
+fn standard_derive_binding_holds(
+    attr: &ast::Attr,
+    names: &[String],
+    source: &std::sync::Arc<str>,
+    index: Option<&RustIndex>,
+) -> bool {
     let Some(prefix) = source.get(..usize::from(attr.syntax().text_range().start())) else {
         return false;
     };
@@ -200,7 +186,7 @@ fn standard_derive_binding_holds_with(attr: &ast::Attr, index: Option<&RustIndex
         .chain(names.iter().map(String::as_str))
         .collect::<Vec<_>>();
     let key = (
-        std::sync::Arc::<str>::from(source.as_str()),
+        std::sync::Arc::clone(source),
         trusted.iter().map(|name| (*name).to_string()).collect(),
     );
     let cached = index.and_then(|index| {
@@ -213,7 +199,7 @@ fn standard_derive_binding_holds_with(attr: &ast::Attr, index: Option<&RustIndex
     });
     let sites = cached.unwrap_or_else(|| {
         let sites =
-            trusted_macro_binding_sites(&source, &BTreeSet::new(), &trusted, &|_, _| false, &|_| {
+            trusted_macro_binding_sites(source, &BTreeSet::new(), &trusted, &|_, _| false, &|_| {
                 false
             });
         let sites = std::sync::Arc::new(
@@ -245,15 +231,35 @@ fn derives_have_root_context(owner: &FunctionSummary, index: &RustIndex) -> bool
 }
 
 fn closed_scope_with(scope: &SyntaxNode, derives: bool, index: Option<&RustIndex>) -> bool {
+    // Every attribute inspected below belongs to this scope or to one of its
+    // direct items. Their enclosing item/statement scopes and complete source
+    // are identical. Read those once per scope, instead of rebuilding the
+    // same file-wide name inventory for every derived item in the file.
+    let derive_context = std::cell::OnceCell::new();
     let preserves = |attr: ast::Attr| {
         let text = attr.syntax().text().to_string();
         crate::analysis::facts::cfg_predicates::attribute_preserves_source_items(&text)
             || crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
             || derives
-                && match index {
-                    Some(index) => standard_derive_binding_holds_with(&attr, Some(index)),
-                    None => standard_derive_binding_holds(&attr),
-                }
+                && standard_derive_names(&attr).is_some_and(|names| {
+                    derive_context
+                        .get_or_init(|| {
+                            // The shared macro reader leaves crate/self/super
+                            // globs to its caller. Preserve that refusal.
+                            if enclosing_scopes(scope)
+                                .iter()
+                                .any(|scope| !name_scope_for_items(&items(scope)).globs.is_empty())
+                            {
+                                return None;
+                            }
+                            let file = scope.ancestors().last()?;
+                            Some(std::sync::Arc::<str>::from(file.text().to_string()))
+                        })
+                        .as_ref()
+                        .is_some_and(|source| {
+                            standard_derive_binding_holds(&attr, &names, source, index)
+                        })
+                })
     };
     scope.children().all(|node| {
         if let Some(attr) = ast::Attr::cast(node.clone()) {
