@@ -431,9 +431,9 @@ fn render_limited_records(
     if let Some(first) = limited.first() {
         out.push_str(&match drill_in {
             Some(FindingDrillIn::Commands(navigation)) => {
-                format!("next={}\n", navigation.explain_command(&first.id))
+                format!("next={}\n", navigation.explain_command_compact(&first.id))
             }
-            None => format!("next=ripr explain {}\n", first.id),
+            None => format!("next=ripr explain --format agent {}\n", first.id),
         });
     }
     out

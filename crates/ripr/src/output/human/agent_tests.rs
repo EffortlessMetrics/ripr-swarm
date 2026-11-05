@@ -381,7 +381,7 @@ fn static_limited_run_stops_and_names_the_limit_instead_of_a_gap() {
     );
     assert!(
         text.lines()
-            .any(|line| line == "next=ripr explain probe:np"),
+            .any(|line| line == "next=ripr explain --format agent probe:np"),
         "{text}"
     );
 }
@@ -426,7 +426,7 @@ fn static_limited_weakly_exposed_alone_keeps_stop() {
     assert!(text.contains("|id=probe:limited-weak"), "{text}");
     assert!(
         text.lines()
-            .any(|line| line == "next=ripr explain probe:limited-weak"),
+            .any(|line| line == "next=ripr explain --format agent probe:limited-weak"),
         "{text}"
     );
 }
@@ -513,7 +513,7 @@ fn reach_limit_without_weak_assertion_row_keeps_stop() {
     assert!(text.contains("|id=probe:fixed"), "{text}");
     assert!(
         text.lines()
-            .any(|line| line == "next=ripr explain probe:fixed"),
+            .any(|line| line == "next=ripr explain --format agent probe:fixed"),
         "{text}"
     );
 
@@ -525,7 +525,7 @@ fn reach_limit_without_weak_assertion_row_keeps_stop() {
     assert!(text.contains("|id=probe:macro"), "{text}");
     assert!(
         text.lines()
-            .any(|line| line == "next=ripr explain probe:macro"),
+            .any(|line| line == "next=ripr explain --format agent probe:macro"),
         "{text}"
     );
 }
@@ -558,7 +558,7 @@ fn all_limited_records_cap_over_the_floor_and_count_the_rest() {
     );
     assert!(
         text.lines()
-            .any(|line| line == "next=ripr explain probe:lim0"),
+            .any(|line| line == "next=ripr explain --format agent probe:lim0"),
         "{text}"
     );
 }
@@ -591,7 +591,7 @@ fn all_no_static_path_run_matches_the_human_surface_route() {
     );
     assert!(
         text.contains(
-            "next=ripr explain gap:rust:src/lib.rs:levy:predicate_boundary:predicate:vip"
+            "next=ripr explain --format agent gap:rust:src/lib.rs:levy:predicate_boundary:predicate:vip"
         ),
         "{text}"
     );
@@ -618,7 +618,7 @@ fn reach_limit_with_a_proximity_only_weak_row_keeps_stop() {
         assert!(text.contains("|id=probe:unrelated"), "{reason:?}: {text}");
         assert!(
             text.lines()
-                .any(|line| line == "next=ripr explain probe:unrelated"),
+                .any(|line| line == "next=ripr explain --format agent probe:unrelated"),
             "{reason:?}: {text}"
         );
     }
