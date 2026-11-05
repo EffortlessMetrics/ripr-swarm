@@ -888,7 +888,10 @@ fn evidence_promotion_corpus_folds_in_case_files_and_rejects_a_repeated_id() -> 
 
 fn seed_honesty_git_base() -> Result<(), String> {
     run("git", &["init", "--quiet"])?;
-    run("git", &["add", super::EVIDENCE_PROMOTION_HONESTY_CORPUS])?;
+    run(
+        "git",
+        &["add", "fixtures/evidence-promotion-honesty-corpus"],
+    )?;
     run(
         "git",
         &[
@@ -930,7 +933,7 @@ fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cas
             write_evidence_promotion_check(fixture, classification)?;
         }
 
-        let corpus_json = serde_json::json!({
+        let mut corpus_json = serde_json::json!({
             "report_digest_required": [],
             "cases": [
                 {
@@ -983,12 +986,70 @@ fn evidence_promotion_corpus_summary_report_writes_pure_and_not_run_external_cas
                 }
             ]
         });
+        // Seed a required, stamped report and a real consumer in the accepted base.
+        write(
+            &root.join("crates/ripr/src/analysis/seam_cache.rs"),
+            "pub(crate) const CACHE_SCHEMA_VERSION: &str = \"1.0\";\n",
+        );
+        let report = "fixtures/evidence-promotion-honesty-corpus/reports/retained.json";
+        let placeholder = format!("sha256:{}", "0".repeat(64));
+        let report_json = serde_json::json!({
+            "artifact": {"canonicalization": "raw_json_placeholder_v1", "content_sha256": placeholder},
+            "summary": {"findings": 1},
+            "findings": [{"id": "retained", "classification": "weakly_exposed"}]
+        });
+        let template = serde_json::to_string_pretty(&report_json).map_err(|err| err.to_string())?;
+        let stamped = template.replace(
+            &placeholder,
+            &format!("sha256:{}", sha256_hex(template.as_bytes())),
+        );
+        write(&root.join(report), &stamped);
+        corpus_json["report_digest_required"] = serde_json::json!([report]);
+        corpus_json["cases"]
+            .as_array_mut()
+            .ok_or("no cases")?
+            .push(serde_json::json!({
+                "id": "retained_report", "language": "python", "tier": "pure",
+                "source_report": report, "must_remain_non_promoted": true
+            }));
         write(
             &corpus,
             &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
         );
 
         seed_honesty_git_base()?;
+        super::check_evidence_promotion_honesty(&[])?;
+        // Remove both the requirement and the stamp while retaining the report.
+        corpus_json["report_digest_required"] = serde_json::json!([]);
+        write(
+            &corpus,
+            &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+        );
+        let mut unstamped = report_json;
+        unstamped
+            .as_object_mut()
+            .ok_or("report object")?
+            .remove("artifact");
+        write(
+            &root.join(report),
+            &serde_json::to_string_pretty(&unstamped).map_err(|err| err.to_string())?,
+        );
+        let error = super::check_evidence_promotion_honesty(&[])
+            .expect_err("retained report omission must fail");
+        assert!(
+            error.contains("required digest entry removed while report still exists"),
+            "{error}"
+        );
+        // Actual deletion and removal of its case is an allowed retirement.
+        fs::remove_file(root.join(report)).map_err(|err| err.to_string())?;
+        corpus_json["cases"]
+            .as_array_mut()
+            .ok_or("no cases")?
+            .retain(|case| case["id"] != "retained_report");
+        write(
+            &corpus,
+            &serde_json::to_string_pretty(&corpus_json).map_err(|err| err.to_string())?,
+        );
         super::check_evidence_promotion_honesty(&[])?;
         let summary_path = root.join("target/ripr/reports/corpus-summary.json");
         let summary_text = fs::read_to_string(&summary_path)

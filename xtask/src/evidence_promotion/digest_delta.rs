@@ -294,4 +294,92 @@ mod tests {
         assert!(delta_problems(&base, &relocated, |_| Ok(false))?.is_empty());
         Ok(())
     }
+
+    #[test]
+    fn base_corpus_reads_pinned_git_sidecars_and_rejects_bad_cases() -> Result<(), String> {
+        crate::tests::with_temp_cwd("honesty-base-git", |root| {
+            use std::fs;
+            let dir = root.join("fixtures/evidence-promotion-honesty-corpus");
+            fs::create_dir_all(dir.join("cases/nested")).map_err(|e| e.to_string())?;
+            let write = |path: &str, contents: &str| {
+                fs::write(dir.join(path), contents).map_err(|e| e.to_string())
+            };
+            write(
+                "corpus.json",
+                r#"{"report_digest_required":[],"cases":[{"id":"manifest"}]}"#,
+            )?;
+            write("cases/a.json", r#"{"id":"sidecar"}"#)?;
+            write("cases/ignored.txt", "not json")?;
+            write("cases/nested/ignored.json", "not json")?;
+            crate::run("git", &["init", "--quiet"])?;
+            let commit = || -> Result<String, String> {
+                crate::run("git", &["add", "-A"])?;
+                crate::run(
+                    "git",
+                    &[
+                        "-c",
+                        "user.name=Fixture",
+                        "-c",
+                        "user.email=fixture@example.invalid",
+                        "commit",
+                        "--quiet",
+                        "-m",
+                        "fixture",
+                    ],
+                )?;
+                Ok(crate::run_output("git", &["rev-parse", "HEAD"])?
+                    .trim()
+                    .to_owned())
+            };
+            let valid = commit()?;
+            // Working-tree changes must not alter the pinned base evidence.
+            write("cases/a.json", "{")?;
+            let loaded = base_corpus(&valid)?;
+            assert_eq!(
+                loaded["cases"]
+                    .as_array()
+                    .ok_or("missing cases")?
+                    .iter()
+                    .map(|row| row["id"].as_str().unwrap_or(""))
+                    .collect::<Vec<_>>(),
+                ["manifest", "sidecar"]
+            );
+            let malformed = commit()?;
+            assert!(
+                base_corpus(&malformed)
+                    .err()
+                    .ok_or("malformed base unexpectedly accepted")?
+                    .contains("malformed base case")
+            );
+            write("cases/a.json", r#"{"id":"one","id":"two"}"#)?;
+            let duplicate_key = commit()?;
+            assert!(
+                base_corpus(&duplicate_key)
+                    .err()
+                    .ok_or("duplicate_key base unexpectedly accepted")?
+                    .contains("malformed base case")
+            );
+            write("cases/a.json", r#"{"id":"manifest"}"#)?;
+            let duplicate_id = commit()?;
+            assert!(
+                base_corpus(&duplicate_id)
+                    .err()
+                    .ok_or("duplicate_id base unexpectedly accepted")?
+                    .contains("duplicate case id")
+            );
+            write("cases/a.json", r#"{"id":"sidecar"}"#)?;
+            write(
+                "corpus.json",
+                r#"{"cases":[],"cases":[],"report_digest_required":[]}"#,
+            )?;
+            let duplicate_manifest_key = commit()?;
+            assert!(
+                base_corpus(&duplicate_manifest_key)
+                    .err()
+                    .ok_or("duplicate_manifest_key base unexpectedly accepted")?
+                    .contains("malformed base corpus")
+            );
+            Ok(())
+        })
+    }
 }
