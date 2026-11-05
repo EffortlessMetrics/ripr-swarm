@@ -1663,3 +1663,18 @@ fn a_bare_call_with_no_placeable_owner_identity_reads_infection_unknown() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn computed_local_boundary_and_unseen_input_delegate_unknown() -> Result<(), String> {
+    let findings = findings_after(
+        "    let threshold = x + 1;\n",
+        "    x >= threshold",
+        "    x > threshold",
+        "use thr::thr;\n#[test]\nfn t() { let v = std::env::var(\"X\").unwrap().len() as i32; assert_eq!(thr(v), true); }\n",
+    )?;
+    let predicate = family(&findings, "predicate")?;
+    assert_eq!(predicate.ripr.infect.state, StageState::Unknown, "{predicate:?}");
+    let returned = family(&findings, "return_value")?;
+    assert_eq!(returned.ripr.infect.state, StageState::Unknown, "{returned:?}");
+    Ok(())
+}
