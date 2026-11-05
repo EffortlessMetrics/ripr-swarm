@@ -66,7 +66,19 @@ Reading it:
 
 ## Per-config scoreboard
 
-`harness/scoreboard.py` groups runs by ripr version, model, turn cap and config, and reports fix rate (valid tests, zero escaped mutants) with a Wilson interval, escaped mutants, tokens, wall time and ripr calls, each against the `none` control. Configs live in `CONFIGS` in `harness/run_one.py`: surface (check, brief, MCP), optional vs mandatory use, output flags (`--json`, `--mode fast`, `--max-seams`), plus model and turn cap (`COHORT_MAX_TURNS`). To re-run on a new ripr: `COHORT_RIPR_BIN=/path/to/ripr python3 sweep.py ... out.jsonl` then `python3 scoreboard.py OUT out.jsonl`.
+`harness/scoreboard.py` reports every attempted run, measured-cost coverage,
+completion and hidden-oracle outcomes, then compares matched task/replicate pairs
+within the same cohort, model and turn budget. Missing usage is not zero; failed
+attempts do not disappear. Full RIPR version strings are retained and mixed
+versions within a cohort/config are rejected. See the
+[measurement contract](MEASUREMENT_CONTRACT.md) for receipt/report v2, pairing,
+cache accounting, cost per success and limitations.
+
+Configs live in `CONFIGS` in `harness/run_one.py`: surface (check, brief, MCP),
+optional vs mandatory use, output flags, model and turn cap (`COHORT_MAX_TURNS`).
+Each sweep creates a fresh cohort ID; set `COHORT_ID` only to split one frozen
+experiment across files. Historical tables and receipts above are retained as
+original observations, not recomputed or statistically requalified by this change.
 
 ## Limits
 
@@ -81,8 +93,17 @@ Reading it:
 ```sh
 cd benchmarks/agentic/cohort/harness
 python3 validate.py                      # check every mutant is killable by the reference tests (small tasks)
-python3 sweep.py all A0-none,A1-diagnostics,A2-packet-loop haiku 1 3 out.jsonl 4
-python3 agg.py out.jsonl
+python3 sweep.py all none,check-mandatory,brief-mandatory haiku 1 3 out.jsonl 4
+python3 scoreboard.py out out.jsonl
 ```
 
-Needs `claude` on PATH and `ripr`. Runs create crates under `/tmp/cohort-work`.
+Needs `claude` on PATH and `ripr`. Runs create unique trial directories under
+`/tmp/cohort-work`; repeated trials do not overwrite prior transcripts or tests.
+The old `agg.py` is a historical quick summary, not the measurement-integrity
+report. Run the offline accounting tests without any model, Cargo or network:
+
+```sh
+python3 -m unittest discover -s benchmarks/agentic/cohort/harness -p 'test_*.py' -v
+```
+
+Run that test command from the repository root.
