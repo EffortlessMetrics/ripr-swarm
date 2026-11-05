@@ -15324,6 +15324,12 @@ Field contract:
   order: before snapshot, packet, brief, after snapshot, analysis outcome,
   verify, receipt. If no
   seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
+  Such a command is a template, not a runnable command, and the entry then
+  carries `requires_substitution: true` (additive, no `schema_version` bump,
+  #13244) so a machine consumer can filter non-executable entries without
+  parsing angle brackets out of the command string. The key is absent on
+  ready-to-run entries; the command string is unchanged either way and stays
+  useful to humans.
 - `repair_attempts[]` - every repair attempt under
   `target/ripr/repair-attempts/`, validated by the attempt authority and
   ordered by attempt ID (not by age): `attempt_id`, `seam_id`, `state` (the
@@ -15450,7 +15456,10 @@ Field contract:
   hand step (add or strengthen a test, then rerun that check) for an enabled
   route, the enable step (add the language to `[languages] enabled` in
   `ripr.toml`) for a route with `enabled: false`, and says to rerun pilot if
-  the workspace changed since that run.
+  the workspace changed since that run. `next_command` uses the same
+  `requires_substitution` marker as `missing_commands[]` when its command
+  embeds the unresolved `<seam-id>` placeholder (#13244); status never selects
+  such a template as the next command, so the key is normally absent here.
 - `warnings[]` - stale-looking or unreadable-artifact hints. Timestamp warnings
   are emitted when `agent verify` is older than a before/after snapshot or
   `agent receipt` is older than `agent verify`. For a seam with no attempt
