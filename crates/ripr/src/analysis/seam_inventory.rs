@@ -2279,6 +2279,16 @@ pub(crate) trait ScopedEvidenceConsumer {
     fn observe(&mut self, ordinal: usize, entry: ClassifiedSeam) -> Result<(), String>;
     fn first_stage_sufficient(&self) -> bool;
     fn retained_payloads(&self) -> usize;
+    /// Narrows the second stage after the first stage ran and was not
+    /// sufficient. Returns a predicate over the remaining seams that must be
+    /// `false` only for a seam the consumer will provably discard whatever its
+    /// evidence says. `None` evaluates every remaining seam.
+    fn second_stage_filter<'s>(
+        &'s self,
+        _index: &RustIndex,
+    ) -> Option<Box<dyn Fn(&RepoSeam) -> bool + 's>> {
+        None
+    }
 }
 
 const DEFAULT_REVIEW_EVIDENCE_WINDOW: usize = 32;
@@ -2379,6 +2389,11 @@ fn classify_scoped_seams_streamed(
             Duration::ZERO,
         );
         return Ok((evaluated, rest.len()));
+    }
+    // Skipped seams are not counted as unevaluated: the consumer proved it
+    // would discard them, so no scoped result can depend on them.
+    if let Some(keep) = consumer.second_stage_filter(index) {
+        rest.retain(|ordinal| keep(&seams[*ordinal]));
     }
     evaluated = evaluated
         .checked_add(classify_evidence_windows(
