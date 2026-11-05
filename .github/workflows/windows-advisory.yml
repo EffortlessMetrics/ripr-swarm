@@ -1573,6 +1573,13 @@ jobs:
                   "Developer setup capability boundary source frontdoor succeeds when writes network and subprocess APIs are forbidden",
                   "Developer setup capability boundary display check distinguishes absent Linux display from other platforms without launching anything",
                   "Developer setup capability boundary report bounds observed text and never renders proxy or CA values",
+                  "Developer setup capability boundary public verification clears prior success before report refusal",
+                  "Developer setup capability boundary public verification clears prior success before installed compiler failure",
+                  "Developer setup capability boundary public verification clears prior success before missing installed compiler",
+                  "Developer setup capability boundary direct verification clears prior success before display refusal",
+                  "Developer setup capability boundary direct verification clears prior success before acquisition refusal",
+                  "Developer setup capability boundary a native spawn refusal retains its useful reason in the pointed setup log",
+                  "Developer setup capability boundary a refused diagnostic write preserves the original native failure and cleanup",
                   "Developer setup capability boundary requires native success and one current host sentinel and preserves the observed version",
                   "Developer setup capability boundary refuses absent host evidence and removes an earlier success receipt",
                   "Developer setup capability boundary refuses wrong_nonce host evidence and removes an earlier success receipt",
@@ -1585,9 +1592,9 @@ jobs:
               stats = report.get('stats', {})
               if len(observed) != len(expected) or set(observed) != expected:
                   raise SystemExit('fixture producer PASS is missing native process controls')
-              if any(stats.get(key) != value for key, value in {'tests': 26, 'passes': 23, 'failures': 0, 'pending': 3}.items()):
+              if any(stats.get(key) != value for key, value in {'tests': 33, 'passes': 30, 'failures': 0, 'pending': 3}.items()):
                   raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
-              print('Verified 23 native process/setup controls; three POSIX-only adapter controls are pending.')
+              print('Verified 30 native process/setup controls; three POSIX-only adapter controls are pending.')
           PY
 
       - name: Require selector consumer receipt, log and native status

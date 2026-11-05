@@ -370,11 +370,18 @@ test-host failure copies a size-capped, redacted log subset into
 the vscode job fails. Success runs do not retain the diagnostics copy, and
 collection cannot change the original test exit status.
 
-The additional setup receipt is `target/ripr/setup-editor-host.json`. A failed
-native smoke retains at most a 64-KiB redacted output tail in
+The additional setup receipt is `target/ripr/setup-editor-host.json`. Explicit
+`setup:verify-editor` invalidates that receipt and its setup log before the source
+report or installed compiler can fail; direct verifier and canonical runner
+entrypoints use the same narrow reset before display/acquisition checks. Ordinary
+read-only reporting preserves those files. A failed native smoke attempts to
+retain at most a 64-KiB redacted output tail in
 `target/ripr/setup-editor-host.log`; the existing failure-only upload includes
 these files. Each invocation requires a fresh nonce-bound sentinel and native
 status zero; an earlier success receipt cannot discharge a failed attempt.
+Native error reasons remain in the bounded redacted error and diagnostic output.
+If diagnostic writing fails, the original native failure/cause is preserved and
+the report identifies the unavailable log instead of pointing to it as evidence.
 
 After the normal extension compile step, the setup-ordering controls can run
 without a VS Code download or a Rust producer build:

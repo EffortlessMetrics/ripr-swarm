@@ -2,7 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { execFileSync, spawn } from 'child_process';
 import { runTests } from '@vscode/test-electron';
-import { downloadVSCodeWithRetry, requireEditorDisplay, verifyHostPrerequisites } from './hostPrerequisites';
+import { downloadVSCodeWithRetry, requireEditorDisplay, resetEditorSetupEvidence, verifyHostPrerequisites } from './hostPrerequisites';
 import { stageGenuineActionableQueue } from './actionableQueueFixture';
 import { REQUIRED_TITLE_SEPARATOR, requiredJourneyTitles } from './requiredJourneys';
 import { finalizeHostRun, resetHostLogDir, resolveUserDataDir } from './hostDiagnostics';
@@ -203,6 +203,7 @@ export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
   let matrixDiagnostics: { userDataDir: string; receiptPath: string } | undefined;
   let error: unknown;
   try {
+    resetEditorSetupEvidence(artifactRoot);
     resetHostLogDir(userDataPath);
     const extensionDevelopmentPath = path.resolve(
       process.env.RIPR_TEST_EXTENSION_PATH ?? path.resolve(__dirname, '../../')

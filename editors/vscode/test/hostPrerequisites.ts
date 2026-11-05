@@ -3,7 +3,13 @@ import * as path from 'path';
 import { randomBytes } from 'crypto';
 import { downloadAndUnzipVSCode } from '@vscode/test-electron';
 import { runFixtureProducer, FixtureProducerError } from './actionableQueueFixture';
-import { redactHostDiagnosticsTail } from './hostDiagnostics';
+import { redactHostDiagnosticsPrefix, redactHostDiagnosticsTail } from './hostDiagnostics';
+
+// The source-checkout frontdoor owns this one reset implementation so the npm
+// command can invalidate evidence before a report or compiler failure as well.
+export const { resetEditorSetupEvidence } = require(path.resolve(__dirname, '../../test/developerSetup.cjs')) as {
+  resetEditorSetupEvidence: (artifactRoot: string) => { publishedReceipt: string; failureLog: string };
+};
 
 const DOWNLOAD_ATTEMPTS = 3;
 const HOST_TIMEOUT_MS = 60_000;
@@ -82,16 +88,13 @@ function readHostSentinel(filename: string, nonce: string): Record<string, unkno
 export async function verifyHostPrerequisites(
   vscodeExecutablePath: string, artifactRoot: string, options: HostPrerequisiteOptions = {}
 ): Promise<HostSetupReceipt> {
+  const { publishedReceipt, failureLog } = resetEditorSetupEvidence(artifactRoot);
   const env = options.env ?? process.env;
   const timeoutMs = options.timeoutMs ?? HOST_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) {
     throw new Error('VS Code host setup timeout must be an integer from 1 to 120000ms');
   }
   fs.mkdirSync(artifactRoot, { recursive: true });
-  const publishedReceipt = path.join(artifactRoot, 'setup-editor-host.json');
-  const failureLog = path.join(artifactRoot, 'setup-editor-host.log');
-  fs.rmSync(publishedReceipt, { force: true });
-  fs.rmSync(failureLog, { force: true });
   requireEditorDisplay(process.platform, env);
   const ownedRoot = fs.mkdtempSync(path.join(artifactRoot, 'setup-host-'));
   const extension = path.join(ownedRoot, 'empty extension');
@@ -131,11 +134,24 @@ export async function verifyHostPrerequisites(
     fs.writeFileSync(publishedReceipt, `${JSON.stringify(receipt, null, 2)}\n`);
     return receipt;
   } catch (error) {
+    const original = redactHostDiagnosticsPrefix(String(error), 1024).toString('utf8');
+    const summary = error instanceof FixtureProducerError
+      ? `kind=${error.kind}; status=${error.status}; signal=${error.signal}; ${original}` : original;
     const detail = error instanceof FixtureProducerError
-      ? `kind=${error.kind}; status=${error.status}; signal=${error.signal}\n${error.stdout}\n${error.stderr}`
-      : String(error);
-    fs.writeFileSync(failureLog, redactHostDiagnosticsTail(detail, 64 * 1024));
-    throw new Error(`Native VS Code setup failed before producer work; inspect ${failureLog}`, { cause: error });
+      ? `${error.stdout}\n${error.stderr}\n${summary}` : summary;
+    let diagnostic: string;
+    try {
+      fs.writeFileSync(failureLog, redactHostDiagnosticsTail(detail, 64 * 1024));
+      diagnostic = `inspect ${failureLog}`;
+    } catch (diagnosticError) {
+      diagnostic = 'diagnostic log unavailable: '
+        + redactHostDiagnosticsPrefix(String(diagnosticError), 512).toString('utf8');
+      if (error instanceof FixtureProducerError) {
+        diagnostic += '; native output: '
+          + redactHostDiagnosticsTail(`${error.stdout}\n${error.stderr}`, 512).toString('utf8');
+      }
+    }
+    throw new Error(`Native VS Code setup failed before producer work: ${summary}; ${diagnostic}`, { cause: error });
   } finally {
     options.signal?.removeEventListener('abort', onAbort);
     process.removeListener('SIGINT', onInterrupt);

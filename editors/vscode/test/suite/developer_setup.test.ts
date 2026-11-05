@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { FixtureProducerError, runFixtureProducer } from '../actionableQueueFixture';
 import { requireEditorDisplay, verifyHostPrerequisites } from '../hostPrerequisites';
+import { verifyEditorSetup, type EditorSetupRuntime } from '../verifySetup';
 
 interface SetupReport {
   requirement_sources: Array<{ path: string; sha256: string }>;
@@ -88,6 +89,16 @@ suite('Developer setup capability boundary', function () {
 
   function collect(env: NodeJS.ProcessEnv = {}) {
     return diagnostic.collectDeveloperSetup({ root, env, platform: 'linux', nodeVersion: '25.1.0' });
+  }
+
+  async function withArtifactRoot<T>(body: () => Promise<T>): Promise<T> {
+    const previous = process.env.RIPR_TEST_ARTIFACT_ROOT;
+    process.env.RIPR_TEST_ARTIFACT_ROOT = root;
+    try { return await body(); }
+    finally {
+      if (previous === undefined) delete process.env.RIPR_TEST_ARTIFACT_ROOT;
+      else process.env.RIPR_TEST_ARTIFACT_ROOT = previous;
+    }
   }
 
   test('reads changed source requirements and leaves execution capabilities unclaimed', () => {
@@ -184,6 +195,138 @@ suite('Developer setup capability boundary', function () {
     assert.ok(!json.includes('private-user'));
     assert.ok(!json.includes('private-password'));
     assert.ok(!json.includes('private-ca-value'));
+  });
+
+  for (const phase of ['report refusal', 'installed compiler failure', 'missing installed compiler'] as const) {
+    test('public verification clears prior success before ' + phase, async () => {
+      const npmCandidates = [process.env.npm_execpath
+        ? path.join(path.dirname(fs.realpathSync.native(process.env.npm_execpath)), 'npm-cli.js') : undefined,
+      path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'),
+      path.resolve(path.dirname(process.execPath), '../lib/node_modules/npm/bin/npm-cli.js')];
+      const npmCli = npmCandidates.find(candidate => candidate && fs.existsSync(candidate));
+      assert.ok(npmCli, 'installed npm CLI is required for the public setup command control');
+      const editor = path.join(root, 'editors/vscode');
+      const packageSource = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../package.json'), 'utf8'));
+      fs.writeFileSync(path.join(editor, 'package.json'), JSON.stringify({ engines: { vscode: '^1.95.0' },
+        scripts: { 'setup:verify-editor': packageSource.scripts['setup:verify-editor'] } }));
+      fs.writeFileSync(path.join(root, '.github/workflows/vscode-e2e.yml'),
+        '      node-version: ' + process.versions.node.split('.')[0] + '\n');
+      for (const directory of ['test', 'node_modules/typescript/bin', 'node_modules/@vscode/test-electron', 'out/test']) {
+        fs.mkdirSync(path.join(editor, directory), { recursive: true });
+      }
+      fs.copyFileSync(reportSource, path.join(editor, 'test/developerSetup.cjs'));
+      fs.writeFileSync(path.join(editor, 'node_modules/@vscode/test-electron/package.json'), '{}');
+      if (phase !== 'missing installed compiler') {
+        fs.writeFileSync(path.join(editor, 'node_modules/typescript/bin/tsc'),
+          'process.stderr.write("CONTROLLED_TSC_ENTERED\\n"); process.exitCode = 23;');
+      }
+      const downstreamMarker = path.join(root, 'unexpected-host-or-producer');
+      fs.writeFileSync(path.join(editor, 'out/test/verifySetup.js'),
+        'require("fs").writeFileSync(' + JSON.stringify(downstreamMarker) + ', "unexpected");');
+      const artifacts = path.join(root, 'artifacts');
+      fs.mkdirSync(artifacts);
+      fs.writeFileSync(path.join(artifacts, 'setup-editor-host.json'), '{"status":"pass","nonce":"old"}');
+      fs.writeFileSync(path.join(artifacts, 'setup-editor-host.log'), 'old diagnostic');
+      fs.writeFileSync(path.join(artifacts, 'unrelated.txt'), 'keep');
+      const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', RIPR_TEST_ARTIFACT_ROOT: artifacts,
+        npm_config_cache: path.join(root, 'npm-cache'), npm_config_update_notifier: 'false',
+        DISPLAY: ':321', WAYLAND_DISPLAY: '' };
+      if (phase === 'report refusal') {
+        env.DISPLAY = '';
+        if (process.platform !== 'linux') fs.writeFileSync(path.join(root, 'rust-toolchain.toml'), 'channel = []\n');
+      }
+      const defaultOutput = await runFixtureProducer(process.execPath,
+        [path.join(editor, 'test/developerSetup.cjs'), '--json'], { cwd: editor, env, timeoutMs: nativeBudget })
+        .catch(error => { assert.ok(error instanceof FixtureProducerError); return error.stdout; });
+      assert.strictEqual(JSON.parse(defaultOutput).mode, 'read_only');
+      assert.strictEqual(JSON.parse(fs.readFileSync(path.join(artifacts, 'setup-editor-host.json'), 'utf8')).nonce, 'old');
+      const error = await runFixtureProducer(process.execPath, [npmCli, 'run', 'setup:verify-editor'], {
+        cwd: editor, env, timeoutMs: nativeBudget
+      }).then(() => undefined, caught => caught as Error);
+      assert.ok(error instanceof FixtureProducerError);
+      assert.strictEqual(error.status, phase === 'installed compiler failure' ? 23 : 1);
+      assert.strictEqual(error.stderr.includes('CONTROLLED_TSC_ENTERED'), phase === 'installed compiler failure');
+      if (phase === 'missing installed compiler') assert.ok(error.stderr.includes('MODULE_NOT_FOUND'));
+      assert.ok(error.stdout.includes('"mode": "explicit_editor_verification_preflight"'));
+      assert.ok(error.stdout.includes('"prior_setup_evidence": "invalidated"'));
+      assert.strictEqual(fs.existsSync(path.join(artifacts, 'setup-editor-host.json')), false);
+      assert.strictEqual(fs.existsSync(path.join(artifacts, 'setup-editor-host.log')), false);
+      assert.strictEqual(fs.existsSync(downstreamMarker), false);
+      assert.strictEqual(fs.readFileSync(path.join(artifacts, 'unrelated.txt'), 'utf8'), 'keep');
+    });
+  }
+
+  for (const phase of ['display', 'acquisition'] as const) {
+    test('direct verification clears prior success before ' + phase + ' refusal', async () => {
+      fs.writeFileSync(path.join(root, 'setup-editor-host.json'), '{"status":"pass","nonce":"old"}');
+      fs.writeFileSync(path.join(root, 'setup-editor-host.log'), 'old diagnostic');
+      const events: string[] = [];
+      const reports: Array<{ record: Record<string, unknown>; failed: boolean }> = [];
+      const token = 'ghp_' + 'A'.repeat(36);
+      const runtime: EditorSetupRuntime = {
+        requireEditorDisplay: () => {
+          events.push('display');
+          requireEditorDisplay('linux', phase === 'display' ? {} : { DISPLAY: ':321' });
+        },
+        downloadVSCode: async () => { events.push('acquisition'); throw new Error('acquisition denied ' + token); },
+        verifyHostPrerequisites: async () => { events.push('native'); throw new Error('unexpected native host'); },
+        report: (record, failed) => reports.push({ record, failed })
+      };
+      await withArtifactRoot(() => assert.rejects(verifyEditorSetup(runtime)));
+      assert.deepStrictEqual(events, phase === 'display' ? ['display'] : ['display', 'acquisition']);
+      assert.strictEqual(fs.existsSync(path.join(root, 'setup-editor-host.json')), false);
+      assert.strictEqual(fs.existsSync(path.join(root, 'setup-editor-host.log')), false);
+      assert.strictEqual(reports.length, 1);
+      assert.strictEqual(reports[0].failed, true);
+      assert.deepStrictEqual(reports[0].record.phases, {
+        acquisition: phase === 'display' ? 'not_run' : 'fail', native_host: 'not_run',
+        genuine_producer: 'not_run', canonical_editor_suite: 'not_run',
+        full_development_validation: 'not_run', fresh_task: 'not_proven'
+      });
+      assert.ok(!String(reports[0].record.error).includes(token));
+    });
+  }
+
+  test('a native spawn refusal retains its useful reason in the pointed setup log', async () => {
+    const reports: Record<string, unknown>[] = [];
+    const error = await withArtifactRoot(() => verifyEditorSetup({
+      requireEditorDisplay: () => {}, downloadVSCode: async () => path.join(root, 'missing-native-host'),
+      verifyHostPrerequisites: (command, artifacts) => verifyHostPrerequisites(command, artifacts, {
+        env: { ...process.env, DISPLAY: ':321' },
+        runProcess: (exe, args, options) => runFixtureProducer(exe, args, { ...options, onProgress: () => {} })
+      }),
+      report: record => reports.push(record)
+    })).then(() => undefined, caught => caught as Error);
+    assert.ok(error instanceof Error);
+    assert.ok(error.cause instanceof FixtureProducerError);
+    assert.strictEqual(error.cause.kind, 'spawn_failure');
+    if (process.platform !== 'win32') assert.ok(error.cause.message.includes('ENOENT'));
+    const log = fs.readFileSync(path.join(root, 'setup-editor-host.log'), 'utf8');
+    assert.deepStrictEqual([log.includes(error.cause.message), String(reports[0].error).includes(error.cause.message)],
+      [true, true], 'pointed setup log or outer report omitted the native spawn reason');
+  });
+
+  test('a refused diagnostic write preserves the original native failure and cleanup', async () => {
+    let original: unknown;
+    const error = await verifyHostPrerequisites('controlled-native-host', root, {
+      env: { ...process.env, DISPLAY: ':321' },
+      runProcess: async (_command, _args, options) => {
+        fs.mkdirSync(path.join(root, 'setup-editor-host.log'));
+        try {
+          return await runFixtureProducer(process.execPath,
+            ['-e', 'process.stderr.write("missing native library"); process.exitCode = 17;'],
+            { ...options, onProgress: () => {}, env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' } });
+        } catch (caught) { original = caught; throw caught; }
+      }
+    }).then(() => undefined, caught => caught as Error);
+    assert.ok(error instanceof Error);
+    assert.strictEqual(error.cause, original);
+    assert.ok(error.cause instanceof FixtureProducerError);
+    assert.strictEqual(error.cause.status, 17);
+    assert.ok(error.message.includes('status=17'));
+    assert.ok(error.message.includes('diagnostic log unavailable'));
+    assert.ok(!error.message.includes('inspect '), 'failed diagnostic write was presented as an available log');
+    assert.ok(!fs.readdirSync(root).some(name => name.startsWith('setup-host-')));
   });
 
   function writeSentinel(env: NodeJS.ProcessEnv, nonce = env.RIPR_SETUP_HOST_NONCE) {

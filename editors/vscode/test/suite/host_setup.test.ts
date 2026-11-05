@@ -102,6 +102,8 @@ suite('VS Code test host setup', () => {
   }
 
   test('a rejected host download invokes zero producers and retains the original failure', async () => {
+    fs.mkdirSync(artifactRoot);
+    fs.writeFileSync(path.join(artifactRoot, 'setup-editor-host.json'), '{"status":"pass","nonce":"old"}');
     runtime.downloadVSCode = async () => {
       events.push('download');
       throw new Error('host download blocked by test network policy');
@@ -113,6 +115,7 @@ suite('VS Code test host setup', () => {
     assert.strictEqual(producerCalls.length, 0);
     assert.strictEqual(hostCalls.length, 0);
     assert.strictEqual(process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT, undefined);
+    assert.strictEqual(fs.existsSync(path.join(artifactRoot, 'setup-editor-host.json')), false);
     assertFailure('host download blocked by test network policy');
   });
 
@@ -131,6 +134,8 @@ suite('VS Code test host setup', () => {
   });
 
   test('an absent display stops before acquisition producer and editor suites', async () => {
+    fs.mkdirSync(artifactRoot);
+    fs.writeFileSync(path.join(artifactRoot, 'setup-editor-host.json'), '{"status":"pass","nonce":"old"}');
     runtime.requireEditorDisplay = () => {
       events.push('display-check');
       throw new Error('display prerequisite unavailable');
@@ -139,6 +144,7 @@ suite('VS Code test host setup', () => {
     assert.deepStrictEqual(events, ['display-check']);
     assert.strictEqual(producerCalls.length, 0);
     assert.strictEqual(hostCalls.length, 0);
+    assert.strictEqual(fs.existsSync(path.join(artifactRoot, 'setup-editor-host.json')), false);
     assertFailure('display prerequisite unavailable');
   });
 

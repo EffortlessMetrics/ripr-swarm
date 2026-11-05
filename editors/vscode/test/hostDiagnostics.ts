@@ -100,6 +100,11 @@ export function redactHostDiagnosticsTail(text: string, maxBytes: number): Buffe
   return utf8Suffix(Buffer.from(redactHostDiagnosticsText(text), 'utf8'), maxBytes);
 }
 
+/** Preserve the original error before optional diagnostic context fills the budget. */
+export function redactHostDiagnosticsPrefix(text: string, maxBytes: number): Buffer {
+  return utf8Prefix(Buffer.from(redactHostDiagnosticsText(text), 'utf8'), maxBytes);
+}
+
 export function retainHostDiagnostics(
   input: RetainHostDiagnosticsInput
 ): RetainHostDiagnosticsResult {

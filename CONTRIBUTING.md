@@ -72,7 +72,8 @@ xvfb-run -a npm run setup:verify-editor
 ```
 
 On a supported live desktop display, use `npm run setup:verify-editor` directly.
-This explicit action runs the cheap report, invokes the installed TypeScript
+This explicit action first invalidates only the prior `setup-editor-host.json`
+and `setup-editor-host.log`, then runs the cheap report, invokes the installed TypeScript
 compiler directly, uses the real downloader, and runs one empty extension-host
 sentinel under the existing process owner. There is no implicit npm installer.
 Missing display, acquisition failure, missing native libraries, a bad receipt,
@@ -80,8 +81,14 @@ timeout or cancellation leave producer and e2e phases `not_run`. The smoke has a
 60-second process deadline; downloader retries retain test-electron's idle-timeout
 semantics. Timeout/cancellation terminate the owned process tree before cleanup.
 The receipt records the observed VS Code/Electron versions, native status and one
-smoke case in `target/ripr/setup-editor-host.json`; a failure keeps a bounded
-`setup-editor-host.log`. `RIPR_TEST_ARTIFACT_ROOT` relocates both and the host cache.
+smoke case in `target/ripr/setup-editor-host.json`; a native failure attempts to
+retain a bounded redacted `setup-editor-host.log`. A refused diagnostic write
+remains secondary to the original native error. `RIPR_TEST_ARTIFACT_ROOT`
+relocates both and the host cache. Report refusal or a missing/failing installed
+compiler cannot leave an earlier pass after the explicit preflight starts.
+The preflight output identifies its evidence reset; ordinary `setup:check` and
+the standalone report remain read-only and preserve existing receipts. Failure
+to start Node or to invalidate the named files is not a completed setup attempt.
 
 ### Explicit full-development validation
 

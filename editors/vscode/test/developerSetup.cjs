@@ -1,5 +1,5 @@
-// A source-checkout diagnostic: Node built-ins only, no child process or writes.
-// Executed verification belongs to the separately named setup:verify-editor.
+// Default source-checkout diagnosis uses Node built-ins with no writes or subprocesses.
+// Only the explicit verification preflight resets its two owned evidence files.
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
@@ -39,6 +39,17 @@ function directoryObservation(filename) {
   } catch (error) {
     return error && error.code === 'ENOENT' ? 'absent' : 'access_not_established';
   }
+}
+
+// Shared by the explicit npm preflight and direct TS entrypoints. Never remove
+// a directory or any other artifact, cache, workspace, or caller-owned file.
+function resetEditorSetupEvidence(artifactRoot = path.resolve(process.env.RIPR_TEST_ARTIFACT_ROOT
+  ?? path.join(__dirname, '../../../target/ripr'))) {
+  const publishedReceipt = path.join(artifactRoot, 'setup-editor-host.json');
+  const failureLog = path.join(artifactRoot, 'setup-editor-host.log');
+  fs.rmSync(publishedReceipt, { force: true });
+  fs.rmSync(failureLog, { force: true });
+  return { publishedReceipt, failureLog };
 }
 
 function collectDeveloperSetup(options = {}) {
@@ -164,7 +175,9 @@ function collectDeveloperSetup(options = {}) {
 }
 
 function renderDeveloperSetup(report) {
-  return ['Developer setup observations (read-only)',
+  return [report.mode === 'explicit_editor_verification_preflight'
+    ? 'Explicit editor verification preflight (prior setup evidence invalidated)'
+    : 'Developer setup observations (read-only)',
     ...report.checks.map(check => `${check.check_id}: ${check.status}\n  ${bounded(typeof check.observed_fact === 'string'
       ? check.observed_fact : JSON.stringify(check.observed_fact))}\n  Next: ${[
       check.next_action.command ? `${check.next_action.cwd}: ${check.next_action.command.join(' ')}` : undefined,
@@ -173,7 +186,7 @@ function renderDeveloperSetup(report) {
 }
 
 function main(args = process.argv.slice(2)) {
-  if (args.some(arg => arg !== '--json' && arg !== '--help')) {
+  if (args.some(arg => !['--json', '--help', '--begin-editor-verification'].includes(arg))) {
     process.stderr.write('Usage: node editors/vscode/test/developerSetup.cjs [--json|--help]\n');
     return 2;
   }
@@ -181,10 +194,16 @@ function main(args = process.argv.slice(2)) {
     process.stdout.write('Read-only developer observations; no builds, writes, subprocesses or downloads.\nExplicit editor proof: cd editors/vscode && npm run setup:verify-editor\n');
     return 0;
   }
+  const explicitVerification = args.includes('--begin-editor-verification');
+  if (explicitVerification) resetEditorSetupEvidence();
   const report = collectDeveloperSetup();
+  if (explicitVerification) {
+    report.mode = 'explicit_editor_verification_preflight';
+    report.prior_setup_evidence = 'invalidated';
+  }
   process.stdout.write((args.includes('--json') ? JSON.stringify(report, null, 2) : renderDeveloperSetup(report)) + '\n');
   return report.known_blockers.length ? 1 : 0;
 }
 
-module.exports = { collectDeveloperSetup, renderDeveloperSetup, main };
+module.exports = { collectDeveloperSetup, renderDeveloperSetup, resetEditorSetupEvidence, main };
 if (require.main === module) process.exitCode = main();
