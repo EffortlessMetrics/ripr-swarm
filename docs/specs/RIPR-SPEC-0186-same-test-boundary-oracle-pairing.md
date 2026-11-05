@@ -356,3 +356,16 @@ relation are out of scope.
 - `same_test_boundary_oracle_pairing`: a predicate does not read `exposed`
   unless one test both feeds a boundary input to the owner and holds a
   discriminating oracle on that call's result.
+
+Per-byte counter-boundary specialization must refuse additional returns,
+loop exits, conditional tails, post-loop statements, and opaque fallible
+suffixes that can mask the firing branch. Its admitted normal output path
+ends with a simple `Ok` value after the loop; the loop suffix is straight-line
+calculation with only the character `to_digit(16).ok_or(...)?` escape.
+Its error must be a distinct unit variant declared in the same retained
+module as the directly named Result error enum, or a distinct string literal
+for a direct string-reference error type. Unknown paths, aliases and
+intermediate error conversions decline. This retains the grid-bits
+`BadDigit` escape while refusing a `TooLong` fallback.
+Differing asserted return spellings alone do not identify which branch
+supplied a result.

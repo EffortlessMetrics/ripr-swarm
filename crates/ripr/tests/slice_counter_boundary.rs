@@ -238,3 +238,43 @@ fn an_established_count_that_disagrees_with_the_admitted_calls_refuses() -> Resu
     assert_ne!(plain_class(PLAIN_PINS, alias)?, ExposureClass::Exposed);
     Ok(())
 }
+
+#[test]
+fn a_later_fallback_return_keeps_the_boundary_below_exposed() -> Result<(), String> {
+    let honest = source("16 < count", &format!("{FF16}\n{FF17}"));
+    for masked in [
+        honest.replace(
+            "        let digit",
+            "        if count == 17 { return Err(ChunkError::TooLong); }\n        let digit",
+        ),
+        honest.replace(
+            "    Ok(size)",
+            "    if count == 17 { Err(ChunkError::TooLong) } else { Ok(size) }",
+        ),
+        honest.replace("ChunkError::BadDigit)?", "ChunkError::TooLong)?"),
+        honest
+            .replace(
+                "        let digit",
+                "        let fallback = ChunkError::TooLong;\n        let digit",
+            )
+            .replace("ChunkError::BadDigit)?", "fallback)?"),
+        format!(
+            "{}\nenum OtherError {{ BadDigit }}\nimpl From<OtherError> for ChunkError {{ fn from(_: OtherError) -> Self {{ Self::TooLong }} }}\n",
+            honest.replace("ChunkError::BadDigit)?", "OtherError::BadDigit)?")
+        ),
+    ] {
+        assert_ne!(masked, honest, "premise: masking mutation applied");
+        let findings = TempRepo::create(&masked, &diff())?.findings()?;
+        let predicate = findings
+            .iter()
+            .filter(|finding| finding.probe.family == ProbeFamily::Predicate)
+            .collect::<Vec<_>>();
+        assert_eq!(predicate.len(), 1, "{findings:?}");
+        assert_ne!(predicate[0].class, ExposureClass::Exposed, "{findings:?}");
+    }
+    assert_eq!(
+        class_for("16 < count", &format!("{FF16}\n{FF17}"))?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

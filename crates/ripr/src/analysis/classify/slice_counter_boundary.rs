@@ -18,7 +18,7 @@ use crate::domain::{
 use crate::value_origins::LocatedValueFact as ValueFact;
 use ra_ap_syntax::{
     AstNode,
-    ast::{self, HasAttrs, HasLoopBody, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasLoopBody, HasName},
 };
 use std::path::PathBuf;
 
@@ -261,8 +261,11 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
     {
         return None;
     }
-    let (slice_param, predicate, fire_value) =
-        per_byte_counter_shape(owner, &context.probe.expression)?;
+    let (slice_param, predicate, fire_value) = per_byte_counter_shape(
+        owner,
+        &context.probe.expression,
+        &context.index.files().get(&owner.file)?.source,
+    )?;
     let counter = predicate.counter.clone();
     let slice_position = immutable_slice_parameter(owner, &slice_param)?;
     let mut rows = Vec::new();
@@ -336,12 +339,16 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
 fn per_byte_counter_shape(
     owner: &FunctionSummary,
     expression: &str,
+    retained_source: &str,
 ) -> Option<(String, CounterPredicate, String)> {
     let predicate = parse_counter_predicate(expression)?;
     let counter = predicate.counter.as_str();
     let parse = parse_clean_source_file(&owner.body)?;
     let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
-    if function.async_token().is_some() || function.attrs().next().is_some() {
+    if function.async_token().is_some()
+        || function.attrs().next().is_some()
+        || function.generic_param_list().is_some()
+    {
         return None;
     }
     let body = function.body()?;
@@ -524,7 +531,232 @@ fn per_byte_counter_shape(
         return None;
     };
     let fire_value = compact(&fire.expr()?.syntax().text().to_string());
+    // Bound the entire normal output path: nothing after the loop can
+    // manufacture the firing error, and the tail is a simple success value.
+    if statements.len() != for_index + 1 {
+        return None;
+    }
+    let ast::Expr::CallExpr(success) = body.stmt_list()?.tail_expr()? else {
+        return None;
+    };
+    if compact(&success.expr()?.syntax().text().to_string()) != "Ok" {
+        return None;
+    }
+    let success_args = success.arg_list()?.args().collect::<Vec<_>>();
+    let [success_arg] = success_args.as_slice() else {
+        return None;
+    };
+    if !matches!(success_arg, ast::Expr::PathExpr(_) | ast::Expr::Literal(_)) {
+        return None;
+    }
+    let ast::Expr::CallExpr(error) = fire.expr()? else {
+        return None;
+    };
+    if compact(&error.expr()?.syntax().text().to_string()) != "Err" {
+        return None;
+    }
+    let error_args = error.arg_list()?.args().collect::<Vec<_>>();
+    let [error_arg] = error_args.as_slice() else {
+        return None;
+    };
+    if !matches!(error_arg, ast::Expr::PathExpr(_) | ast::Expr::Literal(_)) {
+        return None;
+    }
+    let firing_error = compact(&error_arg.syntax().text().to_string());
+    let loop_body = for_loop.loop_body()?;
+    if loop_body.stmt_list()?.tail_expr().is_some() {
+        return None;
+    }
+    // The suffix is straight-line calculation. Its sole admitted early exit
+    // is `option.ok_or(OtherError)?`, whose explicit error differs from the
+    // firing value; opaque fallible calls and conditional fallbacks decline.
+    for statement in &loop_statements[2..] {
+        if statement.syntax().descendants().any(|node| {
+            ast::IfExpr::can_cast(node.kind())
+                || ast::MatchExpr::can_cast(node.kind())
+                || ast::BlockExpr::can_cast(node.kind())
+                || ast::MacroCall::can_cast(node.kind())
+        }) {
+            return None;
+        }
+        for try_expr in statement
+            .syntax()
+            .descendants()
+            .filter_map(ast::TryExpr::cast)
+        {
+            let ast::Expr::MethodCallExpr(method) = try_expr.expr()? else {
+                return None;
+            };
+            if method.name_ref()?.text() != "ok_or" {
+                return None;
+            }
+            let args = method.arg_list()?.args().collect::<Vec<_>>();
+            let [other_error] = args.as_slice() else {
+                return None;
+            };
+            if compact(&method.receiver()?.syntax().text().to_string()) != "(baschar).to_digit(16)"
+                || !distinct_identity_error_escape(
+                    &function,
+                    retained_source,
+                    &firing_error,
+                    other_error,
+                )
+            {
+                return None;
+            }
+        }
+    }
+
+    // A later return can supply the firing value after a boundary edit has
+    // stopped this branch from firing. Distinct asserted outcomes then do not
+    // establish that this predicate controls the result.
+    if body.syntax().descendants().any(|node| {
+        ast::ReturnExpr::cast(node.clone())
+            .is_some_and(|returned| returned.syntax() != fire.syntax())
+            || ast::BreakExpr::can_cast(node.kind())
+            || ast::ContinueExpr::can_cast(node.kind())
+    }) {
+        return None;
+    }
     Some((slice_param, predicate, fire_value))
+}
+
+/// `?` is admitted only when it cannot convert an intermediate error into
+/// the firing value: both errors have the directly declared Result error type.
+fn distinct_identity_error_escape(
+    function: &ast::Fn,
+    retained_source: &str,
+    firing_error: &str,
+    other_error: &ast::Expr,
+) -> bool {
+    let Some(ast::Type::PathType(result)) = function.ret_type().and_then(|ret| ret.ty()) else {
+        return false;
+    };
+    let Some(path) = result.path() else {
+        return false;
+    };
+    if compact(&path.syntax().text().to_string()).split('<').next() != Some("Result") {
+        return false;
+    }
+    let Some(args) = path
+        .segment()
+        .and_then(|segment| segment.generic_arg_list())
+    else {
+        return false;
+    };
+    let args = args.generic_args().collect::<Vec<_>>();
+    let [_, ast::GenericArg::TypeArg(error)] = args.as_slice() else {
+        return false;
+    };
+    let Some(error) = error.ty() else {
+        return false;
+    };
+    let error_type = compact(&error.syntax().text().to_string());
+    let other = compact(&other_error.syntax().text().to_string());
+    if firing_error == other {
+        return false;
+    }
+    let Some(source) = parse_clean_source_file(retained_source) else {
+        return false;
+    };
+    let Some(name) = function.name() else {
+        return false;
+    };
+    let mut functions = source
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|candidate| {
+            candidate
+                .name()
+                .is_some_and(|candidate| candidate.text() == name.text())
+        });
+    let Some(owner) = functions.next() else {
+        return false;
+    };
+    if functions.next().is_some() {
+        return false;
+    }
+    // Reject local/imported Result aliases; the prelude Result supplies identity
+    // conversion only after this spelling is known not to name a local type.
+    if source
+        .tree()
+        .syntax()
+        .descendants()
+        .filter(|node| {
+            owner
+                .syntax()
+                .ancestors()
+                .any(|scope| Some(scope) == node.parent())
+                || node.ancestors().any(|ancestor| ancestor == *owner.syntax())
+        })
+        .any(|node| {
+            ast::MacroCall::can_cast(node.kind())
+                || ast::Use::cast(node.clone()).is_some_and(|use_item| {
+                    let text = compact(&use_item.syntax().text().to_string());
+                    text.contains("Result") || text.contains('*')
+                })
+                || ast::TypeAlias::cast(node.clone())
+                    .is_some_and(|item| item.name().is_some_and(|name| name.text() == "Result"))
+                || ast::Struct::cast(node.clone())
+                    .is_some_and(|item| item.name().is_some_and(|name| name.text() == "Result"))
+                || ast::Enum::cast(node.clone())
+                    .is_some_and(|item| item.name().is_some_and(|name| name.text() == "Result"))
+        })
+    {
+        return false;
+    }
+    if matches!(error_type.as_str(), "&str" | "&'staticstr") {
+        // Escape spellings can denote the same value (`"x"` vs `"\\x78"`).
+        // Keep only ordinary unescaped strings until decoded literal identity
+        // is available; raw/escaped spellings cannot establish distinct errors.
+        return firing_error.starts_with('"')
+            && !firing_error.contains('\\')
+            && matches!(other_error, ast::Expr::Literal(_))
+            && other.starts_with('"')
+            && !other.contains('\\');
+    }
+    let Some(firing_variant) = firing_error.strip_prefix(&format!("{error_type}::")) else {
+        return false;
+    };
+    let Some(other_variant) = other.strip_prefix(&format!("{error_type}::")) else {
+        return false;
+    };
+    if !is_simple_identifier(&error_type)
+        || !is_simple_identifier(firing_variant)
+        || !is_simple_identifier(other_variant)
+    {
+        return false;
+    }
+    let mut definitions = source
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Enum::cast)
+        .filter(|definition| {
+            definition
+                .name()
+                .is_some_and(|name| name.text() == error_type)
+        });
+    let Some(definition) = definitions.next() else {
+        return false;
+    };
+    if definitions.next().is_some() {
+        return false;
+    }
+    if owner.syntax().parent() != definition.syntax().parent() {
+        return false;
+    }
+    let Some(variants) = definition.variant_list() else {
+        return false;
+    };
+    [firing_variant, other_variant].into_iter().all(|expected| {
+        variants.variants().any(|variant| {
+            variant.field_list().is_none()
+                && variant.name().is_some_and(|name| name.text() == expected)
+        })
+    })
 }
 
 fn parse_counter_predicate(expression: &str) -> Option<CounterPredicate> {
@@ -644,6 +876,14 @@ mod tests {
         }
     }
 
+    fn shape(
+        owner: &FunctionSummary,
+        expression: &str,
+    ) -> Option<(String, CounterPredicate, String)> {
+        let source = format!("enum ChunkError {{ TooLong, BadDigit }}\n{}", owner.body);
+        per_byte_counter_shape(owner, expression, &source)
+    }
+
     const GRID_BITS: &str = "pub fn chunk_size(hex: &[u8]) -> Result<u64, ChunkError> {\n    let mut size: u64 = 0;\n    let mut count = 0;\n    for &b in hex {\n        count += 1;\n        if 16 < count {\n            return Err(ChunkError::TooLong);\n        }\n        let digit = (b as char).to_digit(16).ok_or(ChunkError::BadDigit)?;\n        size = (size << 4) | u64::from(digit);\n    }\n    Ok(size)\n}";
 
     fn boundary_with_lengths(expression: &str, lengths: &[usize]) -> Option<SliceCounterBoundary> {
@@ -690,7 +930,7 @@ mod tests {
     #[test]
     fn grid_bits_owner_shape_is_recognized() -> Result<(), ()> {
         let owner = owner_body(GRID_BITS);
-        let (slice, found, fire) = per_byte_counter_shape(&owner, "16 < count").ok_or(())?;
+        let (slice, found, fire) = shape(&owner, "16 < count").ok_or(())?;
         assert_eq!(fire, "Err(ChunkError::TooLong)");
         assert_eq!(slice, "hex");
         assert_eq!(found.counter, "count");
@@ -718,16 +958,68 @@ mod tests {
                 "    let mut count = 0;\n",
                 "    let mut count = 0;\n    let hex = &hex[..4];\n",
             ),
+            // A generic error parameter can shadow the retained enum name.
+            GRID_BITS.replace("fn chunk_size(", "fn chunk_size<ChunkError: Errors>("),
             // counter starts at one
             GRID_BITS.replace("let mut count = 0;", "let mut count = 1;"),
             // increment by two
             GRID_BITS.replace("count += 1;", "count += 2;"),
         ] {
             assert!(
-                per_byte_counter_shape(&owner_body(&body), "16 < count").is_none(),
+                shape(&owner_body(&body), "16 < count").is_none(),
                 "{body}"
             );
         }
+    }
+
+    #[test]
+    fn a_fallback_return_cannot_supply_the_counter_firing_value() {
+        let fallback = GRID_BITS.replace(
+            "        let digit",
+            "        if count == 17 { return Err(ChunkError::TooLong); }\n        let digit",
+        );
+        assert!(shape(&owner_body(&fallback), "16 < count").is_none());
+        let post_loop = GRID_BITS.replace(
+            "    Ok(size)",
+            "    if count == 17 { return Err(ChunkError::TooLong); }\n    Ok(size)",
+        );
+        assert!(shape(&owner_body(&post_loop), "16 < count").is_none());
+        for masked in [
+            GRID_BITS.replace(
+                "    Ok(size)",
+                "    if count == 17 { Err(ChunkError::TooLong) } else { Ok(size) }",
+            ),
+            GRID_BITS.replace("ChunkError::BadDigit)?", "ChunkError::TooLong)?"),
+            GRID_BITS
+                .replace(
+                    "        let digit",
+                    "        let fallback = ChunkError::TooLong;\n        let digit",
+                )
+                .replace("ChunkError::BadDigit)?", "fallback)?"),
+            GRID_BITS.replace("ChunkError::BadDigit)?", "OtherError::BadDigit)?"),
+            GRID_BITS.replace(
+                "        let digit",
+                "        fallible_fallback(count)?;\n        let digit",
+            ),
+        ] {
+            assert!(
+                shape(&owner_body(&masked), "16 < count").is_none(),
+                "{masked}"
+            );
+        }
+        assert!(shape(&owner_body(GRID_BITS), "16 < count").is_some());
+    }
+
+    #[test]
+    fn escaped_literal_alias_cannot_establish_a_distinct_error() {
+        let plain = GRID_BITS
+            .replace("Result<u64, ChunkError>", "Result<u64, &'static str>")
+            .replace("ChunkError::TooLong", "\"too long\"")
+            .replace("ChunkError::BadDigit", "\"bad digit\"");
+        assert!(shape(&owner_body(&plain), "16 < count").is_some());
+        let masked = plain.replace("\"bad digit\"", "\"\\x74oo long\"");
+        assert_ne!(plain, masked);
+        assert!(shape(&owner_body(&masked), "16 < count").is_none());
     }
 
     #[test]
@@ -881,10 +1173,7 @@ mod tests {
                 "        } else {\n            log(count);\n        }\n        let digit",
             ),
         ] {
-            assert!(
-                per_byte_counter_shape(&owner_body(&body), "16 < count").is_none(),
-                "{body}"
-            );
+            assert!(shape(&owner_body(&body), "16 < count").is_none(), "{body}");
         }
     }
 
