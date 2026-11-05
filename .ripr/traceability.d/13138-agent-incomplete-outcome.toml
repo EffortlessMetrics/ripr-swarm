@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0147"
+tests = [
+  "crates/ripr/src/output/human/agent_tests.rs::agent_dispatch_discloses_actual_partial_zero_check_output",
+  "crates/ripr/src/output/human/agent_tests.rs::agent_dispatch_never_completes_incomplete_empty_or_exposed_reports",
+  "crates/ripr/src/output/human/agent_tests.rs::agent_dispatch_keeps_partial_gaps_and_complete_controls",
+]
+code = ["crates/ripr/src/output/human/agent.rs"]
+outputs = ["docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md"]
