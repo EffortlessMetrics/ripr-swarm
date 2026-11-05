@@ -20,14 +20,52 @@ pub(crate) const COMMAND_SHELL_DISCLOSURE: &str = "Commands are written for Bash
 /// single-quote form instead of the unsafe double-quoted one.
 pub(crate) const COMMAND_SHELL_DISCLOSURE_WINDOWS: &str = "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor for spaced paths. A value carrying `$` or backtick keeps the single-quote form instead — both Git Bash and PowerShell would expand it inside double quotes — so paste that value in Git Bash or PowerShell, not cmd.exe (cmd.exe passes single quotes through as literal characters); the same routing applies to a value carrying `%`, which cmd.exe expands even inside double quotes. An interior `\"` in an argument is kept by cmd.exe and PowerShell but dropped by Git Bash (`\"` cannot occur in a Windows filename, so this touches only exotic non-path arguments). A PowerShell form follows a command only when PowerShell needs a different one: the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command that begins with a `NAME=value` environment assignment is Bash syntax only: PowerShell writes it differently (`$env:NAME = 'value'`, which its PowerShell form already does), and cmd.exe rejects it as an unrecognized command. Paste the PowerShell form, or in cmd.exe run `set NAME=value` on its own line first and then the command without the assignment. A command with no PowerShell form after it runs unchanged in cmd.exe and PowerShell, unless a line says its PowerShell form is unavailable. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
 
-/// One-line shell note for a command that runs unchanged in PowerShell, so a
-/// first-time reader is not handed the whole quoting paragraph before any
-/// command needs it (#11570 item 5). Windows keeps the full host paragraph.
-pub(crate) fn short_command_shell_note() -> &'static str {
-    if cfg!(windows) {
+/// One-line shell note for the `ripr status` polling surface (#13242).
+///
+/// The quickstart wires agents to poll plain `ripr status --root .`, and on
+/// Windows the per-poll note used to be the full [`COMMAND_SHELL_DISCLOSURE_WINDOWS`]
+/// paragraph (~1,300 chars, 73% of a real poll's output). Each poll is a fresh
+/// process, so a within-process "show it once" cannot work without making the
+/// read-only status command write marker state; instead the default poll
+/// carries one line that keeps the host shell boundary claim and names the
+/// documented route back to the full disclosure (the global `-v`/`--verbose`
+/// flag, which renders [`agent_status_shell_disclosure`]'s legacy text). The
+/// command-specific PowerShell fence or unavailable line below the command is
+/// unaffected and still renders per command.
+pub(crate) fn status_poll_shell_note(windows_host: bool) -> &'static str {
+    if windows_host {
+        "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor. A `powershell` fence follows only when PowerShell needs a different form. Full shell-quoting disclosure (`$`/backtick/`%` values, `NAME=value` prefixes, WSL limits): rerun with `-v`/`--verbose`.\n\n"
+    } else {
+        "Commands are written for Bash; cmd.exe is not supported. A `powershell` fence follows only when PowerShell needs a different form. Full shell-quoting disclosure: rerun with `-v`/`--verbose`.\n\n"
+    }
+}
+
+/// Shell note for the `ripr status` markdown surface (#13242). With `verbose`
+/// this returns the legacy bytes exactly: the full host disclosure for a
+/// command with a second form, the #11570 short note ("runs unchanged in
+/// PowerShell") for one that does not. Without it, [`status_poll_shell_note`]'
+/// one-liner keeps repeat polls small on both hosts while the boundary claim
+/// stays in the output.
+/// `windows_host` is a parameter (the `shell_arg_for`/`powershell_command_for`
+/// pattern, #4378/#8152) so both hosts' notes are pinned on any machine.
+pub(crate) fn agent_status_shell_disclosure(
+    same_as_bash: bool,
+    windows_host: bool,
+    verbose: bool,
+) -> &'static str {
+    if !verbose {
+        return status_poll_shell_note(windows_host);
+    }
+    if same_as_bash {
+        if windows_host {
+            COMMAND_SHELL_DISCLOSURE_WINDOWS
+        } else {
+            "This command is written for Bash and runs unchanged in PowerShell. cmd.exe is not supported.\n\n"
+        }
+    } else if windows_host {
         COMMAND_SHELL_DISCLOSURE_WINDOWS
     } else {
-        "This command is written for Bash and runs unchanged in PowerShell. cmd.exe is not supported.\n\n"
+        COMMAND_SHELL_DISCLOSURE
     }
 }
 
@@ -1847,6 +1885,75 @@ mod tests {
         // grow a cmd.exe route it does not honor.
         assert!(COMMAND_SHELL_DISCLOSURE.contains("cmd.exe is not supported"));
         assert!(!COMMAND_SHELL_DISCLOSURE.contains("set NAME=value"));
+    }
+
+    /// #13242: the `ripr status` default poll note is one line on both hosts,
+    /// keeps the host shell boundary claim the status tests pin, and names
+    /// the `-v`/`--verbose` route back to the full disclosure.
+    #[test]
+    fn status_poll_shell_note_is_one_line_and_keeps_the_boundary_claim() {
+        for windows_host in [true, false] {
+            let note = status_poll_shell_note(windows_host);
+            assert!(!note.trim_end().contains('\n'), "one line: {note}");
+            assert!(
+                note.contains("`-v`/`--verbose`"),
+                "route to the full disclosure: {note}"
+            );
+            if windows_host {
+                assert!(note.contains("Windows console"), "{note}");
+            } else {
+                assert!(note.contains("cmd.exe is not supported."), "{note}");
+            }
+            // Materially smaller than the essay it replaces (at least 3x on
+            // both hosts; the Bash essay is already the shorter one).
+            let essay = if windows_host {
+                COMMAND_SHELL_DISCLOSURE_WINDOWS
+            } else {
+                COMMAND_SHELL_DISCLOSURE
+            };
+            assert!(
+                note.len() * 3 < essay.len(),
+                "poll note must be a small fraction of the essay: {} vs {}",
+                note.len(),
+                essay.len()
+            );
+        }
+    }
+
+    /// #13242: `-v`/`--verbose` restores the legacy disclosure bytes exactly
+    /// (full essay for a command with a second form, the short note for one
+    /// that runs unchanged); the default demotes both to the one-line note.
+    /// Host is a parameter so both hosts pin on any machine.
+    #[test]
+    fn agent_status_shell_disclosure_verbose_restores_legacy_bytes() {
+        for windows_host in [true, false] {
+            let full = if windows_host {
+                COMMAND_SHELL_DISCLOSURE_WINDOWS
+            } else {
+                COMMAND_SHELL_DISCLOSURE
+            };
+            let short = if windows_host {
+                COMMAND_SHELL_DISCLOSURE_WINDOWS
+            } else {
+                "This command is written for Bash and runs unchanged in PowerShell. cmd.exe is not supported.\n\n"
+            };
+            assert_eq!(
+                agent_status_shell_disclosure(false, windows_host, true),
+                full
+            );
+            assert_eq!(
+                agent_status_shell_disclosure(true, windows_host, true),
+                short
+            );
+            assert_eq!(
+                agent_status_shell_disclosure(false, windows_host, false),
+                status_poll_shell_note(windows_host)
+            );
+            assert_eq!(
+                agent_status_shell_disclosure(true, windows_host, false),
+                status_poll_shell_note(windows_host)
+            );
+        }
     }
 
     #[test]
