@@ -147,7 +147,9 @@ fn bucket(root: &Root, relative: &Path) -> &'static str {
     }
     if relative.starts_with("llvm-cov-target") {
         if relative.parent() == Some(Path::new("llvm-cov-target"))
-            && relative.extension().is_some_and(|extension| extension == "profraw")
+            && relative
+                .extension()
+                .is_some_and(|extension| extension == "profraw")
         {
             return "raw_profiles";
         }
@@ -466,10 +468,9 @@ fn snapshot(roots: &[Root], limits: Limits) -> Snapshot {
     let mut walked: Vec<&Path> = Vec::new();
     for root in roots {
         if walked.iter().any(|prior| root.path.starts_with(prior)) {
-            scan.result.roots.insert(
-                root.label,
-                json!({"status": "included_in_prior_root"}),
-            );
+            scan.result
+                .roots
+                .insert(root.label, json!({"status": "included_in_prior_root"}));
             continue;
         }
         if walked.iter().any(|prior| prior.starts_with(&root.path)) {

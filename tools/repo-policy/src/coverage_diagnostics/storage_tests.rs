@@ -48,7 +48,8 @@ fn allocation_buckets_distinguish_profiles_builds_and_native_fixture_storage() -
     let mut file = File::create(&profile).map_err(|error| error.to_string())?;
     file.write_all(b"profile fixture")
         .map_err(|error| error.to_string())?;
-    file.set_len(1024 * 1024).map_err(|error| error.to_string())?;
+    file.set_len(1024 * 1024)
+        .map_err(|error| error.to_string())?;
     let metadata = file.metadata().map_err(|error| error.to_string())?;
     assert!(metadata.blocks() * 512 < metadata.len(), "sparse setup");
     fs::hard_link(&profile, target.join("llvm-cov-target/two.profraw"))
