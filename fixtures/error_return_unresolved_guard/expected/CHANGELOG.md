@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_return_unresolved_guard (4)
+
+Reason:
+RIPR-SPEC-0158: preserve public ripr#1579 by naming the actual AST guarded error producer edge, retaining infection_unknown and withholding an impossible assertion/input prescription; current/discarded/overwritten/shadowed/unentered production controls are discriminating
+
+Command:
+`cargo xtask goldens bless error_return_unresolved_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

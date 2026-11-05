@@ -3,7 +3,7 @@ use super::{CompactGripContext, FunctionSummary, RepoSeam, TestSummary};
 use crate::analysis::classify::{
     OwnerPinSyntax, OwnerReturnPin, ProbeContext, WrapperEntryPairing,
     activation_and_boundary_input, has_same_test_boundary_oracle_pairing,
-    has_wrapper_boundary_oracle_pairing, helper_pins_owner_call, targeted_free_call_reaches_owner,
+    has_wrapper_boundary_oracle_pairing, targeted_free_call_reaches_owner,
 };
 use crate::domain::{DeltaKind, Probe, ProbeFamily, ProbeId, SourceLocation};
 
@@ -135,13 +135,7 @@ pub(super) fn missing(
         {
             return None;
         }
-        syntax.helper_loan(test, assertion, index).filter(|loan| {
-            helper_pins_owner_call(
-                &loan.helper,
-                &super::strip_comments_and_strings(&test.body),
-                &owner.name,
-            )
-        })
+        syntax.helper_loan(test, assertion, index)
     };
 
     if unresolved {

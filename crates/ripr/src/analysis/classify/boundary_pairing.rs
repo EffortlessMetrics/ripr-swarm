@@ -26,6 +26,7 @@ use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 use crate::value_origins::LocatedValueFact as ValueFact;
 use ra_ap_syntax::{AstNode, ast};
 
+mod borrowed_result;
 mod bound_result;
 
 /// Token carried in the discriminate summary when a predicate would otherwise
@@ -378,7 +379,12 @@ fn test_pairs_boundary_input_with_oracle(
         // through the owner-pin-approved loan's exact mapping (#6482).
         if !(test.start_line..=test.end_line).contains(&assertion.line) {
             return helper_loan(test, assertion).is_some_and(|loan| {
-                loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation)
+                borrowed_result::pairs(probe, owner, test, &loan, assertion, index)
+                    || (super::owner_pin::helper_pins_owner_call(
+                        &loan.helper,
+                        &crate::analysis::extract::mask_comments_and_strings(&test.body),
+                        &owner.name,
+                    ) && loan_pairs_boundary_call(owner, test, &loan, &assertion.text, activation))
             }) || (assertion_is_discriminating(assertion)
                 && asserting_entry.is_some_and(|(helper, entry)| {
                     (entry.entry_loan)(test, assertion).is_some_and(|loan| {

@@ -2,20 +2,25 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/error_return_unresolved_guard/input
 
-Summary: 3 changed behaviors checked: 3 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 3 found, 0 suppressed by your settings
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 3 unclear. 3 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
 
 Start here:
-  State: no gap selected for repair
-  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:16
-  Static exposure: exposed (severity: info, confidence 1.00)
-  Gap ID (for scripts): gap:rust:src/lib.rs:run_slow:error_variant:error_path:err_operror_code-32800_message_lit6f7065726174696f6e2063616e63656c6c6564.to_string
+  Static exposure: unknown (severity: warning, confidence 0.66)
+  Why unknown: the change reaches something a test can check, but ripr could not tell which inputs would trigger it
   Changed behavior: return Err(OpError { code: -32800, message: "operation cancelled".to_string() })
+  Missing check (1 of 2): No exact error variant discriminator was detected
   Related test: tests/q.rs:4 cancelled_return_is_exact
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
+  Next step: Typed static limitation (rust_value_propagation_unresolved): ripr cannot statically
+    resolve the changed error return's producing expression through the boolean guard, so it does
+    not prescribe a boundary or error-assertion test the suite may already contain. Verify via real
+    mutation testing whether the exact observer discriminates the producing expression
+  Evidence: reach yes · infection unknown · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior
@@ -27,19 +32,22 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach run_slow: cancelled_return_is_exact
-    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - infection unknown: error return guard unresolved: `cancelled` guards the changed `Err(OpError { code: -32800, message: "operation cancelled".to_string() })` (earliest unsupported…
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/error_return_unresolved_guard/input --diff <cwd>/fixtures/error_return_unresolved_guard/diff.patch --mode fast probe:src_lib.rs:error_path:83bc8d6f
   ripr context --root <cwd>/fixtures/error_return_unresolved_guard/input --diff <cwd>/fixtures/error_return_unresolved_guard/diff.patch --mode fast --at probe:src_lib.rs:error_path:83bc8d6f
-  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/error_return_unresolved_guard/input --at src/lib.rs:16 --kind error_path
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:16 (exposed); kind: field_construction; reason: Strong oracle found: exact value or pattern assertion
-    - ./src/lib.rs:16 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:16 (unknown: infection unclear); kind: field_construction; reason: A changed Rust value binding uses a bounded string or character operation, but ripr cannot carry that value into the same-owner equality predicate. This is a named analyzer…
+    - ./src/lib.rs:16 (unknown: infection unclear); kind: return_value; reason: A changed Rust value binding uses a bounded string or character operation, but ripr cannot carry that value into the same-owner equality predicate. This is a named analyzer…
   Hidden classes:
-    exposed = tests appear to notice the change
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -1022,3 +1022,102 @@ fn tuple_iterator_identity_cannot_borrow_an_inherent_override() -> Result<(), St
     assert_ne!(findings[0]["classification"], "exposed", "{report}");
     Ok(())
 }
+
+#[test]
+fn borrowed_boolean_helpers_pair_only_the_result_their_assertion_reads() -> Result<(), String> {
+    let cases = [
+        (
+            "plain clone",
+            "fn run_test(want:bool,got:bool) { assert_eq!(got,want); }",
+            "run_test(true,gate(10).clone());",
+            true,
+        ),
+        (
+            "callback",
+            "fn run_test(want:bool,f:impl FnOnce()->bool) { let got=f(); assert_eq!(got,want); }",
+            "run_test(true,|| gate(10));",
+            true,
+        ),
+        (
+            "different boundary call",
+            "fn run_test(want:bool,got:bool) { assert_eq!(got,want); }",
+            "let _=gate(10); run_test(true,gate(11).clone());",
+            false,
+        ),
+        (
+            "discarded callback",
+            "fn run_test(want:bool,f:impl FnOnce()->bool) { let _=f(); assert_eq!(want,true); }",
+            "run_test(true,|| gate(10));",
+            false,
+        ),
+        (
+            "overwritten callback result",
+            "fn run_test(want:bool,f:impl FnOnce()->bool) { let mut got=f(); got=true; assert_eq!(got,want); }",
+            "run_test(true,|| gate(10));",
+            false,
+        ),
+        (
+            "unrelated callback result",
+            "fn run_test(want:bool,f:impl FnOnce()->bool) { let got=f(); assert_eq!(want,true); }",
+            "run_test(true,|| gate(10));",
+            false,
+        ),
+        (
+            "unused callback",
+            "fn run_test(want:bool,f:impl FnOnce()->bool) { assert_eq!(want,true); }",
+            "run_test(true,|| gate(10));",
+            false,
+        ),
+        (
+            "discarded call inside callback",
+            "fn run_test(want:bool,f:impl FnOnce()->bool) { let got=f(); assert_eq!(got,want); }",
+            "run_test(true,|| { let _=gate(10); true });",
+            false,
+        ),
+        (
+            "unrelated compared value",
+            "fn run_test(want:bool,got:bool) { assert_eq!(want,true); }",
+            "run_test(true,gate(10).clone());",
+            false,
+        ),
+    ];
+    let scratch = std::env::temp_dir().join(format!("ripr-borrowed-bool-{}", std::process::id()));
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    std::fs::create_dir(&scratch).map_err(|e| e.to_string())?;
+    let _cleanup = Cleanup(scratch.clone());
+    for (at, (label, helper, body, positive)) in cases.into_iter().enumerate() {
+        let root = scratch.join(at.to_string());
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname=\"borrowed_bool\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(root.join("src/lib.rs"),format!("pub fn gate(n:u32)->bool {{ n>=10 }}\n#[cfg(test)] mod tests {{\nuse super::*;\n{helper}\n#[test] fn boundary() {{\n{body}\n}}\n}}\n")).map_err(|e|e.to_string())?;
+        let output = ripr::app::repo_seam_inventory_input(CheckInput {
+            root,
+            mode: Mode::Draft,
+            format: OutputFormat::RepoExposureJson,
+            ..CheckInput::default()
+        });
+        let report: serde_json::Value =
+            serde_json::from_str(&render_check(&output, &OutputFormat::RepoExposureJson)?)
+                .map_err(|e| e.to_string())?;
+        let seams = report["seams"].as_array().ok_or("seams missing")?;
+        let predicate = seams
+            .iter()
+            .find(|s| s["expression"] == "n>=10")
+            .ok_or_else(|| format!("{label}: predicate missing: {report}"))?;
+        assert_eq!(
+            predicate["grip_class"] == "strongly_gripped",
+            positive,
+            "{label}: {predicate}"
+        );
+    }
+    Ok(())
+}

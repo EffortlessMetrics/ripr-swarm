@@ -1697,19 +1697,11 @@ impl ClassifiedProbeEvidence {
                 // helper identity gates: the helper binds the owner's name
                 // nowhere and the test never names it.
                 &|test, assertion| {
-                    let owner = context.owner_fn.filter(|owner| {
+                    context.owner_fn.filter(|owner| {
                         !import_defeats(test, &owner.name)
                             && !cross_package_defeats(test, &owner.name)
                     })?;
-                    pin_syntax
-                        .helper_loan(test, assertion, context.index)
-                        .filter(|loan| {
-                            helper_pins_owner_call(
-                                &loan.helper,
-                                &mask_comments_and_strings(&test.body),
-                                &owner.name,
-                            )
-                        })
+                    pin_syntax.helper_loan(test, assertion, context.index)
                 },
                 context
                     .helper_chain
