@@ -12,6 +12,7 @@ pub(crate) mod baseline;
 pub(crate) mod baseline_delta;
 pub(crate) mod baseline_update;
 pub(crate) mod ci_summary;
+pub(crate) mod compact_json;
 pub(crate) mod count_noun;
 pub(crate) mod coverage_grip_frontier;
 pub(crate) mod diff_report;
@@ -137,7 +138,7 @@ const _: fn(
 const _: fn(
     &crate::domain::RiprInterventionStudyV1,
     &crate::domain::RiprInterventionStudyV1,
-) -> Result<(), crate::domain::InterventionStudyError> =
+) -> Result<(), crate::domain::RiprInterventionStudyError> =
     crate::domain::RiprInterventionStudyV1::validate_successor;
 const _: &str = crate::domain::RIPR_INTERVENTION_STUDY_SCHEMA_VERSION;
 
