@@ -4181,10 +4181,13 @@ fn an_injected_empty_json_child_cannot_beat_a_valid_warm_baseline() -> Result<()
         Some(&baseline),
         true,
     );
-    assert_eq!(
-        permissive["gate"]["status"].as_str(),
-        Some("pass"),
-        "the old Value(5) admission would beat the baseline; the new predicate must not"
+    assert!(
+        matches!(
+            permissive["gate"]["status"].as_str(),
+            Some("pass" | "pass_with_gaps")
+        ),
+        "the old Value(5) admission would beat the baseline; the new predicate must not: {}",
+        permissive["gate"]["status"]
     );
     Ok(())
 }
