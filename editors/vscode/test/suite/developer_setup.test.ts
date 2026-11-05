@@ -146,6 +146,25 @@ suite('Developer setup capability boundary', function () {
     assert.ok(human.includes('Use an already built ripr from this checkout'));
   });
 
+  test('reports Cargo target paths relative to the invoking directory', () => {
+    const previous = process.cwd();
+    const editor = path.join(root, 'editors/vscode');
+    const target = (env: NodeJS.ProcessEnv): string => {
+      const locations = collect(env).checks.find(check => check.check_id === 'work_locations')
+        ?.observed_fact as { cargo_target: { path: string } };
+      return locations.cargo_target.path;
+    };
+    try {
+      process.chdir(editor);
+      assert.strictEqual(target({ CARGO_TARGET_DIR: 'local-target' }), path.join(editor, 'local-target'));
+      const absolute = path.join(root, 'absolute-target');
+      assert.strictEqual(target({ CARGO_TARGET_DIR: absolute }), absolute);
+      assert.strictEqual(target({}), path.join(root, 'target'));
+    } finally {
+      process.chdir(previous);
+    }
+  });
+
   test('missing display and unsupported or oversized authorities fail visibly before downstream work', () => {
     let report = collect();
     assert.deepStrictEqual(report.known_blockers, ['editor_display']);

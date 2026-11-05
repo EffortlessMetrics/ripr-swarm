@@ -1569,6 +1569,7 @@ jobs:
                   "Genuine fixture producer process boundary validates the deadline instead of silently disabling or overflowing it",
                   "Developer setup capability boundary reads changed source requirements and leaves execution capabilities unclaimed",
                   "Developer setup capability boundary human guidance preserves every instruction alongside its command",
+                  "Developer setup capability boundary reports Cargo target paths relative to the invoking directory",
                   "Developer setup capability boundary missing display and unsupported or oversized authorities fail visibly before downstream work",
                   "Developer setup capability boundary source frontdoor succeeds when writes network and subprocess APIs are forbidden",
                   "Developer setup capability boundary display check distinguishes absent Linux display from other platforms without launching anything",
@@ -1592,7 +1593,7 @@ jobs:
               stats = report.get('stats', {})
               if len(observed) != len(expected) or set(observed) != expected:
                   raise SystemExit('fixture producer PASS is missing native process controls')
-              if any(stats.get(key) != value for key, value in {'tests': 33, 'passes': 30, 'failures': 0, 'pending': 3}.items()):
+              if any(stats.get(key) != value for key, value in {'tests': 34, 'passes': 31, 'failures': 0, 'pending': 3}.items()):
                   raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
               print('Verified 30 native process/setup controls; three POSIX-only adapter controls are pending.')
           PY

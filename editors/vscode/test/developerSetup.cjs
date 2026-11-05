@@ -145,7 +145,8 @@ function collectDeveloperSetup(options = {}) {
       ? ['xvfb-run', '-a', 'npm', 'run', 'setup:verify-editor'] : ['npm', 'run', 'setup:verify-editor'],
       instruction: 'Use a supported live display, or an already provisioned Xvfb; this report starts neither.' });
   const artifactRoot = path.resolve(env.RIPR_TEST_ARTIFACT_ROOT ?? path.join(root, 'target/ripr'));
-  const paths = { cargo_target: path.resolve(root, env.CARGO_TARGET_DIR ?? 'target'),
+  const paths = { cargo_target: env.CARGO_TARGET_DIR === undefined
+    ? path.join(root, 'target') : path.resolve(env.CARGO_TARGET_DIR),
     editor_artifacts: artifactRoot,
     editor_host_cache: path.join(artifactRoot, 'vscode-test-cache') };
   const locations = Object.fromEntries(Object.entries(paths)
