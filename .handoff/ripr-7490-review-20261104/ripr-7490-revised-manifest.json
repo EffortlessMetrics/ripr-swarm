@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "input_tree": "3ae02947cca2e2e9aaa8fec47936463dcc63dc4a",
+  "output_tree": "428ab37da2c41bb6e3e07553b8cf9223cb730717",
+  "patch": "ripr-7490-revised-428ab37d.patch",
+  "bytes": 33421,
+  "sha256": "26e1138c57da605946c996e711a0e71bf7a8d6515aa8f4d3a4654b16f9138553",
+  "status": "Unqualified test-only repair snapshot; active guarded compilation. Golden files unchanged. Earlier coherent6e reload/hover/cache/export and existing retry controls passed; newly added reload retry and framed positive required corrections. Previous borrow error corrected; current tests not yet run. Seven marker-free ancestry tests remain environment-blocked.",
+  "apply": "Reconstruct frozen input tree3ae from the original handoff, then git apply --index this alternate patch; require git write-tree equals output_tree. Do not stack alternate repair patches."
+}
