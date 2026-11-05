@@ -1269,12 +1269,13 @@ fn replacement_criterion(
     let precise = f(coverage.get("canonical_precise_share"));
     let ripr_secs = f(timing.and_then(|t| t.get("ripr_seconds")));
     let mutants_secs = f(timing.and_then(|t| t.get("cargo_mutants_seconds")));
-    let ratio = match (ripr_secs, mutants_secs) {
-        (Some(ripr), Some(full)) if full > 0.0 && ripr >= 0.0 => {
-            Some(((ripr / full) * 1000.0).round() / 1000.0)
-        }
+    // The bar is compared against the unrounded ratio; only the serialised
+    // figure is rounded for display.
+    let raw_ratio = match (ripr_secs, mutants_secs) {
+        (Some(ripr), Some(full)) if full > 0.0 && ripr >= 0.0 => Some(ripr / full),
         _ => None,
     };
+    let ratio = raw_ratio.map(|raw| (raw * 1000.0).round() / 1000.0);
     let mut time_row = json!({
         "id": "time_vs_full_cargo_mutants",
         "description": "ripr wall time on the diff as a share of full cargo-mutants wall time on the same checkout",
@@ -1283,7 +1284,7 @@ fn replacement_criterion(
         "recorded": timing.cloned(),
         "direction": "at_most",
         "observed": {"ripr_seconds": ripr_secs, "cargo_mutants_seconds": mutants_secs, "ratio": ratio},
-        "status": threshold_status(ratio, TIME_RATIO_THRESHOLD, true),
+        "status": threshold_status(raw_ratio, TIME_RATIO_THRESHOLD, true),
         "scope": scope,
     });
     if ratio.is_none() {
@@ -1343,7 +1344,7 @@ fn replacement_criterion(
     ];
     let verdict = replacement_verdict(&criteria);
     json!({
-        "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established; The verdict is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion is not_established until a real-mutant corpus exists. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
+        "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Precision and flagged-or-unknown recall use the R2 bars of the release ladder in docs/METRICS.md; scored coverage and the time ratio are agent-chosen technical bars whose rationale is recorded per criterion in threshold_source. A replaces verdict requires every thresholded criterion met and none not_established. It is fail-closed by design: `replaces` is currently unreachable because the Python/TypeScript criterion is not_established until a real-mutant corpus exists. The time criterion is met on one crate, one diff and one run; it is not a distribution or a general speed claim. It is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
         "criteria": criteria,
         "verdict": verdict["verdict"],
         "not_met": verdict["not_met"],
@@ -1929,6 +1930,14 @@ fn derived_summaries_markdown(report: &Value) -> String {
                     text(obs, "ratio"),
                 ),
                 _ => text(row, "observed"),
+            };
+            let observed = if row.get("id").and_then(Value::as_str)
+                == Some("time_vs_full_cargo_mutants")
+                && row.get("recorded").is_some_and(Value::is_object)
+            {
+                format!("{observed} (one crate, one diff, one run)")
+            } else {
+                observed
             };
             let bar = match row.get("threshold_source").and_then(Value::as_str) {
                 Some(source) => format!("{} ({source})", text(row, "threshold")),
@@ -3125,8 +3134,21 @@ mod tests {
         assert_eq!(time_status(10.0, 100.0), "met"); // exactly at the bar
         assert_eq!(time_status(10.1, 100.0), "not_met");
         assert_eq!(time_status(50.0, 100.0), "not_met");
+        // A true ratio just above the bar that rounds to 0.100 is still not met.
+        assert_eq!(time_status(10.0004, 100.0), "not_met");
         // A zero full-run time cannot yield a ratio.
         assert_eq!(time_status(1.0, 0.0), "not_established");
+    }
+
+    #[test]
+    fn markdown_time_row_carries_the_single_sample_caveat() {
+        let timing = json!({"ripr_seconds": 5.0, "cargo_mutants_seconds": 100.0, "crate": "demo"});
+        let rc = criterion(Some(0.99), 0.9, 0.6, Some(timing));
+        let markdown = derived_summaries_markdown(&json!({"replacement_criterion": rc}));
+        assert!(markdown.contains("ratio 0.05 (one crate, one diff, one run)"));
+        let unmeasured = criterion(Some(0.99), 0.9, 0.6, None);
+        let markdown = derived_summaries_markdown(&json!({"replacement_criterion": unmeasured}));
+        assert!(!markdown.contains("one crate, one diff, one run"));
     }
 
     #[test]
@@ -3192,6 +3214,7 @@ mod tests {
         assert!(markdown.contains("## Replaces cargo-mutants?"));
         assert!(markdown.contains("0.97 (docs/METRICS.md release ladder R2)"));
         assert!(markdown.contains("agent-chosen: a majority"));
+        assert!(!markdown.contains("one crate, one diff, one run"));
         Ok(())
     }
 }

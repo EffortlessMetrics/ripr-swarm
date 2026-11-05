@@ -89,7 +89,7 @@ other keys are unaffected):
   top-level `timing_observation` (`ripr_seconds`, `cargo_mutants_seconds`,
   crate, revision, tool versions, machine); it stays `not_established` when
   absent. The recorded observation is one crate (rust-hex), one diff, one run.
-  Python/TypeScript agreement is `not_established` (no corpus), so `replaces` is currently unreachable; this is fail-closed by design until a real-mutant corpus exists. A `replaces`
+  Python/TypeScript agreement is `not_established` (no corpus), so `replaces` is unreachable until a corpus exists (fail-closed). A `replaces`
   verdict is not suite adequacy; scope is Rust on the recorded crates.
 
 All are advisory, bound to the recorded revisions, and not suite adequacy. To
