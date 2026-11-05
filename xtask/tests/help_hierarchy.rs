@@ -124,6 +124,41 @@ fn command_help_keeps_mutability_and_enforcement_details() -> Result<(), String>
 }
 
 #[test]
+fn check_fast_is_discoverable_with_its_local_proof_boundary() -> Result<(), String> {
+    let exhaustive = normalized(&rendered_help(&["help", "--all"])?);
+    if !exhaustive.split_whitespace().any(|word| word == "check-fast") {
+        return Err("exhaustive help omitted the local check-fast command".to_string());
+    }
+    if exhaustive.contains("check-fast [CI]") {
+        return Err("local check-fast was marked as CI-enforced".to_string());
+    }
+
+    let detail = normalized(&rendered_help(&["help", "check-fast"])?);
+    for needle in [
+        "Usage: cargo xtask check-fast",
+        "Mutability: non_mutating_check",
+        "target/ripr/reports/check-fast.md",
+        "target/ripr/reports/check-fast-selector.md",
+        "Judgment required: false",
+        "CI enforced: false",
+        "committed origin/main...HEAD",
+        "live worktree",
+        "unstaged, staged, or untracked",
+        "git fetch origin main",
+        "builds xtask",
+        "workspace/all-target Clippy",
+        "does not replace precommit or required hosted CI",
+    ] {
+        if !detail.contains(needle) {
+            return Err(format!(
+                "check-fast help lost `{needle}`\nstdout:\n{detail}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn unknown_and_retired_commands_route_to_exhaustive_help() -> Result<(), String> {
     for command in ["chek-pr", "goals"] {
         let stderr = normalized(&rendered_error(&[command])?);

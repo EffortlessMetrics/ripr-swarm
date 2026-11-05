@@ -6763,6 +6763,7 @@ id = "RIPR-SPEC-0060"
 name = "Source-of-truth stack"
 spec = "docs/specs/RIPR-SPEC-0060-source-of-truth-stack.md"
 tests = [
+  "xtask/tests/help_hierarchy.rs::check_fast_is_discoverable_with_its_local_proof_boundary",
   "xtask/tests/support_tier_fast_route.rs::committed_spec_declarations_reach_actual_check_fast_dispatch",
   "xtask/src/check_fast_strict.rs::selected_support_tier_inputs_require_leaf_receipt",
   "xtask/src/check_fast_strict.rs::support_tier_near_matches_keep_noop_applicability",

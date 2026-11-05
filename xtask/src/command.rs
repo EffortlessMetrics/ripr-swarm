@@ -580,6 +580,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "windows-advisory-isolated-summary --dir <path>",
         "suggested-fixes",
         "precommit",
+        "check-fast",
         "ci-policy",
         "check-pr",
         "fixtures [name]",
@@ -1001,6 +1002,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             true,
             "Local formatting, repository policy, complete change-set/whitespace checks and impact-selected strict Clippy. The docs lane retains this route; Rust CI uses ci-policy plus explicit workspace Clippy.",
+        ),
+        command_entry(
+            "check-fast",
+            "non_mutating_check",
+            "target/ripr/reports/check-fast.md and target/ripr/reports/check-fast-selector.md",
+            false,
+            false,
+            "Diff-aware local checks selected from the committed origin/main...HEAD diff; gates inspect the live worktree. Selection does not include unstaged, staged, or untracked changes. Ref freshness is not checked; run git fetch origin main and retry if the recorded basis is missing or unexpected. Unavailable or changed selector identity and incomplete gate receipts fail. The first invocation builds xtask; Rust changes select workspace/all-target Clippy. This focused route does not replace precommit or required hosted CI.",
         ),
         command_entry(
             "ci-policy",
