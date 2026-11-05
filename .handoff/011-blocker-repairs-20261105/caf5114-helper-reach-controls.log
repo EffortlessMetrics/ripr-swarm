@@ -1,0 +1,52 @@
+    Finished `test` profile [unoptimized] target(s) in 1.11s
+     Running unittests src/lib.rs (/workspace/12010-proof/target/debug/deps/ripr-7f72c4b83423df9b)
+
+running 45 tests
+test analysis::language::rust::proximity_reach_tests::a_cfg_test_only_helper_entry_names_no_limit ... ok
+test analysis::language::rust::proximity_reach_tests::a_cfg_test_only_impl_is_neither_a_caller_nor_an_impl ... ok
+test analysis::language::rust::proximity_reach_tests::a_chain_past_five_hops_does_not_displace_the_macro_witness ... ok
+test analysis::language::rust::proximity_reach_tests::a_direct_test_whose_own_boolean_assert_is_unadmitted_beside_a_custom_macro_is_named_not_credited ... ok
+test analysis::language::rust::proximity_reach_tests::a_forwarding_helper_chain_relates_and_credits_an_exact_entry_pin ... ok
+test analysis::language::rust::proximity_reach_tests::a_generator_invoked_only_inside_a_macro_body_names_no_limit ... ok
+test analysis::language::rust::proximity_reach_tests::a_generator_with_a_second_same_named_definition_names_no_limit ... ok
+test analysis::language::rust::proximity_reach_tests::a_generator_without_a_test_attribute_names_no_limit ... ok
+test analysis::language::rust::proximity_reach_tests::a_no_static_path_chain_past_five_hops_does_not_displace_the_macro_witness ... ok
+test analysis::language::rust::proximity_reach_tests::a_same_named_function_in_another_module_is_witnessed_by_name_only_known_limit ... ok
+test analysis::language::rust::proximity_reach_tests::a_second_impl_that_does_not_call_the_owner_is_not_a_caller ... ok
+test analysis::language::rust::proximity_reach_tests::a_self_qualified_call_from_the_single_caller_behaves_as_the_plain_call ... ok
+test analysis::language::rust::proximity_reach_tests::a_test_generated_by_a_macro_naming_the_owner_names_the_macro_limit ... ok
+test analysis::language::rust::proximity_reach_tests::a_trait_default_method_owner_keeps_the_gap ... ok
+test analysis::language::rust::proximity_reach_tests::a_unique_fmt_impl_calling_the_owner_keeps_the_bare_reading ... ok
+test analysis::language::rust::proximity_reach_tests::a_weak_direct_test_preserves_the_unresolved_macro_witness ... ok
+test analysis::language::rust::proximity_reach_tests::a_weakly_exposed_owner_named_weak_assertion_keeps_its_gap_while_proximity_is_limited ... ok
+test analysis::language::rust::proximity_reach_tests::an_infection_unknown_helper_no_test_enters_keeps_its_bare_reading ... ok
+test analysis::language::rust::proximity_reach_tests::an_infection_unknown_private_helper_behind_a_public_entry_names_the_limit ... ok
+test analysis::language::rust::proximity_reach_tests::an_owner_call_inside_an_unread_assertion_macro_names_the_macro_limit ... ok
+test analysis::language::rust::proximity_reach_tests::an_owner_call_quoted_by_stringify_keeps_the_gap ... ok
+test analysis::language::rust::proximity_reach_tests::an_owner_called_from_several_fmt_impls_names_the_dispatch_ambiguity ... ok
+test analysis::language::rust::proximity_reach_tests::an_owner_named_only_in_a_generator_comment_or_string_gets_no_witness ... ok
+test analysis::language::rust::proximity_reach_tests::an_owner_no_macro_names_gets_no_generator_witness ... ok
+test analysis::language::rust::proximity_reach_tests::an_uncrowded_window_keeps_its_name_order_with_the_owner_named_weak_row ... ok
+test analysis::language::rust::proximity_reach_tests::an_unread_assertion_macro_without_the_owner_call_keeps_the_gap ... ok
+test analysis::language::rust::proximity_reach_tests::classified_findings_are_identical_in_order_on_one_and_many_threads ... ok
+test analysis::language::rust::proximity_reach_tests::classify_workers_follow_the_callers_cancellation ... ok
+test analysis::language::rust::proximity_reach_tests::eight_proximity_rows_do_not_displace_the_owner_named_weak_row ... ok
+test analysis::language::rust::proximity_reach_tests::eight_proximity_rows_still_cap_when_the_owner_named_oracle_is_strong ... ok
+test analysis::language::rust::proximity_reach_tests::forwarded_arm_result_cannot_lend_identity_to_an_unrelated_assertion ... ok
+test analysis::language::rust::proximity_reach_tests::inherent_fmt_methods_are_not_trait_impls_and_do_not_count ... ok
+test analysis::language::rust::proximity_reach_tests::mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses ... ok
+test analysis::language::rust::proximity_reach_tests::nested_scans_run_in_line_on_a_pool_worker_only ... ok
+test analysis::language::rust::proximity_reach_tests::no_calling_impl_keeps_the_bare_reading ... ok
+test analysis::language::rust::proximity_reach_tests::one_calling_impl_among_many_names_the_ambiguity_with_that_candidate ... ok
+test analysis::language::rust::proximity_reach_tests::proximity_graph_is_shared_across_changed_arms_cold_and_warm ... ok
+test analysis::language::rust::proximity_reach_tests::proximity_graph_rebuilds_after_a_same_path_helper_edit ... ok
+test analysis::language::rust::proximity_reach_tests::proximity_only_reach_through_a_macro_names_the_macro_limit ... ok
+test analysis::language::rust::proximity_reach_tests::proximity_only_reach_without_a_witness_keeps_the_gap ... ok
+test analysis::language::rust::proximity_reach_tests::several_impls_of_a_trait_method_ripr_does_not_dispatch_implicitly_stay_bare ... ok
+test analysis::language::rust::proximity_reach_tests::several_impls_without_any_test_stay_bare ... ok
+test analysis::language::rust::proximity_reach_tests::the_ambiguity_lists_a_bounded_number_of_candidates ... ok
+test analysis::language::rust::proximity_reach_tests::the_classify_run_fans_the_workspace_macro_scan_out_before_its_probes ... ok
+test analysis::language::rust::proximity_reach_tests::the_owner_named_admission_is_limited_to_infection_unknown_all_owner_named ... ok
+
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 18046 filtered out; finished in 2.85s
+

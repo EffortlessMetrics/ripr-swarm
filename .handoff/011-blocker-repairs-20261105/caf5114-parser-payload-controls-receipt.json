@@ -1,0 +1,52 @@
+{
+  "stage": "parser-payload-controls",
+  "candidate": "caf5114c3c0693e61030fcd087a1f9babac80e60",
+  "tree": "44c0464ee15e09e80e04ffa0a06ec13f016ea098",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "parser_expression_confirms_payload_without_rewriting_emitted_probe",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 10.03,
+  "counts": {
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 18090
+  },
+  "log_sha256": "7822bacca34653ffb1d542fa4333604b11f124a8211d38a61470f983e9990e11",
+  "peak_cgroup_memory_bytes": 3030323200,
+  "samples": [
+    {
+      "utc": "2026-11-05T14:59:32.873024+00:00",
+      "stage": "parser-payload-controls",
+      "head": "caf5114c3c0693e61030fcd087a1f9babac80e60",
+      "pid": 671963,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3030323200,
+      "workspace_free_bytes": 21680619520,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

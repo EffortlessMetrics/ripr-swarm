@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized] target(s) in 0.70s
+     Running unittests src/lib.rs (/workspace/12010-proof/target/debug/deps/ripr-7f72c4b83423df9b)
+
+running 1 test
+test analysis::classifier::tests::parser_expression_confirms_payload_without_rewriting_emitted_probe ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18090 filtered out; finished in 0.08s
+

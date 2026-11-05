@@ -1,0 +1,42 @@
+{
+  "candidate": "6c38556ec5a6b829da7b5dac136e304757dbaf0c",
+  "tree": "ef4acd3d8d8d7019b68465ea0dc9ec908114cc30",
+  "branch": "successor/011-current-main-20261105",
+  "main_basis": "2c400f512f3f3e67b68fd340bfb998e72b3c8380",
+  "core_predecessor": "caf5114c3c0693e61030fcd087a1f9babac80e60",
+  "composition_predecessor": "d6fc8c836fe70f28aeb73d28271b475090fffc43",
+  "cache_generations": {
+    "full": "1.162",
+    "sharded_compact": "0.164"
+  },
+  "status": "producer build running; retained JSON provisional pending real producer generation; no current test qualification",
+  "consumer_pin_repair": "cc65646ecdbb78b51a01f35ad435106ba94c85b8 updates both corpus consumer constants and worked OUTPUT_SCHEMA examples to1.162",
+  "running": {
+    "session": 6781,
+    "phase": "current-xtask-driver; then current CLI producer"
+  },
+  "prior_caf_terminal": {
+    "compatibility": [
+      44,
+      6,
+      70
+    ],
+    "cache_controls": {
+      "passed": 3,
+      "failed": 0
+    },
+    "schema_consumers": {
+      "passed": 9,
+      "failed": 2,
+      "reason": "stale corpus consumer constants and rerun doc example at1.160, repaired in new carrier"
+    },
+    "full_library": "not run on caf; pipeline stopped at schema consumer failure"
+  },
+  "receipts": "caf5114-*.json remain bound to caf, not this carrier",
+  "json_audit": "caf-d11f-json-composition-audit.json",
+  "holds": [
+    "protected merge pause",
+    "promotion trust hold",
+    "scope_pending release selection"
+  ]
+}
