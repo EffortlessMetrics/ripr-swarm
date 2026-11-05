@@ -5740,6 +5740,7 @@ fn timed_complete_run(ms: u64, rss_mb: u64, stdout: &str) -> MeasuredOutput {
     run
 }
 
+#[cfg(unix)]
 fn sample_of<'a>(samples: &'a [Sample], metric: &str) -> Option<&'a Sample> {
     samples.iter().find(|sample| sample.metric == metric)
 }
