@@ -808,8 +808,17 @@ edit cage on it. Anything the producer does not admit (missing, ambiguous,
 generated or vendored, wrong package, private owner, colliding file, stale
 source, cross-language, path escape) still has no proposal and refuses as
 before; a proposal without an identity or one the evidence does not hold keeps
-the no-target text. `ripr check` and `ripr repair` read the same gate, and the
-static-limited Silent path (#12888) is unchanged. Starting does not create the
+the no-target text. `ripr check` and `ripr repair` read the same gate
+(`check_repair_route` over `repair_refusal`): where the gate admits a proposal
+start, `check` prints that same start (same command and seam id) even for a
+static-limited finding, the one case that start line is shown beside the
+limitation guidance, because bare `ripr repair` begins it. The static-limited
+Silent path (#12888) now covers only seams the gate refuses (no proposal, no
+identity, or no enforceable edit surface), where `check` stays silent and
+`repair` refuses with no attempt; a start from an existing test target is still
+not printed for a static-limited finding. The refusal text names the missing
+test target and proposal in plain words; `check` and `repair` compare the same
+constant. Starting does not create the
 proposed file, generate a test body or grant production-source permission.
 
 ## Amendment (#12959): a refused changed-field seam names its next step

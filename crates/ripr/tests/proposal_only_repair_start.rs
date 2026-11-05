@@ -325,3 +325,27 @@ fn colliding_integration_files_still_refuse() -> Result<(), String> {
     commit_all(&fixture.root, "both candidates exist")?;
     assert_refused_not_started(&fixture.root, "file collision")
 }
+
+/// One pre-existing integration file takes only the first candidate name: the
+/// producer proposes the other, so the seam still starts, with the unused file
+/// as its target and the existing file untouched.
+#[test]
+fn one_existing_integration_file_proposes_the_other_candidate() -> Result<(), String> {
+    let fixture = fixture("a0-one-existing")?;
+    write(
+        &fixture.root,
+        "tests/discounted_total.rs",
+        "#[test]\nfn other() {}\n",
+    )?;
+    commit_all(&fixture.root, "first candidate exists")?;
+    let attempt = begin(&fixture.root)?;
+    let policy = cage_policy(&fixture.root, &attempt)?;
+    assert_eq!(
+        policy
+            .pointer("/selected_target/path")
+            .and_then(Value::as_str),
+        Some("tests/discounted_total_boundary.rs"),
+        "{policy}"
+    );
+    Ok(())
+}

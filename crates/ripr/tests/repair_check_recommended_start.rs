@@ -388,31 +388,20 @@ fn a_start_whose_card_cannot_be_produced_creates_no_attempt() -> Result<(), Stri
     let with_test = repo_with("hascard", BOUNDARY_BASE, BOUNDARY_NEW, BOUNDARY_TEST)?;
     assert_starts_check_recommendation(&with_test, "existing test target")?;
     // Contrast 2 (#13203 A0): a public owner with no test but an established
-    // `tests/` layout has a producer-owned proposed integration file, so
-    // repair starts it. Check keeps its static-limited rule (F3: a `no path`
-    // finding offers no runnable line and names no refusal), so the screen
-    // stays silent about the start instead of contradicting its own guidance.
+    // `tests/` layout has a producer-owned proposed integration file. Check
+    // and repair share one gate, so check names that start (same seam id,
+    // despite the `no path` finding's static limitation) and bare repair
+    // starts that same seam, with the proposed file as its target.
     let proposed = repo("proposed", BOUNDARY_BASE, BOUNDARY_NEW, "", true)?;
-    let check = ripr(&proposed.root, &["check", "--base", "main"])?;
-    let screen = text(&check.stdout);
-    if check_start_id(&proposed.root)?.is_some()
+    let screen = text(&ripr(&proposed.root, &["check", "--base", "main"])?.stdout);
+    if !screen.contains("Why no path")
         || screen.contains("not complete enough to name a safe test target")
-        || !screen.contains("Why no path")
     {
         return Err(format!(
-            "check keeps its static-limited silence beside the proposed start:\n{screen}"
+            "the finding stays static-limited and names no refusal:\n{screen}"
         ));
     }
-    let started = ripr(&proposed.root, &["repair"])?;
-    let (out, err) = (text(&started.stdout), text(&started.stderr));
-    if started.status.code() != Some(0)
-        || !out.contains("tests/is_adult.rs")
-        || attempts(&proposed.root) != 1
-    {
-        return Err(format!(
-            "a producer-owned proposal must start:\n{out}\n{err}"
-        ));
-    }
+    assert_starts_check_recommendation(&proposed, "producer-owned proposal")?;
     Ok(())
 }
 
@@ -1088,4 +1077,16 @@ fn shell_split(command: &str) -> Result<Vec<String>, String> {
         words.push(current);
     }
     Ok(words)
+}
+
+/// #13203 A0: the inline counterpart. A private owner whose file holds one
+/// governed `#[cfg(test)]` module has a producer-owned inline proposal (the module holds no test); check
+/// names that start and bare repair starts the same seam.
+#[test]
+fn an_inline_proposal_is_named_by_check_and_started_by_repair() -> Result<(), String> {
+    const MODULE: &str = "\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+    let base = format!("fn is_adult(age: u32) -> bool {{\n    age > 18\n}}\n{MODULE}");
+    let changed = format!("fn is_adult(age: u32) -> bool {{\n    age >= 18\n}}\n{MODULE}");
+    let inline = repo("inline-proposal", &base, &changed, "", true)?;
+    assert_starts_check_recommendation(&inline, "inline proposal")
 }

@@ -336,44 +336,52 @@ fn repair_refusal(
     if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         return Some((RefusalKind::Other, reason));
     }
-    // #12867: the start publishes an attempt and then renders the handoff
-    // card, which cannot name the workspace without an admitted test target
-    // or a producer-owned proposal that carries the identity (#13203 A0). A
-    // start whose card cannot be produced leaves an attempt with nothing to
-    // act on, so the gate refuses it up front, through the card's own
-    // identity rule.
+    proposal_start_refusal(entry, &eligibility.readiness)
+}
+
+/// #12867 / #13203 A0: the start publishes an attempt and then renders the
+/// handoff card, which cannot name the workspace without an admitted test
+/// target or a producer-owned proposal that carries the identity. A start whose
+/// card cannot be produced leaves an attempt with nothing to act on, so the
+/// gate refuses it up front, through the card's own identity rule.
+///
+/// A proposal is startable only when the attempt can enforce an edit cage on
+/// it: the packet's recommended test must be the proposal's own file (a new
+/// test surface, or the one governed inline module). Otherwise the packet is
+/// inspection-only and the start would publish an attempt whose before phase
+/// fails on the cage policy.
+pub(super) fn proposal_start_refusal(
+    entry: &crate::analysis::ClassifiedSeam,
+    readiness: &crate::analysis::repair_route::RepairRouteReadiness,
+) -> Option<(RefusalKind, String)> {
     let no_target = || {
         Some((
             RefusalKind::RouteNotReady,
             NO_TEST_TARGET_REASON.to_string(),
         ))
     };
-    if super::repair_card_handoff::workspace_identity_for(entry, &eligibility.readiness).is_err() {
+    if super::repair_card_handoff::workspace_identity_for(entry, readiness).is_err() {
         return no_target();
     }
-    // A proposal is startable only when the attempt can enforce an edit cage
-    // on it: the packet's allowed edit surface must be the proposal's file
-    // (a new test surface, or the one governed inline module). Otherwise the
-    // packet is inspection-only and the start would publish an attempt whose
-    // before phase fails on the cage policy.
-    if matches!(
-        eligibility.readiness.target_selection,
-        crate::analysis::repair_route::RepairTargetSelection::Proposed(_)
-    ) && !crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry)
+    if let crate::analysis::repair_route::RepairTargetSelection::Proposed(proposal) =
+        &readiness.target_selection
+        && (!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry)
+            || !crate::output::agent_seam_packets::recommended_test_is_the_proposed_file(
+                entry,
+                &proposal.file,
+            ))
     {
         return no_target();
     }
     None
 }
 
-/// Compared by equality in `check_repair_route` (shared on purpose, so a
-/// static-limited finding can stay silent about it): change the text in one
-/// place only.
-/// Why a seam that is otherwise ready does not start: no existing test names
-/// where the repair would go, and no producer-owned proposal (with a workspace
-/// identity and an enforceable edit surface) stands in for one (#12867,
-/// #13203 A0).
-const NO_TEST_TARGET_REASON: &str = "ripr found no existing test to extend for this code, and it cannot hand off a repair that would begin in a new test file, so it does not start an automatic repair here; write the test by hand";
+/// Why a seam that is otherwise ready does not start: ripr found no existing
+/// test to extend and no complete new-test proposal it can safely begin from
+/// (#12867, #13203 A0). `check_repair_route` compares against this same
+/// constant to stay silent for a static-limited finding, so change the text
+/// in one place only.
+pub(super) const NO_TEST_TARGET_REASON: &str = "ripr found no existing test to extend for this code and no complete new-test proposal it can safely start from, so it does not start an automatic repair here; write the test by hand";
 
 /// The refusal for an opaque seam with no candidate test to name: ripr could
 /// not see how any test reaches or observes the changed code, so it cannot say
@@ -2891,7 +2899,14 @@ pub(crate) fn check_repair_route(
             boundary_input_observed: false,
         });
     }
-    if static_limited {
+    // #13203 A0: a seam the shared gate admitted on a producer-owned
+    // new-test proposal is started by bare `ripr repair` whatever the
+    // finding's static limitation, so check names that same start.
+    let proposal_start = matches!(
+        repair_packet_eligibility(entry).readiness.target_selection,
+        crate::analysis::repair_route::RepairTargetSelection::Proposed(_)
+    );
+    if static_limited && !proposal_start {
         // F3: no runnable line for a static-limited finding. The refusal
         // arms above still named any concrete ineligibility; reaching here
         // means the seam was eligible, so the limitation guidance on the
@@ -2906,6 +2921,7 @@ pub(crate) fn check_repair_route(
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
         uncommitted_target,
+        proposal_start,
     })
 }
 
@@ -4545,6 +4561,7 @@ pub(crate) mod tests {
                 finding_id: "f".to_string(),
                 seam_id: seam.to_string(),
                 uncommitted_target: uncommitted.map(str::to_string),
+                proposal_start: false,
             })
         };
         assert_eq!(

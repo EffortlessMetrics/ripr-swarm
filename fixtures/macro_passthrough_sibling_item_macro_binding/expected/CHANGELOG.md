@@ -139,3 +139,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — macro_passthrough_sibling_item_macro_binding (11)
+
+Reason:
+RIPR-SPEC-0011: a static-limited no-path finding whose seam the shared repair gate admits on a producer-owned new-test proposal now prints the repair start that bare ripr repair begins (#13203 A0)
+
+Command:
+`cargo xtask goldens bless macro_passthrough_sibling_item_macro_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

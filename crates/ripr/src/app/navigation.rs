@@ -54,6 +54,10 @@ pub(crate) struct RepairRoute {
     /// screen states the commit-or-stash requirement instead of offering the
     /// repair start as a runnable next action.
     pub(crate) uncommitted_target: Option<String>,
+    /// The start is a producer-owned new-test proposal (#13203 A0). Bare
+    /// `ripr repair` starts it even for a static-limited finding, so the
+    /// check screen names the same start instead of staying silent.
+    pub(crate) proposal_start: bool,
 }
 
 /// The gap-bound repair start the check pipeline computed for a TypeScript
@@ -905,6 +909,7 @@ mod tests {
         // The route only answers for its own finding.
         let routed = navigation.with_repair_route_outcome(CheckRepairRoute::Route(RepairRoute {
             uncommitted_target: None,
+            proposal_start: false,
             finding_id: "probe:one".to_string(),
             seam_id: "67fc764ba37d77bd".to_string(),
         }));

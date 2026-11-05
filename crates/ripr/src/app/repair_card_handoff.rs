@@ -1235,6 +1235,45 @@ mod tests {
         )));
     }
 
+    /// #13203 A0: the start gate's proposal refusal, called directly with a
+    /// hand-built `Proposed` readiness. Each defect names the same
+    /// route-not-ready refusal and text `check` compares against.
+    #[test]
+    fn a_proposal_start_is_refused_without_identity_or_edit_surface() {
+        use super::super::task_first::RefusalKind;
+        use super::super::task_first::{NO_TEST_TARGET_REASON, proposal_start_refusal};
+        let refused = |entry: &ClassifiedSeam, readiness: &RepairRouteReadiness| {
+            proposal_start_refusal(entry, readiness)
+        };
+        let expected = Some((
+            RefusalKind::RouteNotReady,
+            NO_TEST_TARGET_REASON.to_string(),
+        ));
+        // No workspace identity (the producer could not name it).
+        let unnamed = proposal("");
+        assert_eq!(
+            refused(
+                &entry_admitting(Some(unnamed.clone())),
+                &proposed_readiness(unnamed)
+            ),
+            expected
+        );
+        // Identity mismatch: the evidence admitted a different proposal.
+        assert_eq!(
+            refused(
+                &entry_admitting(Some(proposal("ws:other"))),
+                &proposed_readiness(proposal("ws:demo"))
+            ),
+            expected
+        );
+        // Identity is named and admitted, but the packet's edit surface is
+        // not the proposal's file, so no cage can be enforced.
+        let named = proposal("ws:demo");
+        let entry = entry_admitting(Some(named.clone()));
+        assert!(!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(&entry));
+        assert_eq!(refused(&entry, &proposed_readiness(named)), expected);
+    }
+
     #[test]
     fn parsed_match_arm_geometry_keeps_nested_ownership_and_head_ambiguity() -> Result<(), String> {
         use crate::analysis::{RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};

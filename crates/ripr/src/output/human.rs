@@ -2976,6 +2976,7 @@ mod tests {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: None,
+                    proposal_start: false,
                 }),
             ),
         );
@@ -3037,6 +3038,7 @@ mod tests {
                     finding_id: "probe:other".to_string(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: None,
+                    proposal_start: false,
                 }),
             ),
         );
@@ -3066,6 +3068,7 @@ mod tests {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
                     uncommitted_target: Some("src/lib.rs".to_string()),
+                    proposal_start: false,
                 }),
             ),
         );

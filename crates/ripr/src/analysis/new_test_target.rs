@@ -279,6 +279,13 @@ fn try_admit_new_inline_unit_test(
         .as_deref()
         .ok_or(NewTestProposalBlocker::LexicalFallback)?;
     let region = unique_inline_region(seam.file(), &facts.source, owner_fn, &layout, modules)?;
+    // #13203 A0: the proposal's identity comes from the workspace authority;
+    // without it nothing can name the workspace, so admit no proposal.
+    let workspace_identity = index
+        .workspace_authority
+        .as_ref()
+        .map(|authority| authority.workspace_identity.clone())
+        .ok_or(NewTestProposalBlocker::PathUnsafe)?;
 
     Ok((
         NewTestTargetProposal {
@@ -286,11 +293,7 @@ fn try_admit_new_inline_unit_test(
             file: normalize_relative(seam.file()),
             owner: seam.owner().to_string(),
             provenance: NewTestProposalProvenance::ProducerOwned,
-            workspace_identity: index
-                .workspace_authority
-                .as_ref()
-                .map(|authority| authority.workspace_identity.clone())
-                .unwrap_or_default(),
+            workspace_identity,
         },
         region,
     ))
