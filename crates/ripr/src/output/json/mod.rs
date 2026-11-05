@@ -80,17 +80,20 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
-    fn render_compact_minifies_without_changing_the_parsed_value() {
+    fn render_compact_minifies_without_changing_the_parsed_value() -> Result<(), String> {
         let pretty = "{\n  \"a\": 1,\n  \"b\": [\n    1,\n    2\n  ]\n}\n";
         let compact = super::render_compact(pretty);
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&compact).expect("compact output must parse"),
-            serde_json::from_str::<serde_json::Value>(pretty).expect("pretty input parses")
+            serde_json::from_str::<serde_json::Value>(&compact)
+                .map_err(|error| error.to_string())?,
+            serde_json::from_str::<serde_json::Value>(pretty)
+                .map_err(|error| error.to_string())?
         );
         assert!(compact.len() < pretty.len(), "{compact}");
         assert!(!compact.contains("\n  "), "{compact}");
         // A document that does not parse passes through unchanged.
         assert_eq!(super::render_compact("not json"), "not json");
+        Ok(())
     }
 
     #[test]
