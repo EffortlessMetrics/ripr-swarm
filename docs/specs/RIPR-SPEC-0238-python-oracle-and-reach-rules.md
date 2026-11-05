@@ -374,6 +374,8 @@ one changed raise only (#12952); the general class-only table row stays weak.
 
    The plain argument-free pytest test imports `pytest` canonically and the
    owner and new class directly, without aliases, from the exact owner module.
+   Both symbols must use the same module spelling: `src.fx.core` and
+   `fx.core` can load separate class objects from the same source file.
    Its selected context has one item, no `raises` keywords, and exactly one
    body statement: that owner call with positional literal arguments. It must
    be the first context reached after docstrings, `pass` or assertions the
@@ -382,10 +384,23 @@ one changed raise only (#12952); the general class-only table row stays weak.
    Decorators, fixtures, parametrization, deferred bodies, dynamic namespace
    access, visible class/framework/builtin writes and unresolved identity
    refuse this reading.
-   Existing workspace import-environment checks remain required: a configured
-   `pythonpath` other than the configuration's own directory refuses this
-   identity credit, even when its spelling is `src`. It can introduce code
-   outside the bounded import proof; this rule does not relax that guard.
+   Module identity needs a separate positive per-file admission, defaulting
+   to false and computed from the raw foreign-module view before legacy path
+   refusal flags. Every supported dotted spelling is checked at all known
+   import roots, including excluded source files, package prefixes, compiled
+   code and parent symlinks. Unreadable paths, non-module path components,
+   standard-library names and unread or active package initializers refuse
+   the admission. Regular package initializers may contain only comments,
+   docstrings and `pass`; namespace package parents are outside this reading,
+   apart from the top-level `src` layout directory.
+   Existing workspace import-environment checks remain required. A bounded
+   exception admits the root `pyproject.toml`'s exact
+   `[tool.pytest.ini_options] pythonpath = ["src"]` only for an owner inside
+   that scanned, regular source root, with no other pytest/tox configuration,
+   path alias, path setting, extra entry or `addopts`. The configuration read
+   is capped at 64 KiB and initializer scans at 4096 directory entries.
+   Unchecked bytecode still refuses admission. The legacy configured-path
+   flag remains on shared owners for all other module-value passes.
    Framework identity needs a positive per-run admission fact, defaulting to
    false. An incomplete workspace scan, unresolved compiled-file index, or
    any visible `pytest` source module, package initializer or compiled shadow
@@ -1628,17 +1643,26 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 ## Required Evidence
 
-- The seven `specific_exception_variant_*` classifier tests in
+- The eight `specific_exception_variant_*` classifier tests in
   `crates/ripr/src/analysis/language/python/exception_variant_tests.rs` pin
   rule 6's class-only credit and refusal cases: exact context retention,
   sibling versus subtype/base identity, import/rebinding custody, builtin
   shadowing, Unicode length boundaries, prior raises/returns, explicit
-  framework admission and the sole type-only replacement requirement.
+  module/framework admission and the sole type-only replacement requirement.
 - `crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_preserves_import_environment_guards`
   drives the real workspace check through cold and warm file facts, Unicode
   activation and import-configuration refusal/restoration. A flat-layout
   package with `pythonpath = ["."]` supplies the runnable positive case;
-  `pythonpath = ["src"]` remains a refusal control.
+  `pythonpath = ["src"]` remains a refusal control for that flat owner.
+- `check_output_python_exception_variant_admits_scanned_src_imports` in the
+  same module admits the canonical src layout with cold and warm facts and
+  refuses competing/aliased configurations, framework shadows under `src`,
+  active initializers and mixed class/function module spellings.
+- `check_output_python_import_identity_checks_excluded_module_sources`
+  checks direct `core` and full `src.core` imports against excluded source
+  shadows at the same canonical gap, with removal restoring credit.
+  `check_output_python_import_identity_rejects_non_module_paths` refuses
+  dotted physical file/directory names and a workspace `sys` shadow.
 - The same app test module's
   `check_output_python_exception_variant_rejects_framework_shadows` checks
   source modules/packages and compiled module/package presence at known
@@ -1649,6 +1673,10 @@ rejected alternative. Any can be reversed later without touching the rest.
   pin the known-wrong promotion: a local `pytest.py` context that accepts
   both exception variants remains `weakly_exposed` / `broad_error` / weak.
   The independent RIPR-SPEC-0108 invariant rejects re-blessing it as exposed.
+- `fixtures/python_exception_dotted_module_no_credit` and its corresponding
+  RIPR-SPEC-0108 corpus fragment retain the weak finding when a physical
+  filename containing a dot cannot supply the claimed package import.
+  The independent import check fails on both source versions.
 - Each Problem row reads the class the rules give, through
   `classify_change_with_old` and in `ripr check --json` for a fixture.
 - Swapping two assertions in a test, or two test names, never changes a

@@ -97,6 +97,9 @@ fn credits<'a>(
     let new_facts = ModuleBindingFacts::of(edit.new_source, &new_module.body);
     let old_facts = ModuleBindingFacts::of(&old_source, &old_module.body);
     let names = [old_type.as_str(), new_type.as_str(), owner.name.as_str()];
+    // The caller requires the current per-file module-import admission.
+    // That producer checks raw module identity; the shared owner below
+    // retains the legacy configured-path flag for other module-value passes.
     if !new_facts.unbound("Exception")
         || !old_facts.unbound("Exception")
         || mentions_identifier(edit.new_source, "__builtins__")
@@ -105,7 +108,6 @@ fn credits<'a>(
         || new_facts.assigns_dunder()
         || old_facts.assigns_dunder()
         || module_owner.foreign_writes.reflection_elsewhere()
-        || module_owner.foreign_writes.shares_module_name()
         || module_owner.foreign_writes.names_may_differ_elsewhere()
         || module_owner.foreign_writes.writes_dunder()
         || module_owner.foreign_writes.may_replace_reader_code()
@@ -377,13 +379,16 @@ fn test_bindings_intact(
                 && import.alias == "pytest"
                 && import.source_module.is_empty()
         })
-        && [owner.name.as_str(), new_type].iter().all(|name| {
-            test.imports.iter().any(|import| {
-                import.imported == *name
-                    && import.alias == *name
-                    && owner_modules.contains(&import.source_module)
-                    && import_source_module_matches_owner(import, owner, &test.file)
-            })
+        && test.imports.iter().any(|import| {
+            import.imported == owner.name
+                && import.alias == owner.name
+                && owner_modules.contains(&import.source_module)
+                && import_source_module_matches_owner(import, owner, &test.file)
+                && test.imports.iter().any(|class_import| {
+                    class_import.imported == new_type
+                        && class_import.alias == new_type
+                        && class_import.source_module == import.source_module
+                })
         })
 }
 

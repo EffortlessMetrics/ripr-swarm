@@ -59,6 +59,7 @@ fn classify_with_context(
         &tests,
         PythonNoBehaviorContext {
             sole_line_replacement: sole,
+            module_import_unshadowed: true,
             pytest_import_unshadowed: true,
             ..PythonNoBehaviorContext::default()
         },
@@ -278,6 +279,8 @@ fn specific_exception_variant_requires_import_and_binding_identity() -> Check {
         "import pytest\nfrom fx import parse, EmptyError, TooLongError\n",
         "import pytest\nfrom fx.core import parse, EmptyError, TooLongError as Expected\n",
         "import fake as pytest\nfrom fx.core import parse, EmptyError, TooLongError\n",
+        "import pytest\nfrom src.fx.core import parse\nfrom fx.core import TooLongError\n",
+        "import pytest\nfrom fx.core import parse\nfrom src.fx.core import TooLongError\n",
     ] {
         let tests = test.replace(IMPORTS, imports);
         assert_no_credit(&classify(SOURCE, &tests, OLD, NEW)?);
@@ -354,6 +357,7 @@ fn specific_exception_variant_requires_import_and_binding_identity() -> Check {
         &tests,
         PythonNoBehaviorContext {
             sole_line_replacement: true,
+            module_import_unshadowed: true,
             pytest_import_unshadowed: true,
             ..PythonNoBehaviorContext::default()
         },
@@ -428,6 +432,7 @@ fn specific_exception_variant_requires_verified_framework_import() -> Check {
             &tests,
             PythonNoBehaviorContext {
                 sole_line_replacement: true,
+                module_import_unshadowed: true,
                 pytest_import_unshadowed,
                 ..PythonNoBehaviorContext::default()
             },
@@ -435,6 +440,40 @@ fn specific_exception_variant_requires_verified_framework_import() -> Check {
         )
         .ok_or_else(|| "framework identity control needs its changed-raise finding".to_string())?;
         if pytest_import_unshadowed {
+            assert_credited(&finding);
+        } else {
+            assert_no_credit(&finding);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn specific_exception_variant_requires_verified_module_import() -> Check {
+    let file = Path::new("src/fx/core.py");
+    let owners = extract_owners(file, SOURCE);
+    let tests = extract_tests(
+        Path::new("tests/test_core.py"),
+        &test_source("TooLongError", "'abcdefghijklmnop'"),
+    );
+    for module_import_unshadowed in [false, true] {
+        let finding = classify_change_with_context(
+            file,
+            8,
+            NEW,
+            Some(OLD),
+            &owners,
+            &tests,
+            PythonNoBehaviorContext {
+                sole_line_replacement: true,
+                module_import_unshadowed,
+                pytest_import_unshadowed: true,
+                ..PythonNoBehaviorContext::default()
+            },
+            Some(SOURCE),
+        )
+        .ok_or_else(|| "module identity control needs its changed-raise finding".to_string())?;
+        if module_import_unshadowed {
             assert_credited(&finding);
         } else {
             assert_no_credit(&finding);

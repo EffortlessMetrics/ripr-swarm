@@ -34,8 +34,11 @@ const OTHER_PATH: &str = "[tool.pytest.ini_options]\npythonpath = [\"src\"]\n";
 const FAKE_PYTEST: &str = "class _Raises:\n    def __enter__(self): return self\n    def __exit__(self, exc_type, exc, traceback): return True\n\ndef raises(expected):\n    return _Raises()\n";
 
 fn run_check(root: &Path) -> Result<crate::CheckOutput, String> {
-    let config =
-        crate::config::tests_only_parse("[languages]\nenabled = [\"rust\", \"python\"]\n")?;
+    run_check_with_config(root, "[languages]\nenabled = [\"rust\", \"python\"]\n")
+}
+
+fn run_check_with_config(root: &Path, text: &str) -> Result<crate::CheckOutput, String> {
+    let config = crate::config::tests_only_parse(text)?;
     crate::app::check_workspace_with_config(
         crate::CheckInput {
             root: root.to_path_buf(),
@@ -55,13 +58,18 @@ fn run_check(root: &Path) -> Result<crate::CheckOutput, String> {
 }
 
 fn changed_raise(output: &crate::CheckOutput) -> Result<&Finding, String> {
-    let mut findings = output
-        .findings
-        .iter()
-        .filter(|finding| finding.probe.location.file.ends_with("fx/core.py"));
+    let finding = sole_finding(output)?;
+    if finding.related_tests.is_empty() {
+        return Err("the changed raise needs a related test".to_string());
+    }
+    Ok(finding)
+}
+
+fn sole_finding(output: &crate::CheckOutput) -> Result<&Finding, String> {
+    let mut findings = output.findings.iter();
     match (findings.next(), findings.next()) {
-        (Some(finding), None) if !finding.related_tests.is_empty() => Ok(finding),
-        _ => Err("the changed raise needs exactly one finding with a related test".to_string()),
+        (Some(finding), None) => Ok(finding),
+        _ => Err("the changed raise needs exactly one finding".to_string()),
     }
 }
 
@@ -86,6 +94,11 @@ fn assert_variant_credit(finding: &Finding) {
 
 fn assert_no_variant_credit(finding: &Finding) {
     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_no_variant_read(finding);
+}
+
+fn assert_no_variant_read(finding: &Finding) {
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
     assert_ne!(
         finding.alignment_reason.as_deref(),
         Some("strong_oracle_observes_changed_exception_variant")
@@ -228,4 +241,210 @@ fn check_output_python_exception_variant_rejects_framework_shadows() -> Result<(
         }
         Ok(())
     })
+}
+
+#[test]
+fn check_output_python_exception_variant_admits_scanned_src_imports() -> Result<(), String> {
+    with_fixture(|root| {
+        fs::rename(root.join("fx"), root.join("src/fx"))
+            .map_err(|error| format!("move fixture into src layout: {error}"))?;
+        fs::write(root.join("diff.patch"), DIFF.replace("fx/core.py", "src/fx/core.py"))
+            .map_err(|error| format!("write src-layout diff: {error}"))?;
+        fs::write(root.join("pyproject.toml"), OTHER_PATH)
+            .map_err(|error| format!("write canonical src configuration: {error}"))?;
+        // Both runs use the complete workspace producer; the second reads
+        // warm Python facts without borrowing a manually supplied admission.
+        for _ in 0..2 {
+            let output = run_check(root)?;
+            assert_variant_credit(changed_raise(&output)?);
+        }
+        for config in [
+            r#"[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+"#,
+            r#"[tool.pytest.ini_options]
+pythonpath = ["../src"]
+"#,
+            r#"[tool.pytest.ini_options]
+pythonpath = ["./src"]
+"#,
+            r#"[tool.pytest.ini_options]
+pythonpath = ["src/"]
+"#,
+            r#"[tool.pytest.ini_options]
+pythonpath = ["outside"]
+"#,
+            r#"[tool.pytest.ini_options]
+pythonpath = "src"
+"#,
+            r#"[tool.pytest.ini_options]
+python_paths = ["src"]
+"#,
+            r#"[tool.pytest]
+pythonpath = ["src"]
+"#,
+            r#"[tool.pytest.ini_options]
+"python\u0070ath" = ["src"]
+"#,
+            r#"[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = "-q"
+"#,
+        ] {
+            fs::write(root.join("pyproject.toml"), config)
+                .map_err(|error| format!("write refused import configuration: {error}"))?;
+            let refused = run_check(root)?;
+            assert_no_variant_credit(changed_raise(&refused)?);
+        }
+        fs::write(root.join("pyproject.toml"), OTHER_PATH)
+            .map_err(|error| format!("restore canonical src configuration: {error}"))?;
+        let restored = run_check(root)?;
+        assert_variant_credit(changed_raise(&restored)?);
+        for path in ["pytest.ini", "tests/pytest.ini"] {
+            fs::write(root.join(path), "[pytest]\n")
+                .map_err(|error| format!("write competing configuration: {error}"))?;
+            let refused = run_check(root)?;
+            assert_no_variant_credit(changed_raise(&refused)?);
+            fs::remove_file(root.join(path))
+                .map_err(|error| format!("remove competing configuration: {error}"))?;
+        }
+        for path in ["src/pytest.py", "src/pytest/__init__.py", "src/pytest.pyc"] {
+            let shadow = root.join(path);
+            fs::create_dir_all(shadow.parent().ok_or("shadow needs a parent")?)
+                .map_err(|error| format!("create src framework directory: {error}"))?;
+            fs::write(&shadow, FAKE_PYTEST)
+                .map_err(|error| format!("write src framework shadow: {error}"))?;
+            let refused = run_check(root)?;
+            assert_no_variant_credit(changed_raise(&refused)?);
+            fs::remove_file(&shadow)
+                .map_err(|error| format!("remove src framework shadow: {error}"))?;
+        }
+        fs::write(root.join("src/fx/__init__.py"), "MARKER = 1\n")
+            .map_err(|error| format!("write active package initializer: {error}"))?;
+        let refused = run_check(root)?;
+        assert_no_variant_credit(changed_raise(&refused)?);
+        fs::write(root.join("src/fx/__init__.py"), "")
+            .map_err(|error| format!("restore inert package initializer: {error}"))?;
+        for imports in [
+            "from src.fx.core import parse\nfrom fx.core import TooLongError",
+            "from fx.core import parse\nfrom src.fx.core import TooLongError",
+        ] {
+            fs::write(
+                root.join("tests/test_core.py"),
+                TEST.replace("from fx.core import parse, TooLongError", imports),
+            )
+            .map_err(|error| format!("write mixed module imports: {error}"))?;
+            let refused = run_check(root)?;
+            assert_no_variant_credit(changed_raise(&refused)?);
+        }
+        fs::write(root.join("tests/test_core.py"), TEST)
+            .map_err(|error| format!("restore same-module imports: {error}"))?;
+        let restored = run_check(root)?;
+        assert_variant_credit(changed_raise(&restored)?);
+        Ok(())
+    })
+}
+
+#[test]
+fn check_output_python_import_identity_checks_excluded_module_sources() -> Result<(), String> {
+    with_fixture(|root| {
+        fs::rename(root.join("fx/core.py"), root.join("src/core.py"))
+            .map_err(|error| format!("move direct module into src: {error}"))?;
+        fs::write(root.join("diff.patch"), DIFF.replace("fx/core.py", "src/core.py"))
+            .map_err(|error| format!("write direct-module diff: {error}"))?;
+        fs::write(root.join("pyproject.toml"), OTHER_PATH)
+            .map_err(|error| format!("write direct-module configuration: {error}"))?;
+        for (module, shadow_path) in [
+            ("core", "tests/core.py"),
+            ("src.core", "tests/src/core.py"),
+        ] {
+            let test = TEST.replace("from fx.core import", &format!("from {module} import"));
+            fs::write(root.join("tests/test_core.py"), test)
+                .map_err(|error| format!("write direct-module import: {error}"))?;
+            let before = run_check(root)?;
+            let finding = changed_raise(&before)?;
+            assert_variant_credit(finding);
+            let gap = finding
+                .canonical_gap
+                .as_ref()
+                .ok_or("direct-module gap identity missing")?
+                .id
+                .clone();
+            let shadow = root.join(shadow_path);
+            fs::create_dir_all(shadow.parent().ok_or("shadow needs a parent")?)
+                .map_err(|error| format!("create excluded module directory: {error}"))?;
+            fs::write(
+                &shadow,
+                r"class TooLongError(Exception): pass
+
+def parse(s):
+    raise TooLongError()
+",
+            )
+            .map_err(|error| format!("write excluded module: {error}"))?;
+            let config = format!(
+                r#"[languages]
+enabled = ["python"]
+[languages.python]
+excluded_file_patterns = ["{shadow_path}"]
+"#
+            );
+            // The competing file is absent from ForeignIndex. Only physical
+            // lookup of every admitted spelling can see this source shadow.
+            let refused = run_check_with_config(root, &config)?;
+            let finding = changed_raise(&refused)?;
+            assert_no_variant_credit(finding);
+            assert_eq!(finding.canonical_gap.as_ref().map(|gap| &gap.id), Some(&gap));
+            fs::remove_file(&shadow)
+                .map_err(|error| format!("remove excluded module: {error}"))?;
+            let restored = run_check_with_config(root, &config)?;
+            let finding = changed_raise(&restored)?;
+            assert_variant_credit(finding);
+            assert_eq!(finding.canonical_gap.as_ref().map(|gap| &gap.id), Some(&gap));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn check_output_python_import_identity_rejects_non_module_paths() -> Result<(), String> {
+    for (path, import) in [
+        ("fx.core.py", "fx.core"),
+        ("fx.extra/core.py", "fx.extra.core"),
+        ("src/sys.py", "sys"),
+    ] {
+        with_fixture(|root| {
+            let target = root.join(path);
+            fs::create_dir_all(target.parent().ok_or("module needs a parent")?)
+                .map_err(|error| format!("create module path control: {error}"))?;
+            fs::rename(root.join("fx/core.py"), &target)
+                .map_err(|error| format!("move module path control: {error}"))?;
+            fs::remove_file(root.join("fx/__init__.py"))
+                .map_err(|error| format!("remove old package initializer: {error}"))?;
+            fs::remove_dir(root.join("fx"))
+                .map_err(|error| format!("remove old package directory: {error}"))?;
+            if path == "fx.extra/core.py" {
+                fs::write(root.join("fx.extra/__init__.py"), "")
+                    .map_err(|error| format!("write dotted-directory initializer: {error}"))?;
+            }
+            if path == "src/sys.py" {
+                fs::write(root.join("pyproject.toml"), OTHER_PATH)
+                    .map_err(|error| format!("write builtin-shadow configuration: {error}"))?;
+            }
+            fs::write(root.join("diff.patch"), DIFF.replace("fx/core.py", path))
+                .map_err(|error| format!("write module path diff: {error}"))?;
+            fs::write(
+                root.join("tests/test_core.py"),
+                TEST.replace("from fx.core import", &format!("from {import} import")),
+            )
+            .map_err(|error| format!("write module path import: {error}"))?;
+            let refused = run_check(root)?;
+            let finding = sole_finding(&refused)?;
+            assert_eq!(finding.probe.location.file, Path::new(path));
+            assert_eq!(finding.probe.location.line, 8);
+            assert_no_variant_read(finding);
+            Ok(())
+        })?;
+    }
+    Ok(())
 }

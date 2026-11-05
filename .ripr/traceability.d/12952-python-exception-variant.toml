@@ -9,9 +9,14 @@ tests = [
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_import_and_binding_identity",
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_a_type_only_single_line_edit",
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_verified_framework_import",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_verified_module_import",
   "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_preserves_import_environment_guards",
   "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_rejects_framework_shadows",
+  "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_admits_scanned_src_imports",
+  "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_import_identity_checks_excluded_module_sources",
+  "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_import_identity_rejects_non_module_paths",
 ]
+code = ["crates/ripr/src/analysis/language/python/import_identity.rs"]
 
 [[extend]]
 id = "RIPR-SPEC-0238"
@@ -23,9 +28,15 @@ tests = [
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_import_and_binding_identity",
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_a_type_only_single_line_edit",
   "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_verified_framework_import",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_verified_module_import",
   "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_preserves_import_environment_guards",
   "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_rejects_framework_shadows",
+  "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_admits_scanned_src_imports",
+  "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_import_identity_checks_excluded_module_sources",
+  "crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_import_identity_rejects_non_module_paths",
 ]
+code = ["crates/ripr/src/analysis/language/python/import_identity.rs"]
 fixtures = [
   "fixtures/python_exception_framework_shadow_no_credit",
+  "fixtures/python_exception_dotted_module_no_credit",
 ]

@@ -302,16 +302,40 @@ A class-only `pytest.raises(NewError)` can supply finding-specific
 `raise OldError(...)` to `raise NewError(...)` (#12952). Both classes must be
 inert, distinct direct subclasses of the unshadowed builtin `Exception` in
 the owner's module. The test must import the new class and owner directly
-without aliases, and its own context must call the owner with literal inputs
+without aliases, using the same module spelling for both names, and its own
+context must call the owner with literal inputs
 that provably reach the exact changed raise. A complete current workspace
 scan must also establish that no source module, package initializer or
 compiled module at the bounded import roots shadows `pytest`; canonical
 import spelling alone supplies no framework identity. This admission fact is
 recomputed on each check, including when source facts come from the cache.
 The bounded reading and its refusals are specified in RIPR-SPEC-0238 rule 6.
-It preserves that assertion's
-context in sink alignment, including when another strong assertion exists in
-the test; it does not change the global grade of class-only exception tests.
+It preserves that assertion's context in sink alignment, including when
+another strong assertion exists in the test; it does not change the global
+grade of class-only exception tests.
+
+The bounded readings receive a separate, default-false module-import fact
+from the current workspace. It checks the raw foreign-module view before the
+legacy configured-path refusal is applied, then checks every admitted dotted
+spelling physically at every known root. Source modules, source prefixes,
+package initializers, compiled code, unreadable paths and parent symlinks can
+all withhold that fact, including files omitted from source discovery. Each
+path component must be one ASCII module identifier; a standard-library
+module spelling cannot identify a workspace replacement. Package initializers
+must be scanned, regular files containing only comments, docstrings or
+`pass`; namespace package parents are outside this reading, apart from the
+top-level `src` layout directory. The fact is kept only for the current run.
+
+The existing import-configuration refusal remains unchanged for legacy
+module-value passes. These bounded readings can additionally admit exactly
+the root `pyproject.toml`'s `[tool.pytest.ini_options] pythonpath = ["src"]`
+when that physical, non-symlink root is already scanned and contains the
+changed module. No other pytest/tox configuration file, path setting,
+`addopts`, path alias, extra entry or unread root is admitted by this
+exception. The configuration read is bounded to 64 KiB and initializer
+directory checks to 4096 entries. Unchecked bytecode remains a refusal.
+This admits the canonical `src/fx/core.py` benchmark without accepting a
+flat `fx/core.py` owner merely because an unrelated `src` directory exists.
 
 Related-test heuristics mirror the Rust and TypeScript adapters: changed
 owner name match, import-reference match, file-path proximity, and
@@ -1490,26 +1514,38 @@ can show:
 
 ## Test Mapping
 
-Finding-specific exception-variant credit (#12952) is covered by the seven
+Finding-specific exception-variant credit (#12952) is covered by the eight
 `specific_exception_variant_*` tests in
 `crates/ripr/src/analysis/language/python/exception_variant_tests.rs`.
 They exercise the public classifier through real owner/test extraction,
 including exact selected-context alignment, passing literal prefixes and
 blocked paths, import and class identity, builtin shadowing, Unicode length
-boundaries, explicit framework admission and the sole type-only edit requirement.
+boundaries, explicit module/framework admission and the sole type-only edit
+requirement.
 The full `check_workspace_with_config` path is covered by
 `crates/ripr/src/app/tests/python_exception_variant.rs::check_output_python_exception_variant_preserves_import_environment_guards`:
 flat-layout imports retain credit with cold and warm file facts, Unicode
-inputs preserve the changed-raise boundary, and a non-dot configured import
-path refuses credit until the own-directory configuration is restored.
+inputs preserve the changed-raise boundary, and configuring an unrelated
+`src` import root refuses credit until the own-directory configuration is
+restored.
 The same module's
 `check_output_python_exception_variant_rejects_framework_shadows` checks
 source module/package and compiled-shadow presence at root, test and owner
 directories. Each shadow removes the credit without changing the canonical
 gap, and removing it restores credit through the real workspace pipeline.
+`check_output_python_exception_variant_admits_scanned_src_imports` covers
+the canonical src layout with cold and warm facts, configuration refusals,
+framework shadows under `src`, active initializers and mixed class/function
+module spellings. `check_output_python_import_identity_checks_excluded_module_sources`
+checks direct `core` and full `src.core` imports against excluded source
+shadows, with gap identity and removal/restoration controls.
+`check_output_python_import_identity_rejects_non_module_paths` refuses
+dotted file/directory components and a workspace `sys` shadow.
 The fixture `python_exception_framework_shadow_no_credit` and its
 RIPR-SPEC-0108 corpus fragment independently forbid promoting a local
 `pytest.py` context that suppresses both exception classes.
+`python_exception_dotted_module_no_credit` independently forbids treating
+the physical filename `fx.core.py` as the imported package module `fx.core`.
 
 Default-prefix regression cases live in
 `crates/ripr/src/analysis/language/python/owners_tests/tests.rs`. They exercise

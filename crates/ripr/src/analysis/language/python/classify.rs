@@ -144,6 +144,9 @@ pub(super) struct PythonNoBehaviorContext {
     /// (`module_value.rs`, #9423). A diff with any other changed line cannot
     /// reconstruct the old module and keeps the abstention.
     pub(super) sole_line_replacement: bool,
+    /// The current per-file import check used the raw workspace write view
+    /// and all admitted module spellings, before legacy path refusal flags.
+    pub(super) module_import_unshadowed: bool,
     /// The current bounded workspace scan found no source, package or compiled
     /// module that can replace the imported pytest framework. Only the bounded
     /// class-only exception reading consumes this positive admission fact.
@@ -551,7 +554,10 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // A class-only exception assertion is exact only for this raised-type
     // replacement, with its own context call reaching the edited statement.
     let exception_variants =
-        if no_behavior.sole_line_replacement && no_behavior.pytest_import_unshadowed {
+        if no_behavior.sole_line_replacement
+            && no_behavior.module_import_unshadowed
+            && no_behavior.pytest_import_unshadowed
+        {
             owner_source
                 .zip(
                     owners.iter().find(|candidate| {
