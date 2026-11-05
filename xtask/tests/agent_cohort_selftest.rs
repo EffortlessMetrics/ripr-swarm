@@ -26,8 +26,14 @@ fn agent_cohort_accounting_and_native_oracle_tests_pass() -> Result<(), String> 
     let record: serde_json::Value = serde_json::from_str(summary)
         .map_err(|error| format!("invalid cohort selftest summary: {error}"))?;
     if record.get("tests").and_then(serde_json::Value::as_u64) == Some(0)
-        || record.get("tests").and_then(serde_json::Value::as_u64).is_none()
-        || record.get("native_required").and_then(serde_json::Value::as_bool) != Some(true)
+        || record
+            .get("tests")
+            .and_then(serde_json::Value::as_u64)
+            .is_none()
+        || record
+            .get("native_required")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
         || ["failures", "errors", "skipped"]
             .iter()
             .any(|key| record.get(*key).and_then(serde_json::Value::as_u64) != Some(0))
