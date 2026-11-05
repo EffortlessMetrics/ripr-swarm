@@ -861,7 +861,7 @@ fn cache_root_flag_rejects_missing_repeated_and_unresolvable_values() -> Result<
         ),
         (
             &["cache", "status", "--root", "a", "--root", "b"][..],
-            "repeats --root",
+            "takes --root once",
             &[][..],
         ),
         (&["cache", "status", "--root=a"][..], "--root", &[][..]),

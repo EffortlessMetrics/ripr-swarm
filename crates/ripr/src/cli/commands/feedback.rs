@@ -5,7 +5,7 @@ use crate::app::feedback::{
     record_feedback, record_result_json,
 };
 use crate::cli::help;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::domain::{
     ActorKind, FeedbackJudgment, FeedbackPayload, FeedbackReason, ResultIdentity, ReviewStatus,
@@ -100,6 +100,7 @@ pub(in crate::cli) fn parse_record_options(
     let mut note: Option<String> = None;
     let mut idempotency_key: Option<String> = None;
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut json = false;
     let mut i = 0usize;
     while i < args.len() {
@@ -159,7 +160,14 @@ pub(in crate::cli) fn parse_record_options(
             }
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "feedback record",
+                )?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--json" => json = true,
             "--file" | "--line" => {
@@ -209,6 +217,7 @@ pub(in crate::cli) fn parse_export_options(
     args: &[String],
 ) -> Result<(ExportFeedbackOptions, bool, Option<PathBuf>), String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut route_quality = None;
     let mut out = None;
     let mut json = false;
@@ -217,7 +226,14 @@ pub(in crate::cli) fn parse_export_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = PathBuf::from(expect_value(args, i, "--root")?);
+                let reconciled = reconcile_root(
+                    &root,
+                    root_explicit,
+                    expect_value(args, i, "--root")?,
+                    "feedback export",
+                )?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--route-quality" => {
                 i += 1;

@@ -51,6 +51,8 @@ mod diff_selection;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/discarded_matches.rs"]
 mod discarded_matches;
+#[path = "cli_smoke/duplicate_root_refusal.rs"]
+mod duplicate_root_refusal;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
 #[cfg(unix)]

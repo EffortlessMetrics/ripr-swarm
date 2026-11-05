@@ -1581,7 +1581,9 @@ fn gap_list_output_schema() -> Value {
                             "limitations": {
                                 "type": "array",
                                 "items": { "type": "string" }
-                            }
+                            },
+                            "analysis_status": { "type": "string", "enum": ["not_analyzed"] },
+                            "clean": { "type": "boolean", "enum": [false] }
                         },
                         "required": ["kind", "label", "limitations"],
                         "additionalProperties": false
@@ -1906,7 +1908,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v4",
+                "schema_version": "ripr-mcp-gap-list-v5",
                 "rows": (0..count)
                     .map(|index| {
                         json!({
@@ -1947,7 +1949,7 @@ mod tests {
         }
         let reparsed: Value = serde_json::from_str(small_text)
             .map_err(|error| format!("text copy is not JSON: {error}"))?;
-        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v4")) {
+        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v5")) {
             return Err(format!("text copy drifted from the document: {reparsed}"));
         }
 
@@ -2077,7 +2079,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v4",
+                "schema_version": "ripr-mcp-gap-list-v5",
                 "claim_boundary": "Static exposure evidence only.",
                 "selected": count,
                 "overflowed": false,
@@ -2127,7 +2129,7 @@ mod tests {
         // The text-only pointer, the identity of the document, the counts
         // and the first identities (so a text-only agent can continue).
         for needle in [
-            "ripr-mcp-gap-list-v4",
+            "ripr-mcp-gap-list-v5",
             "not a copy",
             "structuredContent",
             "RIPR_MCP_TEXT_CONTENT=full",
@@ -2225,7 +2227,7 @@ mod tests {
 
     fn brief_gap_list() -> Value {
         json!({
-            "schema_version": "ripr-mcp-gap-list-v4",
+            "schema_version": "ripr-mcp-gap-list-v5",
             "eligible": 3,
             "omitted": 0,
             "items": [

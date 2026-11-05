@@ -3092,7 +3092,7 @@ fn check_filtered_gap_page(
         || document["filtered"] != json!(filtered)
         || document["page"]["returned"] != json!(expected_ids.len())
         || document["snapshot_id"] != snapshot_id
-        || document["schema_version"] != "ripr-mcp-gap-list-v4"
+        || document["schema_version"] != "ripr-mcp-gap-list-v5"
     {
         return Err(format!(
             "filtered transport page differs from exact IDs/counts: expected {expected_ids:?}, selected={selected}, filtered={filtered}: {document}"
@@ -3203,7 +3203,7 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
             if refused.get("error").is_some()
                 || refused.pointer("/result/isError") != Some(&json!(true))
                 || refused.pointer("/result/structuredContent/schema_version")
-                    != Some(&json!("ripr-mcp-gap-list-v4"))
+                    != Some(&json!("ripr-mcp-gap-list-v5"))
                 || refused.pointer("/result/structuredContent/failure/code")
                     != Some(&json!("result_too_large"))
                 || refused.pointer("/result/structuredContent/failure/data/current_snapshot_id")
@@ -3693,6 +3693,20 @@ fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
     let status = structured_tool_success(&status, "ripr_workspace_status")?;
     if status.pointer("/session/scope") != refresh.get("scope") {
         return Err(format!("status lost refresh scope disclosure: {status}"));
+    }
+    // #13280: the list that follows the empty committed refresh must say
+    // nothing was analyzed, in the same snapshot, with literal wire output.
+    let listed = session.call_tool("list-empty", "ripr_list_gaps", json!({}), timeout)?;
+    let listed = structured_tool_success(&listed, "ripr_list_gaps")?;
+    if listed.pointer("/outcome/kind").and_then(Value::as_str) != Some("no_scope")
+        || listed.pointer("/total").and_then(Value::as_u64) != Some(0)
+        || listed.pointer("/outcome/analysis_status") != Some(&json!("not_analyzed"))
+        || listed.pointer("/outcome/clean") != Some(&json!(false))
+        || listed.pointer("/snapshot_id") != refresh.pointer("/snapshot/snapshot_id")
+    {
+        return Err(format!(
+            "an empty committed list must say not_analyzed on the same snapshot: {listed}"
+        ));
     }
     drop(session);
     let after = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
