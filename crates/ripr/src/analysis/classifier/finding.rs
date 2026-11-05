@@ -182,23 +182,12 @@ pub(in crate::analysis) fn build_finding_with_origins(
     // contains, so the typed static limitation replaces the
     // prescription. The class stays `InfectionUnknown`: the gap is
     // still visible, only the impossible repair assignment is withheld.
-    let error_guard_unresolved: Option<String> = if class == ExposureClass::InfectionUnknown
-        && matches!(context.probe.family, ProbeFamily::Predicate)
-    {
-        unresolved_guard_error_edge(
-            context.probe,
-            context.owner_fn,
-            &test_summaries,
+    let error_guard_unresolved: Option<String> = if class == ExposureClass::InfectionUnknown {
+        bounded_error_guard_limitation(
+            context,
             &evidence.flow_sinks,
-            context.helper_chain.as_ref(),
-            context.index,
+            context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax),
         )
-        .filter(|_| {
-            strong_assertion_observes_owner_result(
-                &context.related_tests,
-                context.owner_fn.map(|owner| owner.name.as_str()),
-            )
-        })
     } else {
         None
     };
@@ -645,6 +634,45 @@ fn exact_oracle_aligns_with_sink(
 /// applies to value sinks), so only an observer of the owner result
 /// withholds the prescription. A directly asserted owner call with no
 /// `let` binding stays fail-closed and keeps its repair.
+pub(super) fn bounded_error_guard_limitation(
+    context: &ProbeContext<'_>,
+    sinks: &[FlowSinkFact],
+    syntax: &OwnerPinSyntax,
+) -> Option<String> {
+    let owner = context.owner_fn?;
+    let observes = if context.probe.family == ProbeFamily::Predicate {
+        strong_assertion_observes_owner_result(&context.related_tests, Some(&owner.name))
+    } else {
+        context.related_tests.iter().any(|(test, relation)| {
+            relation.establishes_reach(true)
+                && bound_identifiers_from_owner_calls(&test.body, &owner.name)
+                    .iter()
+                    .any(|binding| {
+                        test.assertions.iter().any(|assertion| {
+                            assertion.strength == OracleStrength::Strong
+                                && contains_identifier(&assertion.text, binding)
+                        }) && crate::analysis::classify::current_unwrapped_error_binding(
+                            test,
+                            binding,
+                            owner,
+                            context.index,
+                            syntax,
+                        )
+                    })
+        })
+    };
+    observes.then(|| {
+        unresolved_guard_error_edge(
+            context.probe,
+            Some(owner),
+            &context.related_test_summaries(),
+            sinks,
+            context.helper_chain.as_ref(),
+            context.index,
+        )
+    })?
+}
+
 fn strong_assertion_observes_owner_result(
     related_tests: &[(&TestSummary, RelationReason)],
     owner_name: Option<&str>,

@@ -13,6 +13,76 @@ fn check(test: &str) -> Result<String, String> {
     check_source(SOURCE, test)
 }
 
+#[test]
+fn guarded_error_constructor_change_names_its_limit_without_inventing_a_test_gap()
+-> Result<(), String> {
+    let source = include_str!("../../../fixtures/error_return_unresolved_guard/input/src/lib.rs");
+    let test = include_str!("../../../fixtures/error_return_unresolved_guard/input/tests/q.rs");
+    let manifest = include_str!("../../../fixtures/error_return_unresolved_guard/input/Cargo.toml");
+    let diff = include_str!("../../../fixtures/error_return_unresolved_guard/diff.patch");
+    let report = check_report(source, test, manifest, diff)?;
+    let findings = report["findings"].as_array().ok_or("findings missing")?;
+    assert_eq!(findings.len(), 3);
+    for finding in findings {
+        assert_eq!(finding["classification"], "infection_unknown");
+        assert_eq!(
+            finding["static_limit_kind"],
+            "rust_value_propagation_unresolved"
+        );
+        let next = finding["recommended_next_step"]
+            .as_str()
+            .ok_or("next step missing")?;
+        assert!(next.contains("boolean guard"), "{next}");
+        assert!(
+            !next.starts_with("Add ") && !next.starts_with("Strengthen "),
+            "{next}"
+        );
+        assert!(
+            finding["ripr"]["infect"]["summary"]
+                .as_str()
+                .is_some_and(|s| s.contains("cancelled"))
+        );
+    }
+    let overwritten = test.replace("let err =", "let mut err =").replace(
+        "    assert_eq!(err,",
+        "    err = cancelled_error();\n    assert_eq!(err,",
+    );
+    let shadowed = test.replace(
+        "    assert_eq!(err,",
+        "    let err = cancelled_error();\n    assert_eq!(err,",
+    );
+    let discarded = test
+        .replace("let err =", "let _ =")
+        .replace(
+            "    assert_eq!(err, cancelled_error());",
+            "    assert_eq!(1, 1);",
+        )
+        .replace("    assert_eq!(err.message, \"operation cancelled\");", "");
+    for (label, body) in [
+        ("overwritten", overwritten),
+        ("shadowed", shadowed),
+        ("discarded", discarded),
+        (
+            "unentered",
+            test.replace("run_slow(true)", "run_slow(false)"),
+        ),
+    ] {
+        let report = check_report(source, &body, manifest, diff)?;
+        let findings = report["findings"]
+            .as_array()
+            .ok_or("negative findings missing")?;
+        assert!(!findings.is_empty());
+        for finding in findings {
+            assert_ne!(finding["classification"], "exposed", "{label}: {finding}");
+            assert_ne!(
+                finding["static_limit_kind"], "rust_value_propagation_unresolved",
+                "{label}: {finding}"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn check_report(
     source: &str,
     test: &str,

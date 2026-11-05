@@ -1,2 +1,4 @@
 <!-- section: Fixed -->
 - Keep strong Rust discrimination tied to the assertion that observes the changed result or effect; keep returned comparisons paired to the same boundary call, reject proximity-only oracles, unchanged return tokens, stale results and intercepted collection reads (including unread external trait dispatch and rebound crate-name imports) while retaining validated wrapper, array, async and error observers (#12010).
+- Retain the imported precise guarded-error-return limitation when only the return changes: name the unresolved producer edge and withhold an unverifiable test prescription (public `EffortlessMetrics/ripr#1579`, distinct from swarm #1579).
+- Keep the split-test returned-comparison honesty control non-promoting: the unasserted boundary calls cannot borrow the far-input test oracle.

@@ -22,3 +22,7 @@ tests = [
   "crates/ripr/tests/return_diagnostic_confirmation.rs::tuple_iterator_identity_cannot_borrow_an_inherent_override",
   "crates/ripr/src/analysis/classify/owner_pin/tests/tuple_projection.rs::iterator_option_tuple_projection_establishes_and_pins_its_actual_component",
 ]
+
+[[extend]]
+id = "RIPR-SPEC-0158"
+tests = ["crates/ripr/tests/return_diagnostic_confirmation.rs::guarded_error_constructor_change_names_its_limit_without_inventing_a_test_gap"]

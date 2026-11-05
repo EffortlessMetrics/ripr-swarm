@@ -2583,11 +2583,19 @@ pub(in crate::analysis) fn unresolved_guard_error_edge(
     helper_chain: Option<&super::helper_transfer::HelperChain>,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<String> {
-    let guard = probe.expression.trim();
+    let owner = owner_fn?;
+    let (guard, error) = if probe.family == ProbeFamily::Predicate {
+        let sink = flow_sinks.iter().find(|sink| {
+            sink.kind == FlowSinkKind::ErrorVariant && sink.line > probe.location.line
+        })?;
+        (probe.expression.trim().to_string(), sink.text.clone())
+    } else {
+        guarded_struct_error_return(probe, owner, index)?
+    };
+    let guard = guard.as_str();
     if !super::value_transfer::is_identifier(guard) || !extract_literals(guard).is_empty() {
         return None;
     }
-    let owner = owner_fn?;
     // #1726 review: `function_parameters` preserves `mut`, so a
     // mutable guard (`mut cancelled: bool`) must match the bare probe
     // guard. Only the comparison is normalized; call-row and helper
@@ -2599,9 +2607,6 @@ pub(in crate::analysis) fn unresolved_guard_error_edge(
     {
         return None;
     }
-    let sink = flow_sinks
-        .iter()
-        .find(|sink| sink.kind == FlowSinkKind::ErrorVariant && sink.line > probe.location.line)?;
     let exact_observer = related_tests.iter().any(|test| {
         test.assertions
             .iter()
@@ -2628,7 +2633,12 @@ pub(in crate::analysis) fn unresolved_guard_error_edge(
             .iter()
             .map(|cell| (cell.parameter.clone(), cell.value.clone()))
             .collect();
-        match super::value_transfer::evaluate_initializer(&sink.text, &inputs) {
+        if probe.family != ProbeFamily::Predicate
+            && inputs.get(guard).is_none_or(|value| value != "true")
+        {
+            return None;
+        }
+        match super::value_transfer::evaluate_initializer(&error, &inputs) {
             super::value_transfer::EvalOutcome::Unsupported { earliest_edge } => {
                 if earliest_unsupported.is_none() {
                     earliest_unsupported = Some(earliest_edge);
@@ -2640,8 +2650,102 @@ pub(in crate::analysis) fn unresolved_guard_error_edge(
     let earliest_edge = earliest_unsupported?;
     Some(format!(
         "{ERROR_RETURN_GUARD_UNRESOLVED_MARKER}: `{guard}` guards the changed `{}` (earliest unsupported edge: {earliest_edge})",
-        sink.text
+        error
     ))
+}
+
+/// The actual guarded record-valued error return, not a synthetic flow
+/// witness. The first statement is one bare-parameter `if`, its sole statement
+/// returns the record, and the remaining tail is `Ok`. Shared parser and source
+/// coordinates keep this independent of formatting; enums retain their pins.
+fn guarded_struct_error_return(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<(String, String)> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
+    if !matches!(
+        probe.family,
+        ProbeFamily::ErrorPath | ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
+    ) {
+        return None;
+    }
+    let facts = index.files().get(&owner.file)?;
+    if facts.used_lexical_fallback {
+        return None;
+    }
+    let parsed = crate::analysis::syntax::parse_clean_source_file_memoized(&facts.source)?;
+    let lines = crate::analysis::syntax::ra::LineIndex::new(&facts.source);
+    let tree = parsed.tree();
+    let mut functions = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text() == owner.name)
+                && function.syntax().text().to_string() == owner.body
+                && lines.line(function.syntax().text_range().start()) <= owner.start_line
+                && lines.line_for_range_end(function.syntax().text_range().end())
+                    >= owner.start_line
+        });
+    let function = functions.next()?;
+    if functions.next().is_some() || function.attrs().next().is_some() {
+        return None;
+    }
+    let body = function.body()?;
+    let mut statements = body.statements();
+    let ast::Stmt::ExprStmt(statement) = statements.next()? else {
+        return None;
+    };
+    let ast::Expr::IfExpr(guarded) = statement.expr()? else {
+        return None;
+    };
+    if statements.next().is_some() || guarded.else_branch().is_some() {
+        return None;
+    }
+    let ast::Expr::CallExpr(tail) = body.tail_expr()? else {
+        return None;
+    };
+    if tail.expr()?.syntax().text().to_string().trim() != "Ok"
+        || tail.arg_list()?.args().count() != 1
+    {
+        return None;
+    }
+    let arm = guarded.then_branch()?;
+    let mut statements = arm.statements();
+    let ast::Stmt::ExprStmt(statement) = statements.next()? else {
+        return None;
+    };
+    let ast::Expr::ReturnExpr(returned) = statement.expr()? else {
+        return None;
+    };
+    if statements.next().is_some()
+        || arm.tail_expr().is_some()
+        || !(lines.line(returned.syntax().text_range().start())
+            ..=lines.line_for_range_end(returned.syntax().text_range().end()))
+            .contains(&probe.location.line)
+    {
+        return None;
+    }
+    let ast::Expr::CallExpr(error_call) = returned.expr()? else {
+        return None;
+    };
+    if error_call.expr()?.syntax().text().to_string().trim() != "Err" {
+        return None;
+    }
+    let arguments = error_call.arg_list()?;
+    let mut arguments = arguments.args();
+    if !matches!(arguments.next()?, ast::Expr::RecordExpr(_)) || arguments.next().is_some() {
+        return None;
+    }
+    let error = error_call.syntax().text().to_string();
+    // A record with a bare type name is not a supported enum variant pin.
+    if exact_error_variant(&error).is_some() {
+        return None;
+    }
+    Some((guarded.condition()?.syntax().text().to_string(), error))
 }
 
 /// The shared evidence a boundary reading draws on, bundled so the reading takes the probe,

@@ -721,6 +721,13 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
         owner,
         literal_length_boundary,
     } = owner_inputs;
+    if !matches!(probe.family, ProbeFamily::Predicate)
+        && let Some(reason) = unresolved_boundary.filter(|reason| {
+            reason.starts_with(super::activation::ERROR_RETURN_GUARD_UNRESOLVED_MARKER)
+        })
+    {
+        return StageEvidence::new(StageState::Unknown, Confidence::Low, reason.to_string());
+    }
     // A returned bare comparison with a resolved missing boundary
     // discriminator reads the predicate lens's gap, never a better reading:
     // Weak or unresolved boundary evidence also applies to the returned

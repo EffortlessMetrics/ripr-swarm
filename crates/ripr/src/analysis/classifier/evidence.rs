@@ -408,6 +408,12 @@ impl ClassifiedProbeEvidence {
             &mut gathered,
             &mut flow_sinks,
         );
+        if context.probe.family != ProbeFamily::Predicate
+            && let Some(reason) =
+                super::finding::bounded_error_guard_limitation(context, &flow_sinks, pin_syntax)
+        {
+            gathered.unresolved_boundary = Some(reason);
+        }
         let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed
         // once — the cross-package same-name defeats compare each related

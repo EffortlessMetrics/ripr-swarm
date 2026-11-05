@@ -6228,7 +6228,7 @@ impl OwnerReturnPin {
                             operands[at],
                             projection,
                             &self.name,
-                            self.returns_scalar,
+                            LetObservation::from(self.returns_scalar),
                             false,
                         )
                         .and_then(|text| {
@@ -6355,7 +6355,7 @@ impl OwnerReturnPin {
                         &matches_operands[0],
                         "",
                         &self.name,
-                        true,
+                        LetObservation::Scalar,
                         false,
                     )
                 })
@@ -6440,7 +6440,7 @@ impl OwnerReturnPin {
                     operand,
                     "",
                     &self.name,
-                    self.returns_scalar,
+                    LetObservation::from(self.returns_scalar),
                     true,
                 )
                 && let Some(call) = self.awaited_call_shape(poll_context, text, &self.name)
@@ -8837,6 +8837,36 @@ fn unwrapped_err_call(operand: &str) -> Option<&str> {
         .and_then(|rest| rest.strip_suffix('"'))
         .is_some_and(|inner| !inner.contains(['"', '\\']));
     literal.then(|| call.trim_end())
+}
+
+/// Association for a typed limitation only. Reuse the existing current-let
+/// and canonical free-call authorities; this does not pin an error variant.
+pub(in crate::analysis) fn current_unwrapped_error_binding(
+    test: &TestSummary,
+    binding: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    syntax: &OwnerPinSyntax,
+) -> bool {
+    test.assertions.iter().any(|assertion| {
+        syntax.targeted_macro_binding_is_unambiguous(test, assertion.line, "assert_eq", index)
+            && let_bound_owner_call(
+                test,
+                assertion,
+                binding,
+                "",
+                &owner.name,
+                LetObservation::LimitationAssociation,
+                false,
+            )
+            .and_then(unwrapped_err_call)
+            .is_some_and(|call| {
+                is_whole_free_owner_call(call, &owner.name)
+                    && super::call_identity::bound_free_owner_calls(
+                        index, owner, test, call, syntax,
+                    )
+            })
+    })
 }
 
 /// #6974: whether `test`'s crate (or the workspace) may bind `root` before
@@ -14406,6 +14436,24 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
     Some(bindings)
 }
 
+#[derive(Clone, Copy)]
+enum LetObservation {
+    WholeValue,
+    Scalar,
+    // Association for a limitation does not assert primitive type or value identity.
+    LimitationAssociation,
+}
+
+impl From<bool> for LetObservation {
+    fn from(scalar: bool) -> Self {
+        if scalar {
+            Self::Scalar
+        } else {
+            Self::WholeValue
+        }
+    }
+}
+
 /// #6974: the initializer of `operand` when it is a plain identifier the
 /// test binds exactly once, by an immutable `let operand [: T] = <init>;`,
 /// and uses nowhere else but as a whole operand of its own `assert_eq!`
@@ -14416,21 +14464,24 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
 /// `bare_condition`: the reviewed assertion is a bool owner's `assert!(operand)`
 /// / `assert!(!operand)`, whose condition is the operand itself.
 ///
-/// `scalar` (cell-0094): the owner returns a primitive scalar, so the
+/// `Scalar` (cell-0094): the owner returns a primitive scalar, so the
 /// binding is `Copy` with no interior mutability and nothing can change
 /// it. Its other uses may then also sit in any other std assertion macro
 /// after the `let` (`assert!(b > 3); assert_eq!(b, 12);`), and statements
 /// may stand between the `let` and the assertion. Every use still lies in
 /// an assertion, so no item, pattern or macro outside one can rebind it.
+/// `LimitationAssociation` uses that same statement/use discipline only to
+/// withhold an unverified repair assignment; it grants no scalar or value pin.
 fn let_bound_owner_call<'a>(
     test: &'a TestSummary,
     assertion: &OracleFact,
     operand: &str,
     projection: &str,
     name: &str,
-    scalar: bool,
+    observation: LetObservation,
     bare_condition: bool,
 ) -> Option<&'a str> {
+    let read_only_assertions = !matches!(observation, LetObservation::WholeValue);
     let operand = operand.trim();
     if !is_plain_identifier(operand) || operand == name || operand == "self" {
         return None;
@@ -14457,6 +14508,19 @@ fn let_bound_owner_call<'a>(
         if !(test.start_line..=test.end_line).contains(&other.line) {
             continue;
         }
+        if matches!(observation, LetObservation::LimitationAssociation)
+            && other.line == let_line
+            && test
+                .body
+                .get(let_at..binding_at + binding.len() + 1)
+                .is_some_and(|statement| {
+                    collapse_whitespace(&other.text) == collapse_whitespace(statement)
+                })
+        {
+            // `expect_err` itself is an oracle fact on the initializer. The
+            // written let is already counted once outside the assertions.
+            continue;
+        }
         let text = mask_comments_and_strings(&other.text);
         let in_text = whole_word_offsets(&text, operand).len();
         if in_text == 0 {
@@ -14478,14 +14542,14 @@ fn let_bound_owner_call<'a>(
         let reviewed = other.line == assertion.line && other.text == assertion.text;
         // A bare `assert!(operand)` / `assert!(!operand)` reads the operand
         // as the whole condition, which is the `assert_eq!(operand, bool)`
-        // operand once; the scalar check below bounds it to one mention.
+        // operand once; the read_only_assertions check below bounds it to one mention.
         let whole_operand = whole_operand
             || (reviewed && bare_condition)
             || (reviewed
-                && scalar
+                && read_only_assertions
                 && projection.is_empty()
                 && literal_matches_binding_uses(&other.text, operand) == Some(in_text));
-        let read_only = scalar
+        let read_only = read_only_assertions
             && !reviewed
             && READ_ONLY_ASSERTION_MACROS
                 .iter()
@@ -14493,7 +14557,8 @@ fn let_bound_owner_call<'a>(
         if !(whole_operand || read_only)
             || other.line < let_line
             || (other.line == let_line
-                && (!scalar || !same_line_scalar_binding_precedes(test, binding_at, other)))
+                && (!read_only_assertions
+                    || !same_line_scalar_binding_precedes(test, binding_at, other)))
         {
             return None;
         }
@@ -14503,7 +14568,7 @@ fn let_bound_owner_call<'a>(
     if uses != asserted + 1 {
         return None;
     }
-    if scalar {
+    if read_only_assertions {
         let reviewed = mask_comments_and_strings(&assertion.text);
         let admitted_uses = literal_matches_binding_uses(&assertion.text, operand).unwrap_or(1);
         return (whole_word_offsets(&reviewed, operand).len() == admitted_uses
@@ -14543,7 +14608,7 @@ fn let_bound_owner_call<'a>(
     let_initializer(binding)
 }
 
-/// A scalar's once-bound initializer may precede an assertion on the same
+/// A once-bound initializer may precede an assertion on the same
 /// line. Bind the exact parser invocation and enclosing statement list;
 /// line equality alone cannot establish order or scope.
 fn same_line_scalar_binding_precedes(

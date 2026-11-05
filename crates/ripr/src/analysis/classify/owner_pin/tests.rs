@@ -2048,7 +2048,7 @@ fn an_early_return_pin_admits_only_the_value_that_return_produces() {
     let shadowed_index = index(&[(LIB, &shadowed)]);
     assert!(establish(&shadowed_index, "parse", "return Ok(k + 2);").is_none());
 
-    let lib = "pub enum E { Negative }\n\npub fn checked(x: i32) -> Result<i32, E> {\n    if x < 0 { return Err(E::Negative); }\n    Ok(x * 2)\n}\n";
+    let lib = "#[derive(Debug, PartialEq)]\npub enum E { Negative }\n\npub fn checked(x: i32) -> Result<i32, E> {\n    if x < 0 { return Err(E::Negative); }\n    Ok(x * 2)\n}\n";
     let tests = "use demo::{checked, E};\n\n#[test]\nfn checks() {\n    assert_eq!(checked(-1), Err(E::Negative));\n    assert_eq!(checked(2), Ok(4));\n}\n";
     let err_index = index(&[(LIB, lib), (TESTS, tests)]);
     let pin = establish(&err_index, "checked", "return Err(E::Negative);");

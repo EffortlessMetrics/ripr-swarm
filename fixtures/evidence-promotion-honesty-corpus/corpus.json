@@ -45,6 +45,66 @@
   ],
   "cases": [
     {
+      "id": "rust_guarded_error_return_limitation_error_path",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_return_unresolved_guard",
+      "vector": "constructor_to_literal_change_keeps_guarded_error_producer_unresolved",
+      "probe_family": "error_path",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "rust_value_propagation_unresolved"
+        }
+      ]
+    },
+    {
+      "id": "rust_guarded_error_return_limitation_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_return_unresolved_guard",
+      "vector": "constructor_to_literal_change_keeps_guarded_error_producer_unresolved",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "rust_value_propagation_unresolved"
+        }
+      ]
+    },
+    {
+      "id": "rust_guarded_error_return_limitation_field_construction",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/error_return_unresolved_guard",
+      "vector": "constructor_to_literal_change_keeps_guarded_error_producer_unresolved",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "must_emit_limitation",
+          "expected_limit_kind": "rust_value_propagation_unresolved"
+        }
+      ]
+    },
+    {
       "id": "rust_effect_receiver_intercepted_first_side_effect",
       "language": "rust",
       "tier": "pure",
@@ -5001,18 +5061,18 @@
       "language": "rust",
       "tier": "pure",
       "source_fixture": "fixtures/split_test_boundary_oracle",
-      "vector": "owner_return_pin_confirms_return_value_through_owner_naming_call",
+      "vector": "returned_comparison_cannot_join_boundary_input_with_another_tests_oracle",
       "probe_family": "return_value",
       "assertions": [
         {
           "type": "must_not_report_clean"
         },
         {
-          "type": "must_promote"
+          "type": "must_not_promote"
         },
         {
           "type": "maximum_class",
-          "class": "exposed"
+          "class": "weakly_exposed"
         }
       ]
     },
