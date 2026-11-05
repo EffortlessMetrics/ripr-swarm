@@ -45,19 +45,18 @@ ripr check --root fixtures/error_variant_boxed_wrapper_downcast_witness/input   
 
 ## Then
 
-The two typed parseable-variant return sites remain `weakly_exposed` when
-this bound-result witness does not establish which early return produced the
-asserted value. An exact variant category and an owner call alone cannot lend
-sink identity to both sites (RIPR-SPEC-0106 / RIPR-SPEC-0197).
+The first typed parseable-variant return is `exposed` when the admitted
+current result binding, unit-error pattern and literal input select its first
+guard. The later identical return remains `weakly_exposed`: a variant category
+and an owner call alone cannot lend sink identity to both sites.
 
 Native per-return controls distinguish this from missing test execution:
 changing only the first return makes both existing parse witnesses fail;
 changing only the second return leaves their outcomes unchanged. The complete
 fixture harness also contains deliberately wrong companion assertions, so its
-whole exit is not a passing-suite claim. Static analysis remains conservative
-for both typed sites until it can bind the selected observer to the particular
-return. The directly bound unique unit-variant positives remain covered by
-`unwrap_err_variant_positive` and the production return-confirmation controls.
+whole exit is not a passing-suite claim. Production controls retain unentered,
+shadowed, overwritten and unrelated-result negatives, and the directly bound
+unique unit-variant positives remain covered by `unwrap_err_variant_positive`.
 
 The `map_err(Into::into)` wrapper seams with asserting observers — including
 the one the downcast witness reaches — classify `weakly_exposed` and carry

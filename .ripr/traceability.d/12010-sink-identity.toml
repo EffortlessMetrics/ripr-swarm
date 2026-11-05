@@ -1,6 +1,7 @@
 [[extend]]
 id = "RIPR-SPEC-0108"
 tests = [
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::unit_error_pattern_pins_the_selected_return_without_lending_it_to_its_sibling",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::borrowed_boolean_helpers_pair_only_the_result_their_assertion_reads",
   "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can",
   "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_equal_strength_bound_oracle_wins_in_either_order",

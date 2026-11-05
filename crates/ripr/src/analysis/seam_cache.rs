@@ -708,7 +708,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.173`: retain the typed unresolved guarded-error-return limitation.
 /// `1.174`: guarded-return lookup uses the indexed fn token, not visibility text.
 /// `1.175`: borrowed bool observers pair only through their exact result argument.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.175";
+/// `1.176`: unit-error pattern identity is tied to the selected literal guard row.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.176";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -928,7 +929,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.175";
 /// `0.174`: same composed module-glob ancestry as full `1.172`.
 /// `0.175`: same guarded-error-return limitation as full `1.173`.
 /// `0.176`: same fn-token guarded-return identity as full `1.174`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.177";
+/// `0.177`: same exact borrowed-bool pairing as full `1.175`.
+/// `0.178`: same selected unit-error row identity as full `1.176`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1150,7 +1153,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.177";
 /// `0.174`: same composed module-glob ancestry as full `1.172`.
 /// `0.175`: same guarded-error-return limitation as full `1.173`.
 /// `0.176`: same fn-token guarded-return identity as full `1.174`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.177";
+/// `0.177`: same exact borrowed-bool pairing as full `1.175`.
+/// `0.178`: same selected unit-error row identity as full `1.176`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.178";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5306,7 +5311,7 @@ mod tests {
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
         // Composed main and successor invalidate both predecessor branches.
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.175");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.176");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5452,8 +5457,8 @@ mod tests {
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.177");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.177");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.178");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.178");
     }
 
     #[test]
@@ -5793,6 +5798,7 @@ mod tests {
             ("pre-guarded-error-limitation", "1.172", "0.174"),
             ("pre-guard-fn-token-lookup", "1.173", "0.175"),
             ("pre-borrowed-bool-pairing", "1.174", "0.176"),
+            ("pre-selected-unit-error-row", "1.175", "0.177"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {

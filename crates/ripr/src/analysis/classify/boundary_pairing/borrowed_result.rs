@@ -3,7 +3,9 @@
 //! HelperLoan supplies execution, macro binding and helper identity. This
 //! module supplies the missing value edge, never generic helper reach.
 use super::*;
-use crate::analysis::syntax::{parse_clean_source_file, ra::LineIndex};
+use crate::analysis::syntax::{
+    parse_clean_source_file_memoized as parse_clean_source_file, ra::LineIndex,
+};
 use ra_ap_syntax::ast::{HasArgList, HasGenericArgs, HasName};
 
 pub(super) fn pairs(
@@ -17,7 +19,9 @@ pub(super) fn pairs(
     let Some(pin) = super::super::owner_pin::OwnerReturnPin::establish(probe, owner, index) else {
         return false;
     };
-    if !pin.is_unconditional_boolean_tail() {
+    if !pin.is_unconditional_boolean_tail()
+        || super::super::owner_pin::wrapper_may_be_rebound("bool", index)
+    {
         return false;
     }
     let Some((result_slot, expected_slot, callback)) = slots(loan, assertion) else {

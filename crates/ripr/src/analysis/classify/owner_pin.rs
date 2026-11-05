@@ -47,6 +47,8 @@ mod expected_binding;
 mod fallible_check;
 mod fixture_receiver;
 mod helper_arguments;
+mod selected_error;
+pub(in crate::analysis) use selected_error::selected_unit_error_return;
 pub(in crate::analysis::classify) mod path_value;
 pub(super) mod result_map;
 pub(super) mod returned_closure;
@@ -14440,6 +14442,8 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
 enum LetObservation {
     WholeValue,
     Scalar,
+    // The caller establishes a unit-error pattern; no primitive/equality claim.
+    UnitPattern,
     // Association for a limitation does not assert primitive type or value identity.
     LimitationAssociation,
 }
@@ -14461,8 +14465,8 @@ impl From<bool> for LetObservation {
 /// a method call, an argument, a second binding, a use before the `let`)
 /// could change or replace the value, so it fails closed.
 ///
-/// `bare_condition`: the reviewed assertion is a bool owner's `assert!(operand)`
-/// / `assert!(!operand)`, whose condition is the operand itself.
+/// `bare_condition`: the caller established that the reviewed condition reads
+/// the whole binding (a bool condition or a validated unit-error pattern).
 ///
 /// `Scalar` (cell-0094): the owner returns a primitive scalar, so the
 /// binding is `Copy` with no interior mutability and nothing can change
@@ -14470,6 +14474,9 @@ impl From<bool> for LetObservation {
 /// after the `let` (`assert!(b > 3); assert_eq!(b, 12);`), and statements
 /// may stand between the `let` and the assertion. Every use still lies in
 /// an assertion, so no item, pattern or macro outside one can rebind it.
+/// `UnitPattern` uses the same immutable use discipline after its caller has
+/// established a pattern on a declared unit error, without claiming scalar type
+/// or equality semantics.
 /// `LimitationAssociation` uses that same statement/use discipline only to
 /// withhold an unverified repair assignment; it grants no scalar or value pin.
 fn let_bound_owner_call<'a>(

@@ -515,6 +515,9 @@ fn apply_method(
         (TypedValue::Str(value), "contains", Some(TypedValue::Str(needle))) => {
             TypedValue::Bool(value.contains(&needle))
         }
+        (TypedValue::Str(value), "contains", Some(TypedValue::Char(needle))) => {
+            TypedValue::Bool(value.contains(needle))
+        }
         (TypedValue::Str(value), "strip_prefix", Some(TypedValue::Str(prefix))) => {
             TypedValue::OptStr(value.strip_prefix(&prefix).map(str::to_string))
         }

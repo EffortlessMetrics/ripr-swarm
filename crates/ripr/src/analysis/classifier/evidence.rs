@@ -1072,6 +1072,11 @@ impl ClassifiedProbeEvidence {
                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
                 })
                 || direct_owner_pin_admits(test, assertion)
+                || context.owner_fn.is_some_and(|owner| {
+                    crate::analysis::classify::selected_unit_error_return(
+                        context.probe, owner, test, assertion, context.index, pin_syntax,
+                    )
+                })
         };
         // #9766: the per-assertion fact that the fixture-receiver owner gate
         // itself admitted this assertion. Another owner-pin route (chain

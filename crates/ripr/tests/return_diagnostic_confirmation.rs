@@ -1121,3 +1121,63 @@ fn borrowed_boolean_helpers_pair_only_the_result_their_assertion_reads() -> Resu
     }
     Ok(())
 }
+
+#[test]
+fn unit_error_pattern_pins_the_selected_return_without_lending_it_to_its_sibling()
+-> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/error_variant_boxed_wrapper_downcast_witness");
+    let read = |path: &str| std::fs::read_to_string(fixture.join(path)).map_err(|e| e.to_string());
+    let source = read("input/src/lib.rs")?;
+    let manifest = read("input/Cargo.toml")?;
+    let diff = read("diff.patch")?;
+    let test = "use boxed_wrapper_downcast_witness_fixture::try_parse_summary;\nuse boxed_wrapper_downcast_witness_fixture::ParseSummaryError;\n#[test]\nfn observes()->Result<(),Box<dyn std::error::Error>> {\n    let result = try_parse_summary(\"@bad;\");\n    if !matches!(result, Err(ParseSummaryError::MalformedSource)) {\n        return Err(\"wrong variant\".into());\n    }\n    Ok(())\n}\n";
+    let overwritten = test.replace("let result", "let mut result").replace(
+        "    if !matches!",
+        "    result = Err(ParseSummaryError::MalformedSource);\n    if !matches!",
+    );
+    let shadowed = test.replace("    if !matches!", "    let result = Err::<boxed_wrapper_downcast_witness_fixture::ParseSummary,ParseSummaryError>(ParseSummaryError::MalformedSource);\n    if !matches!");
+    let unrelated = test.replace("let result = try_parse_summary(\"@bad;\");", "let _ = try_parse_summary(\"@bad;\");\n    let result = Err::<(),_>(ParseSummaryError::MalformedSource);");
+    for (label, body, positive) in [
+        ("selected", test.to_string(), true),
+        ("unentered", test.replace("@bad;", "ordinary"), false),
+        ("later identical return", test.replace("@bad;", ""), false),
+        ("overwritten", overwritten, false),
+        ("shadowed", shadowed, false),
+        ("unrelated", unrelated, false),
+        (
+            "sibling variant",
+            test.replace(
+                "Err(ParseSummaryError::MalformedSource)",
+                "Err(ParseSummaryError::ParserInit)",
+            ),
+            false,
+        ),
+    ] {
+        let report = check_report(&source, &body, &manifest, &diff)?;
+        let findings = report["findings"].as_array().ok_or("findings missing")?;
+        for line in [45, 48] {
+            let rows = findings
+                .iter()
+                .filter(|f| {
+                    f["probe"]["line"] == line
+                        && f["probe"]["expression"]
+                            == "return Err(ParseSummaryError::MalformedSource)"
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                rows.len(),
+                2,
+                "{label} expected error+return findings on {line}: {report}"
+            );
+            for row in rows {
+                assert_eq!(
+                    row["classification"] == "exposed",
+                    positive && line == 45,
+                    "{label}, {line}: {row}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
