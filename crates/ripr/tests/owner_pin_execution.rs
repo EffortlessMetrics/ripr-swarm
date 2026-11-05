@@ -4203,11 +4203,17 @@ fn external_collection_trait_cannot_supply_payload_identity() -> Result<(), Stri
             ("subject", "use crate::First;", true),
         ] {
             std::fs::write(&manifest, format!("[package]\nname=\"subject\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n[dependencies]\n{alias}={{package=\"external_first\",path=\"../external\"}}\n")).map_err(|e| e.to_string())?;
+            let local_trait = if import == "use crate::First;" {
+                "\npub trait First {}\n"
+            } else {
+                ""
+            };
             let input = format!(
-                "{}{}{}\npub trait First {{}}\n",
+                "{}{}{}{}",
                 &original[..start],
                 import,
-                &original[end..]
+                &original[end..],
+                local_trait
             )
             .replace(".first()", &format!(".{method}()"));
             std::fs::write(subject.join("src/lib.rs"), &input).map_err(|e| e.to_string())?;
