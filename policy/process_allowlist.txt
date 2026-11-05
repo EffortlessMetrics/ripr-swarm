@@ -205,6 +205,8 @@ tools/repo-policy/src/coverage_diagnostics/linux.rs|Command::new|2|coverage/4978
 
 crates/ripr/src/analysis/workspace/assertion_dependency.rs|Command::new|1|bounded-anyhow-identity|#4478: read-only full offline locked Cargo metadata, owned process containment, 120-second deadline and 8-MiB output cap; refuses effective source replacement and performs no build or network operation.
 
+xtask/tests/file_policy_packet_acceptance.rs|Command::new|1|packet-coverage-cli-proof|#13223: runs offline Cargo lockfile generation and two-test inventories in an owned dependency-free temporary workspace with an isolated target directory; actual xtask dispatch uses the existing shared launcher. No repository build, network or production spawn.
+xtask/tests/file_policy_packet_acceptance.rs|use std::process::Command|1|packet-coverage-cli-proof|#13223: test-only import for the bounded fixture Cargo commands and child-only environment configuration above.
 xtask/tests/policy_all.rs|Command::new|1|policy-all-driver-proof|#5073: integration tests run Git in tiny private fixtures to compare all nine existing leaf reports, independent failures and later execution; xtask dispatch routes through `common/xtask_bin.rs` (#4293); no production spawn or network behavior.
 xtask/tests/policy_all.rs|use std::process::Command|1|policy-all-driver-proof|#5073: test-only import for the same built-driver and fixture-Git probes.
 

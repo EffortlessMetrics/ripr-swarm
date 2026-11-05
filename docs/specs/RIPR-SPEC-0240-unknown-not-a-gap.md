@@ -21,7 +21,8 @@ Linked plan:
 Linked issues:
 
 - #5327 (serde `format_u8` false gap), #5432 (sibling-arm oracles),
-  #9442 and #9443 (owners reached without a placeable call)
+  #9442 and #9443 (owners reached without a placeable call),
+  #11985 (TypeScript workspace byte limits cannot establish a missing test)
 
 Linked PRs:
 
@@ -31,7 +32,7 @@ Linked PRs:
 Support-tier impact:
 
 - None.
-- This narrows when Rust findings claim a gap. It does not promote a
+- This narrows when Rust and TypeScript/JavaScript findings claim a gap. It does not promote a
   language, surface, or gate.
 
 Policy impact:
@@ -418,13 +419,27 @@ non-ignored related test matches one of these shapes:
   strict snapshot grader names the owner by its identifier, so a different
   receiver's `other.own(..)` or a shadowed `own` is read as the owner; aliasing
   and escape are not followed.
-- **insta**: a `direct_owner_call` test with a snapshot macro that has no
-  inline `@` literal, whose snapshotted value (after an optional literal name)
-  derives from the owner as above (a live binding at the assertion), and no `add_redaction`, `with_settings` or `Settings`,
-  on a changed `field:` initializer that no redaction selector (a literal
-  keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
-  keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
-  does a redacted field (`lib-insta-json-redacted-id`).
+- **insta**: a `direct_owner_call` test whose snapshotted value (after an
+  optional literal name) derives from the owner as above (a live binding at
+  the assertion), on a changed `field:` initializer. With no inline `@`
+  literal, an unredacted field is serialized into expected bytes ripr does
+  not read and is withheld. A readable literal selector naming the field
+  keeps the gap only when no unread settings can alter the comparison.
+  Selector maps are parsed through Rust syntax, preserving Unicode trivia,
+  raw strings, generic calls, closures and comment trivia. Unreadable maps,
+  including nonliteral keys, establish neither serialization nor redaction.
+  Executable whole names `add_redaction`, `with_settings` or `Settings`
+  before the snapshot likewise identify unread configuration. After owner-result
+  and changed-field gates, either uncertainty retains `static_unknown` with
+  `rust_framework_oracle_unresolved` and accurate advice, including inline
+  expected text. Settings after the assertion, strings/comments/longer names,
+  another value's snapshot and unrelated changed lines do not supply this witness.
+  Ordinary inline snapshots and literal redactions retain their existing
+  disposition when configuration is readable. This is bounded syntax admission;
+  settings scopes, type aliases and dynamic selectors remain unsupported.
+  Snapshot-byte identity and positive projection credit remain with #8121.
+  Repository seam evidence and pilot/brief selection have a separate producer;
+  its snapshot-uncertainty disclosure remains a residual under #8121.
 - **fixture receiver** (#9609): a `return_value` probe whose changed line
   holds a closure (`|..|`, `move |..|` or `|| ..` opening an argument; a boolean or bitwise `||` / `|` is not one) in a `&self` method, and a `direct_owner_call` test
   with a strong assertion: an `assert_eq!` with a literal (number, string,
@@ -1061,14 +1076,47 @@ the partial file set even when the walk stopped before reaching it. Without
 that, a cut-short walk leaves the change with no owner and no finding at all.
 
 This does not make the cut-short run complete: the limitation still marks the
-outcome partial. Reference-tree pruning, walk order by changed paths and the
-read budget are separate work.
+outcome partial. Reference-tree pruning and walk order by changed paths are
+separate work. Byte-read limits follow the rule below.
+
+### TypeScript workspace sources refused by a byte limit (#11985)
+
+A finished discovery walk does not establish that no test reaches a change
+when the workspace reader refused discovered sources under
+`RIPR_TS_MAX_FILE_READ_BYTES` or `RIPR_TS_MAX_WORKSPACE_READ_BYTES`. An unread
+source may contain the test itself or an import/call path connecting a test
+to the changed owner. The refusal list from the bounded reader, before its
+path samples are capped for display, is the evidence that the index is partial.
+
+When at least one workspace source was refused by either byte cap, every
+TypeScript or JavaScript finding classed `no_static_path` with no earlier
+`static_limit_kind` is rewritten through the shared `withhold_gap` owner to
+`static_unknown` under `typescript_workspace_read_limited`. Its first
+unresolved edge names the unread source count. Its next step names the
+effective per-file and total byte limits, both environment settings, and a
+narrower root as recovery. TypeScript actionability evidence is refreshed by
+its existing producer to name the same limitation and recovery route;
+canonical repair-gap and TypeScript repair-packet projection remain withheld.
+The shared preview-confidence owner also derives the reasons again for
+`static_unknown`: JSON and human output must say that whether a test checks
+the behavior is unestablished, rather than retain the withheld claim that no
+related test reaches the changed owner.
+
+This rule preserves findings with observed related tests and any named limit
+another producer already established. Discovery withholding runs first, so a
+run that also stopped its walk retains `typescript_workspace_discovery_truncated`
+on those findings. The existing per-path read-limit disclosures still mark
+the run partial. A sufficient-budget read with a reachable test keeps the
+test and its oracle; a finished read with no test keeps `no_static_path`.
+Refusing the changed source itself still produces no owner or invented
+finding. The byte caps and all reader refusals remain enforced.
 
 ## Scope boundary
 
-- Rust check findings, the TypeScript truncated-discovery rule, and the named
-  panic-outcome limitation in repository seam evidence described above. The
-  separate pilot seam rule for unresolved reach is RIPR-SPEC-0230 (#5569).
+- Rust check findings, the TypeScript truncated-discovery and byte-read-limit
+  rules, and the named panic-outcome limitation in repository seam evidence
+  described above. The separate pilot seam rule for unresolved reach is
+  RIPR-SPEC-0230 (#5569).
 - `weakly_exposed` findings are out of scope except for the framework
   oracles above and the profile-dependent `debug_assert_eq!` above (which the
   owner pin would credit as `assert_eq!`): a credited weak oracle is read
@@ -1181,6 +1229,14 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
+- `unread_insta_selectors_withhold_changed_fields` retains typed uncertainty
+  for constant selectors, named and match-prefixed maps, mixed literal/constant
+  keys and inline expected text, while unrelated snapshot operands keep a gap.
+- `insta_settings::unread_settings_withhold_both_fields` and
+  `insta_settings::with_settings_withholds_both_fields` exercise the public
+  classifier on both the redacted field and its unredacted sibling; controls
+  preserve literal redactions, constant selectors, ordinary inline snapshots,
+  exact field assertions and owner binding.
 - `fixtures/fixture_receiver_coincident_data` and its independent honesty case
   retain equal-column, single-row product/sum and all-zero product/sum refusals.
 - `fixture_receiver_literal_pin_reads_helper_data` and
@@ -1307,6 +1363,18 @@ Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 `no_static_path`; a truncated walk withholds it, names the cap, keeps the changed
 file in scope and leaves the outcome partial).
 
+`crates/ripr/tests/typescript_read_budget.rs` invokes the real CLI with
+child-local byte limits. Both a per-file refusal and an aggregate-budget
+refusal of an existing reachable test withhold the false `no_static_path` and
+expose the named limit, matching actionability, recovery, and partial outcome.
+Both cases check the confidence reason in JSON and the rendered human digest
+and full report, rejecting the stale no-related-test claim.
+Sufficient budgets retain that test's exact-value boundary witness; a finished
+read with no tests retains `no_static_path`; an observed test's whole finding
+is unchanged beside an unread unrelated source; and a refused changed source
+does not fabricate a finding. The shared withholding unit test also pins
+idempotence, zero-refusal behavior, other classes, and existing typed limits.
+
 Wire strings are pinned by
 `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
 and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
@@ -1330,6 +1398,10 @@ and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_cl
   indirect-owner decision.
 - `crates/ripr/src/analysis/language/rust/mod.rs` calls it last in
   `apply_probe_and_oracle_limits`.
+- `crates/ripr/src/analysis/language/typescript/mod.rs` applies byte-read
+  withholding from the bounded reader's refusal list after discovery
+  withholding; `crates/ripr/src/analysis/language/typescript/actionability.rs` keeps the producer-owned
+  actionability fields aligned with the resulting named limit.
 - `crates/ripr-contract/src/domain/language.rs` and `crates/ripr-contract/src/domain/probe.rs`
   own the new wire values.
 

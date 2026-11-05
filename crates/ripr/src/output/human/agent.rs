@@ -162,6 +162,21 @@ fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
     true
 }
 
+/// A weakly exposed preview finding whose producer recorded both a missing
+/// discriminator and a contributing weak related test. Guided repair being
+/// unavailable for preview languages does not mean the test-side action is
+/// absent. Requires the established discriminator, never limitation prose.
+fn preview_leaves_test_side_open(finding: &Finding) -> bool {
+    triage::is_preview_limited(finding)
+        && !triage::is_static_limited(finding)
+        && matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+        && !finding.activation.missing_discriminators.is_empty()
+        && triage::weak_assertion_row(finding).is_some()
+}
+
 /// `ripr explain --format agent` (#12104): the one-finding counterpart of
 /// [`render`]. It reuses the same record, test-table and terminal vocabulary
 /// (`done=` / `open=` / `stop=`) and the same gap predicates, so a finding is
@@ -210,6 +225,15 @@ pub(super) fn render_finding(
             "open=a static limit leaves reach unconfirmed, but a related test asserts too weakly to notice the change; not a confirmed gap, and tests may still help",
             weak_row,
         )
+    } else if preview_leaves_test_side_open(finding) {
+        // #13277: preview evidence is advisory and has no governed repair
+        // route, which is not the same as "nothing more is fixable". The
+        // producer-owned discriminator and related test are shown; nothing
+        // is inferred or promoted.
+        (
+            "open=preview-language evidence is advisory and offers no guided repair, but a related test asserts too weakly to notice this change; tests may still help; static advisory, not runtime proof",
+            weak_row,
+        )
     } else if finding.class == ExposureClass::Exposed
         && !triage::is_static_limited(finding)
         && !triage::is_preview_limited(finding)
@@ -226,7 +250,8 @@ pub(super) fn render_finding(
     };
     let mut tests: Vec<TestRef> = Vec::new();
     let test_ref = test.map(|test| intern_test(&mut tests, root, test));
-    let with_missing = terminal.starts_with("open=a test-side");
+    let with_missing =
+        terminal.starts_with("open=a test-side") || terminal.starts_with("open=preview-language");
     out.push_str(&gap_line(root, finding, test_ref, with_missing));
     out.push('\n');
     for (index, test) in tests.iter().enumerate() {

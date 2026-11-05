@@ -55,9 +55,9 @@ run the `ripr-setup` workflow and stop with its outcome.
    `readiness.repair_ready` to be true. Otherwise, or when a limitation
    blocks the seam, explain the exact typed stop and end. A wrong
    actionable signal is worse than a missed advisory one.
-4. Prepare a durable attempt with the CLI, using the seam identity from
-   the repair card's receipt binding — the seam ID it names, not an
-   inferred equivalent of the canonical gap ID:
+4. Prepare a durable attempt with the CLI, using the repair card's
+   `card.subject.seam_id`. Keep this seam ID distinct from the canonical
+   gap ID:
 
    ```text
    ripr agent repair --root . --seam-id <seam-id> --phase before --json

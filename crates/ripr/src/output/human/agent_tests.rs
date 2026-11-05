@@ -701,6 +701,76 @@ fn explain_agent_reach_limit_with_weak_row_is_open_without_a_missing_value() {
     assert!(text.contains("|missing=-|test=t1|"), "{text}");
 }
 
+/// #13277: a preview-language finding with a producer-recorded missing
+/// discriminator and a weak related test must not be told "nothing more is
+/// fixable"; the discriminator and test stay visible, advisory only.
+fn preview_weak_gap(id: &str, line: usize) -> Finding {
+    let mut f = weak_gap(id, line);
+    f.language_status = Some(crate::domain::LanguageStatus::Preview);
+    f
+}
+
+#[test]
+fn explain_agent_preview_weak_gap_keeps_the_discriminator_and_test_open() {
+    let text = explained(&preview_weak_gap("probe:a", 2));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines[1],
+        "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50|test=t1|id=probe:a"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("open=preview-language evidence is advisory")),
+        "{text}"
+    );
+    assert!(!text.contains("nothing more is fixable"), "{text}");
+    assert!(!text.contains("\nstop="), "{text}");
+    assert!(
+        text.contains("static advisory, not runtime proof"),
+        "{text}"
+    );
+    assert_eq!(
+        lines.last().copied(),
+        Some("next=ripr context --root repo --at probe:a")
+    );
+}
+
+#[test]
+fn explain_agent_preview_controls_stay_closed_without_established_evidence() {
+    // No producer-recorded discriminator: still the honest stop.
+    let mut bare = preview_weak_gap("probe:a", 2);
+    bare.activation.missing_discriminators.clear();
+    let text = explained(&bare);
+    assert!(text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    // No weak related test: nothing to point at.
+    let mut no_test = preview_weak_gap("probe:a", 2);
+    no_test.related_tests.clear();
+    let text = explained(&no_test);
+    assert!(text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    // Exposed preview finding is not a gap.
+    let mut exposed = preview_weak_gap("probe:a", 2);
+    exposed.class = ExposureClass::Exposed;
+    assert!(!explained(&exposed).contains("open="));
+    // Static limit and non-current source keep their stops.
+    let mut limited = preview_weak_gap("probe:a", 2);
+    limited.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    assert!(!explained(&limited).contains("open="));
+    let mut moved = preview_weak_gap("probe:a", 2);
+    moved.source_currentness = SourceCurrentness::MovedOrRenamed;
+    assert!(!explained(&moved).contains("open="));
+    // Suppressed stays suppressed.
+    let suppressed = render_finding(
+        &preview_weak_gap("probe:a", 2),
+        std::path::Path::new("repo"),
+        "ripr context --at probe:a",
+        true,
+    );
+    assert!(!suppressed.contains("open="), "{suppressed}");
+}
+
 #[test]
 fn explain_agent_agrees_with_check_agent_on_gap_membership() {
     // One predicate decides "gap" for both surfaces: for every class, explain

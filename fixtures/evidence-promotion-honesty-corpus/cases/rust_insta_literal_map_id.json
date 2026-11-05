@@ -1,0 +1,24 @@
+{
+  "id": "rust_insta_literal_map_id",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-insta-literal-map-id.json",
+  "vector": "unread_insta_configuration_cannot_manufacture_a_gap_with_exact_owner_and_preservation_controls",
+  "probe_family": "field_construction",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "must_not_promote"
+    }
+  ]
+}
