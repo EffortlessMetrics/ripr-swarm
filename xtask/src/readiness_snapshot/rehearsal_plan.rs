@@ -145,7 +145,7 @@ mod tests {
     use super::parse_args;
 
     #[test]
-    fn rehearsal_plan_arguments_fail_closed() {
+    fn rehearsal_plan_arguments_fail_closed() -> Result<(), String> {
         for args in [
             vec![],
             vec!["--plan"],
@@ -156,12 +156,14 @@ mod tests {
             vec!["--sha", "HEAD", "--plan", "--no-publish"],
             vec!["--sha", "HEAD", "--plan", "--execute"],
         ] {
-            parse_args(&args.into_iter().map(str::to_string).collect::<Vec<_>>())
-                .expect_err("invalid arguments must be rejected");
+            if parse_args(&args.into_iter().map(str::to_string).collect::<Vec<_>>()).is_ok() {
+                return Err("invalid arguments must be rejected".to_string());
+            }
         }
         assert_eq!(
             parse_args(&["--sha", "HEAD", "--plan", "--json"].map(str::to_string)),
             Ok(("HEAD".to_string(), true))
         );
+        Ok(())
     }
 }

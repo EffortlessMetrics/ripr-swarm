@@ -233,8 +233,9 @@ fn rehearsal_identity_missing_blob_cannot_invoke_promisor_transport() -> Result<
             .join(&blob[2..]),
     )
     .map_err(|e| e.to_string())?;
-    collect_identity_inputs_for_commit(&fixture.root, &head)
-        .expect_err("missing object must be rejected");
+    if collect_identity_inputs_for_commit(&fixture.root, &head).is_ok() {
+        return Err("missing object must be rejected".to_string());
+    }
     assert!(
         !fixture.root.join(".git/transport-marker").exists(),
         "identity read invoked transport"
@@ -453,7 +454,9 @@ fn rehearsal_identity_refuses_split_index_without_freshening_it() -> Result<(), 
         .map_err(|e| e.to_string())?
         .set_times(fs::FileTimes::new().set_modified(old))
         .map_err(|e| e.to_string())?;
-    git_worktree_clean().expect_err("split index must be rejected");
+    if git_worktree_clean().is_ok() {
+        return Err("split index must be rejected".to_string());
+    }
     assert_eq!(
         fs::metadata(&shared)
             .map_err(|e| e.to_string())?
