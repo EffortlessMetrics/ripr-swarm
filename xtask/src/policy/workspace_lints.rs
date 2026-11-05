@@ -82,9 +82,9 @@ target = "2027-03-31"
     fn table_form_lint_requires_a_ledger_entry() {
         let violations = collect_lint_policy_violations(RUST_TABLE, "");
         assert!(
-            violations.iter().any(|row| {
-                row.contains("unexpected_cfgs") && row.contains("no matching")
-            }),
+            violations
+                .iter()
+                .any(|row| { row.contains("unexpected_cfgs") && row.contains("no matching") }),
             "{violations:?}"
         );
     }
