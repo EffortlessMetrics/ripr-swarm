@@ -182,6 +182,32 @@ ripr_list_repair_attempts → durable attempt discovery, before or after refresh
 Status and list calls never return the full evidence graph; read one item at
 a time through the tool or the resource.
 
+### Re-read policy (no conditional reads over stdio)
+
+`resources/read` has no conditional form: stdio has no HTTP 304, the server
+answers every read with the full document and sets `ttl_ms: 0`. The supported
+way to avoid paying for an unchanged document is the snapshot identity, which
+is already content-addressed (`snapshot:sha256:` over the typed outcome, the
+canonical item identities and each item's evidence digest) and is carried by
+every status, list, gap, limitation and card document:
+
+- A `ripr://gap/{canonical_id}` or `ripr://snapshot/{snapshot_id}` document
+  read under snapshot `S` stays valid while `S` is the current snapshot. Do
+  not poll it. The one field that can change under an unchanged `S` is
+  `item.links.repair_attempt`, which binds when `ripr_prepare_repair` creates
+  a session transaction; read the attempt through its own tool.
+- To learn whether the snapshot moved, call `ripr_refresh` (the only call that
+  commits one) or compare the `snapshot_id` already on the last small
+  response you hold. A new `snapshot_id` is the signal to re-read; an equal
+  one means every item document under it is unchanged.
+- `ripr_workspace_status` carries session facts that are not content-addressed, so
+  it is the poll target of last resort; prefer `ripr_list_gaps` with `limit: 1` when
+  only the snapshot identity is wanted.
+
+A request-side conditional read (a client-supplied seen digest answered with a
+minimal "unchanged" document) and a narrower status payload remain open design
+choices tracked on #13328; neither is implied by this policy.
+
 ## Top limitation
 
 `ripr_get_top_limitation` (and the equivalent resource
