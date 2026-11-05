@@ -641,7 +641,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "targeted-rerun-benchmark --root <path> --changed-test <path> [--samples <n>] [--timeout-ms <n>]",
         "agentic-bench [--bench <id>]",
         "seam-inventory-scaling-benchmark [--sizes <n,n,n>] [--samples <n>] [--timeout-ms <n>] [--keep-workspaces]",
-        "mutation-spot-check --repo <name>=<checkout> [--mutants-out <name>=<dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]",
+        "mutation-spot-check --repo <name>=<checkout> [--mutants-out <name>=<dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>] | mutation-spot-check --rederive-summaries <mutation-spot-check.json>",
         "pilot-ranking check|fetch|label|score [--manifest <path>] [--root <dir>] [--repo <id>]... [--allow-network] [--mutants-out <id>=<dir>] [--ripr <binary>]",
         "real-crate-dogfood check|fetch|run [--manifest <path>] [--root <dir>] [--case <id>]... [--allow-network] [--ripr <binary>]",
         "dx-scoreboard [--boards <list>] [--repo <id>] [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>] [--baseline <report.json>] [--gate] [--timeout-ms <n>] [--samples <n>]",
@@ -1475,7 +1475,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Times cold repo-seams-json and repo-exposure-json inventory runs on deterministic generated workspaces across file counts; the cost curve backs the seam-inventory construction-cap issues (#1887/#4996/#4997).",
         ),
         command_entry(
-            "mutation-spot-check --repo <name>=<checkout> [--mutants-out <name>=<dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]",
+            "mutation-spot-check --repo <name>=<checkout> [--mutants-out <name>=<dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>] | mutation-spot-check --rederive-summaries <mutation-spot-check.json>",
             "report_only",
             "target/ripr/reports/mutation-spot-check.{json,md}",
             false,
