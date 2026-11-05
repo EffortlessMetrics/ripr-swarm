@@ -486,7 +486,7 @@ and a bare executable name uses PATH while a relative path containing a
 separator resolves from the selected root, with spaces kept literally;
 and a missing, malformed, below-minimum or failing selected compiler fails
 without retrying a lower-priority compiler;
-and an empty or non-Unicode explicit value fails with its variable named;
+and an empty or non-Unicode selected value fails with its variable named;
 and the bounded probe, no-auto-install policy and MSRV check remain in force.
 The analysis profile keeps its existing PATH behavior. Cargo configuration
 files, compiler wrappers and successful build qualification are outside this
