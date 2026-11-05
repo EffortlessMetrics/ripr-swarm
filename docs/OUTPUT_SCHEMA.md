@@ -108,6 +108,8 @@ map is:
 | `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
 | `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
+| `ripr check --format sarif-compact` | `version` | `2.1.0` (the `sarif` document minified and byte-bounded; see below, #13195) |
+| `ripr check --format repo-sarif-compact` | `version` | `2.1.0` (the `repo-sarif` document minified and byte-bounded; #13195) |
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.4` |
 | `ripr diff --json` (`kind: "ripr_diff"`) | `schema_version` | `0.1` |
@@ -4032,7 +4034,18 @@ Campaign 5B SARIF formats:
 ```bash
 ripr check --format sarif
 ripr check --format repo-sarif
+ripr check --format sarif-compact
+ripr check --format repo-sarif-compact
 ```
+
+`sarif-compact` and `repo-sarif-compact` (#13195) render the same documents
+minified: parsed values are identical to `sarif`/`repo-sarif`, including the
+`RIPR_SARIF_RESULTS_BYTES` results bound (#13102, default 1,000,000 pretty
+bytes; `0` removes the cap; an unparseable value fails the run) and its
+in-band disclosure (`limited_results_bound`, `document_complete: false`,
+`results_rendered`/`results_total`/`results_omitted`). A bounded document
+stays valid SARIF 2.1.0 and is incomplete, never a clean run.
+The pretty `sarif` and `repo-sarif` bytes are unchanged.
 
 `sarif` is the diff-scoped Finding SARIF surface. `repo-sarif` is the
 repo-scoped classified seam SARIF surface. Both use SARIF 2.1.0:

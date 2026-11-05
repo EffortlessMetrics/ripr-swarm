@@ -327,6 +327,93 @@ pub(crate) fn render_repo_seams_sarif_with_budget(
     sarif_document_repo_seam(rules, results, limit_info, results_bound.as_ref())
 }
 
+/// Render diff-scoped Findings as minified SARIF (#13195): the
+/// \RIPR_SARIF_RESULTS_BYTES\-bounded document (#13102) with insignificant
+/// whitespace removed, so parsed values match \--format sarif\ exactly,
+/// including its disclosed \limited_results_bound\ truncation.
+pub(crate) fn render_findings_sarif_compact(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+) -> Result<String, String> {
+    Ok(render_findings_sarif_compact_with_budget(
+        output,
+        config,
+        suppressions,
+        sarif_results_byte_budget()?,
+    ))
+}
+
+fn render_findings_sarif_compact_with_budget(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+    results_budget: Option<usize>,
+) -> String {
+    minify_sarif_document(&render_findings_sarif_with_budget(
+        output,
+        config,
+        suppressions,
+        results_budget,
+    ))
+}
+
+/// Render the refusal document minified for \sarif-compact\ (#13195), so a
+/// refused run stays uploadable to code scanning like \--format sarif\.
+pub(crate) fn render_refusal_sarif_compact(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+) -> String {
+    minify_sarif_document(&render_refusal_sarif(notice, root, base))
+}
+
+/// Render repo-scoped classified seams as minified SARIF (#13195): the
+/// \RIPR_SARIF_RESULTS_BYTES\-bounded document (#13102) minified, so parsed
+/// values match \--format repo-sarif\ exactly.
+pub(crate) fn render_repo_seams_sarif_compact(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    config: &RiprConfig,
+) -> Result<String, String> {
+    Ok(render_repo_seams_sarif_compact_with_budget(
+        classified,
+        limit_info,
+        config,
+        sarif_results_byte_budget()?,
+    ))
+}
+
+fn render_repo_seams_sarif_compact_with_budget(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    config: &RiprConfig,
+    results_budget: Option<usize>,
+) -> String {
+    minify_sarif_document(&render_repo_seams_sarif_with_budget(
+        classified,
+        limit_info,
+        config,
+        results_budget,
+    ))
+}
+
+/// Minifies a rendered SARIF document: parses and re-serializes without
+/// insignificant whitespace, so the parsed value is identical to the pretty
+/// document. A document that does not parse is returned unchanged, so this
+/// step can never corrupt output.
+fn minify_sarif_document(pretty: &str) -> String {
+    match serde_json::from_str::<Value>(pretty) {
+        Ok(document) => {
+            let mut minified =
+                serde_json::to_string(&document).unwrap_or_else(|_| pretty.to_string());
+            minified.push('\n');
+            minified
+        }
+        Err(_) => pretty.to_string(),
+    }
+}
+
 fn sarif_document_repo_seam(
     rules: Vec<Value>,
     results: Vec<Value>,
@@ -1941,6 +2028,27 @@ mod tests {
         Ok(())
     }
 
+    /// #13195: the compact refusal document carries the same typed
+    /// notification as the pretty one, minified.
+    #[test]
+    fn refusal_sarif_compact_keeps_the_typed_notification() -> Result<(), String> {
+        let notice = crate::core_error::CoreError::base_unresolvable(
+            "the base `deadbeef` does not resolve to a commit",
+        )
+        .refusal_notice(&crate::config::config_error_summary);
+        let pretty = render_refusal_sarif(&notice, std::path::Path::new("."), Some("deadbeef"));
+        let compact =
+            render_refusal_sarif_compact(&notice, std::path::Path::new("."), Some("deadbeef"));
+        assert_eq!(parse_json(&compact)?, parse_json(&pretty)?);
+        assert!(compact.len() < pretty.len(), "compact {compact}");
+        assert!(!compact.contains("\n  "), "compact {compact}");
+        assert_eq!(
+            parse_json(&compact)?["runs"][0]["properties"]["run_status"],
+            "refused"
+        );
+        Ok(())
+    }
+
     #[test]
     fn sarif_preserves_matched_total_for_sparse_retained_rows() -> Result<(), String> {
         let mut output = sample_output();
@@ -2270,6 +2378,78 @@ mod tests {
         assert_eq!(
             props["analysis_outcome"]["limitations"][0]["kind"],
             "unresolved_conflict_markers"
+        );
+        Ok(())
+    }
+
+    /// #13195: an over-budget `sarif-compact` document stays valid SARIF
+    /// and carries the landed results-bound disclosure (#13102) unchanged:
+    /// it is the bounded pretty document, minified.
+    #[test]
+    fn sarif_compact_over_budget_stays_valid_and_discloses_the_bound() -> Result<(), String> {
+        let mut output = sample_output();
+        let finding = output.findings[0].clone();
+        output.findings = (0..12)
+            .map(|index| {
+                let mut finding = finding.clone();
+                finding.probe.location.line = index + 1;
+                finding
+            })
+            .collect();
+        let config = RiprConfig::default();
+        let unbounded = render_findings_sarif_compact_with_budget(&output, &config, &[], None);
+        let total = parse_json(&unbounded)?["runs"][0]["results"]
+            .as_array()
+            .map(Vec::len)
+            .ok_or("unbounded results missing")?;
+        assert_eq!(total, 12, "control: every finding renders unbounded");
+
+        let budget = Some(1);
+        let bounded = render_findings_sarif_compact_with_budget(&output, &config, &[], budget);
+        let pretty_bounded = render_findings_sarif_with_budget(&output, &config, &[], budget);
+        assert_eq!(
+            parse_json(&bounded)?,
+            parse_json(&pretty_bounded)?,
+            "compact is the bounded pretty document minified"
+        );
+        assert!(!bounded.contains("\n  "), "compact: {bounded}");
+        let doc = parse_json(&bounded)?;
+        assert_eq!(doc["version"], "2.1.0");
+        assert_eq!(
+            doc["$schema"],
+            "https://json.schemastore.org/sarif-2.1.0.json"
+        );
+        let run = &doc["runs"][0];
+        assert_eq!(run["tool"]["driver"]["name"], "ripr");
+        let retained = run["results"].as_array().map(Vec::len).ok_or("results")?;
+        assert!(
+            retained >= 1 && retained < total,
+            "retained {retained} of {total}"
+        );
+        let props = &run["properties"];
+        assert_eq!(props["limited_results_bound"], true);
+        assert_eq!(props["document_complete"], false);
+        assert_eq!(props["results_rendered"], retained);
+        assert_eq!(props["results_total"], total);
+        assert_eq!(props["results_omitted"], total - retained);
+        Ok(())
+    }
+
+    /// #13195: under budget, `sarif-compact` is the pretty document with
+    /// only insignificant whitespace removed.
+    #[test]
+    fn sarif_compact_under_budget_matches_the_pretty_document() -> Result<(), String> {
+        let output = sample_output();
+        let config = RiprConfig::default();
+        let pretty = render_findings_sarif(&output, &config, &[]);
+        let compact = render_findings_sarif_compact_with_budget(&output, &config, &[], None);
+        assert_eq!(parse_json(&compact)?, parse_json(&pretty)?);
+        assert!(compact.len() < pretty.len(), "compact {compact}");
+        assert!(
+            parse_json(&compact)?["runs"][0]["properties"]
+                .get("limited_results_bound")
+                .is_none(),
+            "no bound disclosure when nothing was bounded"
         );
         Ok(())
     }

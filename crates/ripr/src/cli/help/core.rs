@@ -306,14 +306,15 @@ Options:
                            or coding agent -> json-compact;
                            compact report for a coding agent -> agent;
                            file annotations in Actions logs -> github; code
-                           scanning upload -> sarif; README badge ->
+                           scanning upload -> sarif (bounded minified:
+                           sarif-compact); README badge ->
                            repo-badge-shields (repo ledger); PR/CI status
                            badge -> badge-shields (diff); whole-repo
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
                                human, human-full, json, json-compact, github,
-                               sarif, agent,
+                               sarif, sarif-compact, agent,
                                check-findings-json (identified snapshot
                                for `agent verify`)
                              Badge (diff-scoped, for PR/CI status):
@@ -322,7 +323,7 @@ Options:
                              Repo-scope (full-repo analysis):
                                repo-seams-json, repo-seams-md,
                                repo-exposure-json, repo-exposure-summary-json,
-                               repo-exposure-md, repo-sarif,
+                               repo-exposure-md, repo-sarif, repo-sarif-compact,
                                repo-badge-json, repo-badge-shields,
                                repo-badge-plus-json, repo-badge-plus-shields
                              Agent (machine-readable repair evidence):
