@@ -2233,6 +2233,18 @@ fn snapshot_entries_ignore_non_code_and_keep_live_counters() -> Result<(), Strin
             format!("{JEST_HEADER}exports[`other 1`] = `/* \\` \\${{x}} */`;\n{live}"),
             OracleStrength::Strong,
         ),
+        (
+            format!("{JEST_HEADER}{live}if (true) {{\n{fake_one}}}\n"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}{live}if (true) {{\n{fake_two}}}\n"),
+            OracleStrength::Medium,
+        ),
+        (
+            format!("{JEST_HEADER}{live}void (\n{fake_two});\n"),
+            OracleStrength::Medium,
+        ),
         (format!("{JEST_HEADER}{live}{live}"), OracleStrength::Medium),
         (
             format!("{JEST_HEADER}{live}{fake_two}"),

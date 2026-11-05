@@ -170,8 +170,10 @@ runner's entry for it can be named and is committed:
   `<titles> 2`, where `<titles>` joins the describe titles and the test title with a
   space for Jest and with ` > ` for Vitest, followed under rule 2 by
   `: <hint>`. A second entry means the assertion ran more than once when
-  the file was written. A parse error or refused parser worker keeps medium;
-  text inside comments or other values is not an entry.
+  the file was written. A matching assignment nested in another construct
+  also refuses credit because it can overwrite the entry or add a counter.
+  A parse error or refused parser worker keeps medium; text inside comments
+  or other values is not an entry.
 
 **Rule 2. A Jest hint names its entry.** Jest's
 `toMatchSnapshot(hint)` records its entry under `<titles>: <hint>

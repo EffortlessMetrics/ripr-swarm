@@ -6,4 +6,4 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_entries_ignore_non_code_and_keep_live_counters",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::adapter_snapshot_comment_does_not_expose_changed_owner",
 ]
-fixtures = ["fixtures/typescript_snapshot_block_comment"]
+fixtures = ["fixtures/typescript_snapshot_block_comment", "fixtures/typescript_snapshot_nested_counter"]

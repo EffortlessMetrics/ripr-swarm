@@ -205,6 +205,7 @@ pub(crate) fn promote_committed_snapshots(
 struct CommittedSnapshots {
     text: String,
     entry_starts: Vec<usize>,
+    assignment_starts: Vec<usize>,
     separator: String,
     runner: SnapshotRunner,
 }
@@ -215,44 +216,64 @@ impl CommittedSnapshots {
     /// is the one it compares with. Only parsed top-level assignment starts
     /// count; a line in a comment or another snapshot value is not an entry.
     fn pins_only_entry(&self, key: &str) -> bool {
-        let count = |counter: usize| {
+        let count = |starts: &[usize], counter: usize| {
             let entry = format!("exports[`{key} {counter}`] = ");
-            self.entry_starts
+            starts
                 .iter()
                 .filter(|&&start| self.text[start..].starts_with(&entry))
                 .count()
         };
-        count(1) == 1 && count(2) == 0
+        count(&self.entry_starts, 1) == 1
+            && count(&self.assignment_starts, 1) == 1
+            && count(&self.assignment_starts, 2) == 0
     }
 }
 
 /// Parse once per snapshot file, behind the TypeScript parser's nesting and
 /// worker limits. Syntax errors or a failed worker cannot establish credit.
-fn snapshot_entry_starts(text: &str) -> Option<Vec<usize>> {
+fn snapshot_entry_starts(text: &str) -> Option<(Vec<usize>, Vec<usize>)> {
+    use oxc_ast_visit::{Visit, walk};
+
+    struct Assignments(Vec<usize>);
+    impl<'a> Visit<'a> for Assignments {
+        fn visit_assignment_expression(
+            &mut self,
+            assignment: &oxc_ast::ast::AssignmentExpression<'a>,
+        ) {
+            self.0.push(assignment.span.start as usize);
+            walk::walk_assignment_expression(self, assignment);
+        }
+    }
     super::parse::parse_on_worker(Path::new("snapshot.js"), text, |_, source, allocator| {
         let parsed = Parser::new(allocator, source, SourceType::cjs()).parse();
         if !parsed.errors.is_empty() {
             return None;
         }
-        Some(
-            parsed
-                .program
-                .body
-                .iter()
-                .filter_map(|statement| {
-                    let Statement::ExpressionStatement(statement) = statement else {
-                        return None;
-                    };
-                    let Expression::AssignmentExpression(assignment) = &statement.expression else {
-                        return None;
-                    };
-                    let start = statement.span.start as usize;
-                    (assignment.span.start as usize == start
-                        && source.as_bytes().get(start.wrapping_sub(1)) == Some(&b'\n'))
-                    .then_some(start)
-                })
-                .collect(),
-        )
+        let top_level = parsed
+            .program
+            .body
+            .iter()
+            .filter_map(|statement| {
+                let Statement::ExpressionStatement(statement) = statement else {
+                    return None;
+                };
+                let Expression::AssignmentExpression(assignment) = &statement.expression else {
+                    return None;
+                };
+                let start = statement.span.start as usize;
+                (assignment.span.start as usize == start
+                    && source.as_bytes().get(start.wrapping_sub(1)) == Some(&b'\n'))
+                .then_some(start)
+            })
+            .collect();
+        // Nested assignments cannot establish the runner-written entry, but
+        // they can overwrite it or create a second counter. Refuse those
+        // ambiguous cases while ignoring comments and string contents.
+        let mut all = Assignments(Vec::new());
+        all.visit_program(&parsed.program);
+        all.0
+            .retain(|&start| source.as_bytes().get(start.wrapping_sub(1)) == Some(&b'\n'));
+        Some((top_level, all.0))
     })
     .ok()
     .flatten()
@@ -302,10 +323,11 @@ fn committed_snapshot_file(root: &Path, test_file: &Path) -> Option<CommittedSna
     if (runner == SnapshotRunner::Vitest) != configs.mentions_vitest {
         return None;
     }
-    let entry_starts = snapshot_entry_starts(&text)?;
+    let (entry_starts, assignment_starts) = snapshot_entry_starts(&text)?;
     Some(CommittedSnapshots {
         text,
         entry_starts,
+        assignment_starts,
         separator: separator.to_string(),
         runner,
     })
