@@ -1,0 +1,8 @@
+{
+  "scenario_id": "stale-snapshot",
+  "setup_outcome": "ready",
+  "required_edit": "the boundary test edit, followed by a worktree refresh before any after read",
+  "executed_oracle": "after evidence carries a snapshot id different from the before snapshot and fresh_for_working_tree true",
+  "combined_claim": "completed_repair",
+  "notes": "Reusing the pre-edit snapshot as current evidence fails the scenario even if the class text looks right."
+}
