@@ -1,0 +1,54 @@
+{
+  "public_candidate": "41eb1cdda4beccf34015bb73c2d9cf667a0d97f1",
+  "public_tree": "187d70fb1d3898f4fc695394ddc243e5475e57af",
+  "public_base": "d731a19bf13e5a5c2257d3c320f734f65ccd9894",
+  "remote_ref": "EffortlessMetrics/ripr:successor/source-promotion-input-base-20261105",
+  "patch_bytes": 10689,
+  "patch_sha256": "2795f05791a97ae7ce66daf6b4bae880069d64590d2c406c551691146b79dc74",
+  "proof": "Own current35realGit controls pass. Shell syntax pass. Not full Rust/hosted/canary. Source four repaired blobs remain identical to verified coordinator input; current main workflow pins and full changelog retained.",
+  "status": "Published unassociated branch only, no PR, CI or promotion activation. Opening PR currently triggers PR-mode routed Rust Small on opened with no draft guard; queue-only direction requires route decision before that action. One inbound history-sync exception does not cover this separate public-base predecessor.",
+  "primary_candidate": "a43795f5f25c26b1f5cd55d8b2d39f87cf938f54",
+  "primary_prior_evidence": "0d1f53bf19production+4native and goldens pass; honesty three semantic positive failures. a437 borrowed observer repair currently focused compilation, not passed. Boxed per-return witness remains unresolved.",
+  "artifacts": [
+    {
+      "path": "guarded-error-goldens-receipt.json",
+      "bytes": 2752,
+      "sha256": "0ed273015625853842234ca005b59d6464d8795ee2b9ff68964c5519cf95b8c0"
+    },
+    {
+      "path": "guarded-error-golden-refresh-receipt.json",
+      "bytes": 1143,
+      "sha256": "dc8c03e91f54220adbe9e7563ee1d0961bb97a822b8c69fee8457b59fcac7ee6"
+    },
+    {
+      "path": "guarded-error-extra-report-regeneration-receipt.json",
+      "bytes": 12062,
+      "sha256": "702073469bbdcd085c95add2ef118b429958733b9454bb088c352d7e38c2ec41"
+    },
+    {
+      "path": "guarded-error-honesty-verified-env-receipt.json",
+      "bytes": 835,
+      "sha256": "da9a08dfff1c0d52d6ed8afe288b31646d336f1bcda54d5ae3089e6b64c29c10"
+    },
+    {
+      "path": "guarded-error-honesty-verified-env.log",
+      "bytes": 885,
+      "sha256": "c1885edb3be1303d61039dc4d89fd5cdf3212c04d623c14af91c758c884bfd3a"
+    },
+    {
+      "path": "source-predecessor-current-composition-receipt.json",
+      "bytes": 445,
+      "sha256": "16e32ace2f6bc9afad35d899127c9fe6543a2e5a65f0832015edfa93c0c0a64a"
+    },
+    {
+      "path": "source-predecessor-current-composition.log",
+      "bytes": 98,
+      "sha256": "3f60086bd691600dd6926b7693f51444aa3ac68eb3a69368cdb85a2acebe32db"
+    },
+    {
+      "path": "borrowed-helper-plan.txt",
+      "bytes": 1481,
+      "sha256": "519da6dcdff47d274418df415d6e7988865557704f9998a76fe6536ccbe13aae"
+    }
+  ]
+}

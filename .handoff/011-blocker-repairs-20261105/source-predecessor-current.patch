@@ -1,0 +1,198 @@
+diff --git a/.github/scripts/source-promotion-composition.sh b/.github/scripts/source-promotion-composition.sh
+index 16229c548..8fea7e773 100644
+--- a/.github/scripts/source-promotion-composition.sh
++++ b/.github/scripts/source-promotion-composition.sh
+@@ -6,12 +6,14 @@ marker='<!-- source-promotion: true -->'
+ control_prefix='<!-- source-promotion-control:'
+ # Routing identity is mandatory, even for an ordinary non-promotion PR.
+ [[ ${PR_BODY+x} && ${HEAD_REF+x} ]] || fail 'event routing inputs missing'
++[[ -n "$HEAD_REF" && "$HEAD_REF" != -* ]] && git check-ref-format "refs/heads/$HEAD_REF" || fail 'invalid head ref'
+ # GitHub web-edited bodies may use CRLF; marker cardinality stays exact.
+ PR_BODY=${PR_BODY//$'\r'/}
+ if [[ "$HEAD_REF" != promote/0.11.0-* ]] && [[ "$PR_BODY" != *"$marker"* ]] && [[ "$PR_BODY" != *"$control_prefix"* ]]; then
+   echo 'Ordinary pull request: no source-promotion composition requested.'
+   exit 0
+ fi
++command -v python3 >/dev/null 2>&1 || fail 'python3 is required for promotion sidecar validation'
+ [[ "$PR_BODY" == *"$marker"* ]] || fail 'promotion marker missing'
+ mapfile -t markers < <(printf '%s\n' "$PR_BODY" | grep -E '^<!-- source-promotion-control: [0-9a-f]{40} -->$' || true)
+ [[ ${#markers[@]} -eq 1 ]] || fail 'exactly one control marker required'
+@@ -30,14 +32,34 @@ for path in "$control_path" "$preflight_path"; do
+   entry=$(git ls-tree "$control" -- "$path")
+   [[ "$entry" == $'100644 blob '*$'\t'"$path" ]] || fail 'control sidecar is not a regular tracked file'
+ done
+-inputs=$(git show "$control:$control_path")
++control_file=$(mktemp)
++preflight_file=$(mktemp)
++trap 'rm -f "$control_file" "$preflight_file"' EXIT
++git show "$control:$control_path" > "$control_file"
++reject_duplicate_keys() {
++  python3 -c '
++import json, sys
++def unique(pairs):
++    result = {}
++    for key, value in pairs:
++        if key in result:
++            raise ValueError("duplicate JSON key")
++        result[key] = value
++    return result
++try:
++    json.load(sys.stdin, object_pairs_hook=unique)
++except (ValueError, UnicodeError, RecursionError):
++    sys.exit(1)
++' < "$1"
++}
+ # jq is stream-oriented: a valid object followed by an incomplete object can
+ # otherwise satisfy separate field checks using values from different objects.
+-jq -e -s 'length == 1 and (.[0] | type == "object")' <<< "$inputs" >/dev/null || fail 'control must contain exactly one JSON object'
+-preflight_file=$(mktemp)
+-trap 'rm -f "$preflight_file"' EXIT
++jq -e -s 'length == 1 and (.[0] | type == "object")' "$control_file" >/dev/null || fail 'control must contain exactly one JSON object'
++reject_duplicate_keys "$control_file" || fail 'control must contain exactly one JSON object without duplicate keys'
++inputs=$(cat "$control_file")
+ git show "$control:$preflight_path" > "$preflight_file"
+ jq -e -s 'length == 1 and (.[0] | type == "object")' "$preflight_file" >/dev/null || fail 'preflight must contain exactly one JSON object'
++reject_duplicate_keys "$preflight_file" || fail 'preflight must contain exactly one JSON object without duplicate keys'
+ jq -e --arg p "$preflight_path" --arg base "$BASE_SHA" '.schema == "ripr.source_promotion_ci_inputs.v2" and .preflight == $p and .source_main == $base' <<< "$inputs" >/dev/null || fail 'control identities do not bind event base and merge'
+ expected=$(jq -er '.preflight_sha256 | select(type == "string" and test("^[0-9a-f]{64}$"))' <<< "$inputs") || fail 'invalid preflight digest'
+ [[ $(sha256sum "$preflight_file" | cut -d ' ' -f 1) == "$expected" ]] || fail 'preflight digest mismatch'
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 9e7b119be..ba356c1b4 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -34,6 +34,12 @@ qualification and publication histories.
+ 
+ ## Unreleased
+ 
++- Reject malformed event head refs and duplicate JSON keys in both source-promotion
++  sidecars before binding composition identities. Python 3 is required only for
++  promotion validation; valid ordinary routing remains independent of Python.
++  This hardening does not activate a workflow, establish trusted required-check
++  enforcement, or authorize promotion or release (#1893).
++
+ [Full development diff since v0.10.0](https://github.com/EffortlessMetrics/ripr/compare/v0.10.0...main).
+ 
+ ### Compatibility and upgrades
+diff --git a/docs/SOURCE_PROMOTION.md b/docs/SOURCE_PROMOTION.md
+index c2605c65d..25821c2a1 100644
+--- a/docs/SOURCE_PROMOTION.md
++++ b/docs/SOURCE_PROMOTION.md
+@@ -771,6 +771,11 @@ PR-head SHA. No candidate-provided path is read, and no input file is required
+ in J's tree; this avoids the impossible fixed-point construction where an
+ input file contains `J` while also contributing bytes to `J^{tree}`.
+ 
++The composition validator requires `python3` with its standard-library `json`
++module on the promotion route to reject duplicate keys in both JSON sidecars.
++If `python3` is unavailable, promotion validation fails closed with an
++explicit diagnostic. Ordinary PR routing does not require Python.
++
+ The PR body must also contain the live-head guarded merge command and these
+ warnings:
+ 
+diff --git a/xtask/src/policy/file_policy.rs b/xtask/src/policy/file_policy.rs
+index 5eee9c85e..fabfe2fef 100644
+--- a/xtask/src/policy/file_policy.rs
++++ b/xtask/src/policy/file_policy.rs
+@@ -193,7 +193,7 @@ mod tests {
+         )?;
+         if output.timed_out
+             || !output.status.is_some_and(|status| status.success())
+-            || !output.stderr.contains("Ran 27 tests in")
++            || !output.stderr.contains("Ran 35 tests in")
+             || !output.stderr.lines().any(|line| line.trim() == "OK")
+         {
+             return Err(format!(
+diff --git a/xtask/tests/source_promotion_composition.py b/xtask/tests/source_promotion_composition.py
+index c9f54e45b..703bda054 100644
+--- a/xtask/tests/source_promotion_composition.py
++++ b/xtask/tests/source_promotion_composition.py
+@@ -76,7 +76,8 @@ class CompositionTests(unittest.TestCase):
+ 
+     def control(self, *, digest: str | None = None, executable: bool = False,
+                 raw_preflight: bytes | None = None,
+-                duplicate_inputs: bool = False) -> None:
++                duplicate_inputs: bool = False,
++                raw_inputs: str | None = None) -> None:
+         path = self.root / PREFLIGHT
+         path.parent.mkdir(parents=True, exist_ok=True)
+         data = (raw_preflight if raw_preflight is not None
+@@ -84,6 +85,8 @@ class CompositionTests(unittest.TestCase):
+         path.write_bytes(data)
+         self.inputs['preflight_sha256'] = digest or hashlib.sha256(data).hexdigest()
+         inputs_text = json.dumps(self.inputs)
++        if raw_inputs is not None:
++            inputs_text = raw_inputs.replace('__DIGEST__', self.inputs['preflight_sha256'])
+         if duplicate_inputs:
+             second = {key: self.inputs[key] for key in (
+                 'schema', 'source_main', 'join_head', 'preflight')}
+@@ -112,7 +115,22 @@ class CompositionTests(unittest.TestCase):
+         self.check()
+ 
+     def test_ordinary_is_explicitly_not_a_promotion(self) -> None:
+-        self.env.update(PR_BODY='ordinary', HEAD_REF='feature')
++        self.env.update(PR_BODY='ordinary', HEAD_REF='feature/valid-name')
++        result = self.command('bash', str(SCRIPT))
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertIn('no source-promotion composition requested', result.stdout)
++        self.assertNotIn('matches the control packet', result.stdout)
++
++    def test_missing_python_rejects_promotion_but_not_ordinary(self) -> None:
++        path = self.root / 'without-python'
++        path.mkdir()
++        for tool in ('bash', 'git'):
++            executable = shutil.which(tool)
++            self.assertIsNotNone(executable)
++            (path / tool).symlink_to(executable)
++        self.env['PATH'] = str(path)
++        self.check('python3 is required for promotion sidecar validation')
++        self.env.update(PR_BODY='ordinary', HEAD_REF='feature/valid')
+         result = self.command('bash', str(SCRIPT))
+         self.assertEqual(result.returncode, 0, result.stderr)
+         self.assertIn('no source-promotion composition requested', result.stdout)
+@@ -127,6 +145,46 @@ class CompositionTests(unittest.TestCase):
+         self.env.pop('HEAD_REF')
+         self.check('event routing inputs missing')
+ 
++    def test_empty_or_malformed_head_ref_is_rejected(self) -> None:
++        self.env['PR_BODY'] = 'ordinary'
++        for ref in ('', 'bad ref', 'bad..ref', 'bad\nref'):
++            with self.subTest(ref=ref):
++                self.env['HEAD_REF'] = ref
++                self.check('invalid head ref')
++
++    def test_duplicate_control_key_is_rejected(self) -> None:
++        inputs = json.dumps({**self.inputs, 'preflight_sha256': '__DIGEST__'})
++        inputs = inputs.replace('"schema":', '"schema": "invalid", "schema":', 1)
++        self.control(raw_inputs=inputs)
++        self.check('control must contain exactly one JSON object without duplicate keys')
++
++    def test_duplicate_preflight_key_is_rejected(self) -> None:
++        data = json.dumps(self.pf).replace('"mode":', '"mode": "two_parent_join", "mode":', 1)
++        self.control(raw_preflight=data.encode())
++        self.check('preflight must contain exactly one JSON object without duplicate keys')
++
++    def test_duplicate_nested_preflight_key_is_rejected(self) -> None:
++        data = json.dumps(self.pf).replace('"preview_tree":', '"preview_tree": "wrong", "preview_tree":', 1)
++        self.control(raw_preflight=data.encode())
++        self.check('preflight must contain exactly one JSON object without duplicate keys')
++
++    def test_escaped_duplicate_control_key_is_rejected(self) -> None:
++        inputs = json.dumps({**self.inputs, 'preflight_sha256': '__DIGEST__'})
++        inputs = inputs.replace('"schema":', '"\\u0073chema": "invalid", "schema":', 1)
++        self.control(raw_inputs=inputs)
++        self.check('control must contain exactly one JSON object without duplicate keys')
++
++    def test_duplicate_nested_control_key_is_rejected(self) -> None:
++        inputs = json.dumps({**self.inputs, 'preflight_sha256': '__DIGEST__'})
++        inputs = inputs[:-1] + ', "extra": {"x": 1, "x": 2}}'
++        self.control(raw_inputs=inputs)
++        self.check('control must contain exactly one JSON object without duplicate keys')
++
++    def test_same_key_in_distinct_objects_is_allowed(self) -> None:
++        self.pf['extra'] = {'first': {'x': 1}, 'second': {'x': 2}}
++        self.control()
++        self.check()
++
+     def test_missing_marker(self) -> None:
+         self.env['PR_BODY'] = 'broken'
+         self.check('promotion marker missing')

@@ -1,0 +1,13 @@
+{
+  "candidate": "41eb1cdda4beccf34015bb73c2d9cf667a0d97f1",
+  "tree": "187d70fb1d3898f4fc695394ddc243e5475e57af",
+  "command": [
+    "python3",
+    "xtask/tests/source_promotion_composition.py",
+    "-q"
+  ],
+  "native_exit": 0,
+  "seconds": 6.09,
+  "log_sha256": "3f60086bd691600dd6926b7693f51444aa3ac68eb3a69368cdb85a2acebe32db",
+  "scope": "35 real-Git input controls; not full Rust, hosted qualification or trusted required-check canary"
+}

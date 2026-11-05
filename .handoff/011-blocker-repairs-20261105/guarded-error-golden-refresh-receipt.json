@@ -1,0 +1,31 @@
+{
+  "stage": "guarded-error-golden-refresh",
+  "candidate": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+  "tree": "30eb94904991ca16a521643efd9acfb8e74bc145",
+  "command": [
+    "/workspace/12010-proof/target/debug/xtask",
+    "goldens",
+    "bless",
+    "error_return_unresolved_guard",
+    "--reason",
+    "RIPR-SPEC-0158: preserve public ripr#1579 by naming the actual AST guarded error producer edge, retaining infection_unknown and withholding an impossible assertion/input prescription; current/discarded/overwritten/shadowed/unentered production controls are discriminating"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 10.03,
+  "counts": null,
+  "log_sha256": "8856c4930e5b37260663e1ba8704d12807f8d76d76041f2ca91c8129cb507bd1",
+  "peak_cgroup_memory_bytes": 3357646848,
+  "samples": [
+    {
+      "utc": "2026-11-05T22:21:48.580252+00:00",
+      "stage": "guarded-error-golden-refresh",
+      "head": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+      "pid": 1370768,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3357646848,
+      "workspace_free_bytes": 20417597440,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

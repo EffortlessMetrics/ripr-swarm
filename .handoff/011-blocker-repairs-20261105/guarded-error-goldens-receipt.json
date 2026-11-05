@@ -1,0 +1,88 @@
+{
+  "stage": "guarded-error-goldens",
+  "candidate": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+  "tree": "30eb94904991ca16a521643efd9acfb8e74bc145",
+  "command": [
+    "/workspace/12010-proof/target/debug/xtask",
+    "goldens",
+    "check"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 70.03,
+  "counts": null,
+  "log_sha256": "8eecad186e77bbc6e35d126cbfe750a520aabe704c67304b3721237ee6fcb983",
+  "peak_cgroup_memory_bytes": 3683680256,
+  "samples": [
+    {
+      "utc": "2026-11-05T22:21:58.612438+00:00",
+      "stage": "guarded-error-goldens",
+      "head": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+      "pid": 1370911,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3547496448,
+      "workspace_free_bytes": 20886409216,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:22:08.613908+00:00",
+      "stage": "guarded-error-goldens",
+      "head": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+      "pid": 1370911,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3596275712,
+      "workspace_free_bytes": 20886102016,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:22:18.624406+00:00",
+      "stage": "guarded-error-goldens",
+      "head": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+      "pid": 1370911,
+      "elapsed": 20.01,
+      "cgroup_memory_bytes": 3619131392,
+      "workspace_free_bytes": 20886097920,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:22:28.630363+00:00",
+      "stage": "guarded-error-goldens",
+      "head": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+      "pid": 1370911,
+      "elapsed": 30.02,
+      "cgroup_memory_bytes": 3640082432,
+      "workspace_free_bytes": 20886122496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:22:38.630997+00:00",
+      "stage": "guarded-error-goldens",
+      "head": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+      "pid": 1370911,
+      "elapsed": 40.02,
+      "cgroup_memory_bytes": 3671707648,
+      "workspace_free_bytes": 20886011904,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:22:48.632505+00:00",
+      "stage": "guarded-error-goldens",
+      "head": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+      "pid": 1370911,
+      "elapsed": 50.02,
+      "cgroup_memory_bytes": 3682922496,
+      "workspace_free_bytes": 20886261760,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T22:22:58.635065+00:00",
+      "stage": "guarded-error-goldens",
+      "head": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+      "pid": 1370911,
+      "elapsed": 60.02,
+      "cgroup_memory_bytes": 3683680256,
+      "workspace_free_bytes": 20886405120,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+$ cargo build -p ripr --quiet
+xtask: check-evidence-promotion-honesty failed; see target/ripr/reports/evidence-promotion-honesty.md
+evidence promotion honesty case `rust_boxed_wrapper_downcast_positive_control` (fixture `fixtures/error_variant_boxed_wrapper_downcast_witness`): `must_promote` requires at least one finding with classification `exposed`
+evidence promotion honesty case `rust_eager_literal_callback` (fixture `fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-eager-literal-callback.json`): seam `17de4b3c4e63bc4d` has grip_class `weakly_gripped` but the corpus pins `strongly_gripped`
+evidence promotion honesty case `rust_ordinary_value_clone` (fixture `fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-ordinary-value-clone.json`): seam `17de4b3c4e63bc4d` has grip_class `weakly_gripped` but the corpus pins `strongly_gripped`

@@ -1,0 +1,27 @@
+{
+  "stage": "guarded-error-honesty-verified-env",
+  "candidate": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+  "tree": "30eb94904991ca16a521643efd9acfb8e74bc145",
+  "command": [
+    "/workspace/12010-proof/target/debug/xtask",
+    "check-evidence-promotion-honesty"
+  ],
+  "native_exit": 1,
+  "guard_stop": null,
+  "seconds": 10.01,
+  "counts": null,
+  "log_sha256": "c1885edb3be1303d61039dc4d89fd5cdf3212c04d623c14af91c758c884bfd3a",
+  "peak_cgroup_memory_bytes": 3196264448,
+  "samples": [
+    {
+      "utc": "2026-11-05T22:28:54.376496+00:00",
+      "stage": "guarded-error-honesty-verified-env",
+      "head": "0d1f53bf4f8ffea3a499576f4b034002e9756653",
+      "pid": 1412926,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3196264448,
+      "workspace_free_bytes": 20882325504,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}
