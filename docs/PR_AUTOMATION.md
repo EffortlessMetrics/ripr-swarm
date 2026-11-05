@@ -952,6 +952,14 @@ state files. It writes `target/ripr/reports/local-context.md` and
 `target/ripr/reports/local-context.json`. Narrow generic examples must use
 `policy/local_context_allowlist.txt`.
 
+Its optional fifth `receipt_sha256` column is limited to the reviewed #6308
+public CI receipt subset from run 41383028929, artifact 13114861147. Each row
+binds one exact JSON path, detected CI-runner pattern, occurrence count and
+original file SHA-256, also present in the existing retained-input manifest.
+Every embedded home segment must name the CI runner. Changed bytes, new paths,
+private-user paths, memory/sandbox state and excess occurrences still refuse;
+this is no directory exclusion or general receipt waiver.
+
 `check-supply-chain` runs `cargo deny check advisories licenses bans sources`
 using `deny.toml` and writes `target/ripr/reports/supply-chain.md`. It is a
 local and CI security preflight; duplicate dependency findings are warnings

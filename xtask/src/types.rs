@@ -591,4 +591,5 @@ pub(crate) struct LocalContextAllow {
     pub(crate) pattern: String,
     pub(crate) max_count: usize,
     pub(crate) line: usize,
+    pub(crate) receipt_sha256: Option<String>,
 }
