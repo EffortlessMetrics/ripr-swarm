@@ -3631,9 +3631,9 @@ cfg(test) extraction and/or the crate split.
 
 ## 2026-11-04: Agent-efficiency study — needed subset is 26% of delivered context; uplift needs harder scenarios
 
-A 3-scenario × 3-variant A/B (Nov 2-4; raw artifacts retained under
-`F:/Temp/agent-bench/`) measured whether ripr context helps an agent write a
-discriminating test. Three scenario crates (`inserted-guard`,
+A 3-scenario × 3-variant A/B (Nov 2-4; run on a local off-repo harness tree
+whose corpus encoding lands at `benchmarks/agent-discrimination/`) measured
+whether ripr context helps an agent write a discriminating test. Three scenario crates (`inserted-guard`,
 `flipped-comparison`, `silent-return`), three context variants (vanilla
 diff-only, ripr-context handed over, ripr-tool runnable), one model, and one
 objective mutation evaluator — the test must fail on the changed behavior and
