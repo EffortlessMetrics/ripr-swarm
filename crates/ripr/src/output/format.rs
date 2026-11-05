@@ -698,6 +698,7 @@ mod tests {
             "repo-exposure-summary-json",
             "repo-exposure-md",
             "repo-sarif",
+            "repo-sarif-compact",
             "agent-seam-packets-json",
             // #5261/#5263 review: the seam-native repo badge formats walk
             // the same full classified inventory as repo-exposure, so they
@@ -733,6 +734,7 @@ mod tests {
             "repo-exposure-summary-json",
             "repo-exposure-md",
             "repo-sarif",
+            "repo-sarif-compact",
             "agent-seam-packets-json",
             // #5261/#5263 review: the seam-native repo badge formats read
             // the same classified cache, so their disclosures may claim warm
