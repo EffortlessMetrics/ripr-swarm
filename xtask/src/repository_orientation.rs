@@ -808,6 +808,7 @@ mod tests {
         for (issue, disposition, selected_issue) in [
             (9101, OrientationDispositionV1::DuplicateBlocked, None),
             (9104, OrientationDispositionV1::NoSafeWork, None),
+            (9301, OrientationDispositionV1::NoSafeWork, None),
             (
                 9109,
                 OrientationDispositionV1::PartialAcceptance,
