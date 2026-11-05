@@ -419,28 +419,27 @@ non-ignored related test matches one of these shapes:
   strict snapshot grader names the owner by its identifier, so a different
   receiver's `other.own(..)` or a shadowed `own` is read as the owner; aliasing
   and escape are not followed.
-- **insta**: a `direct_owner_call` test with a snapshot macro that has no
-  inline `@` literal, whose snapshotted value (after an optional literal name)
-  derives from the owner as above (a live binding at the assertion),
-  on a changed `field:` initializer that no redaction selector (a literal
-  keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
-  keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
-  does a literal redacted field (`lib-insta-json-redacted-id`) when no unread
-  settings are present. Executable whole names `add_redaction`, `with_settings`
-  or `Settings` before the owner-bound snapshot identify configuration this
-  reader does not evaluate (#13035). That case carries the same typed
-  limitation with advice naming the unread settings or redactions; it does not
-  assert that no redaction names the field. This limitation also applies to an
-  inline `@` snapshot under that unread configuration. Comments, strings,
-  identifier substrings, configuration only after the assertion, a snapshot
-  of another value, and settings without an owner-bound snapshot do not supply
-  this witness. Constant selectors remain withheld, and ordinary inline
-  snapshots retain their existing disposition. This is bounded syntax
-  admission; settings scopes, type aliases and dynamic selector evaluation
-  remain unsupported. Snapshot-byte identity and positive projection credit
-  remain with #8121. This reader governs fresh `Finding` output; repository
-  seam evidence and pilot/brief selection have a separate producer, whose
-  snapshot-uncertainty disclosure remains a residual under #8121.
+- **insta**: a `direct_owner_call` test whose snapshotted value (after an
+  optional literal name) derives from the owner as above (a live binding at
+  the assertion), on a changed `field:` initializer. With no inline `@`
+  literal, an unredacted field is serialized into expected bytes ripr does
+  not read and is withheld. A readable literal selector naming the field
+  keeps the gap only when no unread settings can alter the comparison.
+  Selector maps are parsed through Rust syntax, preserving Unicode trivia,
+  raw strings, generic calls, closures and comment trivia. Unreadable maps,
+  including nonliteral keys, establish neither serialization nor redaction.
+  Executable whole names `add_redaction`, `with_settings` or `Settings`
+  before the snapshot likewise identify unread configuration. After owner-result
+  and changed-field gates, either uncertainty retains `static_unknown` with
+  `rust_framework_oracle_unresolved` and accurate advice, including inline
+  expected text. Settings after the assertion, strings/comments/longer names,
+  another value's snapshot and unrelated changed lines do not supply this witness.
+  Ordinary inline snapshots and literal redactions retain their existing
+  disposition when configuration is readable. This is bounded syntax admission;
+  settings scopes, type aliases and dynamic selectors remain unsupported.
+  Snapshot-byte identity and positive projection credit remain with #8121.
+  Repository seam evidence and pilot/brief selection have a separate producer;
+  its snapshot-uncertainty disclosure remains a residual under #8121.
 - **fixture receiver** (#9609): a `return_value` probe whose changed line
   holds a closure (`|..|`, `move |..|` or `|| ..` opening an argument; a boolean or bitwise `||` / `|` is not one) in a `&self` method, and a `direct_owner_call` test
   with a strong assertion: an `assert_eq!` with a literal (number, string,
@@ -1230,6 +1229,9 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
+- `unread_insta_selectors_withhold_changed_fields` retains typed uncertainty
+  for constant selectors, named and match-prefixed maps, mixed literal/constant
+  keys and inline expected text, while unrelated snapshot operands keep a gap.
 - `insta_settings::unread_settings_withhold_both_fields` and
   `insta_settings::with_settings_withholds_both_fields` exercise the public
   classifier on both the redacted field and its unredacted sibling; controls

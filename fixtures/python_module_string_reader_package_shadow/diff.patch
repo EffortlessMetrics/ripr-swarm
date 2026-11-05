@@ -1,0 +1,9 @@
+diff --git a/fx/core.py b/fx/core.py
+--- a/fx/core.py
++++ b/fx/core.py
+@@ -1,4 +1,4 @@
+-GREETING = 'hello'
++GREETING = 'hi'
+ 
+ 
+ def greet(name):

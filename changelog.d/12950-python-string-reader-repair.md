@@ -11,4 +11,5 @@
   re-export or forwarding routes also withhold credit. The covered canonical `src`
   layout retains its repair route. Unresolved consumers keep unknown reach
   and no repair card. Repair help now describes supported Python gap starts
-  alongside TypeScript (#12950).
+  alongside TypeScript. Preview explanations retain the advisory limitation
+  without denying the supported repair route (#12950).

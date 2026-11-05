@@ -16,4 +16,7 @@ tests = [
   "crates/ripr/src/app/tests/python_module_reader_packets.rs::check_output_python_module_reader_starts_and_closes_the_same_gap",
   "crates/ripr/src/app/tests/python_module_reader_packets.rs::check_output_python_module_reader_refuses_source_shadows_and_recovers",
   "crates/ripr/src/app/tests/python_module_reader_packets.rs::check_output_python_module_reader_refuses_unproved_reexports",
+  # Preview explanation preserves advisory guidance without deciding availability.
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_preview_weak_gap_keeps_the_discriminator_and_test_open",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_preview_controls_stay_closed_without_established_evidence",
 ]

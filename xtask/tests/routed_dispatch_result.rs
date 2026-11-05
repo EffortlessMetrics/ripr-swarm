@@ -172,9 +172,33 @@ fn run_result(
     fs::write(
         &gh,
         r#"#!/bin/sh
+set -eu
 printf '%s\n' "$*" >> "$MOCK_CALLS.log"
+# Repeat the last response when a bounded retry exhausts its fixture sequence.
+respond() {
+  kind=$1
+  sequence=$2
+  count=0
+  [ ! -f "$MOCK_CALLS.$kind" ] || read -r count < "$MOCK_CALLS.$kind"
+  printf '%s\n' "$((count + 1))" > "$MOCK_CALLS.$kind"
+  response=$(printf '%s' "$sequence" | jq -ce --argjson n "$count" '.[([$n, length - 1] | min)]')
+  delay=$(printf '%s' "$response" | jq -r '.hang_seconds // 0')
+  [ "$delay" = 0 ] || /bin/sleep "$delay"
+  if printf '%s' "$response" | jq -e 'has("raw_stdout")' >/dev/null; then
+    printf '%s' "$response" | jq -jr '.raw_stdout'
+  else
+    if [ "$kind" = pr ]; then
+      status=$(printf '%s' "$response" | jq -r '.status // 200')
+      printf 'HTTP/2.0 %s Fixture\ncontent-type: application/json\r\n\r\n' "$status"
+    fi
+    printf '%s' "$response" | jq -jr '.body'
+  fi
+  printf '%s' "$response" | jq -r '.error // empty' >&2
+  exit "$(printf '%s' "$response" | jq -r '.exit // 0')"
+}
 case "$2" in
   graphql)
+    [ -z "${MOCK_GRAPHQL_RESPONSES:-}" ] || respond graphql "$MOCK_GRAPHQL_RESPONSES"
     case "$*" in
       *cursor=next*) printf '%s\n' "${MOCK_GRAPHQL_NEXT:-$MOCK_GRAPHQL}" ;;
       *) printf '%s\n' "$MOCK_GRAPHQL" ;;
@@ -191,6 +215,9 @@ case "$2" in
     [ "$page" != fail ] || exit 99
     printf '%s\n' "$page" ;;
   repos/*/pulls/10)
+    [ "$#" -eq 5 ] && [ "$3" = --method ] && [ "$4" = GET ] && [ "$5" = --include ] || exit 96
+    [ -z "${MOCK_PR_RESPONSES:-}" ] || respond pr "$MOCK_PR_RESPONSES"
+    printf 'HTTP/2.0 200 OK\ncontent-type: application/json\r\n\r\n'
     if [ -f "$MOCK_CALLS" ]; then printf '%s\n' "${MOCK_PR_AFTER:-$MOCK_PR}"
     else : > "$MOCK_CALLS"; printf '%s\n' "$MOCK_PR"; fi ;;
   *) exit 97 ;;
@@ -198,10 +225,35 @@ esac
 "#,
     )
     .map_err(|e| e.to_string())?;
+    let sleep = scratch.0.join("sleep");
+    fs::write(
+        &sleep,
+        "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = 1 ] || exit 96\nprintf 'BACKOFF %s\\n' \"$1\" >> \"$MOCK_CALLS.log\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    // Production runs on Ubuntu with GNU timeout. Other test hosts only invoke
+    // controlled, immediate fixtures; Linux below exercises the real deadline.
+    #[cfg(not(target_os = "linux"))]
+    {
+        let timeout = scratch.0.join("timeout");
+        fs::write(
+            &timeout,
+            "#!/bin/sh\n[ \"$1\" = --kill-after=1s ] && [ \"$2\" = 15s ] || exit 96\nshift 2\nexec \"$@\"\n",
+        )
+        .map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&timeout, fs::Permissions::from_mode(0o700))
+                .map_err(|e| e.to_string())?;
+        }
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+        fs::set_permissions(&sleep, fs::Permissions::from_mode(0o700))
+            .map_err(|e| e.to_string())?;
     }
     let paths = std::iter::once(scratch.0.clone())
         .chain(std::env::split_paths(
@@ -274,11 +326,12 @@ esac
     let report =
         fs::read_to_string(summary).map_err(|e| format!("missing summary: {e}; {output:?}"))?;
     assert!(report.contains("### Ripr Rust Small Result"));
+    let calls = fs::read_to_string(scratch.0.join("calls.log")).unwrap_or_default();
     // The eligibility step's own log follows the summary so a test can read
     // the stage it named when it refused (#8858).
     Ok((
         eligibility && output.status.success(),
-        format!("{report}\n{eligibility_log}"),
+        format!("{report}\n{eligibility_log}\nAPI calls:\n{calls}"),
     ))
 }
 
@@ -789,12 +842,366 @@ fn refused_eligibility_names_the_stage_that_refused() -> Result<(), String> {
     Ok(())
 }
 
+fn read_response(body: &str, status: u16, exit: u8) -> serde_json::Value {
+    serde_json::json!({"body": body, "status": status, "exit": exit})
+}
+
+fn with_read_responses(
+    source: &str,
+    event: &str,
+    prs: &[serde_json::Value],
+    graphs: &[serde_json::Value],
+    extra: &[(&str, &str)],
+) -> Result<(bool, String), String> {
+    let prs = serde_json::to_string(prs).map_err(|e| e.to_string())?;
+    let graph_sequence = serde_json::to_string(graphs).map_err(|e| e.to_string())?;
+    let mut overrides = vec![("MOCK_PR_RESPONSES", prs.as_str())];
+    if !graphs.is_empty() {
+        overrides.push(("MOCK_GRAPHQL_RESPONSES", graph_sequence.as_str()));
+    }
+    overrides.extend_from_slice(extra);
+    run_result(source, event, "pr", "success", "admitted", &overrides)
+}
+
+fn assert_read_counts(report: &str, prs: usize, graphs: usize, backoffs: usize) {
+    for (prefix, expected) in [
+        ("api repos/EffortlessMetrics/ripr-swarm/pulls/10 ", prs),
+        ("api graphql ", graphs),
+        ("BACKOFF 1", backoffs),
+    ] {
+        assert_eq!(
+            report
+                .lines()
+                .filter(|line| line.starts_with(prefix))
+                .count(),
+            expected,
+            "wrong count for {prefix}: {report}"
+        );
+    }
+}
+
+#[test]
+fn transient_pr_reads_recollect_within_the_same_admission() -> Result<(), String> {
+    let source = workflow()?;
+    for event in ["pull_request", "merge_group"] {
+        for status in [502, 503, 504] {
+            for second_read in [false, true] {
+                let mut prs = Vec::new();
+                if second_read {
+                    prs.push(read_response(LIVE_PR, 200, 0));
+                }
+                prs.push(read_response("unavailable", status, 1));
+                prs.push(read_response(LIVE_PR, 200, 0));
+                let (success, report) = with_read_responses(&source, event, &prs, &[], &[])?;
+                assert!(success, "{event}, HTTP {status}: {report}");
+                assert_read_counts(
+                    &report,
+                    if second_read { 4 } else { 3 },
+                    if second_read { 2 } else { 1 },
+                    1,
+                );
+                assert!(report.contains(&format!("native exit 1, HTTP {status}")));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn empty_transient_frames_recover() -> Result<(), String> {
+    let source = workflow()?;
+    let event = "pull_request";
+    for status in [502, 503, 504] {
+        for headers in ["content-type: application/json\r\n", ""] {
+            let raw = format!("HTTP/2.0 {status} Fixture\n{headers}\r\n");
+            let transient = serde_json::json!({"raw_stdout": raw, "exit": 1});
+            for second_read in [false, true] {
+                let mut prs = Vec::new();
+                if second_read {
+                    prs.push(read_response(LIVE_PR, 200, 0));
+                }
+                prs.push(transient.clone());
+                prs.push(read_response(LIVE_PR, 200, 0));
+                let (success, report) = with_read_responses(&source, event, &prs, &[], &[])?;
+                assert!(success, "bodyless HTTP {status}: {report}");
+                assert_read_counts(
+                    &report,
+                    if second_read { 4 } else { 3 },
+                    if second_read { 2 } else { 1 },
+                    1,
+                );
+                assert!(report.contains(&format!("native exit 1, HTTP {status}")));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn second_pr_read_retry_discards_reviews_threads_queue_and_pagination() -> Result<(), String> {
+    let source = workflow()?;
+    let page = LIVE_GRAPHQL.replace(
+        r#""hasNextPage":false,"endCursor":null"#,
+        r#""hasNextPage":true,"endCursor":"next""#,
+    );
+    for (event, changed) in [
+        (
+            "pull_request",
+            LIVE_GRAPHQL.replace("APPROVED", "CHANGES_REQUESTED"),
+        ),
+        (
+            "pull_request",
+            LIVE_GRAPHQL.replace("\"nodes\":[]", "\"nodes\":[{\"isResolved\":false}]"),
+        ),
+        (
+            "merge_group",
+            LIVE_GRAPHQL.replace(r#"{"id":"entry-10"}"#, "null"),
+        ),
+    ] {
+        let prs = [
+            read_response(LIVE_PR, 200, 0),
+            read_response("unavailable", 503, 1),
+            read_response(LIVE_PR, 200, 0),
+        ];
+        let graphs = [
+            read_response(&page, 200, 0),
+            read_response(LIVE_GRAPHQL, 200, 0),
+            read_response(&changed, 200, 0),
+        ];
+        let (success, report) = with_read_responses(&source, event, &prs, &graphs, &[])?;
+        assert!(
+            !success,
+            "state changed during second-read backoff: {report}"
+        );
+        assert_read_counts(&report, 3, 3, 1);
+        let cursors = report
+            .lines()
+            .filter(|line| line.starts_with("api graphql "))
+            .map(|line| line.rsplit_once("cursor=").map(|(_, cursor)| cursor))
+            .collect::<Vec<_>>();
+        assert_eq!(cursors, [Some("null"), Some("next"), Some("null")]);
+        assert!(report.contains("stage review_decision_and_threads"));
+        assert!(!report.contains("api repos/EffortlessMetrics/ripr-swarm/actions/"));
+    }
+    Ok(())
+}
+
+#[test]
+fn retrying_only_the_second_pr_read_exposes_the_stale_review_false_green() -> Result<(), String> {
+    let source = workflow()?;
+    let refusal = "                pr=; return \"$native\"\n";
+    assert_eq!(source.matches(refusal).count(), 1);
+    let only_pr_retry = source.replace(
+        refusal,
+        "                if [ \"$retry_pr_read\" = true ]; then retry_pr_read=false; sleep 1; read_pr; return; fi\n                pr=; return \"$native\"\n",
+    );
+    let blocked = LIVE_GRAPHQL.replace("APPROVED", "CHANGES_REQUESTED");
+    let prs = [
+        read_response(LIVE_PR, 200, 0),
+        read_response("unavailable", 503, 1),
+        read_response(LIVE_PR, 200, 0),
+    ];
+    let graphs = [
+        read_response(LIVE_GRAPHQL, 200, 0),
+        read_response(&blocked, 200, 0),
+    ];
+    let (success, report) =
+        with_read_responses(&only_pr_retry, "pull_request", &prs, &graphs, &[])?;
+    assert!(
+        success,
+        "the wrong retry must expose the old-frame false green: {report}"
+    );
+    assert_read_counts(&report, 3, 1, 1);
+    assert!(!with_read_responses(&source, "pull_request", &prs, &graphs, &[])?.0);
+    Ok(())
+}
+
+#[test]
+fn recovered_pr_read_still_refuses_changed_semantics_and_succession() -> Result<(), String> {
+    let source = workflow()?;
+    for changed in [
+        LIVE_PR.replace("\"open\"", "\"closed\""),
+        LIVE_PR.replace("\"draft\":false", "\"draft\":true"),
+        LIVE_PR.replace(PR_HEAD, GROUP_HEAD),
+        LIVE_PR.replace("\"main\"", "\"other\""),
+        LIVE_PR.replace(REPOSITORY, "other/repository"),
+        LIVE_PR.replace(r#"[{"name":"merge-ready"}]"#, "[]"),
+    ] {
+        let prs = [
+            read_response("unavailable", 503, 1),
+            read_response(&changed, 200, 0),
+            read_response(LIVE_PR, 200, 0),
+        ];
+        let (success, report) = with_read_responses(&source, "pull_request", &prs, &[], &[])?;
+        assert!(!success, "fresh PR predicates must refuse: {report}");
+        assert_read_counts(&report, 2, 0, 1);
+    }
+    let advanced = run_entry("pull_request", 100, 7, 2).to_string();
+    let prs = [
+        read_response("unavailable", 503, 1),
+        read_response(LIVE_PR, 200, 0),
+    ];
+    let (success, report) = with_read_responses(
+        &source,
+        "pull_request",
+        &prs,
+        &[],
+        &[("MOCK_RUN", &advanced)],
+    )?;
+    assert!(!success, "a superseding attempt still refuses: {report}");
+    assert_read_counts(&report, 3, 1, 1);
+    assert!(report.contains("stage same_head_succession"));
+    Ok(())
+}
+
+#[test]
+fn freshly_admitted_attempt_two_can_recover_without_adopting_another_request() -> Result<(), String>
+{
+    let source = workflow()?;
+    for event in ["pull_request", "merge_group"] {
+        let own = run_entry(event, 100, 7, 2);
+        let run = own.to_string();
+        let page = runs_page(1, &[own]);
+        let prs = [
+            read_response("unavailable", 503, 1),
+            read_response(LIVE_PR, 200, 0),
+        ];
+        let (success, report) = with_read_responses(
+            &source,
+            event,
+            &prs,
+            &[],
+            &[
+                ("GITHUB_RUN_ATTEMPT", "2"),
+                ("EXPECTED_REQUEST", "100-2"),
+                ("MOCK_RUN", &run),
+                ("MOCK_RUNS_1", &page),
+            ],
+        )?;
+        assert!(
+            success,
+            "a matching fresh admission remains valid: {report}"
+        );
+        assert_read_counts(&report, 3, 1, 1);
+        assert!(report.contains("admission 100-2 is unchanged"));
+    }
+    Ok(())
+}
+
+#[test]
+fn only_framed_transient_pr_failures_are_retried() -> Result<(), String> {
+    let source = workflow()?;
+    let mut terminal = Vec::new();
+    for status in [401, 403, 404, 422, 429, 500] {
+        let mut response = read_response("HTTP 503", status, 1);
+        response["error"] = "gh: HTTP 503".into();
+        terminal.push(response);
+    }
+    for exit in [0, 2, 99, 124, 137] {
+        terminal.push(read_response(LIVE_PR, 503, exit));
+        terminal.push(serde_json::json!({
+            "raw_stdout": "HTTP/2.0 503 Fixture\n\r\n",
+            "exit": exit
+        }));
+    }
+    for body in [
+        "{".to_string(),
+        "".to_string(),
+        "{}".to_string(),
+        format!("{LIVE_PR}\n{LIVE_PR}"),
+        format!("{{}}\n{LIVE_PR}"),
+    ] {
+        terminal.push(read_response(&body, 200, 0));
+    }
+    for raw in [
+        LIVE_PR.to_string(),
+        format!("HTTP/2.0 unknown\ncontent-type: application/json\r\n\r\n{LIVE_PR}"),
+        format!("HTTP/2.0 200 OK\ncontent-type: application/json\r\n{LIVE_PR}"),
+        format!("HTTP/2.0 503 Unavailable\nHTTP/2.0 200 OK\r\n\r\n{LIVE_PR}"),
+        "HTTP/2.0 503 Unavailable\ncontent-type: application/json\r\n\r".to_string(),
+        "HTTP/2.0 503 Unavailable\n\r".to_string(),
+    ] {
+        terminal.push(serde_json::json!({"raw_stdout": raw, "exit": 1}));
+    }
+    for response in terminal {
+        let prs = [response.clone(), read_response(LIVE_PR, 200, 0)];
+        let (success, report) = with_read_responses(&source, "pull_request", &prs, &[], &[])?;
+        assert!(
+            !success,
+            "terminal response {response} must refuse: {report}"
+        );
+        assert_read_counts(&report, 1, 0, 0);
+    }
+    // A valid-looking body from a failed call cannot supply the next read.
+    let prs = [read_response(LIVE_PR, 503, 1), read_response("{}", 200, 0)];
+    let (success, report) = with_read_responses(&source, "pull_request", &prs, &[], &[])?;
+    assert!(!success, "failed data must be discarded: {report}");
+    assert_read_counts(&report, 2, 0, 1);
+    Ok(())
+}
+
+#[test]
+fn transient_budget_exhaustion_and_non_pr_errors_remain_terminal() -> Result<(), String> {
+    let source = workflow()?;
+    let transient = read_response("unavailable", 503, 1);
+    for second_read in [false, true] {
+        let prs = if second_read {
+            (0..3)
+                .flat_map(|_| [read_response(LIVE_PR, 200, 0), transient.clone()])
+                .collect::<Vec<_>>()
+        } else {
+            vec![transient.clone()]
+        };
+        let (success, report) = with_read_responses(&source, "pull_request", &prs, &[], &[])?;
+        assert!(!success, "exhaustion must refuse: {report}");
+        assert_read_counts(
+            &report,
+            if second_read { 6 } else { 3 },
+            if second_read { 3 } else { 0 },
+            2,
+        );
+        assert!(report.contains("collection 3/3"));
+    }
+    // A GraphQL error may have the same native exit as a retryable PR read.
+    // Even after a previous PR retry, it must not enter the retry path.
+    let prs = [transient.clone(), read_response(LIVE_PR, 200, 0)];
+    for native in [1, 75] {
+        let graphs = [
+            read_response("unavailable", 503, native),
+            read_response(LIVE_GRAPHQL, 200, 0),
+        ];
+        let (success, report) = with_read_responses(&source, "pull_request", &prs, &graphs, &[])?;
+        assert!(!success, "non-PR failure must remain terminal: {report}");
+        assert_read_counts(&report, 2, 1, 1);
+        assert!(report.contains(&format!(
+            "stage review_decision_and_threads (exit {native})"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn stalled_pr_transport_is_bounded_and_keeps_its_native_exit_cause() -> Result<(), String> {
+    let source = workflow()?;
+    let mut stalled = read_response(LIVE_PR, 200, 0);
+    stalled["hang_seconds"] = 30.into();
+    let started = std::time::Instant::now();
+    let (success, report) = with_read_responses(&source, "pull_request", &[stalled], &[], &[])?;
+    assert!(!success, "a stalled transport must refuse: {report}");
+    assert_read_counts(&report, 1, 0, 0);
+    assert!(report.contains("native exit 124"), "{report}");
+    assert!(report.contains("stage pull_request_state (exit 124)"));
+    assert!(started.elapsed() < std::time::Duration::from_secs(25));
+    Ok(())
+}
+
 #[test]
 fn removed_terminal_guard_exposes_the_same_closed_pr_false_green() -> Result<(), String> {
     let source = workflow()?;
-    let guard = "          current_eligibility\n";
+    let guard = "            if current_eligibility; then break; else rc=$?; fi\n";
     assert_eq!(source.matches(guard).count(), 1);
-    let removed = source.replace(guard, "          true\n");
+    let removed = source.replace(guard, "            break\n");
     let closed = LIVE_PR.replace("\"open\"", "\"closed\"");
     assert!(
         run_result(
