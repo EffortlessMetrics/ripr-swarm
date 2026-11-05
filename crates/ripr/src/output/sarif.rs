@@ -183,6 +183,169 @@ pub(crate) fn render_repo_seams_sarif(
     sarif_document_repo_seam(rules, results, limit_info)
 }
 
+/// Environment variable overriding the `sarif-compact` byte budget
+/// (#13195). Set to `0` to remove the cap (unbounded); any positive integer
+/// sets the budget explicitly. When unset, `DEFAULT_SARIF_BYTES` applies.
+/// An unparseable value fails the run, never the opt-out, mirroring
+/// `RIPR_CHECK_FINDINGS_BYTES` (#5203).
+pub(crate) const SARIF_BYTES_ENV: &str = "RIPR_SARIF_BYTES";
+
+/// Default cap on rendered `sarif-compact` document bytes (#13195), aligned
+/// with the diff-JSON findings budget (#5203). Ordinary runs sit far below
+/// it; operators can raise or remove the cap via `RIPR_SARIF_BYTES`.
+pub(crate) const DEFAULT_SARIF_BYTES: usize = 1_000_000;
+
+/// `run_status` carried by a SARIF run whose results the byte budget
+/// truncated (#13195). A bounded document is incomplete, never clean.
+const SARIF_BOUND_RUN_STATUS: &str = "limited_sarif_bound";
+
+/// Effective `sarif-compact` byte budget: `None` is the unbounded opt-out.
+/// Fails closed on unparseable values.
+pub(crate) fn sarif_byte_budget() -> Result<Option<usize>, String> {
+    sarif_byte_budget_from_env(std::env::var(SARIF_BYTES_ENV))
+}
+
+fn sarif_byte_budget_from_env(
+    value: Result<String, std::env::VarError>,
+) -> Result<Option<usize>, String> {
+    match value {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            match trimmed.parse::<usize>() {
+                Ok(0) => Ok(None),
+                Ok(budget) => Ok(Some(budget)),
+                Err(_) => Err(format!(
+                    "{SARIF_BYTES_ENV} `{raw}` is not a byte budget: set a positive integer, \
+                     or 0 to remove the cap"
+                )),
+            }
+        }
+        Err(std::env::VarError::NotPresent) => Ok(Some(DEFAULT_SARIF_BYTES)),
+        Err(std::env::VarError::NotUnicode(value)) => Err(format!(
+            "{SARIF_BYTES_ENV} is not valid UTF-8 (got {value:?}): set a positive byte budget, \
+             or 0 to remove the cap"
+        )),
+    }
+}
+
+/// Render diff-scoped Findings as minified, byte-bounded SARIF (#13195).
+pub(crate) fn render_findings_sarif_compact(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+) -> Result<String, String> {
+    Ok(render_findings_sarif_compact_with_budget(
+        output,
+        config,
+        suppressions,
+        sarif_byte_budget()?,
+    ))
+}
+
+fn render_findings_sarif_compact_with_budget(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+    budget: Option<usize>,
+) -> String {
+    compact_sarif_document(&render_findings_sarif(output, config, suppressions), budget)
+}
+
+/// Render repo-scoped classified seams as minified, byte-bounded SARIF
+/// (#13195).
+pub(crate) fn render_repo_seams_sarif_compact(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    config: &RiprConfig,
+) -> Result<String, String> {
+    Ok(render_repo_seams_sarif_compact_with_budget(
+        classified,
+        limit_info,
+        config,
+        sarif_byte_budget()?,
+    ))
+}
+
+fn render_repo_seams_sarif_compact_with_budget(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<&SeamLimitInfo>,
+    config: &RiprConfig,
+    budget: Option<usize>,
+) -> String {
+    compact_sarif_document(
+        &render_repo_seams_sarif(classified, limit_info, config),
+        budget,
+    )
+}
+
+/// Minifies a rendered SARIF document and, when a budget applies and the
+/// document exceeds it, retains the longest result prefix that fits and
+/// discloses the bound in the run properties (#13195). The retained
+/// document stays valid SARIF 2.1.0; when even the empty-results skeleton
+/// exceeds the budget it is returned as the minimal disclosed document.
+/// A document that does not parse is returned unchanged.
+fn compact_sarif_document(pretty: &str, budget: Option<usize>) -> String {
+    let Ok(mut document) = serde_json::from_str::<Value>(pretty) else {
+        return pretty.to_string();
+    };
+    let serialize = |document: &Value| -> String {
+        let mut rendered = serde_json::to_string(document).unwrap_or_else(|_| pretty.to_string());
+        rendered.push('\n');
+        rendered
+    };
+    let Some(budget) = budget else {
+        return serialize(&document);
+    };
+    if serialize(&document).len() <= budget {
+        return serialize(&document);
+    }
+    let all_results: Vec<Value> = document["runs"]
+        .as_array()
+        .and_then(|runs| runs.first())
+        .and_then(|run| run["results"].as_array().cloned())
+        .unwrap_or_default();
+    let total = all_results.len();
+    let result_len = |index: usize| -> usize {
+        all_results
+            .get(index)
+            .map(|result| serde_json::to_string(result).map_or(0, |text| text.len()))
+            .unwrap_or(0)
+    };
+    let mut retained = total;
+    loop {
+        let kept: Vec<Value> = all_results.iter().take(retained).cloned().collect();
+        if let Some(run) = document["runs"]
+            .as_array_mut()
+            .and_then(|runs| runs.first_mut())
+        {
+            run["results"] = Value::Array(kept);
+            if let Some(properties) = run["properties"].as_object_mut() {
+                properties.insert("run_status".to_string(), json!(SARIF_BOUND_RUN_STATUS));
+                properties.insert(
+                    "output_bound".to_string(),
+                    json!({
+                        "bounded": true,
+                        "max_output_bytes": budget,
+                        "results_total": total,
+                        "results_retained": retained,
+                        "results_omitted": total - retained,
+                    }),
+                );
+            }
+        }
+        let rendered = serialize(&document);
+        if rendered.len() <= budget || retained == 0 {
+            return rendered;
+        }
+        // Drop enough trailing results to cover the overflow in one step,
+        // using the smallest retained result as the per-drop estimate.
+        let overflow = rendered.len() - budget;
+        let smallest = (0..retained).map(result_len).min().unwrap_or(1).max(1);
+        let drops = (overflow / smallest + 1).min(retained);
+        retained -= drops;
+    }
+}
+
 fn sarif_document_repo_seam(
     rules: Vec<Value>,
     results: Vec<Value>,
@@ -1949,6 +2112,101 @@ mod tests {
             "unresolved_conflict_markers"
         );
         Ok(())
+    }
+
+    /// #13195: an over-budget `sarif-compact` document stays valid SARIF,
+    /// fits the budget, and discloses the bound in-band instead of reading
+    /// as a clean complete run.
+    #[test]
+    fn sarif_compact_over_budget_stays_valid_and_discloses_the_bound() -> Result<(), String> {
+        let mut output = sample_output();
+        let finding = output.findings[0].clone();
+        output.findings = (0..12)
+            .map(|index| {
+                let mut finding = finding.clone();
+                finding.probe.location.line = index + 1;
+                finding
+            })
+            .collect();
+        let config = RiprConfig::default();
+        let unbounded = render_findings_sarif_compact_with_budget(&output, &config, &[], None);
+        let unbounded_doc = parse_json(&unbounded)?;
+        let total = unbounded_doc["runs"][0]["results"]
+            .as_array()
+            .map(Vec::len)
+            .ok_or("unbounded results missing")?;
+        assert_eq!(total, 12, "control: every finding renders unbounded");
+
+        let budget = unbounded.len() - 1;
+        let bounded =
+            render_findings_sarif_compact_with_budget(&output, &config, &[], Some(budget));
+        assert!(
+            bounded.len() <= budget,
+            "bounded {} exceeds budget {budget}",
+            bounded.len()
+        );
+        assert!(!bounded.contains("\n  "), "compact: {bounded}");
+        let doc = parse_json(&bounded)?;
+        assert_eq!(doc["version"], "2.1.0");
+        assert_eq!(
+            doc["$schema"],
+            "https://json.schemastore.org/sarif-2.1.0.json"
+        );
+        let run = &doc["runs"][0];
+        assert_eq!(run["tool"]["driver"]["name"], "ripr");
+        let retained = run["results"].as_array().map(Vec::len).ok_or("results")?;
+        assert!(retained < total, "retained {retained} of {total}");
+        assert_eq!(
+            run["results"][0]["partialFingerprints"],
+            unbounded_doc["runs"][0]["results"][0]["partialFingerprints"],
+            "retained results are the rendered prefix"
+        );
+        let props = &run["properties"];
+        assert_eq!(props["run_status"], "limited_sarif_bound");
+        assert_eq!(props["output_bound"]["bounded"], true);
+        assert_eq!(props["output_bound"]["max_output_bytes"], budget);
+        assert_eq!(props["output_bound"]["results_total"], total);
+        assert_eq!(props["output_bound"]["results_retained"], retained);
+        assert_eq!(props["output_bound"]["results_omitted"], total - retained);
+        Ok(())
+    }
+
+    /// #13195: under budget, `sarif-compact` is the pretty document with
+    /// only insignificant whitespace removed.
+    #[test]
+    fn sarif_compact_under_budget_matches_the_pretty_document() -> Result<(), String> {
+        let output = sample_output();
+        let config = RiprConfig::default();
+        let pretty = render_findings_sarif(&output, &config, &[]);
+        let compact = render_findings_sarif_compact_with_budget(&output, &config, &[], None);
+        assert_eq!(parse_json(&compact)?, parse_json(&pretty)?);
+        assert!(compact.len() < pretty.len(), "compact {compact}");
+        assert!(
+            parse_json(&compact)?["runs"][0]["properties"]
+                .get("output_bound")
+                .is_none(),
+            "no bound disclosure when nothing was bounded"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_byte_budget_env_resolution_fails_closed() {
+        assert_eq!(
+            sarif_byte_budget_from_env(Err(std::env::VarError::NotPresent)),
+            Ok(Some(DEFAULT_SARIF_BYTES))
+        );
+        assert_eq!(sarif_byte_budget_from_env(Ok("0".to_string())), Ok(None));
+        assert_eq!(
+            sarif_byte_budget_from_env(Ok("4096".to_string())),
+            Ok(Some(4096))
+        );
+        for invalid in ["", "abc", "-1", "1.5"] {
+            assert!(
+                sarif_byte_budget_from_env(Ok(invalid.to_string())).is_err(),
+                "{invalid:?} must fail closed"
+            );
+        }
     }
 
     #[test]
