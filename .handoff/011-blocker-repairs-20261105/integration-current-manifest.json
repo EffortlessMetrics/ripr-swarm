@@ -51,7 +51,24 @@
       "ci-policy",
       "goldens",
       "promotion honesty"
-    ]
+    ],
+    "current_compatibility": {
+      "qualified_entry": [
+        44,
+        0
+      ],
+      "glob_identity": [
+        6,
+        0
+      ],
+      "owner_pin_execution": [
+        55,
+        9
+      ],
+      "receipt": "cdbb570-owner-call-compatibility-receipt.json",
+      "native_exit": 101
+    },
+    "current_phase": "remaining downstream consumer/policy checks running sequentially; nine public-owner failures under source diagnosis"
   },
   "history": {
     "public_source": "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a",
