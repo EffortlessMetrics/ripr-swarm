@@ -122,10 +122,7 @@ exit 23
 
 #[test]
 fn native_success_and_signal_survive_observation() -> Result<()> {
-    for (script, expected, signal) in [
-        ("exit 0", 0, None),
-        ("kill -TERM $$", 143, Some(15)),
-    ] {
+    for (script, expected, signal) in [("exit 0", 0, None), ("kill -TERM $$", 143, Some(15))] {
         let mut command = Command::new("sh");
         command.args(["-c", script]);
         let mut events = Vec::new();
@@ -177,7 +174,10 @@ fn dropped_owner_terminates_and_reaps_its_child() -> Result<()> {
     let pid = child.pid;
     drop(child);
     assert!(matches!(
-        waitid(WaitId::Pid(pid), WaitIdOptions::EXITED | WaitIdOptions::NOHANG),
+        waitid(
+            WaitId::Pid(pid),
+            WaitIdOptions::EXITED | WaitIdOptions::NOHANG
+        ),
         Err(rustix::io::Errno::CHILD)
     ));
     Ok(())

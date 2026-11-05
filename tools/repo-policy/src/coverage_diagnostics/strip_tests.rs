@@ -66,7 +66,10 @@ impl Drop for StripFixture {
 }
 
 fn native_arguments(arguments: &[&str]) -> Vec<OsString> {
-    arguments.iter().map(|value| OsString::from(*value)).collect()
+    arguments
+        .iter()
+        .map(|value| OsString::from(*value))
+        .collect()
 }
 
 fn read_native_output(path: &Path) -> Result<Vec<u8>> {
@@ -242,7 +245,9 @@ fn strip_tools(root: &Path) -> Result<StripTools> {
             &native_arguments(&["--version"]),
             &[],
         )?;
-        tools.versions.insert(name, native_text(&output)?.trim().into());
+        tools
+            .versions
+            .insert(name, native_text(&output)?.trim().into());
     }
     Ok(tools)
 }
@@ -293,7 +298,10 @@ fn strip_executable(root: &Path, tools: &StripTools, mode: &str) -> Result<PathB
     assert!(invocation.contains("-C instrument-coverage"));
     assert!(invocation.contains("-C debuginfo=line-tables-only"));
     assert!(!invocation.contains("-C strip=symbols"));
-    assert_eq!(invocation.contains("-C strip=debuginfo"), mode == "debuginfo");
+    assert_eq!(
+        invocation.contains("-C strip=debuginfo"),
+        mode == "debuginfo"
+    );
 
     let mut executables = Vec::new();
     for line in native_text(&output)?.lines() {
@@ -318,9 +326,7 @@ fn strip_executable(root: &Path, tools: &StripTools, mode: &str) -> Result<PathB
 
 fn one_build_id<'a>(ids: impl Iterator<Item = &'a str>) -> Result<String> {
     let ids: Vec<_> = ids.filter(|id| !id.is_empty()).collect();
-    if ids.len() != 1
-        || ids[0].len() != 40
-        || !ids[0].bytes().all(|byte| byte.is_ascii_hexdigit())
+    if ids.len() != 1 || ids[0].len() != 40 || !ids[0].bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(format!(
             "native strip control requires one SHA-1 build ID: {ids:?}"
@@ -362,7 +368,9 @@ fn owned_coverage(export: &Value, source: &Path) -> Result<Value> {
     if data.len() != 1 {
         return Err("expected one binary coverage export".into());
     }
-    let files = data[0]["files"].as_array().ok_or("coverage files missing")?;
+    let files = data[0]["files"]
+        .as_array()
+        .ok_or("coverage files missing")?;
     let files: Vec<_> = files
         .iter()
         .filter(|file| {
@@ -386,9 +394,9 @@ fn owned_coverage(export: &Value, source: &Path) -> Result<Value> {
                     .as_str()
                     .is_some_and(|symbol| symbol.contains(name))
                     && function["filenames"].as_array().is_some_and(|paths| {
-                        paths.iter().any(|path| {
-                            path.as_str().is_some_and(|path| Path::new(path) == source)
-                        })
+                        paths
+                            .iter()
+                            .any(|path| path.as_str().is_some_and(|path| Path::new(path) == source))
                     })
             })
             .collect();
@@ -487,8 +495,7 @@ fn parse_debug_sections(text: &str) -> Result<Vec<DebugSection>> {
         sections.push(DebugSection {
             name: (*name).to_owned(),
             section_type: fields[1].to_owned(),
-            size_bytes: u64::from_str_radix(fields[4], 16)
-                .map_err(|error| error.to_string())?,
+            size_bytes: u64::from_str_radix(fields[4], 16).map_err(|error| error.to_string())?,
             flags: flags.to_owned(),
         });
     }
@@ -522,8 +529,7 @@ fn debug_sections_require_dwarf_removal_and_exact_allocated_loader_marker() -> R
     let header = "  [Nr] Name Type Address Off Size ES Flg Lk Inf Al\n";
     let null = "  [ 0] NULL 0000000000000000 000000 000000 00 0 0 0\n";
     let line = "  [ 2] .debug_line PROGBITS 0000000000000000 000040 000020 00 0 0 1\n";
-    let loader =
-        "  [ 3] .debug_gdb_scripts PROGBITS 0000000000000040 000060 000022 01 AMS 0 0 1\n";
+    let loader = "  [ 3] .debug_gdb_scripts PROGBITS 0000000000000040 000060 000022 01 AMS 0 0 1\n";
     let table = format!("Section Headers:\n{header}{null}{line}{loader}Key to Flags:\n");
     let sections = parse_debug_sections(&table)?;
     assert_eq!(sections.len(), 2);
@@ -533,11 +539,12 @@ fn debug_sections_require_dwarf_removal_and_exact_allocated_loader_marker() -> R
     assert!(permitted_debug_loader(&sections[1]));
     assert!(!nonempty_dwarf_line_table(&sections[1]));
     let no_debug = parse_debug_sections(&format!("Section Headers:\n{null}Key to Flags:\n"))?;
-    assert!(no_debug.is_empty(), "the unnamed NULL row is not a debug section");
-    let lookalike = parse_debug_sections(&table.replace(
-        ".debug_gdb_scripts",
-        ".debug_gdb_scripts_extra",
-    ))?;
+    assert!(
+        no_debug.is_empty(),
+        "the unnamed NULL row is not a debug section"
+    );
+    let lookalike =
+        parse_debug_sections(&table.replace(".debug_gdb_scripts", ".debug_gdb_scripts_extra"))?;
     assert_eq!(lookalike[1].name, ".debug_gdb_scripts_extra");
     assert!(!permitted_debug_loader(&lookalike[1]));
 
@@ -597,7 +604,10 @@ fn observe_strip_variant(root: &Path, tools: &StripTools, mode: &str) -> Result<
     let mut profiles = Vec::new();
     for run in 0..2 {
         let profile = root.join(format!("{mode}-{run}.profraw"));
-        assert!(!profile.exists(), "each invocation starts without a profile");
+        assert!(
+            !profile.exists(),
+            "each invocation starts without a profile"
+        );
         let output = native_output(
             root,
             &format!("{mode}-run-{run}"),
@@ -611,8 +621,7 @@ fn observe_strip_variant(root: &Path, tools: &StripTools, mode: &str) -> Result<
             1,
             "post-assertion acknowledgement"
         );
-        let passed =
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
+        let passed = "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out";
         assert_eq!(
             text.matches(passed).count(),
             1,
@@ -737,7 +746,8 @@ fn observe_strip_variant(root: &Path, tools: &StripTools, mode: &str) -> Result<
         export.stderr.is_empty(),
         "coverage export warnings are not success"
     );
-    let export: Value = serde_json::from_slice(&export.stdout).map_err(|error| error.to_string())?;
+    let export: Value =
+        serde_json::from_slice(&export.stdout).map_err(|error| error.to_string())?;
     let coverage = owned_coverage(&export, &source)?;
     let mut arguments = arguments.to_vec();
     arguments.push("-format=lcov".into());
@@ -748,7 +758,10 @@ fn observe_strip_variant(root: &Path, tools: &StripTools, mode: &str) -> Result<
         &arguments,
         &[],
     )?;
-    assert!(lcov.stderr.is_empty(), "LCOV export warnings are not success");
+    assert!(
+        lcov.stderr.is_empty(),
+        "LCOV export warnings are not success"
+    );
     let lines = owned_lcov_lines(native_text(&lcov)?, &source)?;
     assert_eq!(lines.get(&4), Some(&2), "the hot return executed twice");
     assert_eq!(lines.get(&6), Some(&0), "the cold return never executed");
@@ -779,7 +792,10 @@ fn native_test_profile_strip_preserves_coverage_and_reduces_fixture_size() -> Re
     let tools = strip_tools(&fixture.root)?;
     let baseline = observe_strip_variant(&fixture.root, &tools, "none")?;
     let stripped = observe_strip_variant(&fixture.root, &tools, "debuginfo")?;
-    assert_eq!(baseline.lines, stripped.lines, "all owned source line counts");
+    assert_eq!(
+        baseline.lines, stripped.lines,
+        "all owned source line counts"
+    );
     assert_eq!(
         baseline.coverage, stripped.coverage,
         "source regions and function counts"

@@ -86,13 +86,11 @@ impl CoverageChild {
         }
         // Use the shared owner's non-reaping ordering: signal the owned group
         // while its primary PID is still reserved, then reap exactly once.
-        let group_error = match rustix::process::kill_process_group(
-            self.pid,
-            rustix::process::Signal::KILL,
-        ) {
-            Ok(()) | Err(rustix::io::Errno::SRCH) => false,
-            Err(_) => true,
-        };
+        let group_error =
+            match rustix::process::kill_process_group(self.pid, rustix::process::Signal::KILL) {
+                Ok(()) | Err(rustix::io::Errno::SRCH) => false,
+                Err(_) => true,
+            };
         if group_error {
             let _ = self.child.kill();
         }
