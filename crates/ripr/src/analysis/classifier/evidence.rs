@@ -1074,7 +1074,12 @@ impl ClassifiedProbeEvidence {
                 || direct_owner_pin_admits(test, assertion)
                 || context.owner_fn.is_some_and(|owner| {
                     crate::analysis::classify::selected_unit_error_return(
-                        context.probe, owner, test, assertion, context.index, pin_syntax,
+                        context.probe,
+                        owner,
+                        test,
+                        assertion,
+                        context.index,
+                        pin_syntax,
                     )
                 })
         };
