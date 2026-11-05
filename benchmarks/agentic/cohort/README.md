@@ -82,6 +82,7 @@ original observations, not recomputed or statistically requalified by this chang
 
 ## Limits
 
+- Known scorer limits (being repaired in a child PR): a timed-out or otherwise failing mutant run counts as killed, a pristine run that executes zero tests counts as valid, and scoring runs in the agent-edited checkout. Escape rates above are therefore best read as lower bounds with unverified scorer provenance.
 - One provider (Anthropic), two models. The "two providers" bar is not met; no other provider is reachable from this environment.
 - Mutants for the large and real-code tasks are mechanical (not cargo-mutants, which is not installed here) and filtered by Sonnet-written suites, so bugs those suites could not kill are excluded; this biases toward bugs that are easy to kill.
 - First-party tasks are small (under 120 lines). Real-code tasks are single-crate, and only `src/lib.rs` is mutated.
