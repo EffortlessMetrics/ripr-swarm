@@ -1,0 +1,2 @@
+.github/scripts/npm_package.py|urllib.request|3|release/npm|#12009 RIPR-SPEC-0374: imported public-source metadata reader uses fixed-origin anonymous npm registry GET with redirect refusal, 30-second timeout and 5 MB response bound; no publication, credential or staging authority added.
+.github/scripts/npm_package.py|urlopen|1|release/npm|#12009 RIPR-SPEC-0374: same bounded anonymous package-metadata read; retain existing release admission and separate staging/publication approval.
