@@ -104,6 +104,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     validate_issue_lifecycle_intake_fixture_corpus(&mut violations)?;
     validate_verification_run_snapshot_binding_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_contract_plan_fixture_corpus(&mut violations)?;
+    validate_admission_incident_route_fixture_corpus(&mut violations)?;
     validate_issue_lifecycle_real_rows_corpus(&mut violations)?;
     crate::work_portfolio::validate_work_portfolio_fixture_corpus(&mut violations);
     crate::work_selection_identity::validate_work_selection_identity_fixture_corpus(
@@ -118,6 +119,7 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     );
     crate::work_burndown_identity::validate_work_burndown_identity_fixture_corpus(&mut violations);
     crate::work_intake_identity::validate_work_intake_identity_fixture_corpus(&mut violations);
+    crate::repository_orientation::validate_repository_orientation_fixture_corpus(&mut violations);
     crate::work_plan_identity::validate_work_plan_identity_fixture_corpus(&mut violations);
     crate::work_adapter_identity::validate_work_adapter_identity_fixture_corpus(&mut violations);
     crate::readiness_snapshot::validate_readiness_snapshot_fixture_corpus(&mut violations);

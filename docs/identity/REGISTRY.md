@@ -1,6 +1,6 @@
 # RIPR governed identity registry
 
-Generated from `crates/ripr/src/domain/identity`. Do not edit by hand.
+Generated from `crates/ripr-contract/src/domain/identity`. Do not edit by hand.
 
 This table is the human projection of the machine-readable registry. It names
 authorities and compatibility posture. It does not prove that consumers have
@@ -17,7 +17,7 @@ behavior, or support claims.
 | `ContinuationId` | `domain::analysis_execution_identity::ContinuationId` (#1603/#1899/#4807) | `transport-bound` | Snapshot, profile, budget, or page-order change. | `continuation_id` | `continuation_identity` |
 | `DiagnosticCodeId` | `LSP Diagnostic.code / diagnostic data diagnostic_id` (#1892/#4804 (distinct from DiagnosticResultId)) | `transport-bound` | Diagnostic code change. Result-id payload digest must not be substituted. | `diagnostic_id` | — |
 | `DiagnosticResultId` | `domain::analysis_execution_identity::DiagnosticResultId` (#1565/#1566/#4807) | `transport-bound` | Snapshot, document, delivery selection, or diagnostic payload change. | — | — |
-| `EditInstructionId` | `(not yet typed; #4806)` (#1571/#1895/#4806) | `snapshot-bound` | Any source, range, or document-version change. Cannot survive an edit. | — | — |
+| `EditInstructionId` | `domain::guarded_edit::EditInstructionId` (#1571/#1902/#4806) | `snapshot-bound` | Any source, range, or document-version change. Cannot survive an edit. | — | — |
 | `FeedbackReceiptId` | `domain::feedback::FeedbackReceipt.feedback_id / identity.receipt_id` (#4585/#4804 (same field name as repair ReceiptId; different authority)) | `snapshot-bound` | Referenced snapshot or judgment identity change. Timestamp is outside payload identity. | `receipt_id` | — |
 | `FindingId` | `domain::support::ProbeId` (#1932 (producer finding/probe identity; typed CanonicalItemId family is #4805)) | `portable` | Changed owner or probe family. Display titles do not participate. | `finding_id` | — |
 | `InputIdentity` | `lsp::input_identity::LspAnalysisInputIdentity` (#1642/#1671/#2000/#4804) | `repository-bound` | Any listed semantic input change. Absolute checkout spelling is recorded separately as root_identity containment evidence. | `input_identity` | — |

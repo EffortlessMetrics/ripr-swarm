@@ -30,7 +30,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping
-    - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+    - infection weak: Related tests contain input values, but the equality-boundary check is missing
     - 16 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
@@ -43,7 +43,7 @@ Write a test for it:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (weak); kind: return_value; reason: Missing discriminator value: items == 10
+    - ./src/lib.rs:3 (weak); kind: return_value; reason: Missing check value: items == 10
     - ./src/lib.rs:17 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
     - ./src/lib.rs:17 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
   Hidden classes:

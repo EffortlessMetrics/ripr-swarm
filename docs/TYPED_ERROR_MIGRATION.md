@@ -8,7 +8,7 @@ application error family. The foundation slice lands in #1986:
   `#[non_exhaustive]` and exported from the crate root.
 - [`try_check_workspace`](../crates/ripr/src/app/check.rs) /
   [`try_check_workspace_with_config`](../crates/ripr/src/app/check.rs)
-  project the existing [`CoreError`](../crates/ripr/src/core_error.rs)
+  project the existing [`CoreError`](../crates/ripr-contract/src/core_error.rs)
   check path onto that boundary.
 - Legacy [`check_workspace`] helpers keep returning `String` diagnostics
   with unchanged CLI and human output.

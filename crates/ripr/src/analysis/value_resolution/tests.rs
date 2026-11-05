@@ -555,6 +555,7 @@ fn extract_rstest_cases_preserves_string_literal_whitespace() {
         attrs: vec!["#[rstest]".to_string(), "#[case(\"a b\")]".to_string()],
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     };
     let (cases, params) = extract_rstest_cases(&test);
     assert_eq!(params, vec!["input"]);
@@ -627,6 +628,7 @@ fn allowed_builder_method_names_includes_required_discriminator_tokens() {
         attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     };
     let facts = ValueEnvFacts::default();
     let env = ValueEnv::new(&seam, &facts);
@@ -997,6 +999,7 @@ fn extract_rstest_cases_maps_case_rows_to_case_marked_parameters_only() {
         ],
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     };
 
     let (cases, params) = extract_rstest_cases(&test);
@@ -1038,6 +1041,7 @@ fn case_columns_stay_aligned_past_a_pattern_parameter() {
         ],
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     };
 
     assert_eq!(
@@ -1069,6 +1073,7 @@ fn case_value_not_credited_past_a_shadowing_let_after_a_url_string() {
         ],
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     };
 
     assert_eq!(
@@ -1094,6 +1099,7 @@ fn rstest_case_test(name: &str, body: &str) -> TestSummary {
         ],
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     }
 }
 
@@ -1230,6 +1236,7 @@ fn facts_test(name: &str, file: &str, body: &str) -> TestSummary {
         attrs: Vec::new(),
         nested_fn_names: Vec::new(),
         let_bindings: Vec::new(),
+        generated: None,
     }
 }
 

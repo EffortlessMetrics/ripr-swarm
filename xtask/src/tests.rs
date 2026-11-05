@@ -9641,8 +9641,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Check out trusted admission bundle for the review recheck",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Check out trusted admission bundle for the review recheck",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -30054,6 +30054,95 @@ fn network_policy_rejects_fetch_in_tsx_and_accepts_clean_jsx() -> Result<(), Str
 }
 
 #[test]
+fn network_policy_rejects_python_network_and_accepts_parse_only() -> Result<(), String> {
+    with_temp_cwd("network-policy-python", |root| {
+        write(&root.join("policy/network_allowlist.txt"), "");
+        write(
+            &root.join("src/networked.py"),
+            concat!(
+                "import so",
+                "cket\nimport urllib.",
+                "request\ndata = urllib.",
+                "request.url",
+                "open(\"https://example.invalid\")\n"
+            ),
+        );
+        write(
+            &root.join("src/http_client.py"),
+            concat!(
+                "import http.",
+                "client\nconn = http.",
+                "client.HTTPSConnection(\"example.invalid\")\n"
+            ),
+        );
+        write(
+            &root.join("src/quoting.py"),
+            "from urllib.parse import quote\npath = quote(\"a b\")\n",
+        );
+        write(&root.join("src/clean.py"), "value = 1\n");
+
+        let init = run("git", &["init", "--quiet"])?;
+        if !init.success() {
+            return Err(format!("temporary git init failed with {init}"));
+        }
+        let add = run(
+            "git",
+            &[
+                "add",
+                "policy/network_allowlist.txt",
+                "src/networked.py",
+                "src/http_client.py",
+                "src/quoting.py",
+                "src/clean.py",
+            ],
+        )?;
+        if !add.success() {
+            return Err(format!("temporary git add failed with {add}"));
+        }
+
+        let failure = check_network_policy()
+            .expect_err("unallowlisted Python network imports must fail network policy");
+        assert!(
+            failure.contains(concat!(
+                "src/networked.py contains `import so",
+                "cket` 1 time(s), allowed 0"
+            )),
+            "unexpected network-policy failure: {failure}"
+        );
+        assert!(
+            failure.contains(concat!(
+                "src/networked.py contains `urllib.",
+                "request` 2 time(s), allowed 0"
+            )),
+            "unexpected network-policy failure: {failure}"
+        );
+        assert!(
+            failure.contains(concat!(
+                "src/networked.py contains `url",
+                "open` 1 time(s), allowed 0"
+            )),
+            "unexpected network-policy failure: {failure}"
+        );
+        assert!(
+            failure.contains(concat!(
+                "src/http_client.py contains `http.",
+                "client` 2 time(s), allowed 0"
+            )),
+            "unexpected network-policy failure: {failure}"
+        );
+        assert!(
+            !failure.contains("src/quoting.py"),
+            "urllib.parse-only control must not be reported: {failure}"
+        );
+        assert!(
+            !failure.contains("src/clean.py"),
+            "clean Python control must not be reported: {failure}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
 fn file_policy_allowlist_toml_parser_requires_governed_fields() -> Result<(), String> {
     with_temp_cwd("file-policy-allowlist", |root| {
         let path = root.join("allowlist.toml");
@@ -30844,7 +30933,7 @@ fn command_catalog_pins_ci_enforced_classification() -> Result<(), String> {
         "check-tool-capabilities [--as-of YYYY-MM-DD] [--registry <path>]"
     )?);
     assert!(ci_enforced("markdown-links")?);
-    assert!(!ci_enforced("goldens bless <name> --reason <reason>")?);
+    assert!(ci_enforced("goldens bless <name> --reason <reason>")?);
     assert!(!ci_enforced("check-supply-chain")?);
     Ok(())
 }

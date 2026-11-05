@@ -73,6 +73,18 @@ outputs:
   cut_detail:
     description: 'Single concrete hard-cut admission detail naming what to fix'
     value: ${{ steps.admit.outputs.cut_detail }}
+  history_sync_status:
+    description: 'History-sync route status (#12437): not_requested, rejected, or validated'
+    value: ${{ steps.admit.outputs.history_sync_status }}
+  history_sync_detail:
+    description: 'Why a requested history-sync route was not honored'
+    value: ${{ steps.admit.outputs.history_sync_detail }}
+  history_sync_source:
+    description: 'Declared history-sync source as owner/repo@sha (validated subjects only)'
+    value: ${{ steps.admit.outputs.history_sync_source }}
+  history_sync_destination_base:
+    description: 'Declared history-sync destination base sha (validated subjects only)'
+    value: ${{ steps.admit.outputs.history_sync_destination_base }}
 
 runs:
   using: 'composite'
@@ -160,6 +172,8 @@ runs:
             and (.max_changed_files | type == "number")
             and (.max_changed_lines | type == "number")
             and (.status as $status | ($allowed | split(",") | index($status)) != null)
+            and (.history_sync == null or (.history_sync | type == "object" and (.status | type == "string")))
+            and ((.reason == "history_sync_admitted") == (.status == "admitted" and .history_sync.status == "validated"))
           ' "$file" >/dev/null; then
             refuse_early "candidate_result_invalid" "candidate admission produced no valid result; refresh the exact PR/head evidence and retry"
           fi
@@ -284,6 +298,7 @@ runs:
             --max-changed-files "${ADMISSION_MAX_CHANGED_FILES}" \
             --max-changed-lines "${ADMISSION_MAX_CHANGED_LINES}" \
             --pr-files "$pr_files" \
+            --base-sha "$base_sha" \
             --comments "$pr_comments" \
             "${attrs_args[@]}" \
             "${docs_flag[@]}" > "$result"
@@ -336,6 +351,10 @@ runs:
         cut_status="$(jq -r '.status' "$cut_result")"
         cut_reason="$(jq -r '.reason' "$cut_result")"
         cut_detail="$(jq -r '.detail // ""' "$cut_result")"
+        sync_status="$(jq -r '.history_sync.status // "not_requested"' "$result")"
+        sync_detail="$(jq -r '.history_sync.detail // ""' "$result")"
+        sync_source="$(jq -r 'if .history_sync.status == "validated" then "\(.history_sync.source)@\(.history_sync.source_sha)" else "" end' "$result")"
+        sync_base="$(jq -r 'if .history_sync.status == "validated" then .history_sync.destination_base else "" end' "$result")"
         status="$(sanitize_output_value "$status")"
         reason="$(sanitize_output_value "$reason")"
         detail="$(sanitize_output_value "$detail")"
@@ -350,6 +369,10 @@ runs:
         cut_status="$(sanitize_output_value "$cut_status")"
         cut_reason="$(sanitize_output_value "$cut_reason")"
         cut_detail="$(sanitize_output_value "$cut_detail")"
+        sync_status="$(sanitize_output_value "$sync_status")"
+        sync_detail="$(sanitize_output_value "$sync_detail")"
+        sync_source="$(sanitize_output_value "$sync_source")"
+        sync_base="$(sanitize_output_value "$sync_base")"
         {
           echo "status=$status"
           echo "reason=$reason"
@@ -363,6 +386,10 @@ runs:
           echo "cut_status=$cut_status"
           echo "cut_reason=$cut_reason"
           echo "cut_detail=$cut_detail"
+          echo "history_sync_status=$sync_status"
+          echo "history_sync_detail=$sync_detail"
+          echo "history_sync_source=$sync_source"
+          echo "history_sync_destination_base=$sync_base"
         } >> "$GITHUB_OUTPUT"
         {
           echo "### PR candidate admission"
@@ -389,6 +416,10 @@ runs:
           fi
           echo "- scope: \`$changed_files files / $changed_lines changed lines\`"
           echo "- ordinary limit: \`$max_files files / $max_lines changed lines\`"
+          echo "- history-sync: \`$sync_status\`${sync_detail:+ — $sync_detail}"
+          if [ "$sync_status" = "validated" ]; then
+            echo "- history-sync source: \`$sync_source\`; destination base: \`$sync_base\` (size caps not applied; diff-scoped PR evidence is not_applicable)"
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
 
         if [ -n "$concurrent_claims" ]; then

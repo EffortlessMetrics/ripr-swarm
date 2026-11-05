@@ -109,6 +109,9 @@ mod partial_preview_disclosure;
 #[cfg(all(unix, feature = "lang-rust"))]
 #[path = "cli_smoke/pilot_timeout_retry.rs"]
 mod pilot_timeout_retry;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/pilot_wall_budget.rs"]
+mod pilot_wall_budget;
 #[cfg(all(feature = "lang-rust", feature = "lang-python"))]
 #[path = "cli_smoke/portable_diff_paths.rs"]
 mod portable_diff_paths;
@@ -15796,6 +15799,72 @@ fn doctor_reports_ripr_facts_capable_exporter_as_compatible() -> Result<(), Stri
     Ok(())
 }
 
+#[test]
+#[cfg(unix)]
+fn doctor_reports_ripr_facts_exporter_without_version_flag_as_compatible() -> Result<(), String> {
+    // #12937: the canonical exporter exits 1 on `--version` but accepts
+    // `ripr-facts`, which is how `ripr check` runs it. It must not read as
+    // "NOT found".
+    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
+        "doctor-perl-no-version-exporter",
+        "#!/bin/sh\ncase \"$1\" in\n  ripr-facts) echo 'usage: perllsp ripr-facts [--schema S] [--root R]' ;;\n  *) echo 'unexpected subcommand' >&2; exit 1 ;;\nesac\n",
+    )?;
+    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let exporter_line = stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("exporter:"))
+        .unwrap_or("");
+    assert!(
+        exporter_line.contains("exporter: compatible") && exporter_line.contains("version unknown"),
+        "versionless ripr-facts exporter must be reported compatible: {exporter_line}\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("exporter: NOT found"),
+        "present exporter must not read as not found:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn doctor_keeps_non_exporter_and_silent_version_binaries_distinct() -> Result<(), String> {
+    // #12937 controls: a binary that answers neither `--version` nor
+    // `ripr-facts` stays not found; one whose `--version` succeeds silently
+    // but rejects `ripr-facts` stays incompatible.
+    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
+        "doctor-perl-neither-answers",
+        "#!/bin/sh\nexit 1\n",
+    )?;
+    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("exporter: NOT found") && !stdout.contains("exporter: compatible"),
+        "a binary answering nothing must stay not found:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+
+    let (root, shim_dir) = perl_doctor_workspace_with_exporter_stub(
+        "doctor-perl-silent-version",
+        "#!/bin/sh\ncase \"$1\" in\n  --version) exit 0 ;;\n  *) exit 2 ;;\nesac\n",
+    )?;
+    let output = run_doctor_with_shims_first(&root, &shim_dir)?;
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("not a compatible exporter"),
+        "a silent --version binary rejecting ripr-facts must stay incompatible:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    Ok(())
+}
+
 /// #5349: a marker-writing `perllsp` exporter. Every invocation creates
 /// `marker`, so a test can prove doctor did (or did not) execute it.
 fn write_marker_perl_exporter(dir: &Path, marker: &Path) -> Result<(), String> {
@@ -22239,24 +22308,46 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                         assert_eq!(related[0]["file"], "tests/partial.rs", "{seam}");
                     }
                 }
-                assert_eq!(
-                    summary["top_actionable_seams"][0]["line"], expected_line,
-                    "{summary}"
-                );
-                assert_eq!(
-                    summary["top_actionable_seams"][0]["kind"], "match_arm",
-                    "{summary}"
-                );
-                assert_eq!(
-                    summary["current_change"]["actionable_seams_in_change"], 1,
-                    "{summary}"
-                );
-                assert_eq!(
-                    summary["current_change"]["top_recommendation_in_change"], true,
-                    "{summary}"
-                );
-                assert!(stdout.contains("current change: part of it"), "{stdout}");
-                assert!(md.contains("- Current change: part of it"), "{md}");
+                if partial {
+                    assert_eq!(summary["withheld_static_limitations_total"], 3, "{summary}");
+                    let top = summary["top_actionable_seams"]
+                        .as_array()
+                        .ok_or("missing top_actionable_seams")?;
+                    assert!(
+                        top.iter()
+                            .all(|seam| seam["kind"].as_str() != Some("match_arm")),
+                        "match_arm seams are static limitations with partial tests: {summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["actionable_seams_in_change"], 0,
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["top_recommendation_in_change"], false,
+                        "{summary}"
+                    );
+                    assert!(stdout.contains("withheld: 3 spots"), "{stdout}");
+                    assert!(md.contains("Withheld: 3 spots"), "{md}");
+                } else {
+                    assert_eq!(
+                        summary["top_actionable_seams"][0]["line"], expected_line,
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["top_actionable_seams"][0]["kind"], "match_arm",
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["actionable_seams_in_change"], 1,
+                        "{summary}"
+                    );
+                    assert_eq!(
+                        summary["current_change"]["top_recommendation_in_change"], true,
+                        "{summary}"
+                    );
+                    assert!(stdout.contains("current change: part of it"), "{stdout}");
+                    assert!(md.contains("- Current change: part of it"), "{md}");
+                }
             }
             let warm = run_ripr_with_env(
                 &[
@@ -22304,15 +22395,26 @@ fn pilot_ranks_multiline_match_head_edits_with_warm_caches_and_caps() -> Result<
                 Some(1),
                 "{summary}"
             );
-            assert_eq!(
-                summary["top_actionable_seams"][0]["line"], expected_line,
-                "{summary}"
-            );
-            assert_eq!(
-                summary["current_change"]["top_recommendation_in_change"], true,
-                "{summary}"
-            );
-            assert!(md.contains("ranked 1 of 5 seams"), "{md}");
+            if partial {
+                assert_ne!(
+                    summary["top_actionable_seams"][0]["kind"], "match_arm",
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["top_recommendation_in_change"], false,
+                    "{summary}"
+                );
+            } else {
+                assert_eq!(
+                    summary["top_actionable_seams"][0]["line"], expected_line,
+                    "{summary}"
+                );
+                assert_eq!(
+                    summary["current_change"]["top_recommendation_in_change"], true,
+                    "{summary}"
+                );
+            }
+            assert!(md.contains("ranked 1 of "), "{md}");
         }
         ignore_remove_dir_all(&root);
         ignore_remove_dir_all(&out);

@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0320"
+scope = "out"
+reason = "Domain precondition DTO for guarded test edits (#1902), not an analyzer verdict; covered by the guarded-edit corpus and domain unit tests"

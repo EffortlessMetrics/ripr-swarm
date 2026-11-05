@@ -14,17 +14,18 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use super::{non_empty_path_arg, non_empty_string_arg, write_text_file};
-use crate::output::gate::GATE_STATUS_CONFIG_ERROR;
+use crate::output::gate::{GATE_STATUS_BLOCKED, GATE_STATUS_CONFIG_ERROR};
 
 /// Map a failing gate-evaluate status onto the process exit contract.
-/// The producer tokens live on `output::gate`; `config_error` is
-/// could-not-complete and `blocked` is a completed blocking decision.
+/// The producer tokens live on `output::gate`; `blocked` is a completed
+/// blocking decision (exit 3) and every other failing status, including
+/// `config_error` and any unknown token, is could-not-complete (exit 2).
 /// Callers only pass statuses `gate_decision_should_fail` already accepted.
 pub(crate) fn gate_evaluate_exit_error(status: &str, message: String) -> CommandError {
-    if status == GATE_STATUS_CONFIG_ERROR {
-        CommandError::Failure(message)
-    } else {
+    if status == GATE_STATUS_BLOCKED {
         CommandError::Decision(message)
+    } else {
+        CommandError::Failure(message)
     }
 }
 
@@ -345,6 +346,15 @@ mod tests {
         assert_eq!(
             gate_evaluate_exit_error(GATE_STATUS_BLOCKED, "blocked".to_string()),
             CommandError::Decision("blocked".to_string())
+        );
+        // Unknown failing statuses are could-not-complete, never a decision.
+        assert_eq!(
+            gate_evaluate_exit_error("future_unknown_status", "unknown".to_string()),
+            CommandError::Failure("unknown".to_string())
+        );
+        assert_eq!(
+            gate_evaluate_exit_error("future_unknown_status", "unknown".to_string()).exit_code(),
+            crate::cli::EXIT_COULD_NOT_COMPLETE
         );
     }
 

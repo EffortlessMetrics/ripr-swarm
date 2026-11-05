@@ -19,6 +19,20 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 - `finish_contract:duplicate_recheck`
 - `finish_contract:behind_only_no_restack`
 
+# Incident route markers
+
+When a current `admission_incident.v1` packet is available, route before opening a PR-local repair loop.
+
+- `incident_route:currentness_before_class`
+- `incident_route:candidate_escape_revoke_repair_ready`
+- `incident_route:candidate_escape_requires_proof_feedback`
+- `incident_route:integration_not_behind_main_only`
+- `incident_route:instrument_repair_before_retry`
+- `incident_route:infrastructure_same_subject_no_mutation`
+- `incident_route:superseded_no_h2_contamination`
+- `incident_route:not_proven_no_convenient_retry`
+- `incident_route:retain_incident_lineage`
+
 # Entry condition
 
 `finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass.
@@ -26,6 +40,12 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can publish the PR and obtain remote evidence. Before authorizing landing through the applicable route, the exact published PR head must have a current `REVIEW_READY` result from `review-pr`. When the head changes materially, re-enter `review-pr` for affected currentness dimensions.
 
 Routine publication and convergence inside the selected repository claim—push ordinary branch, open/update PR, reply to review, repair CI, resolve addressed threads, use the applicable protected landing route, and clean lane-created state—do not require another owner approval. Separate authorization remains required for force-push/shared-history rewriting, settings/rulesets/secrets, public tags/releases/publication/signing/credentials, durable-evidence deletion, or work outside the selected goal.
+
+Preserve the separate [source attestation](../review-pr/SKILL.md#source-attestation-and-final-review)
+when final review awaits hosted or integration evidence. A later same-account
+native review replaces the earlier attestation in the installed consumer;
+put evidence-only follow-ups in Conversation comments. Material findings still
+withdraw readiness and require affected proof and review.
 
 # Procedure
 
@@ -58,6 +78,12 @@ Result, review and other gates; do not claim the guard passed. An unknown or
 rejected mutation requires PR and merge-state readback before any retry. Check
 observations and the server mutation are not atomic, so native required checks
 and protections remain authoritative.
+
+Before retrying a terminal Result, inspect its original request and native
+run/attempt binding under [CI eligibility semantics](../../../docs/CI.md#merge-queue-request-cutover).
+A Result-only retry cannot reuse an older attempt's admission. Follow the
+installed recovery route; passing child jobs remain evidence, not permission
+to bypass binding or duplicate a queued/running current-subject request.
 
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists.
 2. Write a complete body:

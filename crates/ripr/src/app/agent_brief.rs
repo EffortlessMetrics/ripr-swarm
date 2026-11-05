@@ -263,12 +263,20 @@ impl<'a> AgentBriefPolicy<'a> {
         Self { config }
     }
 
-    fn severity_for(self, class: SeamGripClass) -> ConfigSeverity {
-        self.config.severity().for_seam(class)
+    fn severity_for(self, class: SeamGripClass, file: &Path) -> ConfigSeverity {
+        self.config.severity().for_seam_in(class, file)
     }
 
-    pub(crate) fn omission_reason_for_class(self, class: SeamGripClass) -> Option<String> {
-        if matches!(self.severity_for(class), ConfigSeverity::Off) {
+    pub(crate) fn omission_reason_for_class(
+        self,
+        class: SeamGripClass,
+        file: Option<&Path>,
+    ) -> Option<String> {
+        let configured_off = match file {
+            Some(path) => matches!(self.severity_for(class, path), ConfigSeverity::Off),
+            None => matches!(self.config.severity().for_seam(class), ConfigSeverity::Off),
+        };
+        if configured_off {
             return Some(format!(
                 "is configured off for {} seams and is not included in agent results",
                 class.as_str()
@@ -496,6 +504,43 @@ impl<'a> AgentBriefChangedScope<'a> {
     pub(crate) fn contains(&self, seam: &RepoSeam) -> bool {
         matching_changed_line(seam, &self.working_set).is_some()
             || matching_changed_owner(seam, &self.working_set).is_some()
+    }
+
+    /// True when some test in `test_files` lives in a file the working set
+    /// names, the only files whose tests can raise a related-test why-now.
+    /// When none does, no seam can match through related-test evidence.
+    pub(crate) fn related_tests_possible<'p>(
+        &self,
+        test_files: impl IntoIterator<Item = &'p Path>,
+    ) -> bool {
+        test_files.into_iter().any(|file| {
+            let file = normalized_path(file);
+            self.working_set.files.contains(&file)
+                || self
+                    .working_set
+                    .changed_lines
+                    .iter()
+                    .any(|(line_file, _)| *line_file == file)
+        })
+    }
+
+    /// False only for a seam that cannot match any non-fallback why-now: not
+    /// on a changed line or in a changed owner, not in a working-set file, and
+    /// (`related_tests_possible` false) with no related-test route. Such a
+    /// seam is discarded once any scoped match exists, so its evidence is
+    /// never needed. The two related-test priorities read evidence, so they
+    /// stay unfiltered unless `related_tests_possible` proves them out.
+    pub(crate) fn can_match_non_fallback(
+        &self,
+        seam: &RepoSeam,
+        related_tests_possible: bool,
+    ) -> bool {
+        related_tests_possible
+            || self.contains(seam)
+            || self
+                .working_set
+                .files
+                .contains(&normalized_path(seam.file()))
     }
 
     /// True when `classified` holds at least the requested number of
@@ -744,8 +789,9 @@ fn compare_selected_parts(
     why_now_sort_priority(left_why)
         .cmp(&why_now_sort_priority(right_why))
         .then_with(|| {
-            severity_priority(policy.severity_for(left.class))
-                .cmp(&severity_priority(policy.severity_for(right.class)))
+            severity_priority(policy.severity_for(left.class, left.seam.file())).cmp(
+                &severity_priority(policy.severity_for(right.class, right.seam.file())),
+            )
         })
         .then_with(|| grip_priority(left.class).cmp(&grip_priority(right.class)))
         .then_with(|| {
@@ -818,10 +864,13 @@ fn relation_confidence_priority(confidence: RelationConfidence) -> u8 {
 /// and the four `*_unknown` classes) names evidence the analyzer could not
 /// establish, so selecting it would send the agent to repair a gap that may
 /// not exist; pilot withholds the same classes from its ranking (#5497,
-/// #6775). Omitted seams are named in warnings, never silently dropped
-/// (`AgentBriefOmission`).
-fn is_agent_actionable(class: SeamGripClass) -> bool {
-    class.is_headline_eligible() && !class.is_static_limitation()
+/// #6775). Gap-class seams that [`is_static_limited`] marks as static
+/// limitations are omitted for the same reason. Omitted seams are named in
+/// warnings, never silently dropped (`AgentBriefOmission`).
+fn is_agent_actionable(entry: &ClassifiedSeam) -> bool {
+    entry.class.is_headline_eligible()
+        && !entry.class.is_static_limitation()
+        && !crate::output::evidence_record::is_static_limited(entry)
 }
 
 /// Whether an explicitly named seam renders an agent result (packet,
@@ -838,14 +887,34 @@ fn is_agent_result_visible(class: SeamGripClass) -> bool {
 enum AgentBriefOmission {
     ConfiguredOff(SeamGripClass),
     NotActionable(SeamGripClass),
+    /// A gap-class seam whose evidence stages are opaque or unknown
+    /// ([`is_static_limited`]); the class alone would read as a repairable gap.
+    EvidenceLimited(SeamGripClass),
+    /// A producer-named panic limit can retain concrete stage states.
+    PanicOutcomeUnresolved(SeamGripClass),
 }
 
 impl AgentBriefOmission {
     fn for_entry(entry: &ClassifiedSeam, policy: AgentBriefPolicy<'_>) -> Option<Self> {
-        if matches!(policy.severity_for(entry.class), ConfigSeverity::Off) {
+        if matches!(
+            policy.severity_for(entry.class, entry.seam.file()),
+            ConfigSeverity::Off
+        ) {
             return Some(Self::ConfiguredOff(entry.class));
         }
-        if !is_agent_actionable(entry.class) {
+        if !is_agent_actionable(entry) {
+            if entry.class.is_headline_eligible()
+                && !entry.class.is_static_limitation()
+                && crate::output::evidence_record::is_static_limited(entry)
+            {
+                if entry
+                    .evidence
+                    .names_static_limit(crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved)
+                {
+                    return Some(Self::PanicOutcomeUnresolved(entry.class));
+                }
+                return Some(Self::EvidenceLimited(entry.class));
+            }
             return Some(Self::NotActionable(entry.class));
         }
         None
@@ -860,6 +929,14 @@ impl AgentBriefOmission {
             ),
             Self::NotActionable(class) => format!(
                 "is {} and is not included in agent brief results",
+                class.as_str()
+            ),
+            Self::EvidenceLimited(class) => format!(
+                "is {} but its evidence is opaque or unknown at a stage, so it is a static limitation and is not included in agent brief results",
+                class.as_str()
+            ),
+            Self::PanicOutcomeUnresolved(class) => format!(
+                "is {} but ripr cannot tell whether the changed code causes the expected panic, so it is a static limitation and is not included in agent brief results",
                 class.as_str()
             ),
         }
@@ -880,6 +957,14 @@ impl AgentBriefOmission {
             ),
             Self::NotActionable(class) => format!(
                 "{count} more matching {noun} {verb} {} and not included in agent brief results",
+                class.as_str()
+            ),
+            Self::EvidenceLimited(class) => format!(
+                "{count} more matching {noun} {verb} {} with opaque or unknown evidence (static limitations) and not included in agent brief results",
+                class.as_str()
+            ),
+            Self::PanicOutcomeUnresolved(class) => format!(
+                "{count} more matching {noun} {verb} {} with unresolved expected panic outcomes (static limitations) and not included in agent brief results",
                 class.as_str()
             ),
         }
@@ -2319,5 +2404,38 @@ weakly_gripped = "off"
                 "{class:?} omission must be named honestly"
             );
         }
+    }
+
+    #[test]
+    fn agent_brief_omits_gap_class_seams_when_is_static_limited_marks_them() {
+        let mut limited = classified(
+            "src/pricing.rs",
+            88,
+            "pricing::discounted_total",
+            "amount >= discount_threshold",
+            SeamGripClass::WeaklyGripped,
+        );
+        limited.evidence.propagate = stage(StageState::Unknown);
+        let gap = classified(
+            "src/pricing.rs",
+            101,
+            "pricing::taxed_total",
+            "amount >= tax_threshold",
+            SeamGripClass::Ungripped,
+        );
+        let seams = vec![limited, gap];
+        let selection = select(
+            &seams,
+            &AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/pricing.rs")]),
+            3,
+        );
+        assert_eq!(selection.top_seams.len(), 1);
+        assert_eq!(selection.top_seams[0].seam.class, SeamGripClass::Ungripped);
+        assert!(
+            selection.warnings.iter().any(|warning| warning
+                .contains("is weakly_gripped but its evidence is opaque or unknown at a stage")),
+            "{:?}",
+            selection.warnings
+        );
     }
 }

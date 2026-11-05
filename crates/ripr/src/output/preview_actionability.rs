@@ -183,7 +183,9 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
 /// Typed-scope reason for a repo-scoped finding with no repair route (#5531).
 /// Reads `Finding::analysis_mode()`, never the evidence line.
 pub(crate) fn repo_scope_no_repair_reason(finding: &Finding) -> Option<String> {
-    use crate::domain::language_capability::{AnalysisMode, repo_mode_no_repair_routing_reason};
+    use ripr_contract::domain::language_capability::{
+        AnalysisMode, repo_mode_no_repair_routing_reason,
+    };
     if finding.analysis_mode() != Some(AnalysisMode::Repo) {
         return None;
     }

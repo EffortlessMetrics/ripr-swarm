@@ -730,6 +730,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                 name,
                 "active-goal-authority-audit"
                     | "actionable-gap-outcomes-corpus"
+                    | "admission_incident_route"
                     | "blind_journey_contract"
                     | "cache-payload-tamper-recovery"
                     | "blind_journey_execute"
@@ -740,6 +741,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "convergence"
                     | "cross-language-oracle-graph-corpus"
                     | "cross-language-edge-registry-corpus"
+                    | "cross-language-edge-registry-currentness-corpus"
                     | "dotnet-evidence-contract-corpus"
                     | "editor_gap_cockpit"
                     | "editor_first_run_usability"
@@ -782,6 +784,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "source_promotion"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
+                    | "verification-plan-corpus"
                     | "work_portfolio"
                     | "work_selection_identity"
                     | "work_result_identity"
@@ -793,6 +796,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "work_intake_identity"
                     | "work_plan_identity"
                     | "work_adapter_identity"
+                    | "repository_orientation"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
@@ -3266,7 +3270,7 @@ mod tests {
         let paths = |items: &[&str]| items.iter().map(|p| p.to_string()).collect::<Vec<_>>();
         for path in [
             "crates/ripr/src/output/human/triage.rs",
-            "crates/ripr/src/domain/classification.rs",
+            "crates/ripr-contract/src/domain/classification.rs",
             "fixtures/rust_map_overwrite_count/expected/human.txt",
             "docs/OUTPUT_SCHEMA.md",
             "policy/output_contracts.txt",
@@ -4505,9 +4509,9 @@ mod tests {
         let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
         let untied_list = transitional::NO_SEAM_UNTIED_SURFACES;
         let gripped_list = transitional::NO_SEAM_GRIPPED_SURFACES;
-        if untied_list.len() != 44 || gripped_list.len() != 92 {
+        if untied_list.len() != 44 || gripped_list.len() != 94 {
             return Err(format!(
-                "expected 44 untied and 92 gripped surfaces, got {} and {}",
+                "expected 44 untied and 94 gripped surfaces, got {} and {}",
                 untied_list.len(),
                 gripped_list.len()
             ));
