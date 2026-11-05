@@ -56,14 +56,11 @@ pub(crate) fn agent_status_shell_disclosure(
     if !verbose {
         return status_poll_shell_note(windows_host);
     }
+    if windows_host {
+        return COMMAND_SHELL_DISCLOSURE_WINDOWS;
+    }
     if same_as_bash {
-        if windows_host {
-            COMMAND_SHELL_DISCLOSURE_WINDOWS
-        } else {
-            "This command is written for Bash and runs unchanged in PowerShell. cmd.exe is not supported.\n\n"
-        }
-    } else if windows_host {
-        COMMAND_SHELL_DISCLOSURE_WINDOWS
+        "This command is written for Bash and runs unchanged in PowerShell. cmd.exe is not supported.\n\n"
     } else {
         COMMAND_SHELL_DISCLOSURE
     }
