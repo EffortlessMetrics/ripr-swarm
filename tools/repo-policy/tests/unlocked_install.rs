@@ -172,6 +172,7 @@ fn unlocked_success_resolves_identity_once_and_checks_only_regenerated_package()
                 Some("xtask"),
                 Some("pkgid"),
                 Some("tar"),
+                Some("tar"),
                 Some("generate-lockfile"),
                 Some("check")
             ]
@@ -188,7 +189,7 @@ fn unlocked_success_resolves_identity_once_and_checks_only_regenerated_package()
         assert_eq!(
             trace[2],
             format!(
-                "tar|{}|xzf target/package/ripr-contract-0.11.0.crate target/package/ripr-0.11.0.crate -C {}",
+                "tar|{}|xzf target/package/ripr-contract-0.11.0.crate -C {}",
                 checkout.display(),
                 fixture.package.parent().ok_or("package parent")?.display()
             )
@@ -196,12 +197,20 @@ fn unlocked_success_resolves_identity_once_and_checks_only_regenerated_package()
         assert_eq!(
             trace[3],
             format!(
+                "tar|{}|xzf target/package/ripr-0.11.0.crate -C {}",
+                checkout.display(),
+                fixture.package.parent().ok_or("package parent")?.display()
+            )
+        );
+        assert_eq!(
+            trace[4],
+            format!(
                 "generate-lockfile|{}|generate-lockfile",
                 fixture.package.display()
             )
         );
         assert_eq!(
-            trace[4],
+            trace[5],
             format!(
                 "check|{}|check --target-dir {}/unlocked-target",
                 fixture.package.display(),
@@ -230,17 +239,17 @@ fn unlocked_prerequisite_failure_unavailable_and_timeout_never_reach_later_comma
             ("identity_failure", 19, vec!["xtask", "pkgid"]),
             ("empty_identity", 1, vec!["xtask", "pkgid"]),
             ("extraction_failure", 23, vec!["xtask", "pkgid", "tar"]),
-            ("missing_package", 1, vec!["xtask", "pkgid", "tar"]),
-            ("lock_failure", 1, vec!["xtask", "pkgid", "tar"]),
+            ("missing_package", 1, vec!["xtask", "pkgid", "tar", "tar"]),
+            ("lock_failure", 1, vec!["xtask", "pkgid", "tar", "tar"]),
             (
                 "resolution_failure",
                 29,
-                vec!["xtask", "pkgid", "tar", "generate-lockfile"],
+                vec!["xtask", "pkgid", "tar", "tar", "generate-lockfile"],
             ),
             (
                 "check_failure",
                 37,
-                vec!["xtask", "pkgid", "tar", "generate-lockfile", "check"],
+                vec!["xtask", "pkgid", "tar", "tar", "generate-lockfile", "check"],
             ),
             ("unavailable", 127, vec![]),
             ("timeout", 124, vec!["xtask"]),

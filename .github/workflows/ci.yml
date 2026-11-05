@@ -147,7 +147,8 @@ jobs:
           package_id="$(cargo pkgid -p ripr)"
           package_version="${package_id##*#}"
           test -n "$package_version"
-          tar xzf "target/package/ripr-contract-$package_version.crate" "target/package/ripr-$package_version.crate" -C "$RUNNER_TEMP"
+          tar xzf "target/package/ripr-contract-$package_version.crate" -C "$RUNNER_TEMP"
+          tar xzf "target/package/ripr-$package_version.crate" -C "$RUNNER_TEMP"
           cd "$RUNNER_TEMP/ripr-$package_version"
           printf '\n[patch.crates-io]\nripr-contract = { path = "../ripr-contract-%s" }\n' "$package_version" >> Cargo.toml
           rm Cargo.lock
