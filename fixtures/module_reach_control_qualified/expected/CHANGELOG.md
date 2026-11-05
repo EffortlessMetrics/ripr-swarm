@@ -202,3 +202,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_control_qualified (17)
+
+Reason:
+RIPR-SPEC-0159: retain canonical qualified helper reach and same-test returned-boundary oracle; real parser/native controls preserve owner and sibling refusals
+
+Command:
+`cargo xtask goldens bless module_reach_control_qualified --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

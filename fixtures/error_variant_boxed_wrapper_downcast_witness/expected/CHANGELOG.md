@@ -742,3 +742,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (54)
+
+Reason:
+RIPR-SPEC-0106: refuse owner-level credit for two ambiguous early-return sites; real native branch controls change the first return outcome but not the second; preserve boxed binding limitations and discarded-witness refusal
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

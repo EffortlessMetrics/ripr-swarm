@@ -33,7 +33,7 @@ Evidence
   - infection unknown: Changed boundary input is unresolved: call identity does not resolve to the owner, so ripr cannot establish the boundary inputs; activation/infection is unknown
   - propagation yes: Changed behavior appears to influence returned value: 10 <= qty
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
+  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without sink-level evidence (identity_unresolved)
   - local flow reaches returned value: 10 <= qty (line 2)
   - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(10), 5); misses: no established call path to the changed code; linked by file location only
   - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 4); misses: no established call path to the changed code; linked by file location only

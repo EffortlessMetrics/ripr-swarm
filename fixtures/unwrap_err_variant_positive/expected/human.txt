@@ -10,10 +10,10 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: no gap selected for repair
   Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
-  File: ./src/lib.rs:8
+  File: ./src/lib.rs:9
   Static exposure: exposed (severity: info, confidence 1.00)
   Gap ID (for scripts): gap:rust:src/lib.rs:compute:error_variant:error_path:err_calcerror_negative
-  Changed behavior: return Err(CalcError::Negative);
+  Changed behavior: return Err(CalcError::Negative)
   Related test: tests/errors.rs:4 negative_input_rejects_with_negative_error
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -32,13 +32,13 @@ Start here:
 
 Next: drill into the top finding:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:error_path:6b37a3bc
-  ripr context --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:6b37a3bc
+  ripr explain --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:error_path:6188ddb8
+  ripr context --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:6188ddb8
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:8 (exposed); kind: return_value; reason: Strong oracle found: exact error variant assertion
+    - ./src/lib.rs:9 (exposed); kind: return_value; reason: Strong oracle found: exact error variant assertion
   Hidden classes:
     exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full

@@ -31,6 +31,7 @@ Start here:
     - 16 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/boundary_gap_equality_closed/input --diff <cwd>/fixtures/boundary_gap_equality_closed/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/boundary_gap_equality_closed/input --diff <cwd>/fixtures/boundary_gap_equality_closed/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)

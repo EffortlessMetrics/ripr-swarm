@@ -15,7 +15,7 @@ Start here:
   Why unknown: the change reaches something a test can check, but ripr could not tell which inputs would trigger it
   Gap ID (for scripts): gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0
   Changed behavior: samples.len() == 0
-  Missing check (1 of 2): Changed boundary input is unresolved: slice length `samples.len()` is
+  Missing check (1 of 3): Changed boundary input is unresolved: slice length `samples.len()` is
     outside the bounded eager immutable literal table family; not every input cardinality is
     established; activation/infection is unknown
   Related test (1 of 6 matched rows): src/lib.rs:57 mean_lies_between_min_and_max
@@ -26,7 +26,7 @@ Start here:
     strengthen a test only if this inspection finds a gap. Compare the original and changed
     implementations with a focused run using the project's configured test runner (`cargo test` for
     ordinary Cargo tests). Static classification may remain unknown
-  Evidence: reach yes · infection unknown · propagation yes · observation yes · assertion not established
+  Evidence: reach yes · infection unknown · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior

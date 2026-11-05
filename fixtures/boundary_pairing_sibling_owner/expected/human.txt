@@ -39,12 +39,13 @@ Next: drill into the top finding:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/boundary_pairing_sibling_owner/input --diff <cwd>/fixtures/boundary_pairing_sibling_owner/diff.patch --mode fast probe:src_lib.rs:predicate:676f1723
   ripr context --root <cwd>/fixtures/boundary_pairing_sibling_owner/input --diff <cwd>/fixtures/boundary_pairing_sibling_owner/diff.patch --mode fast --at probe:src_lib.rs:predicate:676f1723
-  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins the changed boundary value exactly; follow the Next step above, then rerun `ripr check`
 No test stub here: the owner is in a nested module with no inline test module of its own
+Write this test by hand: call the function with an input just below, exactly on, and just above the changed limit, and assert the exact result each time; then rerun `ripr check`.
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (weak); kind: return_value; reason: No assertion was tied to the changed value
+    - ./src/lib.rs:3 (weak); kind: return_value; reason: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do…
   Hidden classes:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full

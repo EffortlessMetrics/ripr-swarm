@@ -185,14 +185,14 @@
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: input >= 10"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach gate: same_test_separate_owners", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: input >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: input >= 10 (line 3)", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(a::gate(11), true);", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(b::gate(10), true);", "source function argument value input = 10 at line 13", "source function argument value input == 10 at line 13", "source assertion argument value true at line 14", "source function argument value input = 11 at line 14", "source assertion argument value true at line 15", "source function argument value input = 10 at line 15"],
+      "evidence_path": ["reach yes: Related tests appear to reach gate: same_test_separate_owners", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: input >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "local flow reaches returned value: input >= 10 (line 3)", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(a::gate(11), true);", "related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(b::gate(10), true);", "source function argument value input = 10 at line 13", "source function argument value input == 10 at line 13", "source assertion argument value true at line 14", "source function argument value input = 11 at line 14", "source assertion argument value true at line 15", "source function argument value input = 10 at line 15"],
       "flow_sinks": [
         {"kind":"return_value","text":"input >= 10","line":3}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: input >= 10", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: same_test_separate_owners"],
-      "missing": ["No strong discriminator was detected"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: input >= 10", "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: same_test_separate_owners"],
+      "missing": ["Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"],
       "assertion_texts": {
         "13": "let _ = a::gate(10);",
         "14": "assert_eq!(a::gate(11), true);",
@@ -280,9 +280,7 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(a::gate(11), true);",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "relation_confidence": "high"
         },
         {
           "name": "same_test_separate_owners",
@@ -292,9 +290,7 @@
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(b::gate(10), true);",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "relation_confidence": "high"
         }
       ],
       "stop_reasons": [],

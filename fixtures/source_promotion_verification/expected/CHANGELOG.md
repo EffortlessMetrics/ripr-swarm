@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — source_promotion_verification (6)
+
+Reason:
+RIPR-SPEC-0149 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless source_promotion_verification --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

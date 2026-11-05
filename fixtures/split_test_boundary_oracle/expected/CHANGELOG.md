@@ -394,3 +394,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (33)
+
+Reason:
+RIPR-SPEC-0186: retain same-test and same-owner boundary-oracle pairing on returned comparisons; separate tests do not establish the joined witness
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

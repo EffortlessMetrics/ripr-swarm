@@ -11,14 +11,14 @@ Start here:
   State: a test gap to inspect or repair
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:18
-  Static exposure: weak (severity: warning, confidence 0.92)
-  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
+  Static exposure: weak (severity: warning, confidence 0.84)
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0
   Changed behavior: samples.len() == 0
-  Missing check: samples.len() == 0
+  Missing check (1 of 2): samples.len() == 0
   Related test (1 of 6 matched rows): src/lib.rs:43 average_of_nothing_is_zero (no established call path to the changed code; linked by file location only)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
-  Evidence: reach yes · infection weak · propagation yes · observation yes · assertion missing
+  Evidence: reach yes · infection weak · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior

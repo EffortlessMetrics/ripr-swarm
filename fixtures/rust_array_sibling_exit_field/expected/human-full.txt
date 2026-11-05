@@ -34,7 +34,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches constructed field: total: a + b
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: no field-value assertion observes the constructed field
+  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)
   - local flow reaches constructed field: total: a + b (line 6)
   - related test src/lib.rs:14 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33); misses: no assertion pins `total: a + b`
   - source function argument value a = 30 at line 15
@@ -74,7 +74,7 @@ Evidence
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }]
   - observation yes: A related test observes a value or effect near the changed behavior
-  - discriminator weak: Discriminator unconfirmed: constructing the returned array may exit before the test reaches its assertion
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: [Row { total: { std::process::exit(0) } }, Row { total: a + b }] (line 6)
   - related test src/lib.rs:14 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source function argument value a = 30 at line 15

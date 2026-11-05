@@ -43,11 +43,11 @@ Evidence
   shared evidence: E1
   - infection yes: Detected related test input at the changed boundary
   shared evidence: E2, E3
-  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator
+  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through helper_owner_call linkage without sink-level evidence (identity_unresolved)
   shared evidence: E4, E5, E6, E7, E8, E9, E10, E11
 Weakness
-  - Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator
   - ripr could not follow the changed value to something a test can check (a return value or side effect)
+  - No strong discriminator was detected
 Stop reasons:
   - ripr could not tell whether the changed value flows to something a test observes (propagation_evidence_unknown)
     Next: Assert on the value the change flows into (the return value or an observable field), not only on success.

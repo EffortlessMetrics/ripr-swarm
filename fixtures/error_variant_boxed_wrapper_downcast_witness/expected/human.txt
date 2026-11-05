@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/error_variant_boxed_wrapper_downcast_witness/input
 
-Summary: 16 changed behaviors checked: 4 appear noticed by tests, 10 partly noticed, 2 reached but not noticed, 0 no test path. 16 found, 0 suppressed by your settings
+Summary: 16 changed behaviors checked: 0 appear noticed by tests, 14 partly noticed, 2 reached but not noticed, 0 no test path. 16 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 16 changed line(s), 8 candidate line(s), 16 changed behavior(s) checked, 16 finding(s)
@@ -10,15 +10,15 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: a test gap to inspect or repair
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
-  File: ./src/lib.rs:123
-  Static exposure: unrevealed (severity: warning, confidence 0.79)
-  Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
-  Gap ID (for scripts): gap:rust:src/lib.rs:theme_summary:error_variant:error_path:try_theme_summary_raw_.map_err_into_into
-  Changed behavior: try_theme_summary(raw).map_err(Into::into)
-  Missing check (1 of 3): No detected assertion observes the changed value, error, field, or effect
-  Related test: tests/errors.rs:82 theme_summary_ignores_matches_result (has no assertion)
-  Next step: Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
-  Evidence: reach yes · infection yes · propagation yes · observation no · assertion no
+  File: ./src/lib.rs:45
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Gap ID (for scripts): gap:rust:src/lib.rs:try_parse_summary:error_variant:error_path:err_parsesummaryerror_malformedsource
+  Changed behavior: return Err(ParseSummaryError::MalformedSource)
+  Missing check: No exact error variant discriminator was detected
+  Related test: tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source
+  Next step: Assert the exact error variant or payload instead of only is_err()
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior
@@ -29,24 +29,23 @@ Start here:
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach yes: Related tests appear to reach theme_summary: theme_summary_ignores_matches_result
+    - reach yes: Related tests appear to reach try_parse_summary: parse_summary_fails_closed_on_malformed_source
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 6 more detail line(s) in --format human-full
+    - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:c82815a4
-  ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:c82815a4
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that observes the changed error variant; follow the Next step above, then rerun `ripr check`
+  ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:5c979117
+  ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:5c979117
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --at src/lib.rs:123 --kind error_path
+  ripr agent stub --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --at src/lib.rs:45 --kind error_path
 
 Hidden:
   15 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:45 (exposed); kind: error_path; reason: Strong oracle found: exact error variant assertion
-    - ./src/lib.rs:45 (exposed); kind: return_value; reason: Strong oracle found: exact error variant assertion
-    - ./src/lib.rs:48 (exposed); kind: error_path; reason: Strong oracle found: exact error variant assertion
-    - ./src/lib.rs:48 (exposed); kind: return_value; reason: Strong oracle found: exact error variant assertion
+    - ./src/lib.rs:45 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:48 (weak); kind: error_path; reason: No exact error variant discriminator was detected
+    - ./src/lib.rs:48 (weak); kind: return_value; reason: No strong assertion was detected
     - ./src/lib.rs:56 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
     - ./src/lib.rs:56 (weak); kind: return_value; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
     - ./src/lib.rs:67 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
@@ -57,9 +56,9 @@ Hidden:
     - ./src/lib.rs:95 (weak); kind: return_value; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
     - ./src/lib.rs:109 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
     - ./src/lib.rs:109 (weak); kind: return_value; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
+    - ./src/lib.rs:123 (unrevealed); kind: error_path; reason: No detected assertion observes the changed value, error, field, or effect
     - ./src/lib.rs:123 (unrevealed); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
   Hidden classes:
-    exposed = tests appear to notice the change
     weak = tests reach it but check it only loosely
     unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full

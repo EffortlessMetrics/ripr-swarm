@@ -598,3 +598,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — unwrap_err_variant_positive (46)
+
+Reason:
+RIPR-SPEC-0106: correct the real Git diff hunk to the actual Err line; preserve exact unit-variant positive and native wrong-variant refusal
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

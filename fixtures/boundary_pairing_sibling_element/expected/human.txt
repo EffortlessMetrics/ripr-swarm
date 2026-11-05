@@ -45,7 +45,7 @@ Write this test by hand: call the function with an input just below, exactly on,
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (weak); kind: return_value; reason: No assertion was tied to the changed value
+    - ./src/lib.rs:3 (weak); kind: return_value; reason: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do…
   Hidden classes:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full

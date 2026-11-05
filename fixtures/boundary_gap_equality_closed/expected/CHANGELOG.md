@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — boundary_gap_equality_closed (4)
+
+Reason:
+RIPR-SPEC-0001 / RIPR-SPEC-0197: retain fixture classifications while refreshing composed producer guidance and assertion-local sink identity; owner-call proximity alone does not establish discriminator credit
+
+Command:
+`cargo xtask goldens bless boundary_gap_equality_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

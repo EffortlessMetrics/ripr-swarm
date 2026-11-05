@@ -18,16 +18,16 @@ Shared evidence and guidance
   E3 [findings 1, 2]: propagation yes: Complete propagation witness reaches error variant: Result::Err(CalcError::Negative)
   E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
   E5 [findings 1, 2]: discriminator yes: Strong oracle found: exact error variant assertion
-  E6 [findings 1, 2]: local flow reaches error variant: Result::Err(CalcError::Negative) (line 8)
+  E6 [findings 1, 2]: local flow reaches error variant: Result::Err(CalcError::Negative) (line 9)
   E7 [findings 1, 2]: related test tests/errors.rs:4 negative_input_rejects_with_negative_error uses strong exact error variant oracle: assert_eq!(err, CalcError::Negative);
   E8 [findings 1, 2]: source function argument value x = -1 at line 5
   E9 [findings 1, 2]: source enum variant value CalcError::Negative at line 6
 
-Finding 1: INFO ./src/lib.rs:8
-  id: probe:src_lib.rs:error_path:6b37a3bc
+Finding 1: INFO ./src/lib.rs:9
+  id: probe:src_lib.rs:error_path:6188ddb8
 Changed
-  before: return Err(CalcError::TooLarge);
-  after:  return Err(CalcError::Negative);
+  before: return Err(CalcError::TooLarge)
+  after:  return Err(CalcError::Negative)
 Change type
   error handling changed
   family: error_path
@@ -40,14 +40,14 @@ Evidence
   shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
 Drill in:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:error_path:6b37a3bc
-  ripr context --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:6b37a3bc
+  ripr explain --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:error_path:6188ddb8
+  ripr context --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:6188ddb8
 
-Finding 2: INFO ./src/lib.rs:8
-  id: probe:src_lib.rs:return_value:832c68b7
+Finding 2: INFO ./src/lib.rs:9
+  id: probe:src_lib.rs:return_value:8fe349d2
 Changed
-  before: return Err(CalcError::TooLarge);
-  after:  return Err(CalcError::Negative);
+  before: return Err(CalcError::TooLarge)
+  after:  return Err(CalcError::Negative)
 Change type
   a returned value changed
   family: return_value
@@ -60,5 +60,5 @@ Evidence
   shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
 Drill in:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:return_value:832c68b7
-  ripr context --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:return_value:832c68b7
+  ripr explain --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast probe:src_lib.rs:return_value:8fe349d2
+  ripr context --root <cwd>/fixtures/unwrap_err_variant_positive/input --diff <cwd>/fixtures/unwrap_err_variant_positive/diff.patch --mode fast --at probe:src_lib.rs:return_value:8fe349d2

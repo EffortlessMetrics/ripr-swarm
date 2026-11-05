@@ -2,26 +2,20 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/module_reach_control_qualified/input
 
-Summary: 2 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 2 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Start here:
-  State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  State: no gap selected for repair
+  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
   File: ./src/inner.rs:2
-  Static exposure: weak (severity: warning, confidence 0.92)
-  Why weak: a related test reaches this change but does not observe the exact changed value
-  Gap ID (for scripts): gap:rust:src/inner.rs:is_bulk:return_value:return_value:10<=qty
+  Static exposure: exposed (severity: info, confidence 1.00)
+  Gap ID (for scripts): gap:rust:src/inner.rs:is_bulk:predicate_boundary:predicate:10==qty
   Changed behavior: 10 <= qty
-  Missing check: No assertion was tied to the changed value
-  Related test (1 of 2 matched rows): tests/api.rs:2 discount_boundary (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: The related test `discount_boundary` already has an exact assertion; this does not
-    establish observation of the returned value. Check whether the change can affect the returned
-    value. If it can, add a separating input and assert the exact returned value. If it cannot, test
-    the changed effect separately; another input cannot distinguish unchanged returns
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+  Related test (1 of 2 matched rows): tests/api.rs:2 discount_boundary
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior
@@ -33,20 +27,18 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach is_bulk: discount_boundary
-    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - infection yes: Detected related test input at the changed boundary
     - 11 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/module_reach_control_qualified/input --diff <cwd>/fixtures/module_reach_control_qualified/diff.patch --mode fast probe:src_inner.rs:return_value:438cae72
-  ripr context --root <cwd>/fixtures/module_reach_control_qualified/input --diff <cwd>/fixtures/module_reach_control_qualified/diff.patch --mode fast --at probe:src_inner.rs:return_value:438cae72
-  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
-Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/module_reach_control_qualified/input --at src/inner.rs:2 --kind return_value
+  ripr explain --root <cwd>/fixtures/module_reach_control_qualified/input --diff <cwd>/fixtures/module_reach_control_qualified/diff.patch --mode fast probe:src_inner.rs:predicate:25dc8b63
+  ripr context --root <cwd>/fixtures/module_reach_control_qualified/input --diff <cwd>/fixtures/module_reach_control_qualified/diff.patch --mode fast --at probe:src_inner.rs:predicate:25dc8b63
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/inner.rs:2 (exposed); kind: predicate; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/inner.rs:2 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
   Hidden classes:
     exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full

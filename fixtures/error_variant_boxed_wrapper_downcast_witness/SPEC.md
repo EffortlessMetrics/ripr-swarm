@@ -45,10 +45,19 @@ ripr check --root fixtures/error_variant_boxed_wrapper_downcast_witness/input   
 
 ## Then
 
-The typed parseable-variant seam (`return
-Err(ParseSummaryError::MalformedSource);`) classifies `exposed` with
-`exact_error_variant` / `strong` — the pre-existing variant-bound credit path
-(RIPR-SPEC-0106), no wrapper heuristics involved.
+The two typed parseable-variant return sites remain `weakly_exposed` when
+this bound-result witness does not establish which early return produced the
+asserted value. An exact variant category and an owner call alone cannot lend
+sink identity to both sites (RIPR-SPEC-0106 / RIPR-SPEC-0197).
+
+Native per-return controls distinguish this from missing test execution:
+changing only the first return makes both existing parse witnesses fail;
+changing only the second return leaves their outcomes unchanged. The complete
+fixture harness also contains deliberately wrong companion assertions, so its
+whole exit is not a passing-suite claim. Static analysis remains conservative
+for both typed sites until it can bind the selected observer to the particular
+return. The directly bound unique unit-variant positives remain covered by
+`unwrap_err_variant_positive` and the production return-confirmation controls.
 
 The `map_err(Into::into)` wrapper seams with asserting observers — including
 the one the downcast witness reaches — classify `weakly_exposed` and carry
@@ -81,6 +90,7 @@ the unresolved wrapper binding; the optional `static_limit_kind` and
   establishable.
 - Prescribe an exact-variant assertion for a wrapper seam whose witnesses
   already downcast-and-pin the variant; emit the typed limitation instead.
-- Report the typed parseable-variant seam as a gap while its exact-variant
-  witnesses exist.
+- Credit both typed return sites merely because one owner-level exact-variant
+  witness exists; retain the unresolved per-return identity rather than infer
+  which branch that witness exercises.
 - Use mutation-runtime outcome vocabulary reserved for real mutation execution.
