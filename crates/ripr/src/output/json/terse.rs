@@ -162,7 +162,7 @@ fn compact_finding(finding: &mut serde_json::Map<String, Value>, coder: &mut Leg
 /// (file names, "rust", "yes") are shared vocabulary, not duplication, and
 /// stay. `NEVER_DROP` identity/verdict fields are exempt on both sides.
 fn drop_same_value_aliases(finding: &mut serde_json::Map<String, Value>, coder: &mut LegendCoder) {
-    let mut seen: HashMap<String, ()> = HashMap::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let keys: Vec<String> = finding.keys().cloned().collect();
     for key in keys {
         let Some(value) = finding.get(&key) else {
@@ -172,14 +172,14 @@ fn drop_same_value_aliases(finding: &mut serde_json::Map<String, Value>, coder: 
             continue;
         };
         if NEVER_DROP.contains(&key.as_str()) || text.len() < MIN_LEGEND_TEXT_LEN {
-            seen.insert(text.to_string(), ());
+            seen.insert(text.to_string());
             continue;
         }
-        if seen.contains_key(text) {
+        if seen.contains(text) {
             finding.remove(&key);
             coder.dropped_aliases.push(key);
         } else {
-            seen.insert(text.to_string(), ());
+            seen.insert(text.to_string());
         }
     }
 }
