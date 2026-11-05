@@ -21,6 +21,113 @@ pub(crate) struct CacheExportReport {
     pub(crate) logical_file_bytes: u64,
 }
 
+/// Test the exported snapshot against the current logical keys and the exact
+/// files named by their selected representations, including referenced shards.
+#[cfg(test)]
+pub(crate) fn verify_current_export_for_test(root: &Path, output: &Path) -> Result<(), String> {
+    use std::collections::BTreeSet;
+
+    fn walk(root: &Path, dir: &Path, found: &mut BTreeSet<PathBuf>) -> Result<(), String> {
+        for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            let kind = entry.file_type().map_err(|error| error.to_string())?;
+            if kind.is_dir() {
+                walk(root, &path, found)?;
+            } else if kind.is_file() {
+                found.insert(
+                    path.strip_prefix(root)
+                        .map_err(|error| error.to_string())?
+                        .to_path_buf(),
+                );
+            } else {
+                return Err(format!(
+                    "unexpected non-file in snapshot: {}",
+                    path.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    let source = cache_base_dir(root);
+    let (key, files) = current_cache_keys_at(root, &load_for_root(root)?)?;
+    let mut expected = BTreeSet::new();
+    for cache in [
+        RepoSeamFactCache::at(root),
+        RepoSeamFactCache::at_compact_classified(root),
+    ] {
+        let copied = RepoSeamFactCache::rooted_at(
+            relocated(&cache.dir, &source, output)?,
+            relocated(&cache.sharded_dir, &source, output)?,
+            output.to_path_buf(),
+        );
+        assert!(
+            matches!(
+                copied.load_classified_seams_with_fallback(&key),
+                CacheLoad::Hit(_)
+            ),
+            "current classified family must load"
+        );
+        let single = copied.entry_path(&key);
+        if single.is_file() {
+            expected.insert(
+                single
+                    .strip_prefix(output)
+                    .map_err(|error| error.to_string())?
+                    .to_path_buf(),
+            );
+        } else {
+            let path = copied.sharded_manifest_path(&key);
+            let manifest = codec::decode_sharded_manifest(
+                &fs::read(&path).map_err(|error| error.to_string())?,
+            )?;
+            assert!(manifest.matches_key(&key));
+            manifest.validate_integrity()?;
+            for shard in &manifest.shards {
+                let path =
+                    resolve_sharded_cache_file(&copied.sharded_entry_dir(&key), &shard.file)?;
+                expected.insert(
+                    path.strip_prefix(output)
+                        .map_err(|error| error.to_string())?
+                        .to_path_buf(),
+                );
+            }
+            expected.insert(
+                path.strip_prefix(output)
+                    .map_err(|error| error.to_string())?
+                    .to_path_buf(),
+            );
+        }
+    }
+    let source_facts = RepoFileFactCache::at(root);
+    let copied_facts = RepoFileFactCache {
+        dir: relocated(&source_facts.dir, &source, output)?,
+        base: output.to_path_buf(),
+        unusable_base_reason: std::sync::OnceLock::new(),
+    };
+    assert_eq!(files.len(), 1, "fixture must contain one current Rust file");
+    for file in &files {
+        assert!(
+            matches!(copied_facts.load_file_facts(file), CacheLoad::Hit(_)),
+            "current file fact must load"
+        );
+        let path = copied_facts.entry_path(file);
+        expected.insert(
+            path.strip_prefix(output)
+                .map_err(|error| error.to_string())?
+                .to_path_buf(),
+        );
+    }
+    let mut found = BTreeSet::new();
+    walk(output, output, &mut found)?;
+    assert_eq!(
+        found, expected,
+        "snapshot must contain exactly current representations and referenced shards"
+    );
+    Ok(())
+}
+
 /// Refuse aliases before reading or writing. This is a cooperative-filesystem
 /// guard, not protection against a hostile concurrent directory replacement.
 fn refuse_links(path: &Path) -> Result<(), String> {

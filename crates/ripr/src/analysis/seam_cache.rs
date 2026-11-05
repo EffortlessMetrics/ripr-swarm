@@ -680,7 +680,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// statement through the same owner-pin decision as `ripr check` (#12394).
 /// `1.158`: a bounded `.map(owner)` chain is credited at the first input where
 /// the change is visible (#12841).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
+/// `1.159`: repo boundary evidence requires the boundary input and admitted
+/// discriminating oracle in the same test (#7490).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.159";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -880,7 +882,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
+/// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1082,7 +1085,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
 /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
+/// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1321,6 +1325,8 @@ mod scoped_inventory;
 mod semantic_identity_tests;
 mod store;
 pub(crate) use export::export_current;
+#[cfg(test)]
+pub(crate) use export::verify_current_export_for_test;
 #[cfg(test)]
 pub(crate) use scoped_inventory::SCOPED_INVENTORY_CACHE_SCHEMA_VERSION;
 pub(crate) use scoped_inventory::{
@@ -2605,6 +2611,26 @@ impl RepoSeamFactCache {
             None,
             lexical_fallback_files,
             store_limit,
+        )
+    }
+
+    /// Publish complete compact evidence while retaining one producer window at a time.
+    pub(crate) fn store_compact_classified_windows(
+        &self,
+        key: &RepoSeamCacheKey,
+        total_seams: usize,
+        lexical_fallback_files: &[PathBuf],
+        window_limit: usize,
+        producer: impl FnMut(usize) -> Result<Option<Vec<ClassifiedSeam>>, String>,
+    ) -> Result<CacheStoreStatus, String> {
+        store::publish_compact_windows(
+            self,
+            key,
+            total_seams,
+            lexical_fallback_files,
+            window_limit,
+            classified_seam_cache_encoded_shard_ceiling_bytes()?,
+            producer,
         )
     }
 
@@ -5164,7 +5190,8 @@ mod tests {
         // 1.155 -> 1.156: different-arm error pin is one fact in every view (#12733, #12734).
         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.158");
+        // 1.158 -> 1.159: boundary and oracle must be paired in the same test (#7490).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.159");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5304,8 +5331,9 @@ mod tests {
         // 0.157 -> 0.158: same different-arm error-pin rule as full 1.156 (#12733, #12734).
         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
+        // 0.160 -> 0.161: same boundary-oracle pairing as full 1.159 (#7490).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.161");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.161");
     }
 
     #[test]
@@ -5624,6 +5652,9 @@ mod tests {
             ("1.71", "0.77"),
             ("1.72", "0.78"),
             ("1.73", "0.79"),
+            // #7490: preserve the immediately preceding main generation.
+            ("1.157", "0.159"),
+            ("1.158", "0.160"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -5694,7 +5725,7 @@ mod tests {
     #[test]
     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
         for previous in [
-            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44",
+            "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
         ] {
             for compact in [false, true] {
                 let scratch = integrity_scratch("property-shard-generation")?;

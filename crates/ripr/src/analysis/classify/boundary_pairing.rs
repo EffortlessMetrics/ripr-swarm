@@ -24,6 +24,7 @@ use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 #[cfg(test)]
 use crate::value_origins::LocatedValueFact as ValueFact;
+use ra_ap_syntax::{AstNode, ast};
 
 mod bound_result;
 
@@ -40,6 +41,45 @@ pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
 /// Activation recomputed from one test alone.
 pub(in crate::analysis) type TestActivation<'a> = &'a dyn Fn(&TestSummary) -> ActivationEvidence;
 
+/// Pair only a forwarding wrapper entry, without admitting direct owner or
+/// bound-local paths when the aggregate owner identity is unresolved.
+pub(in crate::analysis) fn has_wrapper_boundary_oracle_pairing(
+    owner: &FunctionSummary,
+    tests: &[&TestSummary],
+    entry: WrapperEntryPairing<'_>,
+    assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+    index: &RustIndex,
+) -> bool {
+    let Some(hop) = entry.chain.hops.last() else {
+        return false;
+    };
+    tests.iter().any(|test| {
+        let scope = super::argument_fold::FoldScope::of_test(test, index);
+        let rows = std::cell::OnceCell::new();
+        test.assertions.iter().any(|assertion| {
+            (test.start_line..=test.end_line).contains(&assertion.line)
+                && assertion_admitted(test, assertion)
+                && assertion_is_discriminating(assertion)
+                && ((chain_forwards_owner_result(&owner.name, entry.chain)
+                    && ((entry.entry_admitted)(test, assertion)
+                        || mapped_literal_entry_admitted(owner, entry.chain, assertion)))
+                    || mapped_enum_entry_admitted(owner, entry.chain, test, assertion, index))
+                && assertion_names_one_entry_call(
+                    owner,
+                    &hop.caller.name,
+                    assertion,
+                    Some((test, scope)),
+                )
+                && assertion_observes_boundary_entry_call(
+                    owner,
+                    &hop.caller.name,
+                    assertion,
+                    rows.get_or_init(|| (entry.test_activation)(test)),
+                )
+        })
+    })
+}
+
 /// The helper chain a wrapper-entry pin pairs through (#6694 / #6672), and
 /// activation recomputed from one test alone. The entry path reads only those
 /// per-test rows (#6780 review): `ValueFact` carries no source test, so a row
@@ -49,6 +89,8 @@ pub(in crate::analysis) type TestActivation<'a> = &'a dyn Fn(&TestSummary) -> Ac
 pub(in crate::analysis) struct WrapperEntryPairing<'a> {
     pub(in crate::analysis) chain: &'a HelperChain,
     pub(in crate::analysis) test_activation: TestActivation<'a>,
+    /// Independently establish the entry result and expected operand.
+    pub(in crate::analysis) entry_admitted: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// The check helper an admitted assertion is borrowed from, without the
     /// owner-call identity gate of `helper_loan`: a method-hop chain's
     /// asserting entry (#9329) reaches the owner through the method, so the
@@ -164,15 +206,13 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
     // #6694 / #6672: a private helper reached only through a wrapper pairs
     // on the wrapper call when every hop hands the helper's result to its
     // caller's return; any other chain shape keeps the pairing missing.
-    let forwarding_entry = wrapper_entry
-        .filter(|entry| chain_forwards_owner_result(&owner.name, entry.chain))
-        .and_then(|entry| {
-            entry
-                .chain
-                .hops
-                .last()
-                .map(|hop| (hop.caller.name.as_str(), entry.test_activation))
-        });
+    let forwarding_entry = wrapper_entry.and_then(|entry| {
+        entry
+            .chain
+            .hops
+            .last()
+            .map(|hop| (hop.caller.name.as_str(), entry))
+    });
     // #9329: a method-hop chain whose top hop is the check helper asserting
     // the method's result, with every hop below forwarding the owner's.
     let asserting_entry = wrapper_entry.and_then(|entry| {
@@ -204,7 +244,7 @@ fn test_pairs_boundary_input_with_oracle(
     owner: &FunctionSummary,
     test: &TestSummary,
     activation: &ActivationEvidence,
-    forwarding_entry: Option<(&str, TestActivation<'_>)>,
+    forwarding_entry: Option<(&str, WrapperEntryPairing<'_>)>,
     asserting_entry: Option<(&str, WrapperEntryPairing<'_>)>,
     assertion_admitted: &dyn Fn(&TestSummary, &OracleFact) -> bool,
     owner_pinned: &dyn Fn(&TestSummary, &OracleFact) -> bool,
@@ -267,16 +307,199 @@ fn test_pairs_boundary_input_with_oracle(
             // rule: the owner-return pin judges the owner's own call, never
             // a wrapper's.
             || (assertion_is_discriminating(assertion)
-                && forwarding_entry.is_some_and(|(entry, test_activation)| {
-                    assertion_names_one_entry_call(owner, entry, assertion, Some((test, scope)))
+                && forwarding_entry.is_some_and(|(name, entry)| {
+                    ((chain_forwards_owner_result(&owner.name, entry.chain)
+                        && ((entry.entry_admitted)(test, assertion)
+                            || mapped_literal_entry_admitted(owner, entry.chain, assertion)))
+                        || mapped_enum_entry_admitted(owner, entry.chain, test, assertion, index))
+                        && assertion_names_one_entry_call(owner, name, assertion, Some((test, scope)))
                         && assertion_observes_boundary_entry_call(
                             owner,
-                            entry,
+                            name,
                             assertion,
-                            own_rows.get_or_init(|| test_activation(test)),
+                            own_rows.get_or_init(|| (entry.test_activation)(test)),
                         )
                 }))
     })
+}
+
+/// A one-hop, same-root enum mapping requires real call identity, unit
+/// variants with derived equality, and the test's direct enum import.
+fn mapped_enum_entry_admitted(
+    owner: &FunctionSummary,
+    chain: &HelperChain,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &RustIndex,
+) -> bool {
+    let [hop] = chain.hops.as_slice() else {
+        return false;
+    };
+    if hop.caller.file != owner.file
+        || hop.through_macro
+        || hop.receiver.is_some()
+        || hop.module_qualified
+    {
+        return false;
+    }
+    let Some([left, right]) = assertion_comparison_operands(&assertion.text) else {
+        return false;
+    };
+    let expected = if super::owner_pin::direct_call_name(left) == Some(hop.caller.name.as_str()) {
+        right
+    } else if super::owner_pin::direct_call_name(right) == Some(hop.caller.name.as_str()) {
+        left
+    } else {
+        return false;
+    };
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&hop.caller.body) else {
+        return false;
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let Some(list) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    if list.statements().next().is_some() {
+        return false;
+    }
+    let Some(ast::Expr::IfExpr(branch)) = list.tail_expr() else {
+        return false;
+    };
+    let Some(condition) = branch.condition() else {
+        return false;
+    };
+    if super::owner_pin::direct_call_name(&condition.syntax().text().to_string())
+        != Some(owner.name.as_str())
+    {
+        return false;
+    }
+    let path = |block: ast::BlockExpr| {
+        let list = block.stmt_list()?;
+        if list.statements().next().is_some() {
+            return None;
+        }
+        let ast::Expr::PathExpr(path) = list.tail_expr()? else {
+            return None;
+        };
+        Some(path.syntax().text().to_string())
+    };
+    let Some(a) = branch.then_branch().and_then(path) else {
+        return false;
+    };
+    let Some(ast::ElseBranch::Block(other)) = branch.else_branch() else {
+        return false;
+    };
+    let Some(b) = path(other) else {
+        return false;
+    };
+    let caller = TestSummary {
+        name: hop.caller.name.clone(),
+        file: hop.caller.file.clone(),
+        start_line: hop.caller.start_line,
+        end_line: hop.caller.end_line,
+        body: hop.caller.body.clone(),
+        calls: hop.caller.calls.clone(),
+        assertions: Vec::new(),
+        literals: hop.caller.literals.clone(),
+        attrs: hop.caller.attrs.clone(),
+        nested_fn_names: hop.caller.nested_fn_names.clone(),
+        let_bindings: hop.caller.let_bindings.clone(),
+        generated: None,
+    };
+    let syntax = super::owner_pin::OwnerPinSyntax::default();
+    super::owner_pin::same_file_free_helper_call_reaches_owner(&caller, owner, None, index, &syntax)
+        && super::owner_pin::targeted_free_call_reaches_owner(&caller, owner, None, index, &syntax)
+        && super::owner_pin::mapped_unit_enum_expectation(
+            &hop.caller,
+            test,
+            assertion,
+            &a,
+            &b,
+            expected,
+            index,
+        )
+}
+
+/// A mapped boolean result is discriminating only if the exact expected
+/// literal is one of the two distinct literal branch outputs. The chain
+/// authority separately establishes the condition and each forwarding hop.
+fn mapped_literal_entry_admitted(
+    owner: &FunctionSummary,
+    chain: &HelperChain,
+    assertion: &OracleFact,
+) -> bool {
+    if !chain_forwards_owner_result(&owner.name, chain) {
+        return false;
+    }
+    let Some(entry) = chain.hops.last() else {
+        return false;
+    };
+    let Some([left, right]) = assertion_comparison_operands(&assertion.text) else {
+        return false;
+    };
+    let expected = if super::owner_pin::direct_call_name(left) == Some(entry.caller.name.as_str()) {
+        right
+    } else if super::owner_pin::direct_call_name(right) == Some(entry.caller.name.as_str()) {
+        left
+    } else {
+        return false;
+    };
+    let Some(expected) = super::helper_transfer::strict_literal(expected) else {
+        return false;
+    };
+    if expected.contains('\\')
+        || (expected.starts_with('"') && !super::owner_pin::is_string_literal(&expected))
+        || (expected.starts_with('\'') && expected.len() != 3)
+    {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&entry.caller.body) else {
+        return false;
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let Some(list) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    let Some(ast::Expr::IfExpr(branch)) = list.tail_expr() else {
+        return false;
+    };
+    let literal = |block: ast::BlockExpr| {
+        let list = block.stmt_list()?;
+        if list.statements().next().is_some() {
+            return None;
+        }
+        let expression = list.tail_expr()?;
+        if !matches!(expression, ast::Expr::Literal(_)) {
+            return None;
+        }
+        super::helper_transfer::strict_literal(&expression.syntax().text().to_string())
+    };
+    let Some(a) = branch.then_branch().and_then(literal) else {
+        return false;
+    };
+    let Some(ast::ElseBranch::Block(other)) = branch.else_branch() else {
+        return false;
+    };
+    let Some(b) = literal(other) else {
+        return false;
+    };
+    if a.contains('\\') || b.contains('\\') {
+        return false;
+    }
+    let equivalent = |value: &str| {
+        if value.bytes().all(|c| c.is_ascii_digit()) && expected.bytes().all(|c| c.is_ascii_digit())
+        {
+            let normalize = |text: &str| text.trim_start_matches('0').to_string();
+            normalize(value) == normalize(&expected)
+        } else {
+            value == expected
+        }
+    };
+    equivalent(&a) || equivalent(&b)
 }
 
 /// The assertion's subject is one call of the chain's entry whose arguments
@@ -288,13 +511,19 @@ fn assertion_names_one_entry_call(
     assertion: &OracleFact,
     test: Option<(&TestSummary, super::argument_fold::FoldScope<'_>)>,
 ) -> bool {
+    let whole_entry = assertion_comparison_operands(&assertion.text).is_some_and(|operands| {
+        operands
+            .into_iter()
+            .any(|operand| super::owner_pin::direct_call_name(operand) == Some(entry))
+    });
     let subject = assertion_subject(&assertion.text);
     let entry_calls = owner_call_argument_lists(&subject, entry);
     // #6780 review round 2: activation binds the first scalar buried in a
     // compound argument (`order_discount(std::cmp::max(10, 50))`,
     // `order_discount(10 * 2)`), so every entry argument must be a whole
     // literal, identifier or path, as on the owner-call path.
-    entry_calls.len() == 1
+    whole_entry
+        && entry_calls.len() == 1
         && entry_calls[0].1.iter().all(|argument| {
             let argument = argument.trim();
             argument_is_activation_fallback_shape(argument)
@@ -1521,6 +1750,7 @@ mod tests {
         chain.map(|chain| WrapperEntryPairing {
             chain,
             test_activation: rows,
+            entry_admitted: &|_, _| true,
             entry_loan: &|_, _| None,
         })
     }

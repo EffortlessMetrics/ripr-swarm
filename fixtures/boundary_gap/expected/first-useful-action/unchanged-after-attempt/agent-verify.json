@@ -1,11 +1,13 @@
 {
+  "after_produced_from_dirty": true,
   "artifact_currentness": "historical_noncurrent",
+  "before_produced_from_dirty": true,
   "changed_seams": [],
   "inputs": {
     "after": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
-    "after_content_sha256": "sha256:f387bcb6c41fcc0a56388ad7ebdcefbfa13a2a90e7bcd4e60ca30fd3b5301799",
+    "after_content_sha256": "sha256:bcc39fe321814af998f679df227370f48db31f5a771118ab1a9de144691be4c6",
     "before": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
-    "before_content_sha256": "sha256:f387bcb6c41fcc0a56388ad7ebdcefbfa13a2a90e7bcd4e60ca30fd3b5301799"
+    "before_content_sha256": "sha256:bcc39fe321814af998f679df227370f48db31f5a771118ab1a9de144691be4c6"
   },
   "new_gaps": [],
   "resolved_gaps": [],
@@ -34,11 +36,13 @@
     {
       "activate_delta": null,
       "after": "weakly_gripped",
-      "after_discriminate_state": "yes",
+      "after_discriminate_state": "weak",
       "after_missing_discriminators": [
         "discount_threshold (equality boundary) (observed values do not include the equality-boundary case for this predicate)"
       ],
-      "after_open_legs": [],
+      "after_open_legs": [
+        "discriminate (weak)"
+      ],
       "before": "weakly_gripped",
       "change": "unchanged",
       "discriminate_delta": null,

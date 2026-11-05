@@ -1213,6 +1213,26 @@ fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::er
     let object = value
         .as_object_mut()
         .ok_or("agent receipt fixture should be a JSON object")?;
+    if let Some(diagnostic) = object
+        .get("analysis_outcome_error")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+    {
+        if !diagnostic.trim_end_matches('.').is_empty() {
+            for pointer in [
+                "/summary/next_action/recommended_action",
+                "/summary/next_recommendation",
+            ] {
+                if let Some(serde_json::Value::String(text)) = value.pointer_mut(pointer) {
+                    *text =
+                        text.replace(diagnostic.trim_end_matches('.'), "<analysis_outcome_error>");
+                }
+            }
+        }
+    }
+    let object = value
+        .as_object_mut()
+        .ok_or("agent receipt fixture should be a JSON object")?;
     if object.contains_key("analysis_outcome_error") {
         object.insert(
             "analysis_outcome_error".to_string(),
@@ -1228,6 +1248,26 @@ fn normalize_agent_receipt_fixture(text: &str) -> Result<String, Box<dyn std::er
     let mut rendered = serde_json::to_string_pretty(&value)?;
     rendered.push('\n');
     Ok(rendered)
+}
+
+#[test]
+fn receipt_fixture_normalizes_embedded_machine_diagnostic() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = serde_json::json!({
+        "analysis_outcome_error": "missing /tmp/example.",
+        "summary": {"next_action": {"recommended_action": "Refuse (missing /tmp/example)"}, "next_recommendation": "Refuse (missing /tmp/example)"}
+    });
+    let normalized: serde_json::Value =
+        serde_json::from_str(&normalize_agent_receipt_fixture(&source.to_string())?)?;
+    assert_eq!(
+        normalized["summary"]["next_recommendation"],
+        "Refuse (<analysis_outcome_error>)"
+    );
+    assert_eq!(
+        normalized["summary"]["next_action"]["recommended_action"],
+        "Refuse (<analysis_outcome_error>)"
+    );
+    Ok(())
 }
 
 fn normalize_unchanged_repo_exposure_producer_fixture(

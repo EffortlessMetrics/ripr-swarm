@@ -3378,11 +3378,18 @@ mod tests {
         Ok(root)
     }
 
-    /// Bound ancestor Cargo.toml discovery at this fixture. Tests live under
-    /// the ripr work tree (`target/`), so without a local `.git` the walk
-    /// would credit `/workspace/Cargo.toml`.
+    /// Establish this fixture's real Git work tree and bound ancestor manifest
+    /// discovery independently of whether its temporary parent is a checkout.
     fn isolate_as_git_root(root: &Path) -> Result<(), String> {
-        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))
+        crate::testing::fixture_git::fixture_git_ok(root, &["init", "--quiet"])?;
+        let inside = crate::testing::fixture_git::fixture_git_stdout(
+            root,
+            &["rev-parse", "--is-inside-work-tree"],
+        )?;
+        if inside.trim() != "true" {
+            return Err(format!("doctor fixture is not a Git work tree: {inside}"));
+        }
+        Ok(())
     }
 
     /// Evaluate a root with a probe where every tool except `git` is
@@ -4010,6 +4017,7 @@ mod tests {
                 ("src/lib.rs", "pub fn f() {}\n"),
             ],
         )?;
+        isolate_as_git_root(&root)?;
         let (report, _probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
         let _ = std::fs::remove_dir_all(&root);
         if check(&report, "cargo_toml")?.status != DoctorCheckStatus::Pass {
@@ -4318,6 +4326,7 @@ mod tests {
                 ("pyproject.toml", "[project]\nname = \"probe\"\n"),
             ],
         )?;
+        isolate_as_git_root(&root)?;
         let (report, _probed) =
             evaluate_without_rust_toolchain(&root, &[LanguageId::Rust, LanguageId::Python]);
         let _ = std::fs::remove_dir_all(&root);

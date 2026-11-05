@@ -14045,3 +14045,269 @@ fn rename_memo_keys_that_collide_still_answer_per_file() {
         assert!(!file_renames_to(&renames, "Fxo"));
     }
 }
+
+#[test]
+fn empty_macro_candidate_fast_path_matches_full_scan_and_is_memoized() -> Result<(), String> {
+    for (label, prefix, empty) in [
+        ("plain", "", true),
+        (
+            "shadow",
+            "macro_rules! assert_eq { ($($t:tt)*) => {} }\n",
+            false,
+        ),
+        ("alias", "use other::check as assert_eq;\n", false),
+        ("glob", "use other::*;\n", false),
+        ("macro_use", "#[macro_use] extern crate other;\n", false),
+    ] {
+        let source = format!("{prefix}#[test]\nfn checks() {{ assert_eq!(1, 1); }}\n");
+        let index = index(&[(LIB, &source)]);
+        let test = index.tests().iter().next().ok_or("missing test")?;
+        let fast = OwnerPinSyntax::default();
+        let full = OwnerPinSyntax::default();
+        // A cloned index has independent memos; force its ordinary full scan.
+        let reference_index = index.clone();
+        let reference_test = reference_index
+            .tests()
+            .iter()
+            .next()
+            .ok_or("reference test")?;
+        reference_index
+            .call_identity_memos
+            .empty_macro_candidates
+            .set(false)
+            .map_err(|_| "occupied reference memo")?;
+        let expected = format!(
+            "{:?}",
+            full.context_ambiguities(
+                reference_test,
+                reference_test.start_line + 1,
+                &reference_index
+            )
+        );
+        for _ in 0..100 {
+            assert_eq!(
+                format!(
+                    "{:?}",
+                    fast.context_ambiguities(test, test.start_line + 1, &index)
+                ),
+                expected,
+                "{label}"
+            );
+        }
+        assert_eq!(
+            index
+                .call_identity_memos
+                .empty_macro_candidate_scans
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1,
+            "{label}: warm calls must reuse the inventory"
+        );
+        assert_eq!(
+            fast.workspace_scan_passes() == 0,
+            empty,
+            "{label}: only a complete empty inventory may skip the scan"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn empty_macro_candidate_fast_path_refuses_withheld_and_invalidates_on_index_change()
+-> Result<(), String> {
+    let plain = "#[test]\nfn checks() { assert_eq!(1, 1); }\n";
+    let shadow = "macro_rules! assert_eq { ($($t:tt)*) => {} }\n#[test]\nfn checks() { assert_eq!(1, 1); }\n";
+    let first = index(&[(LIB, plain)]);
+    let second = index(&[(LIB, shadow)]);
+    let syntax = OwnerPinSyntax::default();
+    let first_test = first.tests().iter().next().ok_or("first test")?;
+    let second_test = second.tests().iter().next().ok_or("second test")?;
+    syntax
+        .context_ambiguities(first_test, first_test.start_line + 1, &first)
+        .map_err(|e| format!("{e:?}"))?;
+    let second_result = syntax
+        .context_ambiguities(second_test, second_test.start_line + 1, &second)
+        .map_err(|e| format!("{e:?}"))?;
+    assert!(
+        second_result.contains("assert_eq"),
+        "a different index must retain the actual shadow"
+    );
+    assert_eq!(
+        second
+            .call_identity_memos
+            .empty_macro_candidate_scans
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+    let warmed = OwnerPinSyntax::default();
+    warmed
+        .context_ambiguities(first_test, first_test.start_line + 1, &first)
+        .map_err(|e| format!("{e:?}"))?;
+    let mut replacement = WithheldMacroBindings::default();
+    replacement.any_name = true;
+    let withheld = warmed.with_withheld(replacement);
+    let result = withheld
+        .context_ambiguities(first_test, first_test.start_line + 1, &first)
+        .map_err(|e| format!("{e:?}"))?;
+    let reference = OwnerPinSyntax {
+        withheld: withheld.withheld.clone(),
+        ..OwnerPinSyntax::default()
+    };
+    assert_eq!(
+        result,
+        reference
+            .context_ambiguities(first_test, first_test.start_line + 1, &first)
+            .map_err(|e| format!("{e:?}"))?
+    );
+    assert!(
+        withheld.workspace_scan_passes() > 0,
+        "withheld uncertainty must use the full scan"
+    );
+    Ok(())
+}
+
+#[test]
+fn empty_macro_candidate_cold_and_warm_inventory_cost() -> Result<(), String> {
+    for files in [1, 100, 1000] {
+        let sources = (0..files)
+            .map(|n| {
+                (
+                    format!("src/f{n}.rs"),
+                    if n == 0 {
+                        "#[test]\nfn checks() { assert_eq!(1, 1); }\n"
+                    } else {
+                        "fn unrelated() {}\n"
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let inputs = sources
+            .iter()
+            .map(|(path, source)| (path.as_str(), *source))
+            .collect::<Vec<_>>();
+        let index = index(&inputs);
+        let test = index.tests().iter().next().ok_or("missing test")?;
+        let syntax = OwnerPinSyntax::default();
+        let start = std::time::Instant::now();
+        syntax
+            .context_ambiguities(test, test.start_line + 1, &index)
+            .map_err(|e| format!("{e:?}"))?;
+        let cold = start.elapsed();
+        let start = std::time::Instant::now();
+        for _ in 0..100 {
+            syntax
+                .context_ambiguities(test, test.start_line + 1, &index)
+                .map_err(|e| format!("{e:?}"))?;
+        }
+        let warm = start.elapsed();
+        assert_eq!(
+            index
+                .call_identity_memos
+                .empty_macro_candidate_scans
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        assert_eq!(syntax.workspace_scan_passes(), 0);
+        eprintln!(
+            "empty-macro-candidates: files={files} cold_us={} warm_100_us={} inventories=1 full_scans=0",
+            cold.as_micros(),
+            warm.as_micros()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn mapped_enum_expectation_memo_is_index_owned_and_bounded() -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    for files in [1, 100, 1000] {
+        let mut sources = vec![
+            ("src/lib.rs".to_string(), "#[derive(Debug, PartialEq)] pub enum Outcome { Low, High }\npub fn owner(a:i32,b:i32)->bool { a >= b }\npub fn wrapper(a:i32,b:i32)->Outcome { if owner(a,b) { Outcome::High } else { Outcome::Low } }\n".to_string()),
+            ("tests/check.rs".to_string(), "use memory_fixture::{wrapper, Outcome};\n#[test]\nfn checks() { assert_eq!(wrapper(1,1), Outcome::High); }\n".to_string()),
+        ];
+        for n in 1..files {
+            sources.push((
+                format!("src/unused_{n}.rs"),
+                format!("pub fn unrelated_{n}() {{}}\n"),
+            ));
+        }
+        let inputs = sources
+            .iter()
+            .map(|(path, source)| (path.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let mut index = index(&inputs);
+        index.package_names.insert("memory_fixture".to_string());
+        index.root_library_name = Some("memory_fixture".to_string());
+        let entry = index
+            .functions()
+            .iter()
+            .find(|f| f.name == "wrapper")
+            .ok_or("entry")?
+            .clone();
+        let test = index.tests().iter().next().ok_or("test")?.clone();
+        let assertion = test.assertions.first().ok_or("assertion")?.clone();
+        let query = |index: &RustIndex, expected: &str| {
+            mapped_unit_enum_expectation(
+                &entry,
+                &test,
+                &assertion,
+                "Outcome::High",
+                "Outcome::Low",
+                expected,
+                index,
+            )
+        };
+        let start = std::time::Instant::now();
+        assert!(query(&index, "Outcome::High"));
+        let cold = start.elapsed();
+        let start = std::time::Instant::now();
+        for _ in 0..100 {
+            assert!(query(&index, "Outcome::High"));
+        }
+        let warm = start.elapsed();
+        assert_eq!(
+            index
+                .call_identity_memos
+                .mapped_enum_decision_builds
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert!(!query(&index, "Outcome::Missing"));
+        assert_eq!(
+            index
+                .call_identity_memos
+                .mapped_enum_decision_builds
+                .load(Ordering::Relaxed),
+            2
+        );
+        let cloned = index.clone();
+        assert_eq!(
+            cloned
+                .call_identity_memos
+                .mapped_enum_decision_builds
+                .load(Ordering::Relaxed),
+            0
+        );
+        assert!(query(&cloned, "Outcome::High"));
+        let data = index
+            .file_data_mut(Path::new("tests/check.rs"))
+            .ok_or("test source")?;
+        data.source = "#[test] fn checks() { assert_eq!(1, 1); }\n".into();
+        assert!(
+            !query(&index, "Outcome::High"),
+            "mutated source must not reuse earlier decision"
+        );
+        assert_eq!(
+            index
+                .call_identity_memos
+                .mapped_enum_decision_builds
+                .load(Ordering::Relaxed),
+            3
+        );
+        eprintln!(
+            "mapped-enum: files={files} cold_us={} warm_100_us={} decision_builds_before_mutation=2",
+            cold.as_micros(),
+            warm.as_micros()
+        );
+    }
+    Ok(())
+}

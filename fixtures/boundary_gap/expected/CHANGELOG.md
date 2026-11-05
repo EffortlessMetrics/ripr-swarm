@@ -1515,3 +1515,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_gap LSP boundary pairing
+
+Reason:
+RIPR-SPEC-0186: below/above calls without a same-test equality oracle carry weak discrimination. The framed protocol control adds an actual equality assertion and checks production inventory `StageState::Yes`; strong seams remain absent from editor diagnostic evidence.
+
+Reproduce producer:
+`RIPR_UPDATE_FIXTURES=1 cargo test --locked -p ripr --lib lsp::tests::boundary_gap_lsp_diagnostics_match_fixture_expectation -- --exact --test-threads=1`
+
+Updated:
+- `expected/lsp-diagnostics.json` (`discriminate`: `yes` to `weak`; all other data unchanged).

@@ -91,9 +91,73 @@ pub(crate) struct DropInManifests {
     json: Arc<Mutex<LiteralJsonMemo>>,
     verdicts: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
     standard_roots: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
+    #[cfg(test)]
+    before_standard_lock: Arc<Mutex<Option<std::sync::mpsc::SyncSender<()>>>>,
 }
 
 impl DropInManifests {
+    /// Whether two snapshots share the same cached manifest authority.
+    pub(crate) fn same_authority(&self, other: &Self) -> bool {
+        self.root == other.root
+            && Arc::ptr_eq(&self.verdicts, &other.verdicts)
+            && Arc::ptr_eq(&self.standard_roots, &other.standard_roots)
+    }
+
+    /// Run a short outer-memo operation only while both verdict tables are
+    /// locked and unpoisoned. Never call a manifest scan inside this closure.
+    pub(crate) fn with_healthy_verdict_caches<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
+        let _verdicts = self.verdicts.lock().ok()?;
+        #[cfg(test)]
+        if let Some(notify) = self
+            .before_standard_lock
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+        {
+            let _ = notify.send(());
+        }
+        let _standard_roots = self.standard_roots.lock().ok()?;
+        Some(action())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notify_before_standard_lock_for_test(
+        &self,
+        sender: std::sync::mpsc::SyncSender<()>,
+    ) -> bool {
+        if let Ok(mut slot) = self.before_standard_lock.lock() {
+            *slot = Some(sender);
+            true
+        } else {
+            false
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn poison_verdict_cache_for_test(&self) {
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = self.verdicts.lock().ok();
+            std::panic::resume_unwind(Box::new("injected manifest-verdict poison"));
+        });
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = self.standard_roots.lock().ok();
+            std::panic::resume_unwind(Box::new("injected standard-root poison"));
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hold_and_poison_standard_root_for_test(
+        &self,
+        entered: std::sync::mpsc::SyncSender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) {
+        let _guard = self.standard_roots.lock().ok();
+        if entered.send(()).is_err() || release.recv().is_err() {
+            return;
+        }
+        std::panic::resume_unwind(Box::new("injected concurrent standard-root poison"));
+    }
+
     /// The workspace root the manifests are read under, `None` for an index
     /// assembled without one.
     pub(crate) fn root(&self) -> Option<&Path> {
@@ -107,6 +171,8 @@ impl DropInManifests {
             json: Arc::default(),
             verdicts: Arc::default(),
             standard_roots: Arc::default(),
+            #[cfg(test)]
+            before_standard_lock: Arc::default(),
         }
     }
 

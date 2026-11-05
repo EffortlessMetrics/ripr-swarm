@@ -719,6 +719,7 @@ tests = [
   "crates/ripr/src/output/repo_seams.rs::tests::markdown_renders_table_when_seams_exist",
   "crates/ripr/src/output/repo_seams.rs::tests::markdown_explains_when_inventory_is_empty",
   "crates/ripr/src/output/repo_seams.rs::tests::markdown_uses_static_exposure_vocabulary",
+  "crates/ripr/tests/boundary_gap_closure.rs::broad_boundary_assertion_cannot_borrow_another_tests_exact_oracle",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_seam_when_tests_skip_equal_value_then_evidence_reports_missing_boundary_discriminator",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_seam_when_test_uses_equal_value_and_exact_assertion_then_discriminate_evidence_is_yes",
   "crates/ripr/src/analysis/test_grip_evidence.rs::tests::given_boundary_seam_when_parameter_operands_are_called_with_equal_strings_then_missing_discriminator_is_cleared",
@@ -11396,6 +11397,8 @@ id = "RIPR-SPEC-0124"
 name = "LSP diagnostic delivery stability"
 spec = "docs/specs/RIPR-SPEC-0124-lsp-diagnostic-delivery-stability.md"
 tests = [
+  "crates/ripr/src/lsp/tests.rs::external_rewrite_reloaded_into_a_buffer_is_analyzed_without_a_save",
+  "crates/ripr/src/lsp/tests.rs::did_change_retries_reloaded_content_after_a_failed_refresh_over_the_wire",
   "crates/ripr/src/lsp/tests.rs::diagnostic_refresh_plan_clears_stale_previous_uris",
   "crates/ripr/src/lsp/tests.rs::diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri",
   "crates/ripr/src/lsp/diagnostics.rs::delivery_tests::canonicalization_sorts_by_stable_diagnostic_id",
@@ -14064,6 +14067,7 @@ id = "RIPR-SPEC-0186"
 name = "Same-test pairing for boundary-class probes"
 spec = "docs/specs/RIPR-SPEC-0186-same-test-boundary-oracle-pairing.md"
 tests = [
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_protocol_smoke_logs_successful_refresh_completion",
   "crates/ripr/src/analysis/classify/activation.rs::tests::a_constant_row_table_feeds_one_input_row_per_table_row",
   "crates/ripr/tests/owner_pin_execution.rs::constant_row_table_pairs_each_row_with_its_boundary_input",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::split_tests_do_not_pair",
@@ -17055,6 +17059,8 @@ id = "RIPR-SPEC-0222"
 name = "Byte-bounded classified-cache store publication"
 spec = "docs/specs/RIPR-SPEC-0222-byte-bounded-classified-cache-store.md"
 tests = [
+  "crates/ripr/src/analysis/seam_inventory/compact_prefill_generation_tests.rs::compact_windows_zero_total_with_nonempty_index_preserves_prior_generation",
+  "crates/ripr/src/analysis/seam_inventory/compact_prefill_generation_tests.rs::compact_windows_genuinely_empty_index_publishes_a_complete_empty_generation",
   "crates/ripr/src/analysis/seam_cache/store.rs::tests::borrowed_single_entry_matches_owned_codec_bytes",
   "crates/ripr/src/atomic_file.rs::tests::stranded_temp_names_match_only_what_this_module_creates",
   "crates/ripr/src/atomic_file.rs::tests::sweep_removes_only_old_matching_regular_files",

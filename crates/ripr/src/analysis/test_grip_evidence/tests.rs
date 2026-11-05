@@ -22828,3 +22828,295 @@ fn field_write_facts_with_tail(
         .map(|fact| fact.value.clone())
         .collect())
 }
+
+#[test]
+fn boundary_wrapper_pairing_uses_proven_same_file_edge() -> Result<(), String> {
+    let production = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+pub fn wrapper(amount: i32, threshold: i32) -> i32 {
+    discounted_total(amount, threshold)
+}
+"#;
+    let tests = r#"
+use memory_fixture::{discounted_total, wrapper};
+#[test]
+fn boundary() {
+    let _ = discounted_total(100, 100);
+    assert_eq!(wrapper(100, 100), 90);
+}
+"#;
+    let mut index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), production),
+        (PathBuf::from("tests/pricing.rs"), tests),
+    ])?;
+    index.package_names.insert("memory-fixture".to_string());
+    index.package_names.insert("memory_fixture".to_string());
+    index.root_library_name = Some("memory_fixture".to_string());
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or("missing boundary seam")?;
+    let partial = CompactGripContext::new(&index);
+    let complete = CompactGripContext::new(&index);
+    let partial_evidence = evidence_for_seam_with_context(seam, &partial);
+    let complete_evidence = evidence_for_seam_with_context(seam, &complete);
+    assert_eq!(
+        partial_evidence.discriminate.state,
+        StageState::Yes,
+        "the bounded same-file edge does not require a global completeness claim"
+    );
+    assert_eq!(
+        complete_evidence.discriminate.state,
+        StageState::Yes,
+        "the forwarding wrapper is retained"
+    );
+    assert_eq!(
+        compact_evidence_for_seam(seam, &partial).discriminate.state,
+        StageState::Yes
+    );
+    assert_eq!(
+        compact_evidence_for_seam(seam, &complete)
+            .discriminate
+            .state,
+        StageState::Yes
+    );
+    Ok(())
+}
+
+#[test]
+fn boundary_wrapper_chain_refuses_foreign_callee_import() -> Result<(), String> {
+    let production = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+
+mod inner {
+    use external::discounted_total;
+    pub fn wrapper(amount: i32, threshold: i32) -> i32 {
+        discounted_total(amount, threshold)
+    }
+}
+"#;
+    let tests = r#"
+use memory_fixture::{discounted_total, inner::wrapper};
+#[test]
+fn boundary() {
+    let _ = discounted_total(100, 100);
+    assert_eq!(wrapper(100, 100), 90);
+}
+"#;
+    let mut index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), production),
+        (PathBuf::from("tests/pricing.rs"), tests),
+    ])?;
+    index.package_names.insert("memory-fixture".to_string());
+    index.package_names.insert("memory_fixture".to_string());
+    index.root_library_name = Some("memory_fixture".to_string());
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or("missing boundary seam")?;
+    let context = CompactGripContext::new(&index);
+    let owner = context
+        .owner_function(seam.file(), seam.display_line())
+        .ok_or("missing owner")?;
+    assert!(
+        context.boundary_chain(owner).is_none(),
+        "foreign import must not establish the owner edge"
+    );
+    assert_ne!(
+        evidence_for_seam_with_context(seam, &context)
+            .discriminate
+            .state,
+        StageState::Yes
+    );
+    Ok(())
+}
+
+#[test]
+fn boundary_wrapper_pairing_refuses_unproven_edges_and_wrong_calls() -> Result<(), String> {
+    let owner = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n if amount >= threshold { amount - 10 } else { amount }\n}\n";
+    let wrapper = "pub fn wrapper(amount: i32, threshold: i32) -> i32 { discounted_total(amount, threshold) }\n";
+    for (label, extra, test_body) in [
+        (
+            "wrong_input",
+            wrapper.to_string(),
+            "let _ = discounted_total(100, 100); assert_eq!(wrapper(50, 100), 50);",
+        ),
+        (
+            "foreign_qualified_same_line",
+            wrapper.to_string(),
+            "let _ = discounted_total(100, 100); let _ = wrapper(50, 100); assert_eq!(foreign::wrapper(100, 100), 90);",
+        ),
+        (
+            "foreign_qualified_separate_lines",
+            wrapper.to_string(),
+            "let _ = discounted_total(100, 100);\nlet _ = wrapper(50, 100);\nassert_eq!(foreign::wrapper(100, 100), 90);",
+        ),
+        (
+            "same_line_broad",
+            wrapper.to_string(),
+            "let _ = discounted_total(100, 100); assert!(wrapper(100, 100) > 0);",
+        ),
+        (
+            "shadowed_entry",
+            wrapper.to_string(),
+            "fn wrapper(_: i32, _: i32) -> i32 { 90 } let _ = discounted_total(100, 100); assert_eq!(wrapper(100, 100), 90);",
+        ),
+        (
+            "dropped_result",
+            "pub fn wrapper(a: i32, b: i32) -> i32 { let _ = discounted_total(a, b); 90 }\n"
+                .to_string(),
+            "let _ = discounted_total(100, 100); assert_eq!(wrapper(100, 100), 90);",
+        ),
+        (
+            "competing_caller",
+            format!("{wrapper}pub fn other(a: i32, b: i32) -> i32 {{ discounted_total(a, b) }}\n"),
+            "let _ = discounted_total(100, 100); assert_eq!(wrapper(100, 100), 90);",
+        ),
+    ] {
+        let production = format!("{owner}{extra}");
+        let test = format!(
+            "use memory_fixture::{{discounted_total, wrapper}};\n#[test]\nfn boundary() {{ {test_body} }}\n"
+        );
+        let mut index = index_from_files(&[
+            (PathBuf::from("src/lib.rs"), &production),
+            (PathBuf::from("tests/pricing.rs"), &test),
+        ])?;
+        index.package_names.insert("memory-fixture".to_string());
+        index.package_names.insert("memory_fixture".to_string());
+        index.root_library_name = Some("memory_fixture".to_string());
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+            .ok_or("boundary seam")?;
+        let context = CompactGripContext::new(&index);
+        let evidence = evidence_for_seam_with_context(seam, &context);
+        assert_ne!(
+            evidence.discriminate.state,
+            StageState::Yes,
+            "{label}: {evidence:?}"
+        );
+        assert_ne!(
+            compact_evidence_for_seam(seam, &context).discriminate.state,
+            StageState::Yes,
+            "compact {label}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_only_pairing_rejects_message_and_longer_identifier() -> Result<(), String> {
+    use crate::analysis::classify::{WrapperEntryPairing, has_wrapper_boundary_oracle_pairing};
+    use crate::value_origins::{LocatedActivationEvidence, LocatedValueFact};
+    let production = "pub fn discounted_total(a: i32, b: i32) -> i32 { if a >= b { a - 10 } else { a } }\npub fn wrapper(a: i32, b: i32) -> i32 { discounted_total(a, b) }\n";
+    for assertion in [
+        "assert_eq!(got, 90, \"wrapper\");",
+        "assert_eq!(wrapper_decoy, 90);",
+        "assert_eq!(wrapper(100, 100) * 0, 0);",
+    ] {
+        let source = format!(
+            "#[test]\nfn boundary() {{ let got = wrapper(100, 100); let wrapper_decoy = 90; {assertion} }}\n"
+        );
+        let index = index_from_files(&[
+            (PathBuf::from("src/lib.rs"), production),
+            (PathBuf::from("tests/pricing.rs"), &source),
+        ])?;
+        let seam = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index)
+            .into_iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary)
+            .ok_or("seam")?;
+        let context = CompactGripContext::new(&index);
+        let owner = context
+            .owner_function(seam.file(), seam.display_line())
+            .ok_or("owner")?;
+        let chain = context.boundary_chain(owner).ok_or("wrapper chain")?;
+        let test = index.tests().iter().next().ok_or("test")?;
+        let rows = |test: &TestSummary| LocatedActivationEvidence {
+            observed_values: vec![LocatedValueFact {
+                file: Some(test.file.clone()),
+                line: test.assertions[0].line,
+                text: format!("{} | exact input", test.assertions[0].text),
+                value: "a == b".to_string(),
+                context: crate::domain::ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            !has_wrapper_boundary_oracle_pairing(
+                owner,
+                &[test],
+                WrapperEntryPairing {
+                    chain: &chain,
+                    test_activation: &rows,
+                    entry_admitted: &|_, _| true,
+                    entry_loan: &|_, _| None
+                },
+                &|_, _| true,
+                &index
+            ),
+            "{assertion}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn boundary_wrapper_branch_establishes_pin_and_pairing() -> Result<(), String> {
+    let production = "pub fn discounted_total(amount: i32, discount_threshold: i32) -> bool { amount >= discount_threshold }\npub fn wrapper(a: i32, b: i32) -> i32 { if discounted_total(a,b) { 5 } else { 0 } }\n";
+    let tests = "use memory_fixture::{discounted_total, wrapper};\n#[test]\nfn boundary() { let _ = discounted_total(100,100);\nassert_eq!(wrapper(100,100), 5); }\n";
+    let mut index = index_from_files(&[
+        (PathBuf::from("src/lib.rs"), production),
+        (PathBuf::from("tests/pricing.rs"), tests),
+    ])?;
+    index.package_names.insert("memory_fixture".to_string());
+    index.root_library_name = Some("memory_fixture".to_string());
+    let seam = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index)
+        .into_iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or("seam")?;
+    let context = CompactGripContext::new(&index);
+    let owner = context
+        .owner_function(seam.file(), seam.display_line())
+        .ok_or("owner")?;
+    let chain = context
+        .boundary_chain(owner)
+        .ok_or("same-file chain refused")?;
+    let probe = crate::domain::Probe {
+        id: crate::domain::ProbeId("branch-test".into()),
+        location: crate::domain::SourceLocation::new(
+            seam.file().to_path_buf(),
+            seam.display_line(),
+            1,
+        ),
+        owner: Some(owner.id.clone()),
+        family: crate::domain::ProbeFamily::Predicate,
+        delta: crate::domain::DeltaKind::Unknown,
+        before: None,
+        after: Some(seam.expression().to_string()),
+        expression: seam.expression().to_string(),
+        expected_sinks: Vec::new(),
+        required_oracles: Vec::new(),
+    };
+    let entry = &chain.hops.last().ok_or("hop")?.caller;
+    assert!(
+        crate::analysis::classify::OwnerReturnPin::establish_forwarding_entry(
+            &probe, entry, &index
+        )
+        .is_none(),
+        "a mapped conditional needs the distinct branch proof"
+    );
+    assert_eq!(
+        evidence_for_seam_with_context(&seam, &context)
+            .discriminate
+            .state,
+        StageState::Yes
+    );
+    Ok(())
+}

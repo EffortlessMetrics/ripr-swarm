@@ -72,7 +72,8 @@ pub(in crate::analysis) use binding_return_flow::{
     BindingReturnFlow, evaluate_binding_return_flow, same_file_binding_helpers,
 };
 pub(in crate::analysis) use boundary_pairing::{
-    WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
+    WrapperEntryPairing, has_same_test_boundary_oracle_pairing,
+    has_wrapper_boundary_oracle_pairing, same_test_pairing_missing_summary,
     wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
@@ -122,7 +123,7 @@ pub(in crate::analysis) use helper_transfer::{
     ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_return_to_observed_hops, chain_forwards_to_observed_hops,
     chain_passes_effect_target_to_observed_hops, helper_only_reach,
-    hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
+    hop_reach_keeps_weak_oracle_gap, resolve_chain, resolve_repo_boundary_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hops};
