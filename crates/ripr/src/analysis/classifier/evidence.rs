@@ -962,7 +962,7 @@ impl ClassifiedProbeEvidence {
                         context.index.files().get(&test.file).and_then(|facts| {
                             call.line
                                 .checked_sub(1)
-                                .and_then(|line| facts.source.lines().nth(line))
+                                .and_then(|line| facts.data().source.lines().nth(line))
                         })
                     else {
                         return false;
