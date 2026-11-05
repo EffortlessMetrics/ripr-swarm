@@ -156,6 +156,27 @@ fn foreign_is_empty() -> bool { let foreign = Foreign; foreign.is_empty() }
             .ends_with("valid_helper_caller")
     );
     assert_eq!(*reason, RelationReason::HelperOwnerCall);
+    // Exercise the production entry point: it must derive and forward the
+    // package scope itself, rather than relying on this test's explicit prefix.
+    HELPER_CHECKS.with_borrow_mut(|checks| *checks = Some(Vec::new()));
+    let _production_observation = ObserveHelperChecks;
+    let related = find_related_tests_with_context(seam, &context);
+    let production_checks = HELPER_CHECKS
+        .with_borrow_mut(Option::take)
+        .ok_or("production helper-check observation missing")?;
+    assert_eq!(
+        production_checks, admitted,
+        "production relation selection must skip foreign package helper work"
+    );
+    assert!(related.iter().all(|(test, _)| test.test.file == owner_file));
+    assert!(
+        related.iter().any(|(test, reason)| {
+            test.test.name.ends_with("valid_helper_caller")
+                && *reason == RelationReason::HelperOwnerCall
+        }),
+        "production relation selection must retain valid owner credit"
+    );
+
     let (unfiltered, checked) = observed_matches(&context, None, &owner)?;
     assert_eq!(checked, *bucket);
     for test_index in admitted {

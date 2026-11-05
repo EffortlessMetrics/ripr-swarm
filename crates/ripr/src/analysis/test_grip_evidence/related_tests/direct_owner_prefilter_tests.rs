@@ -147,6 +147,26 @@ impl Other { pub fn remove(&mut self, _qty: u32) -> u32 { 99 } }
     );
     assert_eq!(*reason, RelationReason::DirectOwnerCall);
 
+    // Exercise the production entry point: it must derive and forward the
+    // package scope itself, rather than relying on this test's explicit prefix.
+    RECEIVER_CHECKS.with_borrow_mut(|checks| *checks = Some(Vec::new()));
+    let _production_observation = ObserveReceiverChecks;
+    let related = find_related_tests_with_context(seam, &context);
+    let production_checks = RECEIVER_CHECKS
+        .with_borrow_mut(Option::take)
+        .ok_or("production receiver-check observation missing")?;
+    assert_eq!(
+        production_checks, admitted,
+        "production relation selection must skip foreign package receiver work"
+    );
+    assert!(related.iter().all(|(test, _)| test.test.file == owner_file));
+    assert!(
+        related.iter().any(|(test, reason)| {
+            test.test.name.ends_with("valid_caller") && *reason == RelationReason::DirectOwnerCall
+        }),
+        "production relation selection must retain valid owner credit"
+    );
+
     // A missing prefix retains the old unfiltered receiver checks, including
     // both foreign paths and the prefix-sharing package name.
     let (unfiltered, checked) = observed_matches(&context, None, &owner)?;
