@@ -68,11 +68,21 @@ fn fixture_root(label: &str) -> Result<PathBuf, String> {
 }
 
 fn doctor_json_output(root: &Path, extra_args: &[&str]) -> Result<std::process::Output, String> {
+    doctor_json_output_with_environment(root, extra_args, |_| {})
+}
+
+fn doctor_json_output_with_environment(
+    root: &Path,
+    extra_args: &[&str],
+    environment: impl FnOnce(&mut Command),
+) -> Result<std::process::Output, String> {
     let root_arg = root.display().to_string();
     let mut args = vec!["doctor", "--root", root_arg.as_str(), "--json"];
     args.extend_from_slice(extra_args);
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(&args)
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.args(&args);
+    environment(&mut command);
+    let output = command
         .output()
         .map_err(|error| format!("spawn doctor: {error}"))?;
     if output.stdout.is_empty() {
@@ -93,6 +103,50 @@ fn doctor_json(root: &Path) -> Result<Value, String> {
             String::from_utf8_lossy(&output.stderr)
         )
     })
+}
+
+/// Reach the public source-build wiring with an explicit compiler that cannot
+/// run. The same process environment must still permit the analysis profile's
+/// PATH probe, so a missing SDK cannot accidentally satisfy this regression.
+#[test]
+fn source_build_doctor_json_refuses_missing_explicit_compiler() -> Result<(), String> {
+    let root = fixture_root("explicit-compiler")?;
+    let missing = root.join("missing compiler");
+    let environment = |command: &mut Command| {
+        command
+            .env("RUSTC", &missing)
+            .env("CARGO_BUILD_RUSTC", "rustc");
+    };
+    let analysis = doctor_json_output_with_environment(&root, &[], environment);
+    let build =
+        doctor_json_output_with_environment(&root, &["--profile", "source-build"], environment);
+    let _ = std::fs::remove_dir_all(&root);
+    let analysis = analysis?;
+    let build = build?;
+    let analysis: Value =
+        serde_json::from_slice(&analysis.stdout).map_err(|error| error.to_string())?;
+    let document: Value =
+        serde_json::from_slice(&build.stdout).map_err(|error| error.to_string())?;
+    let rustc = |document: &Value| {
+        document["checks"]
+            .as_array()
+            .and_then(|checks| checks.iter().find(|check| check["name"] == "tool_rustc"))
+            .cloned()
+            .ok_or_else(|| format!("missing rustc check: {document}"))
+    };
+    let analysis_check = rustc(&analysis)?;
+    let build_check = rustc(&document)?;
+    assert_eq!(analysis_check["status"], "pass", "{analysis}");
+    assert_eq!(build_check["status"], "fail", "{document}");
+    assert_eq!(document["profile"], "source-build");
+    assert_eq!(build.status.code(), Some(3));
+    let evidence = build_check["evidence"].as_str().unwrap_or_default();
+    assert!(
+        evidence.contains("RUSTC compiler: rustc not available"),
+        "{evidence}"
+    );
+    assert!(evidence.contains("fix or unset RUSTC"), "{evidence}");
+    Ok(())
 }
 
 /// #9807: the default `--json` document must be byte-stable across runs that

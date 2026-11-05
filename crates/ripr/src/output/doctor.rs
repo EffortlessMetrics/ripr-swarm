@@ -33,6 +33,7 @@ use crate::output::path::{
 };
 use crate::process_owner::OwnedProcess;
 use serde::Serialize;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -1663,7 +1664,9 @@ pub(crate) fn evaluate_doctor_core_with_config_for_profile(
     detected: &[LanguageId],
     profile: DoctorProfile,
 ) -> DoctorCoreEvaluation {
-    evaluate_doctor_core_with_probe_for_profile(root, detected, profile, doctor_tool_check_for_root)
+    evaluate_doctor_core_with_probe_for_profile(root, detected, profile, |tool, root| {
+        doctor_tool_check_for_root(tool, root, profile)
+    })
 }
 
 #[cfg(test)]
@@ -2096,15 +2099,18 @@ pub(crate) fn doctor_tool_check_isolated(tool: &str) -> (DoctorStatus, String) {
     doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, None).into_public()
 }
 
-fn doctor_tool_command(tool: &str) -> std::process::Command {
+fn doctor_tool_command(tool: impl AsRef<OsStr>) -> std::process::Command {
     // Windows: std's program lookup for a bare `pnpm` only resolves
     // `pnpm.exe` on PATH, so a tool installed as a batch shim (npm/corepack
     // install `pnpm.cmd` and `yarn.cmd`) would be misreported as not
     // installed. When no `.exe` exists, run the resolved shim by full path;
     // std launches `.cmd`/`.bat` through cmd.exe with its batch-argument
     // escaping. Other platforms keep the plain tool name unchanged.
-    let mut program = std::ffi::OsString::from(tool);
-    if cfg!(windows) {
+    let tool = tool.as_ref();
+    let mut program = tool.to_os_string();
+    if cfg!(windows)
+        && let Some(tool) = tool.to_str()
+    {
         let path = std::env::var_os("PATH").unwrap_or_default();
         let pathext = std::env::var("PATHEXT").ok();
         let dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
@@ -2160,7 +2166,11 @@ pub(crate) fn doctor_tool_check(tool: &str) -> (DoctorStatus, String) {
     doctor_tool_check_with_timeout(tool, DOCTOR_TOOL_TIMEOUT)
 }
 
-fn doctor_tool_check_for_root(tool: &str, root: &Path) -> (DoctorStatus, String) {
+fn doctor_tool_check_for_root(
+    tool: &str,
+    root: &Path,
+    profile: DoctorProfile,
+) -> (DoctorStatus, String) {
     if RUST_TOOLCHAIN_TOOLS.contains(&tool)
         && let Some(file) = crate::config::repository_toolchain_path_pin(root)
     {
@@ -2169,12 +2179,62 @@ fn doctor_tool_check_for_root(tool: &str, root: &Path) -> (DoctorStatus, String)
             crate::config::toolchain_path_pin_refusal(&file),
         );
     }
+    if tool == "rustc" && profile == DoctorProfile::SourceBuild {
+        let rustc = std::env::var_os("RUSTC");
+        let cargo_build_rustc = std::env::var_os("CARGO_BUILD_RUSTC");
+        let (command, selector) =
+            match source_build_rustc_command(root, rustc.as_deref(), cargo_build_rustc.as_deref()) {
+                Ok(command) => command,
+                Err(evidence) => return (DoctorStatus::Fail, evidence),
+            };
+        let mut result =
+            doctor_tool_check_with_command(tool, command, DOCTOR_TOOL_TIMEOUT, Some(root));
+        if let Some(selector) = selector {
+            result.evidence = format!("{selector} compiler: {}", result.evidence);
+            if result.status == DoctorStatus::Fail {
+                result.evidence.push_str(&format!("; fix or unset {selector}"));
+            }
+        }
+        return result.into_public();
+    }
     doctor_tool_check_with_timeout_result_at(
         tool,
         DOCTOR_TOOL_TIMEOUT,
         doctor_tool_probe_dir(tool, root),
     )
     .into_public()
+}
+
+/// Cargo's explicit compiler precedence is `RUSTC`, then `CARGO_BUILD_RUSTC`.
+/// Resolve a relative path against the selected build root before the child
+/// changes directory. A bare executable name keeps `PATH` lookup. These are
+/// literal program names, never shell commands; Cargo config and wrappers
+/// remain outside this prerequisite check.
+fn source_build_rustc_command(
+    root: &Path,
+    rustc: Option<&OsStr>,
+    cargo_build_rustc: Option<&OsStr>,
+) -> Result<(std::process::Command, Option<&'static str>), String> {
+    let selected = rustc
+        .map(|program| ("RUSTC", program))
+        .or_else(|| cargo_build_rustc.map(|program| ("CARGO_BUILD_RUSTC", program)));
+    let Some((selector, program)) = selected else {
+        return Ok((doctor_tool_command("rustc"), None));
+    };
+    let program = program
+        .to_str()
+        .filter(|program| !program.is_empty())
+        .ok_or_else(|| {
+            format!("{selector} must name one nonempty Unicode executable; fix or unset {selector}")
+        })?;
+    let program = if program.contains(['/', '\\']) {
+        std::path::absolute(root.join(program)).map_err(|error| {
+            format!("cannot resolve {selector} from the selected root: {error}")
+        })?
+    } else {
+        PathBuf::from(program)
+    };
+    Ok((doctor_tool_command(program), Some(selector)))
 }
 
 /// The directory a core tool probe runs in. `cargo` and `rustc` resolve
@@ -3239,9 +3299,178 @@ mod tests {
 
     #[test]
     fn rustc_doctor_probe_from_selected_root_applies_the_version_gate() {
-        let (status, evidence) = doctor_tool_check_for_root("rustc", &std::env::temp_dir());
+        let (status, evidence) =
+            doctor_tool_check_for_root("rustc", &std::env::temp_dir(), DoctorProfile::Analysis);
         assert_eq!(status, DoctorStatus::Pass, "{evidence}");
         assert!(evidence.starts_with("rustc "), "{evidence}");
+    }
+
+    #[cfg(unix)]
+    fn probe_source_build_compiler(
+        root: &Path,
+        path: &Path,
+        rustc: Option<&OsStr>,
+        cargo_build_rustc: Option<&OsStr>,
+    ) -> Result<DoctorToolCheckResult, String> {
+        let (command, _) = source_build_rustc_command(root, rustc, cargo_build_rustc)?;
+        assert!(command.get_args().next().is_none());
+        let program = command.get_program().to_os_string();
+        Ok(probe_published_tool_with_command(
+            "rustc",
+            || {
+                let mut command = doctor_tool_command(&program);
+                command.env("PATH", path).env("RUSTUP_AUTO_INSTALL", "1");
+                command
+            },
+            SHIM_PROBE_TEST_CEILING,
+            Some(root),
+        ))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_build_compiler_overrides_precede_path_without_shell_splitting() -> Result<(), String>
+    {
+        let dir = unique_test_dir("compiler-selection");
+        let root = dir.join("selected root");
+        let path = dir.join("path tools");
+        let sdk = root.join("sdk");
+        std::fs::create_dir_all(&sdk).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+        let script = |identity: &str| {
+            format!(
+                "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --version ] && [ \"$RUSTUP_AUTO_INSTALL\" = 0 ] || exit 17\nprintf 'rustc {MINIMUM_RUSTC_VERSION} ({identity}; %s)\\n' \"${{PWD##*/}}\"\n"
+            )
+        };
+        publish_doctor_test_tool(&path, "rustc", &script("PATH"))?;
+        publish_doctor_test_tool(&path, "custom-rustc", &script("bare-name"))?;
+        publish_doctor_test_tool(&sdk, "rustc", &script("relative-path"))?;
+        let explicit = publish_doctor_test_tool(&dir, "explicit compiler", &script("RUSTC"))?;
+        let cargo = publish_doctor_test_tool(&dir, "cargo compiler", &script("CARGO_BUILD_RUSTC"))?;
+        let bare = OsStr::new("custom-rustc");
+        let relative = OsStr::new("./sdk/rustc");
+        let cases = [
+            (None, None, "PATH"),
+            (Some(bare), None, "bare-name"),
+            (Some(relative), None, "relative-path"),
+            (Some(explicit.as_os_str()), None, "RUSTC"),
+            (None, Some(cargo.as_os_str()), "CARGO_BUILD_RUSTC"),
+            (Some(explicit.as_os_str()), Some(cargo.as_os_str()), "RUSTC"),
+            (None, Some(bare), "bare-name"),
+            (None, Some(relative), "relative-path"),
+        ];
+        let results: Result<Vec<_>, _> = cases
+            .iter()
+            .map(|(rustc, cargo, identity)| {
+                probe_source_build_compiler(&root, &path, *rustc, *cargo)
+                    .map(|result| (*identity, result))
+            })
+            .collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        for (identity, result) in results? {
+            assert_eq!(result.status, DoctorStatus::Pass, "{}", result.evidence);
+            assert_eq!(
+                result.evidence,
+                format!("rustc {MINIMUM_RUSTC_VERSION} ({identity}; selected root)")
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_build_compiler_failure_never_borrows_a_healthy_fallback() -> Result<(), String> {
+        let dir = unique_test_dir("compiler-failure");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let healthy = publish_doctor_test_tool(
+            &dir,
+            "rustc",
+            &format!("#!/bin/sh\nprintf 'rustc {MINIMUM_RUSTC_VERSION} (healthy)\\n'\n"),
+        )?;
+        let old = publish_doctor_test_tool(
+            &dir,
+            "old-compiler",
+            &format!("#!/bin/sh\nprintf '{}\\n'\n", below_minimum_rustc_output()?),
+        )?;
+        let malformed = publish_doctor_test_tool(
+            &dir,
+            "malformed-compiler",
+            "#!/bin/sh\nprintf 'not a Rust compiler\\n'\n",
+        )?;
+        let failing = publish_doctor_test_tool(
+            &dir,
+            "failing-compiler",
+            "#!/bin/sh\nprintf 'error: selected compiler failed\\n' >&2\nexit 7\n",
+        )?;
+        let missing = dir.join("missing-compiler");
+        let healthy_result = probe_source_build_compiler(&dir, &dir, None, None)?;
+        let cases = [
+            (&missing, "not available"),
+            (&old, "below ripr's build minimum"),
+            (&malformed, "not a Rust compiler"),
+            (&failing, "selected compiler failed"),
+        ];
+        let results: Result<Vec<_>, _> = cases
+            .iter()
+            .map(|(compiler, evidence)| {
+                probe_source_build_compiler(
+                    &dir,
+                    &dir,
+                    Some(compiler.as_os_str()),
+                    Some(healthy.as_os_str()),
+                )
+                .map(|result| (*evidence, result))
+            })
+            .collect();
+        let cargo_missing =
+            probe_source_build_compiler(&dir, &dir, None, Some(missing.as_os_str()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(healthy_result.status, DoctorStatus::Pass);
+        for (evidence, result) in results? {
+            assert_eq!(result.status, DoctorStatus::Fail, "{}", result.evidence);
+            assert!(result.evidence.contains(evidence), "{}", result.evidence);
+            assert!(!result.evidence.contains("healthy"), "{}", result.evidence);
+        }
+        assert_eq!(cargo_missing?.status, DoctorStatus::Fail);
+        Ok(())
+    }
+
+    #[test]
+    fn source_build_compiler_empty_override_is_an_error_before_fallback() {
+        for (rustc, cargo, selector) in [
+            (Some(OsStr::new("")), Some(OsStr::new("rustc")), "RUSTC"),
+            (None, Some(OsStr::new("")), "CARGO_BUILD_RUSTC"),
+        ] {
+            let result = source_build_rustc_command(Path::new("."), rustc, cargo);
+            assert!(
+                matches!(
+                    result,
+                    Err(ref error) if error.contains(selector) && error.contains("nonempty")
+                ),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_build_compiler_non_unicode_override_is_disclosed() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let invalid = OsStr::from_bytes(b"rustc-\xff");
+        for (rustc, cargo, selector) in [
+            (Some(invalid), Some(OsStr::new("rustc")), "RUSTC"),
+            (None, Some(invalid), "CARGO_BUILD_RUSTC"),
+        ] {
+            let result = source_build_rustc_command(Path::new("."), rustc, cargo);
+            assert!(
+                matches!(
+                    result,
+                    Err(ref error) if error.contains(selector) && error.contains("Unicode")
+                ),
+                "{result:?}"
+            );
+        }
     }
 
     #[cfg(unix)]
