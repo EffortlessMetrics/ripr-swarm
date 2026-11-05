@@ -400,6 +400,13 @@ fn helper_owner_lookup_names(owner: &OwnerContext<'_>, index: &RustIndex) -> Vec
             lookup_names.push(qualified);
         }
     }
+    if owner.free_function
+        && let Some(key) = owner
+            .function
+            .and_then(|function| context::ordinary_free_delegation_owner_key(index, function))
+    {
+        lookup_names.push(key);
+    }
     lookup_names
 }
 
@@ -438,7 +445,7 @@ pub(super) fn match_helper_owner_call(
             }
             if lookup_name == &owner.name
                 && owner.function.is_some_and(|owner_fn| {
-                    owner_same_file_helper_name_collision(context.index, owner_fn)
+                    owner_helper_name_collision(context.index, owner_fn)
                         && context.tests.get(test_index).is_none_or(|indexed| {
                             !context::production_delegation_from_test_reaches_owner(
                                 context.index,
@@ -462,7 +469,12 @@ pub(super) fn match_helper_owner_call(
     }
 }
 
-fn owner_same_file_helper_name_collision(index: &RustIndex, owner: &FunctionSummary) -> bool {
+fn owner_helper_name_collision(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    if owner.impl_context == FunctionImplContext::Free
+        && let Some(package) = package_scope(&owner.file)
+    {
+        return !context::production_owner_name_is_unique_in_package(index, &package, &owner.name);
+    }
     index
         .functions()
         .iter()

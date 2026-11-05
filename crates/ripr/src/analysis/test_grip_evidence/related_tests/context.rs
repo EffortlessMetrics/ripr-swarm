@@ -1642,7 +1642,10 @@ pub(in crate::analysis::test_grip_evidence) fn ordinary_module_delegation_owner_
     index: &RustIndex,
     owners_by_package_and_module: &OwnerNamesByPackageAndModulePath,
 ) -> BTreeSet<String> {
-    if function.source_role.is_evidence_role() || rust_index::is_test_file(&function.file) {
+    if function.source_role.is_evidence_role()
+        || rust_index::is_test_file(&function.file)
+        || !ordinary_free_parent_is_unambiguous(index, function)
+    {
         return BTreeSet::new();
     }
     let Some(package) = package_scope(&function.file) else {
@@ -1721,13 +1724,37 @@ pub(in crate::analysis::test_grip_evidence) fn ordinary_module_delegation_owner_
             if total_matches != 1 {
                 continue;
             }
-            let delegated_key =
-                if production_owner_name_is_unique_in_package(index, &package, &owner_name) {
-                    owner_name
-                } else {
-                    format!("{}::{owner_name}", declaration.name)
-                };
-            delegated.insert(delegated_key);
+            if production_owner_name_is_unique_in_package(index, &package, &owner_name) {
+                delegated.insert(owner_name);
+                continue;
+            }
+            // A relative module spelling is not an owner identity: the same
+            // module name can occur in other files or below another module.
+            let mut resolved = index.functions().iter().filter(|candidate| {
+                candidate.name == owner_name
+                    && candidate.impl_context == FunctionImplContext::Free
+                    && !candidate.source_role.is_evidence_role()
+                    && package_scope(&candidate.file).as_deref() == Some(package.as_str())
+                    && ((candidate.file == function.file
+                        && candidate.id.0
+                            == format!(
+                                "{}::{}::{owner_name}",
+                                function.file.display(),
+                                declaration.name
+                            ))
+                        || (candidate.file != function.file
+                            && candidate.id.0
+                                == format!("{}::{owner_name}", candidate.file.display())
+                            && super::module_path_for_index(index, &candidate.file).is_some_and(
+                                |path| candidate_module_paths.contains(&path.replace('/', "::")),
+                            )))
+            });
+            if let Some(candidate) = resolved.next()
+                && resolved.next().is_none()
+                && let Some(key) = ordinary_free_delegation_owner_key(index, candidate)
+            {
+                delegated.insert(key);
+            }
         }
     }
     delegated
@@ -1743,7 +1770,7 @@ fn eager_qualified_helper_call(
         .any(|prefix| calls.contains(&format!("{prefix}{module_path}::{helper_name}")))
 }
 
-fn production_owner_name_is_unique_in_package(
+pub(super) fn production_owner_name_is_unique_in_package(
     index: &RustIndex,
     package: &str,
     name: &str,
@@ -1760,49 +1787,76 @@ fn production_owner_name_is_unique_in_package(
         == 1
 }
 
+/// These private maps group helper bodies by terminal name. A new ordinary
+/// delegation edge cannot choose among same-named production parents.
+fn ordinary_free_parent_is_unambiguous(index: &RustIndex, function: &FunctionSummary) -> bool {
+    function.impl_context != FunctionImplContext::Free
+        || package_scope(&function.file).is_some_and(|package| {
+            production_owner_name_is_unique_in_package(index, &package, &function.name)
+        })
+}
+
+/// Carry the existing indexed owner identity through the private helper map.
+/// Refuse duplicate identities rather than merging configuration siblings.
+pub(super) fn ordinary_free_delegation_owner_key(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+) -> Option<String> {
+    (owner.impl_context == FunctionImplContext::Free
+        && index
+            .functions()
+            .iter()
+            .filter(|candidate| candidate.id == owner.id)
+            .count()
+            == 1)
+        .then(|| format!("ordinary-owner::{}", owner.id.0))
+}
+
 fn same_file_nested_module_delegation_owner_calls(
     index: &RustIndex,
     function: &FunctionSummary,
     same_file_functions: &[&FunctionSummary],
 ) -> BTreeSet<String> {
-    if function.source_role.is_evidence_role() || rust_index::is_test_file(&function.file) {
+    if function.source_role.is_evidence_role()
+        || rust_index::is_test_file(&function.file)
+        || !ordinary_free_parent_is_unambiguous(index, function)
+    {
         return BTreeSet::new();
     }
     let calls = eager_qualified_function_calls(function, index);
     let file_prefix = format!("{}::", function.file.display());
-    let mut by_module: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut by_module: BTreeMap<String, Vec<&FunctionSummary>> = BTreeMap::new();
     for candidate in same_file_functions {
         let Some(rest) = candidate.id.0.strip_prefix(&file_prefix) else {
             continue;
         };
-        let Some((module_name, _)) = rest.split_once("::") else {
+        let Some(module_name) = rest.strip_suffix(&format!("::{}", candidate.name)) else {
             continue;
         };
-        if !owner_token_is_specific_enough(&candidate.name.to_ascii_lowercase()) {
-            continue;
-        }
-        if !eager_qualified_helper_call(&calls, module_name, &candidate.name) {
+        // This route supports one ordinary inline module. A deeper declaration
+        // must not be truncated into a shallower, different owner's key.
+        if module_name.contains("::")
+            || candidate.impl_context != FunctionImplContext::Free
+            || !owner_token_is_specific_enough(&candidate.name.to_ascii_lowercase())
+            || !eager_qualified_helper_call(&calls, module_name, &candidate.name)
+        {
             continue;
         }
         by_module
             .entry(module_name.to_string())
             .or_default()
-            .insert(candidate.name.clone());
+            .push(candidate);
     }
     let mut delegated = BTreeSet::new();
-    for (module, owners) in &by_module {
-        if owners.len() == 1 {
-            for owner in owners {
-                // Keep the resolved module when a same-named owner exists
-                // elsewhere in the package, just as ordinary module edges do.
-                let globally_unique = package_scope(&function.file).is_some_and(|package| {
-                    production_owner_name_is_unique_in_package(index, &package, owner)
-                });
-                delegated.insert(if globally_unique {
-                    owner.clone()
-                } else {
-                    format!("{module}::{owner}")
-                });
+    for owners in by_module.values() {
+        if let [owner] = owners.as_slice() {
+            let globally_unique = package_scope(&function.file).is_some_and(|package| {
+                production_owner_name_is_unique_in_package(index, &package, &owner.name)
+            });
+            if globally_unique {
+                delegated.insert(owner.name.clone());
+            } else if let Some(key) = ordinary_free_delegation_owner_key(index, owner) {
+                delegated.insert(key);
             }
         }
     }
@@ -1848,6 +1902,12 @@ pub(in crate::analysis::test_grip_evidence) fn production_delegation_from_test_r
             if package_scope(&test.file) != package_scope(&callee.file) {
                 continue;
             }
+            if owner_fn.impl_context == FunctionImplContext::Free
+                && (callee.impl_context != FunctionImplContext::Free
+                    || !ordinary_free_parent_is_unambiguous(index, callee))
+            {
+                continue;
+            }
             let calls = eager_qualified_function_calls(callee, index);
             if let Some(module) = owner_module.as_deref().filter(|module| !module.is_empty()) {
                 if eager_qualified_helper_call(&calls, module, &owner_fn.name)
@@ -1883,7 +1943,11 @@ fn callee_delegates_to_owner_in_same_module(
     if owner_scope.is_empty() {
         return true;
     }
-    callee.id.0.starts_with(&format!("{owner_scope}::")) || callee.id.0 == owner_scope
+    if owner.impl_context == FunctionImplContext::Free {
+        callee.id.0.strip_suffix(&format!("::{}", callee.name)) == Some(owner_scope)
+    } else {
+        callee.id.0.starts_with(&format!("{owner_scope}::")) || callee.id.0 == owner_scope
+    }
 }
 
 pub(super) fn owner_delegation_module_path(
@@ -2003,13 +2067,14 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_calls_by_file_with_f
                 (call.name != function.name
                     || call_text_contains_named_call(&function.body, &call.name))
                     && (helper_name_carries_owner_token(&helper_name_lower, &call.name)
-                        || helper_directly_delegates_to_specific_owner(
-                            function,
-                            call,
-                            local_function_names,
-                            external_owner_names,
-                            allow_fanout_wrappers,
-                        ))
+                        || (ordinary_free_parent_is_unambiguous(index, function)
+                            && helper_directly_delegates_to_specific_owner(
+                                function,
+                                call,
+                                local_function_names,
+                                external_owner_names,
+                                allow_fanout_wrappers,
+                            )))
                     && call_text_contains_named_call(&function.body, &call.name)
             })
             .map(|call| call.name.clone())

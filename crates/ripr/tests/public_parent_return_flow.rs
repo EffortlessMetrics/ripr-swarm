@@ -434,3 +434,327 @@ fn same_named_inline_rival_does_not_reach_a_different_child_owner() -> Result<()
     }
     Ok(())
 }
+
+#[test]
+fn ordinary_helper_namespace_keeps_exact_owner_identity() -> Result<(), String> {
+    let cases: &[(&str, &str, bool, &[(&str, &str)])] = &[
+        (
+            "root-bare-target",
+            "src/lib.rs::compute_value",
+            true,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub fn compute_value() -> i32 { 9 }\npub fn entry() -> i32 { compute_value() }\npub mod rival { pub fn compute_value() -> i32 { 9 }\n }",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test]\nfn observes_public_parent() { assert_eq!(parent_output_flow::entry(), 9); }\n",
+                ),
+            ],
+        ),
+        (
+            "root-bare-rival",
+            "src/lib.rs::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub fn compute_value() -> i32 { 9 }\npub mod rival { pub fn compute_value() -> i32 { 9 }\npub fn entry() -> i32 { compute_value() }\n }",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test]\nfn observes_public_parent() { assert_eq!(parent_output_flow::rival::entry(), 9); }\n",
+                ),
+            ],
+        ),
+        (
+            "file-bare-target",
+            "src/child.rs::compute_value",
+            true,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/child.rs",
+                    "pub fn compute_value() -> i32 { 9 }\npub fn entry() -> i32 { compute_value() }\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub mod child;\npub fn compute_value() -> i32 { 9 }\n",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test]\nfn observes_public_parent() { assert_eq!(parent_output_flow::child::entry(), 9); }\n",
+                ),
+            ],
+        ),
+        (
+            "file-bare-rival",
+            "src/child.rs::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                ("src/child.rs", "pub fn compute_value() -> i32 { 9 }\n"),
+                (
+                    "src/lib.rs",
+                    "pub mod child;\npub fn compute_value() -> i32 { 9 }\npub fn entry() -> i32 { compute_value() }\n",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test]\nfn observes_public_parent() { assert_eq!(parent_output_flow::entry(), 9); }\n",
+                ),
+            ],
+        ),
+        (
+            "inline-bare-target",
+            "src/lib.rs::child::compute_value",
+            true,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub mod child { pub fn compute_value() -> i32 { 9 }\npub fn entry() -> i32 { compute_value() }\n }\npub fn compute_value() -> i32 { 9 }\n",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test]\nfn observes_public_parent() { assert_eq!(parent_output_flow::child::entry(), 9); }\n",
+                ),
+            ],
+        ),
+        (
+            "root-file-key-alias",
+            "src/lib.rs::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub fn compute_value() -> i32 { 9 }\npub mod lib { pub fn compute_value() -> i32 { 9 }\n } pub fn entry()->i32 { lib::compute_value() }",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test] fn observes_public_parent(){assert_eq!(parent_output_flow::entry(),9);}",
+                ),
+            ],
+        ),
+        (
+            "inline-truncated-key-alias",
+            "src/lib.rs::outer::child::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub mod outer { pub fn compute_value() -> i32 { 9 }\npub mod child { pub fn compute_value() -> i32 { 9 }\n } } pub fn entry()->i32 { outer::compute_value() }",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test] fn observes_public_parent(){assert_eq!(parent_output_flow::entry(),9);}",
+                ),
+            ],
+        ),
+        (
+            "file-inline-relative-key-alias",
+            "src/outer.rs::child::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub mod outer; pub mod child { pub fn compute_value() -> i32 { 9 }\n } pub fn entry()->i32 { child::compute_value() }",
+                ),
+                (
+                    "src/outer.rs",
+                    "pub mod child { pub fn compute_value() -> i32 { 9 }\n }",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test] fn observes_public_parent(){assert_eq!(parent_output_flow::entry(),9);}",
+                ),
+            ],
+        ),
+        (
+            "root-bare-unused-parent",
+            "src/lib.rs::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub fn compute_value() -> i32 { 9 }\npub mod rival { pub fn compute_value() -> i32 { 9 }\npub fn entry() -> i32 { compute_value() }\n }pub fn entry()->i32 { compute_value() }",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test]\nfn observes_public_parent() { assert_eq!(parent_output_flow::rival::entry(), 9); }\n",
+                ),
+            ],
+        ),
+        (
+            "file-bare-unused-parent",
+            "src/child.rs::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/child.rs",
+                    "pub fn compute_value() -> i32 { 9 }\npub fn entry()->i32 { compute_value() }",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub mod child;\npub fn compute_value() -> i32 { 9 }\npub fn entry() -> i32 { compute_value() }\n",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test]\nfn observes_public_parent() { assert_eq!(parent_output_flow::entry(), 9); }\n",
+                ),
+            ],
+        ),
+        (
+            "file-qualified-unused-parent-colliding",
+            "src/child.rs::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                ("src/child.rs", "pub fn compute_value() -> i32 { 9 }\n"),
+                (
+                    "src/lib.rs",
+                    "pub mod child;pub mod rival { pub fn compute_value() -> i32 { 9 }\n pub fn entry()->i32 { compute_value() } } pub fn entry()->i32 { child::compute_value() }",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test] fn observes_public_parent(){assert_eq!(parent_output_flow::rival::entry(),9);}",
+                ),
+            ],
+        ),
+        (
+            "file-qualified-unused-parent-unique",
+            "src/child.rs::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                ("src/child.rs", "pub fn compute_value() -> i32 { 9 }\n"),
+                (
+                    "src/lib.rs",
+                    "pub mod child;pub mod rival { pub fn rival_value()->i32 {9} pub fn entry()->i32 { rival_value() } } pub fn entry()->i32 { child::compute_value() }",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test] fn observes_public_parent(){assert_eq!(parent_output_flow::rival::entry(),9);}",
+                ),
+            ],
+        ),
+        (
+            "inline-qualified-unused-parent-colliding",
+            "src/lib.rs::child::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub mod child { pub fn compute_value() -> i32 { 9 }\n }pub mod rival { pub fn compute_value() -> i32 { 9 }\n pub fn entry()->i32 { compute_value() } } pub fn entry()->i32 { child::compute_value() }",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test] fn observes_public_parent(){assert_eq!(parent_output_flow::rival::entry(),9);}",
+                ),
+            ],
+        ),
+        (
+            "inline-qualified-unused-parent-unique",
+            "src/lib.rs::child::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub mod child { pub fn compute_value() -> i32 { 9 }\n }pub mod rival { pub fn rival_value()->i32 {9} pub fn entry()->i32 { rival_value() } } pub fn entry()->i32 { child::compute_value() }",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test] fn observes_public_parent(){assert_eq!(parent_output_flow::rival::entry(),9);}",
+                ),
+            ],
+        ),
+        (
+            "root-bare-unused-parent-unique",
+            "src/lib.rs::compute_value",
+            false,
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname=\"parent_output_flow\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                ),
+                (
+                    "src/lib.rs",
+                    "pub fn compute_value() -> i32 { 9 }\npub mod rival { pub fn rival_value()->i32 {9} pub fn entry()->i32 {rival_value()} } pub fn entry()->i32 {compute_value()}",
+                ),
+                (
+                    "tests/integration.rs",
+                    "#[test] fn observes_public_parent(){assert_eq!(parent_output_flow::rival::entry(),9);}",
+                ),
+            ],
+        ),
+    ];
+    for (name, owner, observes, files) in cases {
+        let mut fixture = Fixture::new(Placement::Parent, 9, "HELPER", 9)?;
+        fixture.owner = owner;
+        for (relative, source) in *files {
+            let path = fixture.root.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(path, source).map_err(|error| error.to_string())?;
+        }
+        let seam = fixture.seam()?;
+        if *observes {
+            assert_eq!(contradictions(&seam)?, 0, "{name}: {seam}");
+        } else {
+            assert_no_helper_reach(&seam)?;
+        }
+    }
+    Ok(())
+}

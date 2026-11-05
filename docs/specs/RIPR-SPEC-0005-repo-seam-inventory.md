@@ -199,11 +199,17 @@ The retained fn-keyword body is rebound uniquely to the original indexed file
 source before this proof, preserving function/impl/module/crate ancestors.
 Missing, duplicate or unparseable source does not grant qualified reach; the
 analysis does not re-read live files or change cached source spans. A qualified
-inline delegation retains its module key when a same-named production owner
-exists elsewhere in the package; calling an inline rival must not credit an
-unrelated file-backed child. The consumer resolves an ordinary inline
-owner through its indexed declaration module as well as the existing file key,
-so a real inline target keeps credit beside a same-named rival.
+ordinary helper edge preserves its exact indexed owner identity when another
+production owner in the package has the same name. A relative module spelling,
+crate-root filename or truncated nested path is not that identity. Duplicate
+candidate identities do not grant reach. These newly admitted ordinary helper
+routes also require a unique production parent name in the package, since the
+private graph groups parent bodies by terminal name. An unused same-named
+parent is not a witness for the function a test calls. Bare names require package-wide
+uniqueness or a production delegation witness in the owner's exact lexical
+module; a nested rival's same-named function is not a witness. The supported
+single-level qualified targets retain credit; deeper unsupported routes remain
+below helper authority. This does not expand import or general path resolution.
 
 Full evidence carries the indexed test target. Compact evidence intentionally
 omits target details and preserves the five stage states and contradiction count.
