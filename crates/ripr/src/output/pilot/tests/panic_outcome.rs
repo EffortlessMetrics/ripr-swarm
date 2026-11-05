@@ -7,7 +7,9 @@ use crate::app::agent_brief::{
 };
 use crate::config::RiprConfig;
 use crate::domain::StaticLimitKind;
-use crate::output::evidence_record::{evidence_record_for, evidence_record_json_value};
+use crate::output::evidence_record::{
+    evidence_record_for, evidence_record_json_value, is_static_limited, static_limitations_for,
+};
 use crate::output::pilot::ranking::{
     actionable_in_change, actionable_in_owner, actionable_total, routable_total,
 };
@@ -56,6 +58,64 @@ mod tests {{
     })
 }
 
+/// Isolate the consumer decision with concrete, same-class evidence. The marker
+/// summary comes from the real producer; the CLI snapshot-policy case separately
+/// proves that the full analyzer can produce concrete stages with this limit.
+#[test]
+fn named_panic_limit_with_concrete_stages_withholds_pilot_and_brief() -> Result<(), String> {
+    use StageState::{No, Yes};
+
+    let mut ordinary = panic_predicate("")?;
+    assert!(
+        ordinary
+            .evidence
+            .names_static_limit(StaticLimitKind::RustPanicOutcomeUnresolved)
+    );
+    let named_summary = ordinary.evidence.discriminate.summary.clone();
+    ordinary.evidence.reach = stage(Yes);
+    ordinary.evidence.activate = stage(Yes);
+    ordinary.evidence.propagate = stage(Yes);
+    ordinary.evidence.observe = stage(No);
+    ordinary.evidence.discriminate = stage(No);
+    ordinary.class = classify_seam(&ordinary.seam, &ordinary.evidence);
+    let mut limited = ordinary.clone();
+    limited.evidence.discriminate.summary = named_summary;
+
+    let config = RiprConfig::default();
+    let working_set = AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+    for (entry, withheld) in [(ordinary, false), (limited, true)] {
+        assert_eq!(entry.class, SeamGripClass::ReachableUnrevealed);
+        assert_eq!(classify_seam(&entry.seam, &entry.evidence), entry.class);
+        assert_eq!(is_static_limited(&entry), withheld);
+        let limits = static_limitations_for(&entry);
+        if withheld {
+            assert_eq!(limits.len(), 1);
+            assert_eq!(
+                limits[0].category,
+                StaticLimitKind::RustPanicOutcomeUnresolved.as_str()
+            );
+            assert_eq!(limits[0].state, "no");
+            assert_eq!(limits[0].reason, entry.evidence.discriminate.summary);
+        } else {
+            assert!(limits.is_empty());
+        }
+        let entries = [entry];
+        assert_eq!(
+            top_actionable_seams(&entries, 5, None).len(),
+            usize::from(!withheld)
+        );
+        let brief = select_agent_brief_seams(
+            &entries,
+            &working_set,
+            3,
+            AgentBriefPolicy::from_config(&config),
+        );
+        assert_eq!(brief.top_seams.len(), usize::from(!withheld));
+        assert_eq!(brief.omitted_by_policy, usize::from(withheld));
+    }
+    Ok(())
+}
+
 #[test]
 fn named_panic_limit_withholds_pilot_and_brief_without_reclassifying() -> Result<(), String> {
     let entry = panic_predicate("")?;
@@ -65,8 +125,8 @@ fn named_panic_limit_withholds_pilot_and_brief_without_reclassifying() -> Result
             .evidence
             .names_static_limit(StaticLimitKind::RustPanicOutcomeUnresolved)
     );
-    // This real parser path also has unresolved propagation. The producer's
-    // concrete-stage contract is tested separately in panic_outcome::tests;
+    // This real parser path also has unresolved propagation. The controlled
+    // consumer test above and the CLI snapshot-policy case cover concrete stages;
     // here the named reason must survive alongside the other limitation.
     assert_eq!(entry.evidence.propagate.state, StageState::Unknown);
     assert_eq!(entry.evidence.discriminate.state, StageState::No);

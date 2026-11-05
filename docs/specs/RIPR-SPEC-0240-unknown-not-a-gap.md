@@ -1287,11 +1287,15 @@ proves named-reason preservation. The CLI test also adds a snapshot with
 strength grants no discrimination. That case requires the named panic limit
 and concrete stages before checking the ranking and brief omission, so it
 distinguishes named-only selection from stage-based withholding.
-`crates/ripr/src/analysis/test_grip_evidence/panic_outcome/tests.rs`
-(`named_panic_limit_with_concrete_stages_withholds_pilot_and_brief`) separately
-feeds concrete stage states to the existing panic-limit producer and checks
-that its named limit excludes the seam while the unmarked same-class control
-remains selectable.
+The pure analysis producer test
+`an_unrevealed_seam_names_the_typed_limit_once_without_reclassifying` in
+`crates/ripr/src/analysis/test_grip_evidence/panic_outcome/tests.rs` preserves
+concrete stage facts and classification while adding the named marker.
+The output test `named_panic_limit_with_concrete_stages_withholds_pilot_and_brief`
+in `crates/ripr/src/output/pilot/tests/panic_outcome.rs` separately copies the
+real producer's named summary into a controlled concrete-stage consumer pair.
+The marked seam is withheld while the otherwise identical, unmarked
+`ReachableUnrevealed` seam remains selectable.
 
 `crates/ripr/tests/indirect_owner_limit.rs` (function value, pointer binding,
 local and known executors, item macro, inert-macro, `cfg_attr` and
