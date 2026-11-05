@@ -5650,12 +5650,19 @@ fn assertion_calls_resolve(
         .filter(|call| {
             let offset = u32::from(call.syntax().text_range().start()) as usize;
             let line = test.start_line
-                + test.body[..offset].bytes().filter(|byte| *byte == b'\n').count();
+                + test.body[..offset]
+                    .bytes()
+                    .filter(|byte| *byte == b'\n')
+                    .count();
             line == assertion.line
                 && mask_comments_and_strings(&call.syntax().text().to_string())
-                    .trim().trim_end_matches(';').trim()
+                    .trim()
+                    .trim_end_matches(';')
+                    .trim()
                     == mask_comments_and_strings(&assertion.text)
-                        .trim().trim_end_matches(';').trim()
+                        .trim()
+                        .trim_end_matches(';')
+                        .trim()
         });
     let (Some(call), None) = (matching.next(), matching.next()) else {
         return false;
@@ -5949,7 +5956,10 @@ fn assertion_arguments_resolve_with(
         if let Some(method) = all_named_calls {
             // An opaque nested macro may hide a same-named call; it cannot
             // establish that every relevant operand names this candidate.
-            if syntax.descendants().any(|node| ast::MacroCall::can_cast(node.kind())) {
+            if syntax
+                .descendants()
+                .any(|node| ast::MacroCall::can_cast(node.kind()))
+            {
                 return false;
             }
             for node in syntax.descendants() {
@@ -6469,7 +6479,9 @@ pub(in crate::analysis::classify) fn assertion_free_owner_calls_resolve(
             };
             callee.path().is_some_and(|path| {
                 path.qualifier().is_none()
-                    && path.segment().and_then(|segment| segment.name_ref())
+                    && path
+                        .segment()
+                        .and_then(|segment| segment.name_ref())
                         .is_some_and(|name| name.text() == owner.name)
             })
         },

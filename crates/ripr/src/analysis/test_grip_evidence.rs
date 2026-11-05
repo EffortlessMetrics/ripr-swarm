@@ -665,7 +665,12 @@ fn credited_related_tests<'a>(
                 view.to_mut()
                     .assertions
                     .retain(|oracle| {
-                        !owner_reach.assertion_pins_other_function(owner, test, oracle, &oracle.text)
+                        !owner_reach.assertion_pins_other_function(
+                            owner,
+                            test,
+                            oracle,
+                            &oracle.text,
+                        )
                     });
             }
             // #12394 item 3: the claims statements `ripr check` credits
