@@ -3316,7 +3316,29 @@ mod tests {
             AnalysisOutcomeKind::NoChangedLines,
             AnalysisOutcomeKind::NoBehavioralCandidates,
         ] {
-            let mut session = session_with(kind, 0)?;
+            // Match the producer's admissible counts for each no-scope
+            // outcome; a malformed fixture must not be mistaken for an
+            // output-projection failure.
+            let counts = if kind == AnalysisOutcomeKind::NoBehavioralCandidates {
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..Default::default()
+                }
+            } else {
+                AnalysisOutcomeCounts::default()
+            };
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                counts,
+                Vec::new(),
+            )?);
+            let snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+            session.last_good = Some(Arc::new(snapshot));
             let document = list(&session, &none)?;
             if document["outcome"]["kind"] != kind.as_str()
                 || document["total"] != json!(0)
