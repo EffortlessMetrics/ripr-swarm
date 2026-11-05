@@ -1,0 +1,118 @@
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index 0f319ad4f..760b33f7e 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -682,7 +682,10 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// the change is visible (#12841).
+ /// `1.159`: repo boundary evidence requires the boundary input and admitted
+ /// discriminating oracle in the same test (#7490).
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.159";
++/// `1.159`: proximity-only and unchanged-return-token oracles cannot discriminate (#12010).
++/// `1.160`: compose #7490 boundary pairing with #12010 assertion-local sink identity
++/// and return-delta confirmation; neither independent `1.159` is reusable.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.160";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -883,7 +886,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.159";
+ /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
+ /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+ /// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
++/// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
++/// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1086,7 +1091,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
+ /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
+ /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+ /// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
++/// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
++/// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5191,7 +5198,8 @@ mod tests {
+         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
+         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
+         // 1.158 -> 1.159: boundary and oracle must be paired in the same test (#7490).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.159");
++        // 1.159 -> 1.160: both independent predecessor semantics must be invalidated.
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.160");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5332,8 +5340,9 @@ mod tests {
+         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
+         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
+         // 0.160 -> 0.161: same boundary-oracle pairing as full 1.159 (#7490).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.161");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.161");
++        // 0.161 -> 0.162: compose both independent semantic generations.
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.162");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.162");
+     }
+ 
+     #[test]
+@@ -5640,21 +5649,24 @@ mod tests {
+ 
+     #[test]
+     fn favorable_classified_predecessors_miss_and_current_values_reuse() -> Result<(), String> {
+-        for (previous_full, previous_compact) in [
+-            ("1.27", "0.33"),
+-            ("1.32", "0.38"),
+-            ("1.33", "0.39"),
+-            ("1.34", "0.40"),
+-            ("1.35", "0.41"),
+-            ("1.36", "0.42"),
+-            ("1.37", "0.43"),
+-            ("1.38", "0.44"),
+-            ("1.71", "0.77"),
+-            ("1.72", "0.78"),
+-            ("1.73", "0.79"),
++        for (semantic_predecessor, previous_full, previous_compact) in [
++            ("historical", "1.27", "0.33"),
++            ("historical", "1.32", "0.38"),
++            ("historical", "1.33", "0.39"),
++            ("historical", "1.34", "0.40"),
++            ("historical", "1.35", "0.41"),
++            ("historical", "1.36", "0.42"),
++            ("historical", "1.37", "0.43"),
++            ("historical", "1.38", "0.44"),
++            ("historical", "1.71", "0.77"),
++            ("historical", "1.72", "0.78"),
++            ("historical", "1.73", "0.79"),
+             // #7490: preserve the immediately preceding main generation.
+-            ("1.157", "0.159"),
+-            ("1.158", "0.160"),
++            ("historical", "1.157", "0.159"),
++            ("historical", "1.158", "0.160"),
++            // Independent successors shared version numbers but not semantics.
++            ("7490-boundary-pairing", "1.159", "0.161"),
++            ("12010-sink-identity", "1.159", "0.161"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+@@ -5676,7 +5688,9 @@ mod tests {
+                     };
+                     // Representative synthesized favorable classification, not
+                     // a claimed capture from the old whole-analyzer execution.
+-                    let favorable = synthesized_discarded_oracle_classified();
++                    let mut favorable = synthesized_discarded_oracle_classified();
++                    favorable.evidence.discriminate.summary =
++                        format!("Synthesized favorable {semantic_predecessor} predecessor");
+                     let count = if sharded { 2 } else { 1 };
+                     let store_limit = if sharded { 1 } else { 10 };
+                     let favorable = vec![favorable; count];
+@@ -5726,6 +5740,7 @@ mod tests {
+     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
+         for previous in [
+             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
++            "0.161",
+         ] {
+             for compact in [false, true] {
+                 let scratch = integrity_scratch("property-shard-generation")?;
