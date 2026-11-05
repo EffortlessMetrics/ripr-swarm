@@ -1,8 +1,8 @@
 {
   "scenario_id": "changed-head-or-baseline",
   "setup_outcome": "base_required | limited",
-  "required_edit": "none until identity is re-established",
+  "required_edit": "none while base, baseline, manifest, or HEAD admission is unresolved",
   "executed_oracle": "not_applicable",
   "combined_claim": "refused",
-  "notes": "A comparable-completion claim across a moved HEAD, ambiguous baseline, or manifest mismatch fails the scenario."
+  "notes": "Apply the shared repair-attempt verifier: an unresolved/wrong base, ambiguous baseline, manifest mismatch, non-descendant ordinary HEAD, or edit outside the retained cage cannot support comparable completion. Ordinary descendant commits containing only the focused allowed test edit remain supported; HEAD movement alone is not a refusal. Trust-bound Python attempts retain exact-HEAD admission, and a valid explicit nonstandard base is not itself a failure."
 }

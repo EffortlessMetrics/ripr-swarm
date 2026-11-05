@@ -38,7 +38,7 @@ id = "changed-head-or-baseline"
 fixture = "fixtures/rust-boundary-gap"
 kind = "refusal"
 expected = "expected/changed-head-or-baseline.json"
-summary = "HEAD or default-branch identity moves, a nonstandard base is in play, or the attempt manifest disagrees. Refuse a comparable completion; require the explicit base or a preserved attempt with the exact refusal."
+summary = "Exercise unresolved/wrong base, ambiguous baseline, manifest mismatch, or HEAD/edit movement refused by the shared attempt verifier. Preserve the exact refusal and recovery. Ordinary focused-test descendant commits remain supported; trust-bound Python stays exact-HEAD. A valid explicit nonstandard base is not a refusal."
 
 [[scenario]]
 id = "test-only-edit-constraint"

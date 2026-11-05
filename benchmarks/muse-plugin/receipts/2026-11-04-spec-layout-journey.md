@@ -57,9 +57,17 @@ memory: not measured.
 ## Coverage against scenarios.toml
 
 Executed end to end: `rust-boundary-gap` (this receipt),
-`missing-or-unapproved-server` and `incorrect-repair-control` (prior
-receipt, earlier package bytes), `stale-snapshot` (the worktree-refresh
-step above and the repair it forced in the candidate).
+`missing-or-unapproved-server` (prior receipt, earlier package bytes),
+`stale-snapshot` (the worktree-refresh step above and the repair it
+forced in the candidate).
+
+The prior receipt's interior-value assertion passed under both behaviors
+alongside an already-discriminating boundary test. That observation does
+not establish an incorrect-only plugin end-to-end rejection run: the
+overall wrong-implementation suite failed because the boundary test was
+still present. `incorrect-repair-control` remains unexecuted as the
+standalone scenario specified in `expected/incorrect-repair-control.json`.
+
 Specified but not yet executed: `no-actionable-gap`,
 `changed-head-or-baseline`, `test-only-edit-constraint` (its diff
 oracle is incidentally satisfied by this run's test-only diff),

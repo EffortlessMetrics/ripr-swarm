@@ -24,9 +24,11 @@ the live tool inventory and stop visibly when the server is absent.
 3. Confirm the plugin and approval state with `muse plugins inspect
    ripr` when the CLI is available: the `ripr-setup` and `ripr-repair`
    skills effective, and the MCP capability `plugin:ripr:mcp_server:core`
-   present. If it is `review_needed`, the result is `approval_required`
-   below — tell the user to approve it (`muse plugins approve
-   ripr:mcp_server:core`) and start a new session; approval does not
+   present. If it is `review_needed` or `modified`, the result is
+   `approval_required` below. `modified` means the installed package
+   differs from the approved one, including after a skill or README update.
+   Have the current package reviewed and approved (`muse plugins approve
+   plugin:ripr:mcp_server:core`), then start a new session; approval does not
    retarget an already-running session.
 4. Check the live tool inventory in this session. Expect
    `ripr_workspace_status`, `ripr_refresh`, `ripr_list_gaps`,
@@ -35,16 +37,22 @@ the live tool inventory and stop visibly when the server is absent.
    `ripr_get_repair_card`, and `ripr_list_repair_attempts`. Absent tools
    with an approved server mean `server_unavailable`; absent tools with
    a 0.10.x binary mean the version floor in step 2.
-5. Call `ripr_workspace_status`. Record the resolved root posture, that
-   server edit and execution authority read `none`, the attempt state,
+5. Call `ripr_workspace_status` with no arguments. Record the resolved
+   root posture, that server edit and execution authority read `none`, the attempt state,
    and any limitation. The server resolves its workspace when the MCP
    process starts: if the intended repository or worktree differs from
    the one this session started in, stop and ask for a new session
    started at the intended root. Changing shell directories does not
    retarget the running server.
-6. Run one explicit first analysis with `ripr_refresh`. Report the
-   outcome kind, snapshot id, and `fresh_for_working_tree`. An empty
-   scope is not an all-clear: surface `empty_scope_hint` when present.
+6. Run one first analysis with `ripr_refresh`, passing `source`
+   explicitly: `"worktree"` when the requested scope includes saved
+   tracked edits, or `"committed"` for a committed diff. Repeat any
+   explicitly selected `base` on every refresh; neither option is sticky.
+   Report the outcome kind, requested scope, returned source/base where
+   disclosed, snapshot id, and `fresh_for_working_tree`. A failed refresh's
+   last-known-good snapshot is not a successful current check. Disclose
+   excluded edits or scope mismatch rather than reporting them analyzed.
+   An empty scope is not an all-clear: surface `empty_scope_hint`.
 
 ## Outcomes (report exactly one, with its evidence)
 

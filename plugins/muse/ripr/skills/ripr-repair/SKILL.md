@@ -31,11 +31,17 @@ run the `ripr-setup` workflow and stop with its outcome.
 
 ## Workflow
 
-1. Establish scope. `ripr_workspace_status`, then `ripr_refresh`. Use
-   `{"source": "worktree"}` when evaluating saved working-tree edits;
-   the ordinary default analyzes the committed diff and can miss tests
-   just written in the worktree. Record the snapshot id and whether
-   `fresh_for_working_tree` is true. An empty scope is not an all-clear.
+1. Establish scope. Call `ripr_workspace_status` without arguments and
+   confirm the session's startup-bound root; use `ripr-setup` if unsure.
+   Pass `source` explicitly on every `ripr_refresh`: `"worktree"` for
+   relevant saved tracked edits, or `"committed"` for an intentionally
+   committed diff. Repeat any explicitly selected `base` on every
+   refresh; neither option is sticky. Record the requested scope, the
+   returned source/base where disclosed, snapshot id, and
+   `fresh_for_working_tree`. Bind subsequent evidence reads to that
+   snapshot. A failed refresh's last-known-good snapshot is not new
+   evidence, and excluded edits are not analyzed. An empty scope is not
+   an all-clear: surface `empty_scope_hint` when present.
 2. Choose one gap. Page `ripr_list_gaps` with `repair_ready: true` from
    the bounded summaries, inspect one candidate with `ripr_get_gap`,
    and record its `canonical_id`, class, file, and line. Identify the
@@ -44,9 +50,11 @@ run the `ripr-setup` workflow and stop with its outcome.
    oracle observes the changed sink; a test that only checks a
    neighboring value is the incorrect-repair control, not a repair.
 3. Establish whether repair is justified. `ripr_get_top_limitation` and
-   `ripr_get_repair_card`. If `repair_packet_ready` is false or a
-   limitation blocks the seam, explain the exact typed stop and end. A
-   wrong actionable signal is worse than a missed advisory one.
+   `ripr_get_repair_card` must refer to the selected item and snapshot.
+   Require the gap's `readiness.repair_packet_ready` and the card's
+   `readiness.repair_ready` to be true. Otherwise, or when a limitation
+   blocks the seam, explain the exact typed stop and end. A wrong
+   actionable signal is worse than a missed advisory one.
 4. Prepare a durable attempt with the CLI, using the seam identity from
    the repair card's receipt binding — the seam ID it names, not an
    inferred equivalent of the canonical gap ID:
@@ -55,32 +63,68 @@ run the `ripr-setup` workflow and stop with its outcome.
    ripr agent repair --root . --seam-id <seam-id> --phase before --json
    ```
 
-   Preserve the returned repair-attempt ID, expected test file, allowed
-   edit scope, manifest, and exact after command (also in
-   `.ripr/repair-attempts/<repair-attempt-id>.json`). Never invent an
-   attempt, snapshot, or receipt ID; if preparation fails, preserve the
-   state and report the exact refusal.
+   Run in the same established repository root and check that the
+   returned packet describes the selected subject. Preserve the returned
+   repair-attempt ID, expected test file, allowed edit scope, manifest
+   path, and exact next command. The default manifest is
+   `target/ripr/repair-attempts/<repair-attempt-id>/attempt.json`; use the
+   returned location rather than guessing a path or substituting an
+   in-memory MCP transaction ID. Stop before editing if preparation
+   refuses or reports `baseline_ambiguous: true`. Rust preparation
+   requires an effective ignore rule for all of `target/`; report a
+   missing rule for authorized resolution before preparation, not a
+   silent configuration change during the attempt. Never invent an
+   attempt, snapshot, or receipt ID, or rewrite retained before evidence.
 5. Make a focused test edit under normal authorization: assert the exact
    changed behavior at its boundary (the value, error, or ordering the
    diff alters). Do not expand into unrelated production changes, and
    do not re-bless expectations you have not independently derived from
-   the contract.
-6. Run the relevant tests separately (`cargo test` for Rust). Test
-   execution is your action, never an MCP capability. Then run the
-   strongest wrong-implementation control: the same test against the
-   broken or pre-change behavior must fail. Restore correct behavior.
-   A test that passes under both behaviors does not discriminate; say
-   so and iterate or stop — never record it as an improvement.
-7. Finish the attempt:
-   `ripr agent repair --root . --attempt <repair-attempt-id> --phase after`.
-   The `verify` phase is separately authorized and trust-bound; run it
-   only when the user explicitly authorizes verification with an
-   operator identity.
-8. Refresh against the saved worktree (`ripr_refresh` with
-   `{"source": "worktree"}` — the test edit is uncommitted and a
-   committed refresh cannot see it), re-read the same item, and compare
-   the newly observed static evidence with the original gap and the
-   durable receipt.
+   the contract. Stay within the returned allowed edit surface and
+   preserve pre-existing changes. A wholly untracked new test file is
+   excluded even from worktree analysis. If that path and its Git-index
+   change are authorized, include only it with
+   `git add -N -- <new-test-path>`; preserve the existing index and report
+   the action. Otherwise disclose the exclusion and do not claim the
+   comparison covers the new test. Never stage all files or widen the
+   retained edit scope to make the attempt pass.
+6. Run the relevant tests under the user's execution authority (`cargo
+   test` for Rust); record the exact test selection, command, exit status,
+   and a nonempty test result. Execution is never an MCP capability.
+   For the wrong-implementation control, use an isolated disposable
+   copy/worktree reproducing the relevant current source and test bytes,
+   including saved edits. Never mutate the user's production files or
+   index for this control. Require the exact new or strengthened test to
+   pass on correct behavior and fail at the intended assertion on one
+   wrong/pre-change behavior. An unrelated suite failure, compile
+   failure, or zero selected tests is not that discriminator. Restore
+   the control copy's captured correct bytes, check byte-for-byte
+   restoration, and rerun the same test. Confirm the control left the
+   original worktree and index unchanged. Keep control files and captured
+   output outside the repair root. A test that passes under both behaviors
+   does not discriminate; iterate or report that result. If a safe
+   authorized control is unavailable, record the missing evidence rather
+   than forcing an unsupported route or inventing a completed repair.
+7. Finish using the exact next command returned by preparation, with the
+   same repair-attempt ID and any returned store argument. Its ordinary
+   form is `ripr agent repair --root . --attempt <repair-attempt-id> --phase after`.
+   Read the actual receipt state and limitations; a successful static
+   after phase is not executed-test evidence. Preserve the CLI's shared
+   admission rules: ordinary focused-test descendant commits are
+   supported, while trust-bound Python attempts keep their exact-HEAD
+   and authority requirements. The `verify` phase remains separately
+   authorized and trust-bound; run only its supported route with the
+   user's explicit verification authorization and operator identity.
+8. Refresh against the repaired correct input. Pass
+   `{"source": "worktree"}` explicitly whenever relevant saved edits
+   remain, even after an earlier worktree refresh; choose explicit
+   `"committed"` only for an intentionally committed input. Repeat the
+   selected `base` from step 1; a changed resolved base is not the same
+   comparison. Check the returned source/scope and
+   `fresh_for_working_tree`, then re-read the same `canonical_id` bound
+   to the new snapshot. Failed refreshes, excluded tests, stale snapshots,
+   or missing items cannot establish a current before/after comparison.
+   Compare the new static evidence with the original gap and durable
+   receipt, without substituting a different item.
 9. Report both proof axes independently, compactly: the gap and missing
    discriminator; the action taken; execution (original-behavior and
    known-wrong-variant results); the RIPR after-phase (class movement,

@@ -12,6 +12,7 @@ Muse to the existing analyzer and repair workflow, with no bundled binary,
 hooks, reminders, or background daemon.
 
 - [Install and check the connection](#install-and-check-the-connection)
+- [Update an installed package](#update-an-installed-package)
 - [Repair one gap](#repair-one-gap)
 - [Choose the analyzed inputs](#choose-the-analyzed-inputs)
 - [Troubleshooting](#troubleshooting)
@@ -80,8 +81,7 @@ muse plugins inspect ripr --json
 
 The recorded successful trial reported `trusted_enabled` for that capability.
 Installation and approval are separate steps; neither alone demonstrates a
-working analysis session. After a package update, inspect it again and approve
-the current declaration if the capability is `review_needed`.
+working analysis session.
 
 Start a **fresh Muse session from the target repository**, then run:
 
@@ -101,6 +101,29 @@ A working setup discovers the ten tools listed in the
 calls `ripr_workspace_status` with no arguments, and completes an explicit
 refresh. The setup report names the input source, snapshot, freshness, and
 any limitation. An empty diff is a scope result, not an all-clear.
+
+## Update an installed package
+
+After changing the checkout used for installation, refresh the installed copy:
+
+```sh
+muse plugins update ripr --json
+muse plugins inspect ripr --json
+```
+
+`update` reads the source directory recorded at installation. Editing that
+checkout alone does not replace the cached package. Inspect the changed files
+and server declaration before approving the new package.
+
+A change to any package file, including this README or a skill, returns an
+approved MCP capability to `modified`, even when the manifest is unchanged.
+Both `modified` and `review_needed` leave the server inactive. After reviewing
+the current package, repeat `muse plugins approve plugin:ripr:mcp_server:core
+--json`, inspect for `trusted_enabled`, and start a fresh session from the
+target repository. An update with identical package content retains approval.
+
+See Muse's [update command](https://meta-models.github.io/muse-code-sdk/next/guides/plugins/reference/cli/#update)
+and [trust rules](https://meta-models.github.io/muse-code-sdk/next/guides/plugins/concepts/trust-review-and-scopes/).
 
 ## Repair one gap
 
@@ -200,6 +223,7 @@ new snapshot, report the reason instead of inferring that it closed.
 | Symptom | Next step |
 | --- | --- |
 | No `ripr_*` tools; server is `review_needed` | Inspect the installed capability and complete Muse's approval step. Start a fresh session. |
+| Tools disappeared after an update; server is `modified` | Review the updated package, approve `plugin:ripr:mcp_server:core` again, confirm `trusted_enabled`, and start a fresh session. |
 | No tools; `ripr mcp --help` fails | Check the binary on Muse's inherited `PATH`. The recorded 0.10.0 build predates MCP. Use an MCP-capable build and restart. |
 | Tools refer to the wrong workspace | Check the session startup directory. Start a fresh session in the target repository; the no-argument status tool cannot change roots. |
 | `analysis_failed` names missing base candidates | Choose an existing base, such as `trunk`, and pass it on every refresh. |

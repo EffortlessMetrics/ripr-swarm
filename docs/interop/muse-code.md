@@ -30,10 +30,15 @@ startup alone does not establish a working RIPR session.
 The declared capability is `plugin:ripr:mcp_server:core`. The installation
 guide uses that full identity for approval and re-inspects it for
 `trusted_enabled`. Both skills can be effective while the server still
-requires review. Installation, approval, and package updates take effect in
-new sessions. Inspect after each update and approve the current declaration
-when the capability reports `review_needed`; do not assume the earlier
-approval covers it.
+requires review. After editing the package's installation source, run
+`muse plugins update ripr --json`, then inspect it again. Approval covers the
+whole installed package: even a README or skill edit returns an approved MCP
+capability to `modified`. That state and `review_needed` both require review
+and approval of the current package before the server can load. An unchanged
+update retains approval. Installation, approval, and package updates take effect
+in new sessions; start a fresh session after the capability is
+`trusted_enabled`. Muse's [trust rules](https://meta-models.github.io/muse-code-sdk/next/guides/plugins/concepts/trust-review-and-scopes/)
+define these states.
 
 The manifest does not specify `--root`. The MCP process resolves its root at
 startup from the session's launch directory and repository markers. A later
