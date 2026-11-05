@@ -79,7 +79,10 @@ fn measured_consumers_use_the_private_pin_and_preserve_the_cached_source() -> Re
     let wrong_root = run_measured_check(&wrong_args, &fixture.0.join("wrong-root-cache"))?;
     assert!(!wrong_root.output.timed_out, "wrong-root control timed out");
     assert!(
-        wrong_root.output.status.is_some_and(|status| !status.success()),
+        wrong_root
+            .output
+            .status
+            .is_some_and(|status| !status.success()),
         "the contaminated cached root unexpectedly passed"
     );
     assert!(
