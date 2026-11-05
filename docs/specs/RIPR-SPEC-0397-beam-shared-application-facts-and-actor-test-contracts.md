@@ -166,25 +166,29 @@ explicitly bounded static shapes declared in later adapter specs (#5878, #5879).
 ### Independent framework and property capability cells
 
 Framework semantics are separate capability cells. IDs use the #5531 shape
-`language/framework/mode/family`. Until implementation lands, every cell below
-is **`not_proven`** with tier ceiling **`preview`** in the registry projection;
-this spec defines the obligation set only.
+`language/framework/mode/family`. The current family set is `static_facts` and
+`repair_routing`; a finer family requires a separate #5531 admission decision
+backed by a distinct producer or consumer. Until implementation lands, the
+planned cells below are **`not_proven`**, with a **`preview`** tier ceiling;
+this spec defines obligations, not registered rows.
 
 | Cell ID | Purpose |
 | --- | --- |
-| `beam/shared/diff/application_facts` | Mix/rebar3/OTP/project substrate only |
-| `beam/shared/repo/application_facts` | Repository-mode substrate indexing (#5883) |
 | `elixir/any/diff/static_facts` | Elixir owners/probes without a test framework |
-| `elixir/exunit/diff/test_facts` | ExUnit case/test/setup/tag/filter/async registration |
-| `elixir/streamdata/diff/property_facts` | StreamData generators/properties (registration vs execution separated) |
+| `elixir/exunit/diff/static_facts` | ExUnit case/test/setup/tag/filter/async registration |
+| `elixir/streamdata/diff/static_facts` | StreamData generators/properties (registration vs execution separated) |
 | `erlang/any/diff/static_facts` | Erlang owners/probes without a test framework |
-| `erlang/eunit/diff/test_facts` | EUnit tests/generators/macros |
-| `erlang/common_test/diff/test_facts` | Common Test suite/group/case/config/timetrap/skip |
-| `erlang/proper/diff/property_facts` | PropEr properties and generators |
+| `erlang/eunit/diff/static_facts` | EUnit tests/generators/macros |
+| `erlang/common_test/diff/static_facts` | Common Test suite/group/case/config/timetrap/skip |
+| `erlang/proper/diff/static_facts` | PropEr properties and generators |
 
 Product manifest claims (`metrics/capabilities.toml`) must not imply a cell is
-implemented until the registry row exists and proofs land (#5886). Shared
-`beam/shared/*` cells must not elevate Elixir/Erlang oracle strength.
+implemented until the registry row exists and proofs land (#5886). Mix/rebar3
+application facts and repository-mode substrate completeness (#5883) are
+separate disposition axes, not a `beam` language registry row or an independent
+capability family. They must not elevate Elixir/Erlang oracle strength. Property
+registration, execution, and oracle completeness likewise remain separately
+reported axes within their respective framework cells.
 
 ### Test activation and oracle eligibility (#5542)
 
