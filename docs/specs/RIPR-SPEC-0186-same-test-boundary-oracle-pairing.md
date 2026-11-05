@@ -385,3 +385,14 @@ attributes and unambiguous builtin derives are admitted. Imported aliases,
 globs and extern-crate macro namespaces remain unknown. Conditional expansion
 is not assumed absent based on the analyzer's build configuration; library
 code consumed by integration tests does not globally have `cfg(test)`.
+
+The admitted hex-conversion `?` requires a second proof beyond distinct error
+spellings: every credited repeat row must contain a literal ASCII hex byte,
+and the conversion must consume that unchanged byte from exactly
+`for &b in` the immutable primitive `&[u8]` input. The loop binding is unique,
+not assigned or mutably/raw borrowed, and `u8`/`char` names cannot be shadowed.
+Unproved rows contribute no counter activation; reference completeness still
+counts their calls. Other early-return, conditional, post-loop and fallible
+paths retain the existing refusals. Thus the earlier conversion cannot produce
+an error on the credited rows, even when custom error equality makes its error
+equal to the firing error. No-fallible-suffix shapes retain their existing gate.

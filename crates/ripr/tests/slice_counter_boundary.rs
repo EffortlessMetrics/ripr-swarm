@@ -361,3 +361,51 @@ fn a_procedural_derive_cannot_supply_an_unchecked_result_constructor() -> Result
     );
     Ok(())
 }
+
+#[test]
+fn early_error_equality_cannot_pin_the_counter_boundary() -> Result<(), String> {
+    let equality =
+        "\nimpl PartialEq for ChunkError { fn eq(&self, _other: &Self) -> bool { true } }\n";
+    for (byte, rebound, expected) in [
+        ("b'z'", false, ExposureClass::InfectionUnknown),
+        ("b'f'", true, ExposureClass::InfectionUnknown),
+        ("b'f'", false, ExposureClass::Exposed),
+    ] {
+        let short = if byte == "b'z'" || rebound {
+            "Err(ChunkError::BadDigit)"
+        } else {
+            "Ok(u64::MAX)"
+        };
+        let assertions = format!(
+            "        assert_eq!(chunk_size(&[{byte}; 16]), {short});\n        assert_eq!(chunk_size(&[{byte}; 17]), Err(ChunkError::TooLong));"
+        );
+        let mut lib = source("count >= 17", &assertions)
+            .replace("#[derive(Debug, PartialEq)]", "#[derive(Debug)]");
+        lib.push_str(equality);
+        if rebound {
+            lib = lib.replace(
+                "        let digit",
+                "        let b = b'z';\n        let digit",
+            );
+        }
+        let line = lib
+            .lines()
+            .position(|line| line.contains("if count >= 17"))
+            .ok_or("missing predicate")?
+            + 1;
+        let patch = format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-        if count > 17 {{\n+        if count >= 17 {{\n"
+        );
+        let findings = TempRepo::create(&lib, &patch)?.findings()?;
+        let predicates = findings
+            .iter()
+            .filter(|finding| finding.probe.family == ProbeFamily::Predicate)
+            .collect::<Vec<_>>();
+        assert_eq!(predicates.len(), 1, "{findings:?}");
+        assert_eq!(
+            predicates[0].class, expected,
+            "byte={byte}, rebound={rebound}: {findings:?}"
+        );
+    }
+    Ok(())
+}

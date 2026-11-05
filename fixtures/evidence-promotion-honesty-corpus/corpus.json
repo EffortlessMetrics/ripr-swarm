@@ -17089,6 +17089,19 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "must_not_promote" }
       ]
+    },
+    {
+      "id": "rust_slice_counter_early_error_equality",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_counter_early_error_equality",
+      "probe_family": "predicate",
+      "vector": "early_error_equality_masks_counter_boundary",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" }
+      ]
     }
   ]
 }

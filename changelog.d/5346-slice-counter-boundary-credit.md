@@ -4,3 +4,4 @@
 
 - Refuse specialized boundary credit when retained lexical bindings can shadow Result constructors, including raw identifiers and owners without fallible suffixes (#5346).
 - Withhold specialized counter credit beside unknown attribute or derive producers that can generate hidden Result constructors; retain unambiguous builtin derives (#5346).
+- Require proved valid, unchanged primitive hex-byte input before specialized counter credit across an earlier fallible conversion, preventing custom error equality or rebound bytes from masking the boundary (#5346).

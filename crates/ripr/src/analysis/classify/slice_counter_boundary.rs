@@ -78,6 +78,13 @@ impl CounterPredicate {
     }
 }
 
+struct SliceCounterShape {
+    slice_param: String,
+    predicate: CounterPredicate,
+    fire_value: String,
+    requires_hex_input: bool,
+}
+
 struct SliceCounterRow {
     count: usize,
     /// Compact repeated element when the argument is `&[element; count]`.
@@ -261,7 +268,12 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
     {
         return None;
     }
-    let (slice_param, predicate, fire_value) = per_byte_counter_shape(
+    let SliceCounterShape {
+        slice_param,
+        predicate,
+        fire_value,
+        requires_hex_input,
+    } = per_byte_counter_shape(
         owner,
         &context.probe.expression,
         &context.index.files().get(&owner.file)?.source,
@@ -270,6 +282,8 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
     let slice_position = immutable_slice_parameter(owner, &slice_param)?;
     let mut rows = Vec::new();
     let mut admitted_calls = 0usize;
+    let mut reference_files = std::collections::HashSet::new();
+    reference_files.insert(owner.file.clone());
     for (test, reason) in &context.related_tests {
         if !relation_establishes_reach(*reason, true) {
             continue;
@@ -284,14 +298,26 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
             if length == 0 {
                 return None;
             }
+            admitted_calls += 1;
+            if admitted_calls > MAX_ROWS {
+                return None;
+            }
+            reference_files.insert(test.file.clone());
+            let element = slice_argument_repeat_element(argument);
+            if requires_hex_input
+                && !element
+                    .as_deref()
+                    .is_some_and(repeated_element_is_hex_digit)
+            {
+                continue;
+            }
             rows.push(SliceCounterRow {
                 count: length,
-                element: slice_argument_repeat_element(argument),
+                element,
                 test_file: test.file.clone(),
                 call_line: call.line,
                 call_text: call.text.to_string(),
             });
-            admitted_calls += 1;
             if rows.len() > MAX_ROWS {
                 return None;
             }
@@ -299,11 +325,6 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Slice
     }
     if rows.is_empty() {
         return None;
-    }
-    let mut reference_files = std::collections::HashSet::new();
-    reference_files.insert(owner.file.clone());
-    for row in &rows {
-        reference_files.insert(row.test_file.clone());
     }
     let references = reference_files.iter().try_fold(0usize, |count, path| {
         let facts = context.index.files().get(path)?;
@@ -340,7 +361,7 @@ fn per_byte_counter_shape(
     owner: &FunctionSummary,
     expression: &str,
     retained_source: &str,
-) -> Option<(String, CounterPredicate, String)> {
+) -> Option<SliceCounterShape> {
     let predicate = parse_counter_predicate(expression)?;
     let counter = predicate.counter.as_str();
     let parse = parse_clean_source_file(&owner.body)?;
@@ -573,6 +594,7 @@ fn per_byte_counter_shape(
     // The suffix is straight-line calculation. Its sole admitted early exit
     // is `option.ok_or(OtherError)?`, whose explicit error differs from the
     // firing value; opaque fallible calls and conditional fallbacks decline.
+    let mut requires_hex_input = false;
     for statement in &loop_statements[2..] {
         if statement.syntax().descendants().any(|node| {
             ast::IfExpr::can_cast(node.kind())
@@ -587,6 +609,7 @@ fn per_byte_counter_shape(
             .descendants()
             .filter_map(ast::TryExpr::cast)
         {
+            requires_hex_input = true;
             let ast::Expr::MethodCallExpr(method) = try_expr.expr()? else {
                 return None;
             };
@@ -621,7 +644,69 @@ fn per_byte_counter_shape(
     }) {
         return None;
     }
-    Some((slice_param, predicate, fire_value))
+    if requires_hex_input && !fallible_hex_loop_uses_the_input(&function, &pattern, &slice_param) {
+        return None;
+    }
+    Some(SliceCounterShape {
+        slice_param,
+        predicate,
+        fire_value,
+        requires_hex_input,
+    })
+}
+
+/// The only admitted `?` must receive the unchanged byte from this exact loop.
+/// Together with a valid repeated hex input this proves it cannot exit early;
+/// spelling two errors differently does not prove their runtime inequality.
+fn fallible_hex_loop_uses_the_input(function: &ast::Fn, pattern: &str, input: &str) -> bool {
+    if pattern != "&b" || !function.param_list().is_some_and(|params| params.params().any(|param| {
+        matches!(param.pat(), Some(ast::Pat::IdentPat(ref name)) if name.name().is_some_and(|name| name.text() == input))
+            && param.ty().is_some_and(|ty| compact(&ty.syntax().text().to_string()) == "&[u8]")
+    })) { return false; }
+    let bindings = function
+        .syntax()
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .filter(|binding| {
+            binding
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == "b")
+        })
+        .count();
+    bindings == 1
+        && !function.syntax().descendants().any(|node| {
+            ast::BinExpr::cast(node.clone()).is_some_and(|binary| {
+                matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+                    && binary.lhs().is_some_and(|lhs| {
+                        compact(&lhs.syntax().text().to_string()).trim_start_matches("r#") == "b"
+                    })
+            }) || ast::RefExpr::cast(node).is_some_and(|reference| {
+                (reference.mut_token().is_some() || reference.raw_token().is_some())
+                    && reference.expr().is_some_and(|expr| {
+                        compact(&expr.syntax().text().to_string()).trim_start_matches("r#") == "b"
+                    })
+            })
+        })
+}
+
+fn repeated_element_is_hex_digit(element: &str) -> bool {
+    let Some(parsed) = parse_clean_source_file(&format!("fn input() {{ let value = {element}; }}"))
+    else {
+        return false;
+    };
+    let Some(ast::Expr::Literal(literal)) = parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .and_then(|binding| binding.initializer())
+    else {
+        return false;
+    };
+    match literal.kind() {
+        ast::LiteralKind::Byte(byte) => byte.value().is_ok_and(|byte| byte.is_ascii_hexdigit()),
+        _ => false,
+    }
 }
 
 /// Bare Result constructors have authority only without a competing binding in
@@ -649,12 +734,16 @@ fn result_constructors_unshadowed(function: &ast::Fn, retained_source: &str) -> 
     if candidates.next().is_some() {
         return false;
     }
+    let needs_primitives = function
+        .syntax()
+        .descendants()
+        .any(|node| ast::TryExpr::can_cast(node.kind()));
     let constructor = |name: Option<ast::Name>| {
         name.is_some_and(|name| {
             matches!(
                 name.text().trim_start_matches("r#"),
                 "Ok" | "Err" | "Result"
-            )
+            ) || (needs_primitives && matches!(name.text().trim_start_matches("r#"), "char" | "u8"))
         })
     };
     let scoped = source
@@ -688,21 +777,23 @@ fn result_constructors_unshadowed(function: &ast::Fn, retained_source: &str) -> 
                     .descendants_with_tokens()
                     .filter_map(|entry| entry.into_token())
                     .any(|token| {
-                        matches!(
-                            token.text().trim_start_matches("r#"),
-                            "Ok" | "Err"
-                                | "Result"
-                                | "*"
-                                | "Clone"
-                                | "Copy"
-                                | "Debug"
-                                | "Default"
-                                | "Eq"
-                                | "PartialEq"
-                                | "Ord"
-                                | "PartialOrd"
-                                | "Hash"
-                        )
+                        (needs_primitives
+                            && matches!(token.text().trim_start_matches("r#"), "char" | "u8"))
+                            || matches!(
+                                token.text().trim_start_matches("r#"),
+                                "Ok" | "Err"
+                                    | "Result"
+                                    | "*"
+                                    | "Clone"
+                                    | "Copy"
+                                    | "Debug"
+                                    | "Default"
+                                    | "Eq"
+                                    | "PartialEq"
+                                    | "Ord"
+                                    | "PartialOrd"
+                                    | "Hash"
+                            )
                     })
             })
             || ast::Fn::cast(node.clone()).is_some_and(|item| constructor(item.name()))
@@ -1035,10 +1126,7 @@ mod tests {
         }
     }
 
-    fn shape(
-        owner: &FunctionSummary,
-        expression: &str,
-    ) -> Option<(String, CounterPredicate, String)> {
+    fn shape(owner: &FunctionSummary, expression: &str) -> Option<SliceCounterShape> {
         let source = format!("enum ChunkError {{ TooLong, BadDigit }}\n{}", owner.body);
         per_byte_counter_shape(owner, expression, &source)
     }
@@ -1089,7 +1177,13 @@ mod tests {
     #[test]
     fn grid_bits_owner_shape_is_recognized() -> Result<(), ()> {
         let owner = owner_body(GRID_BITS);
-        let (slice, found, fire) = shape(&owner, "16 < count").ok_or(())?;
+        let SliceCounterShape {
+            slice_param: slice,
+            predicate: found,
+            fire_value: fire,
+            requires_hex_input,
+        } = shape(&owner, "16 < count").ok_or(())?;
+        assert!(requires_hex_input);
         assert_eq!(fire, "Err(ChunkError::TooLong)");
         assert_eq!(slice, "hex");
         assert_eq!(found.counter, "count");
@@ -1232,6 +1326,54 @@ mod tests {
         let unrelated =
             format!("{source}\n#[cfg(test)] mod tests {{ #[derive(Unknown)] struct Local; }}");
         assert!(per_byte_counter_shape(&owner_body(GRID_BITS), "16 < count", &unrelated).is_some());
+    }
+
+    #[test]
+    fn fallible_hex_suffix_requires_the_unchanged_primitive_loop_byte() {
+        let honest = shape(&owner_body(GRID_BITS), "16 < count");
+        assert!(honest.is_some_and(|shape| shape.requires_hex_input));
+        for source in [
+            GRID_BITS.replace(
+                "        let digit",
+                "        let b = b'z';\n        let digit",
+            ),
+            GRID_BITS.replace("for &b in hex", "for _ in hex"),
+            GRID_BITS.replace("for &b in hex", "for b in hex"),
+            GRID_BITS.replace(
+                "        let digit",
+                "        let escaped = &mut b;\n        let digit",
+            ),
+        ] {
+            assert!(
+                shape(&owner_body(&source), "16 < count").is_none(),
+                "{source}"
+            );
+        }
+        for declaration in [
+            "type char = u8;",
+            "use crate::other as char;",
+            "type u8 = Other;",
+        ] {
+            let source =
+                format!("enum ChunkError {{ TooLong, BadDigit }}\n{declaration}\n{GRID_BITS}");
+            assert!(
+                per_byte_counter_shape(&owner_body(GRID_BITS), "16 < count", &source).is_none()
+            );
+        }
+        for element in ["b'f'", "b'F'", "b'0'", "b'9'", "b'\\x66'"] {
+            assert!(repeated_element_is_hex_digit(element), "{element}");
+        }
+        for element in [
+            "b'z'",
+            "b'/'",
+            "b'\\0'",
+            "unknown",
+            "choose()",
+            "choose(b'f')",
+            "102",
+        ] {
+            assert!(!repeated_element_is_hex_digit(element), "{element}");
+        }
     }
 
     #[test]
