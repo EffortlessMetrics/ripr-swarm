@@ -33,8 +33,14 @@ impl Fixture {
         )?;
         fixture.write("docs/ROADMAP.md", "# Roadmap\n\nCurrent bounded work.\n")?;
         fixture.write("README.md", "See docs/status/SUPPORT_TIERS.md.\n")?;
-        fixture.write("docs/proposals/RIPR-PROP-0001-main.md", "# RIPR-PROP-0001\n")?;
-        fixture.write("docs/proposals/RIPR-PROP-0002-fragment.md", "# RIPR-PROP-0002\n")?;
+        fixture.write(
+            "docs/proposals/RIPR-PROP-0001-main.md",
+            "# RIPR-PROP-0001\n",
+        )?;
+        fixture.write(
+            "docs/proposals/RIPR-PROP-0002-fragment.md",
+            "# RIPR-PROP-0002\n",
+        )?;
         fixture.write(
             "policy/doc-artifacts.toml",
             &format!("schema_version = \"1.0\"\n{}", artifact(1, "main", "accepted")),
@@ -89,8 +95,14 @@ fn check_error(root: &Path, expected: &str) -> Result<(), String> {
 fn current_state_counts_main_and_fragment_records_and_recorded_tiers() -> Result<(), String> {
     let fixture = Fixture::new()?;
     let inventory = produce_current_state(&fixture.0)?;
-    assert_eq!(inventory.registered_artifacts_by_kind_and_status["proposal"]["accepted"], 1);
-    assert_eq!(inventory.registered_artifacts_by_kind_and_status["proposal"]["proposed"], 1);
+    assert_eq!(
+        inventory.registered_artifacts_by_kind_and_status["proposal"]["accepted"],
+        1
+    );
+    assert_eq!(
+        inventory.registered_artifacts_by_kind_and_status["proposal"]["proposed"],
+        1
+    );
     assert_eq!(inventory.support_rows_by_tier["usable alpha"], 1);
     assert_eq!(inventory.support_rows_by_tier["stable building block"], 1);
     assert!(inventory.contract_violations.is_empty());
@@ -99,8 +111,13 @@ fn current_state_counts_main_and_fragment_records_and_recorded_tiers() -> Result
         &artifact(2, "fragment", "accepted"),
     )?;
     let changed = produce_current_state(&fixture.0)?;
-    assert_eq!(changed.registered_artifacts_by_kind_and_status["proposal"]["accepted"], 2);
-    assert!(!changed.registered_artifacts_by_kind_and_status["proposal"].contains_key("proposed"));
+    assert_eq!(
+        changed.registered_artifacts_by_kind_and_status["proposal"]["accepted"],
+        2
+    );
+    assert!(
+        !changed.registered_artifacts_by_kind_and_status["proposal"].contains_key("proposed")
+    );
     Ok(())
 }
 
@@ -144,13 +161,21 @@ fn current_state_required_inputs_fail_by_name() -> Result<(), String> {
         check_error(&fixture.0, expected)?;
     }
     for (path, body, expected) in [
-        ("policy/doc-artifacts.toml", "not valid ledger input\n", "doc-artifacts.toml"),
+        (
+            "policy/doc-artifacts.toml",
+            "not valid ledger input\n",
+            "doc-artifacts.toml",
+        ),
         (
             "policy/doc-artifacts.d/current-state.toml",
             "schema_version = \"1.0\"\n",
             "must not set schema_version",
         ),
-        ("docs/status/SUPPORT_TIERS.md", "# Support Tiers\n", "Current Support Map"),
+        (
+            "docs/status/SUPPORT_TIERS.md",
+            "# Support Tiers\n",
+            "Current Support Map",
+        ),
         (
             "docs/status/SUPPORT_TIERS.md",
             "# Support Tiers\n| Capability | Tier | Surface | Proof | Known limits |\n| broken | row |\n",
