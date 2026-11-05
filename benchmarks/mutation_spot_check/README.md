@@ -60,7 +60,7 @@ cargo xtask mutation-spot-check --repo zola=../corpus/zola --run-mutants \
 
 ## Derived summary rows
 
-The v2 receipt also carries two additive rows derived from
+The v2 receipt also carries three additive rows derived from
 `outcomes_by_disposition_and_grip_class` (no schema bump; consumers that read
 other keys are unaffected):
 
@@ -76,7 +76,19 @@ other keys are unaffected):
 - `seam_coverage`: mutants total, caught and missed counts, `canonical_precise`
   and no-containing-seam counts, and their shares of all recorded mutants.
 
-Both are advisory, bound to the recorded revisions, and not suite adequacy. To
+- `replacement_criterion`: the stated "replaces cargo-mutants" criterion, one
+  row per criterion with `threshold`, `observed`, `status` (`met`, `not_met`,
+  `not_established`, or `informational` for the unthresholded strict recall)
+  and `scope`, plus an overall `verdict` (`replaces` only when every
+  thresholded criterion is met and none is `not_established`; otherwise
+  `not_yet` listing `not_met` and `not_established` ids). Thresholds are
+  placeholders pending the owner's product call (#12901). Time versus full
+  cargo-mutants stays `not_established` until a paired timing is recorded as a
+  top-level `timing_observation` (`ripr_seconds`, `cargo_mutants_seconds`);
+  Python/TypeScript agreement is `not_established` (no corpus). A `replaces`
+  verdict is not suite adequacy; scope is Rust on the recorded crates.
+
+All are advisory, bound to the recorded revisions, and not suite adequacy. To
 refresh a recorded receipt without re-running mutation testing:
 `cargo xtask mutation-spot-check --rederive-summaries metrics/public-proof/mutation-spot-check.json`.
 

@@ -676,6 +676,96 @@
     "ungripped_missed": 34,
     "ungripped_share_of_missed": 0.106
   },
+  "replacement_criterion": {
+    "claim_boundary": "Advisory. Answers whether ripr usably replaces cargo-mutants on the recorded evidence. Every threshold is a placeholder pending the owner's product call (#12901), not an accepted bar. A replaces verdict requires every thresholded criterion met and none not_established; it is not suite adequacy and does not mean ripr runs or substitutes for mutation testing. Scope is Rust on the recorded crates and checkout revisions only.",
+    "criteria": [
+      {
+        "description": "agreement of ripr claims_discriminator seams with runtime outcomes",
+        "direction": "at_least",
+        "id": "precision_of_discriminator_claims",
+        "observed": 0.968,
+        "scope": [
+          "rust"
+        ],
+        "status": "not_met",
+        "threshold": 0.97,
+        "threshold_is_placeholder": true
+      },
+      {
+        "description": "share of runtime-missed mutants ripr flagged as a gap or an honest unknown",
+        "direction": "at_least",
+        "id": "recall_flagged_or_unknown",
+        "observed": 0.587,
+        "scope": [
+          "rust"
+        ],
+        "status": "not_met",
+        "threshold": 0.8,
+        "threshold_is_placeholder": true
+      },
+      {
+        "description": "share of runtime-missed mutants ripr flagged ungripped (informational, no threshold)",
+        "id": "recall_strict_ungripped",
+        "observed": 0.106,
+        "scope": [
+          "rust"
+        ],
+        "status": "informational",
+        "threshold": null
+      },
+      {
+        "description": "share of recorded mutants that reach a canonical_precise seam join",
+        "direction": "at_least",
+        "id": "scored_coverage",
+        "observed": 0.283,
+        "scope": [
+          "rust"
+        ],
+        "status": "not_met",
+        "threshold": 0.5,
+        "threshold_is_placeholder": true
+      },
+      {
+        "description": "ripr wall time on the diff as a share of full cargo-mutants wall time on the same checkout",
+        "direction": "at_most",
+        "id": "time_vs_full_cargo_mutants",
+        "observed": {
+          "cargo_mutants_seconds": null,
+          "ratio": null,
+          "ripr_seconds": null
+        },
+        "reason": "no paired timing of ripr and full cargo-mutants is recorded for these checkouts; no figure is claimed",
+        "scope": [
+          "rust"
+        ],
+        "status": "not_established",
+        "threshold": 0.25,
+        "threshold_is_placeholder": true
+      },
+      {
+        "description": "agreement with real mutants on Python and TypeScript",
+        "id": "python_typescript_real_mutant_agreement",
+        "observed": null,
+        "reason": "no real-mutant corpus has been run for Python or TypeScript; no figure is claimed",
+        "scope": [
+          "python",
+          "typescript"
+        ],
+        "status": "not_established",
+        "threshold": null
+      }
+    ],
+    "not_established": [
+      "time_vs_full_cargo_mutants",
+      "python_typescript_real_mutant_agreement"
+    ],
+    "not_met": [
+      "precision_of_discriminator_claims",
+      "recall_flagged_or_unknown",
+      "scored_coverage"
+    ],
+    "verdict": "not_yet"
+  },
   "repos": [
     {
       "calibration_metrics": {
