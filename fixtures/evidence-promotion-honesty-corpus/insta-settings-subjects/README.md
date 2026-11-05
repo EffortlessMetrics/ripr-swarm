@@ -49,3 +49,8 @@ make a new capture pass. A complete successful capture has one changed Rust
 file, one candidate line, one probe and one finding on the named changed
 field. Keep the executable's source identity and native command results in
 the PR's validation record.
+
+The native `canonical_next_action` detail route resolves paths against the
+capture workspace even when the root argument is relative. Preserve those
+captured display strings as emitted; the case's semantic assertions and the
+checked-in source inputs carry the portable oracle.

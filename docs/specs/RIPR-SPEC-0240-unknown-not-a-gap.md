@@ -437,7 +437,9 @@ non-ignored related test matches one of these shapes:
   snapshots retain their existing disposition. This is bounded syntax
   admission; settings scopes, type aliases and dynamic selector evaluation
   remain unsupported. Snapshot-byte identity and positive projection credit
-  remain with #8121.
+  remain with #8121. This reader governs fresh `Finding` output; repository
+  seam evidence and pilot/brief selection have a separate producer, whose
+  snapshot-uncertainty disclosure remains a residual under #8121.
 - **fixture receiver** (#9609): a `return_value` probe whose changed line
   holds a closure (`|..|`, `move |..|` or `|| ..` opening an argument; a boolean or bitwise `||` / `|` is not one) in a `&self` method, and a `direct_owner_call` test
   with a strong assertion: an `assert_eq!` with a literal (number, string,
