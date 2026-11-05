@@ -147,7 +147,10 @@ impl Fixture {
     fn cargo(&self, args: &[&str]) -> Result<Output, String> {
         let mut command = Command::new("cargo");
         self.configure(&mut command);
-        command.args(args).output().map_err(|error| error.to_string())
+        command
+            .args(args)
+            .output()
+            .map_err(|error| error.to_string())
     }
 
     fn report_path(&self) -> PathBuf {
@@ -172,7 +175,10 @@ impl Fixture {
     fn require_pass(&self) -> Result<(), String> {
         let (output, report) = self.check()?;
         if !output.status.success() || !report.contains("Status: pass") {
-            return Err(format!("valid CLI fixture: {}\n{report}", diagnostic(&output)));
+            return Err(format!(
+                "valid CLI fixture: {}\n{report}",
+                diagnostic(&output)
+            ));
         }
         let common = report
             .lines()
@@ -225,7 +231,9 @@ impl Fixture {
             || !selected.contains(&neighbor.as_str())
             || selected.contains(&second)
         {
-            return Err(format!("neighbor did not retain two actual tests: {selected:?}"));
+            return Err(format!(
+                "neighbor did not retain two actual tests: {selected:?}"
+            ));
         }
         let (output, report) = self.check()?;
         let expected = format!("packet coverage lost exact selected subjects: {command}:");
