@@ -1,0 +1,9 @@
+# Block-comment snapshot entries do not promote (#7708 item 8).
+[[extend]]
+id = "RIPR-SPEC-0258"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::block_commented_snapshot_entry_does_not_promote",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_entries_ignore_non_code_and_keep_live_counters",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::adapter_snapshot_comment_does_not_expose_changed_owner",
+]
+fixtures = ["fixtures/typescript_snapshot_block_comment"]
