@@ -5724,7 +5724,9 @@ pub(in crate::analysis::classify) fn assertion_has_closed_candidate_values(
     else {
         return false;
     };
-    if arguments.len() < operands {
+    // Custom diagnostics may carry an owner-produced value into an expected
+    // panic message. This refusal has no message or should-panic resolver.
+    if arguments.len() != operands {
         return false;
     }
     let declared_enum = |path: &ast::Path| {

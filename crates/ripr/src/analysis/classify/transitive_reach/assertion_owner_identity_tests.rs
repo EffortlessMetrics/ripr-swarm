@@ -555,6 +555,11 @@ fn opposite_kind_value_dependencies_keep_owner_uncertainty() -> Result<(), Strin
         ("value + 2", "", "assert_eq!(widget.consume(1 + 0), 3)"),
         (
             "value + 2",
+            "const ACTUAL: u32 = 4;",
+            "assert_eq!(widget.consume(1), 3, \"{ACTUAL}\")",
+        ),
+        (
+            "value + 2",
             "",
             "assert_eq!(if true { widget.consume(1) } else { 0 }, 3)",
         ),

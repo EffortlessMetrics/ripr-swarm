@@ -564,6 +564,8 @@ owner-produced value. The refusal therefore requires a closed value grammar.
 The selected assertion's evaluated operands must be direct candidate calls
 with literal inputs, literals, or established enum values; arithmetic around
 calls, conditions, nonliteral inputs and other value reads retain uncertainty.
+Custom assertion messages retain uncertainty because they can carry an
+owner-produced value into an expected panic; this rule has no message resolver.
 The candidate body may read only established primitive parameters, literals,
 built-in primitive expressions and literal/wildcard match arms. Locals, fields,
 globals, indirect values and outgoing callables remain uncertain.
