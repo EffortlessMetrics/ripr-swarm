@@ -932,6 +932,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.177";
 /// `0.176`: same fn-token guarded-return identity as full `1.174`.
 /// `0.177`: same exact borrowed-bool pairing as full `1.175`.
 /// `0.178`: same selected unit-error row identity as full `1.176`.
+/// `0.179`: same certified bool Clone and returned-comparison pairing as full `1.177`.
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.179";
 
 /// Compact-classified seam cache schema. This cache stores the same
@@ -1156,6 +1157,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.179";
 /// `0.176`: same fn-token guarded-return identity as full `1.174`.
 /// `0.177`: same exact borrowed-bool pairing as full `1.175`.
 /// `0.178`: same selected unit-error row identity as full `1.176`.
+/// `0.179`: same certified bool Clone and returned-comparison pairing as full `1.177`.
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.179";
 
 /// Compact class-count cache used by repo badge rendering. It keys off

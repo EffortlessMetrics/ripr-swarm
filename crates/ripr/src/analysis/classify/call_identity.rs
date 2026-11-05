@@ -216,6 +216,7 @@ impl CallIdentityMemos {
     #[cfg(test)]
     pub(crate) fn invalidate_empty_macro_candidates(&mut self) {
         self.empty_macro_candidates.take();
+        self.bool_clone_view.take();
         self.mapped_enum_decisions = Default::default();
         self.transparent_macro_rebound = Default::default();
     }

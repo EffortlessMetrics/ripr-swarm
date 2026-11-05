@@ -354,9 +354,9 @@ impl ExpansionSurface {
                         !path_text.contains("::") && BUILTIN_MACROS.contains(&path_text)
                     })
                 })
-            // An imported macro can shadow a prelude macro with the same
-            // spelling. Refuse wildcard imports and imports of any name in
-            // the small macro allowlist instead of attempting resolution.
+            // An imported macro can shadow a prelude macro. Existing observers
+            // refuse wildcard imports; the Clone view admits them only after
+            // importer-aware workspace proof. Trusted names remain constrained.
             && tree
                 .syntax()
                 .descendants()
