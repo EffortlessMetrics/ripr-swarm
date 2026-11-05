@@ -1,0 +1,2 @@
+xtask/tests/rust_activation.rs|Command::new|1|rust/setup|#13123: Runs the repository-owned Bash activation regression harness on Unix with null stdin, controlled local tool fixtures, and no installation or network.
+xtask/tests/rust_activation.rs|use std::process::Command|1|rust/setup|#13123: Imports the standard process owner for the single Bash activation harness invocation.

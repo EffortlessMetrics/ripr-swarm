@@ -176,6 +176,29 @@ classification = "config"
 reason = "Product-independent workflow and agent policy package manifest."
 covered_by = ["cargo check -p repo-policy --locked"]
 
+[[allow]]
+glob = "tools/activate-rust.sh"
+kind = "shell_activation"
+owner = "rust"
+surface = "rust"
+classification = "tooling"
+reason = "A sourced Bash boundary must export installed exact Rust tools into its caller; Rust subprocesses cannot do that. No installation or network operation; bounded exception for #13123."
+covered_by = ["cargo xtask check-file-policy"]
+covered_by_unix = ["cargo test -p xtask --test rust_activation"]
+
+[[allow]]
+glob = "tools/test-activate-rust.sh"
+kind = "shell_activation_test"
+owner = "rust"
+surface = "rust"
+classification = "test"
+reason = "Fresh-shell behavioral proof for the #13123 Bash activation boundary, including parent environment, fixture inheritance and failure atomicity; executable on supported Bash hosts without Rust."
+covered_by = ["cargo xtask check-file-policy"]
+covered_by_unix = ["cargo test -p xtask --test rust_activation"]
+
+# The harness can also run directly as `bash tools/test-activate-rust.sh`.
+# Unix workspace tests own behavioral coverage; native Windows is not claimed.
+
 # ---------------------------------------------------------------------------
 # Distribution adapters
 # ---------------------------------------------------------------------------
