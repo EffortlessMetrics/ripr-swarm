@@ -2685,10 +2685,10 @@ fn guarded_struct_error_return(
             function
                 .name()
                 .is_some_and(|name| name.text() == owner.name)
-                && function.syntax().text().to_string() == owner.body
-                && lines.line(function.syntax().text_range().start()) <= owner.start_line
-                && lines.line_for_range_end(function.syntax().text_range().end())
-                    >= owner.start_line
+                && function
+                    .fn_token()
+                    .is_some_and(|token| lines.line(token.text_range().start()) == owner.start_line)
+                && lines.line_for_range_end(function.syntax().text_range().end()) == owner.end_line
         });
     let function = functions.next()?;
     if functions.next().is_some() || function.attrs().next().is_some() {
