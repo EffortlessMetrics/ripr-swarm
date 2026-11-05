@@ -1,0 +1,20 @@
+{
+  "rows": [
+    {
+      "ref": "source-handoff/base-c89eb088",
+      "commit": "652e0adf9695028791c53e48c78d7d8ecb25829c",
+      "tree": "b6351236848af33b64e627c694b23ab1e4288d6f",
+      "parent": "c09c438e5646fcb244bbafcabe57036bc58d8f3d",
+      "verified": true
+    },
+    {
+      "ref": "source-handoff/current-2f198ae8",
+      "commit": "6d4cd2ed2e2b040ee1ef94ea9d310102dbf2e7b2",
+      "tree": "c377e83e865f624966f94c73bff42e3cfd05d465",
+      "parent": "f38978fb7778d7ffc585dc03bcb1882f819bc5be",
+      "verified": true
+    }
+  ],
+  "live_public_main": "d731a19bf13e5a5c2257d3c320f734f65ccd9894",
+  "status": "Fetched native Git objects and verified supplied source refs/parents/trees. No apply, checkout, carrier mutation or qualification claimed; Library not required for this alternative handoff."
+}

@@ -1,0 +1,23 @@
+{
+  "base": "b2ee66a10760e9765ef246de69ec1471b2a3789a",
+  "candidate": "0c429450ec7418b9776acdf72f2b2fabf141577e",
+  "tree": "c675b5729e0bcc95e4b039a7c692c6bffc4ce72a",
+  "patch_bytes": 37043,
+  "patch_sha256": "58bfb2f82acb5c6958839e6bf29d70fecd6102195784777d2839df46556aef8d",
+  "prior_full": {
+    "candidate": "b2ee66a10760e9765ef246de69ec1471b2a3789a",
+    "passed": 18214,
+    "failed": 1,
+    "ignored": 2,
+    "native_exit": 101,
+    "log_bytes": 2035109,
+    "log_sha256": "338dec00b574f6204eb7af087b5effdaf68e7cd730dc9348e7fe15986f4a4f28",
+    "cause": "E enum fixture asserted equality without PartialEq/Debug. Existing compiled diagnostic locates tests.rs2055; real Rust compilation rejects original, adding precisely those traits compiles and passes."
+  },
+  "repair": "Typed guarded-record error-return limitation covers the unchanged bare guard even when only return or field changes. Shared bounded parser locates actual first guard/single Err-record return/Ok tail; canonical call binding and existing immutable-let use discipline associate the observer. The new association mode is explicit and grants no scalar/value pin. All read literal guard rows must enter true; enum variant positives retain their own pin. Shared typed limit prevents an impossible test prescription. Publicripr1579 and swarm1579 remain distinct.",
+  "proof": "19production+4native guarded compile active; new original/overwritten/shadowed/discarded/unentered controls not yet claimed passed. Whole prior18,214/1/2 does not qualify this changed analyzer.",
+  "honesty": "Added three guard limitation invariants. Corrected old split ReturnValue must_promote pin after native2-test before/current controls both pass and same-test boundary positive fails before; runtime truth labels unchanged.",
+  "cache": "full1.173/sharded+compact0.175; predecessor1.172/0.174 refusal retained",
+  "handoff": "Native public Git refs fetched and source trees/parents verified; Library transfer no longer blocks. No public carrier update/merge/CI/settings/release performed.",
+  "remaining": "Focused new producer tests, regenerated artifacts/current goldens, full/consumers/policy/current review and native protected qualification; public1893 trust and release-selection/final installed acceptance remain."
+}

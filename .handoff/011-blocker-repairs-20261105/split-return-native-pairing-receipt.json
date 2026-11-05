@@ -1,0 +1,166 @@
+{
+  "source_fixture": "fixtures/split_test_boundary_oracle",
+  "rows": [
+    {
+      "case": "split_current",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--crate-name",
+        "split_test_boundary_oracle_fixture",
+        "--crate-type",
+        "rlib",
+        "/workspace/011-integration-proof/split-return-native-pairing/split_current/lib.rs",
+        "-o",
+        "/workspace/011-integration-proof/split-return-native-pairing/split_current/libsplit.rlib"
+      ],
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "split_current",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--test",
+        "/workspace/011-integration-proof/split-return-native-pairing/split_current/test.rs",
+        "--extern",
+        "split_test_boundary_oracle_fixture=/workspace/011-integration-proof/split-return-native-pairing/split_current/libsplit.rlib",
+        "-o",
+        "/workspace/011-integration-proof/split-return-native-pairing/split_current/test-bin"
+      ],
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "split_current",
+      "command": [
+        "/workspace/011-integration-proof/split-return-native-pairing/split_current/test-bin",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "log_sha256": "4ea88563a704d5a235bedb3bb6390869a434170084b3e5c47613d650277dde16"
+    },
+    {
+      "case": "split_before",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--crate-name",
+        "split_test_boundary_oracle_fixture",
+        "--crate-type",
+        "rlib",
+        "/workspace/011-integration-proof/split-return-native-pairing/split_before/lib.rs",
+        "-o",
+        "/workspace/011-integration-proof/split-return-native-pairing/split_before/libsplit.rlib"
+      ],
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "split_before",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--test",
+        "/workspace/011-integration-proof/split-return-native-pairing/split_before/test.rs",
+        "--extern",
+        "split_test_boundary_oracle_fixture=/workspace/011-integration-proof/split-return-native-pairing/split_before/libsplit.rlib",
+        "-o",
+        "/workspace/011-integration-proof/split-return-native-pairing/split_before/test-bin"
+      ],
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "split_before",
+      "command": [
+        "/workspace/011-integration-proof/split-return-native-pairing/split_before/test-bin",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "log_sha256": "4ea88563a704d5a235bedb3bb6390869a434170084b3e5c47613d650277dde16"
+    },
+    {
+      "case": "paired_current",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--crate-name",
+        "split_test_boundary_oracle_fixture",
+        "--crate-type",
+        "rlib",
+        "/workspace/011-integration-proof/split-return-native-pairing/paired_current/lib.rs",
+        "-o",
+        "/workspace/011-integration-proof/split-return-native-pairing/paired_current/libsplit.rlib"
+      ],
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "paired_current",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--test",
+        "/workspace/011-integration-proof/split-return-native-pairing/paired_current/test.rs",
+        "--extern",
+        "split_test_boundary_oracle_fixture=/workspace/011-integration-proof/split-return-native-pairing/paired_current/libsplit.rlib",
+        "-o",
+        "/workspace/011-integration-proof/split-return-native-pairing/paired_current/test-bin"
+      ],
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "paired_current",
+      "command": [
+        "/workspace/011-integration-proof/split-return-native-pairing/paired_current/test-bin",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "log_sha256": "4ea88563a704d5a235bedb3bb6390869a434170084b3e5c47613d650277dde16"
+    },
+    {
+      "case": "paired_before",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--crate-name",
+        "split_test_boundary_oracle_fixture",
+        "--crate-type",
+        "rlib",
+        "/workspace/011-integration-proof/split-return-native-pairing/paired_before/lib.rs",
+        "-o",
+        "/workspace/011-integration-proof/split-return-native-pairing/paired_before/libsplit.rlib"
+      ],
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "paired_before",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--test",
+        "/workspace/011-integration-proof/split-return-native-pairing/paired_before/test.rs",
+        "--extern",
+        "split_test_boundary_oracle_fixture=/workspace/011-integration-proof/split-return-native-pairing/paired_before/libsplit.rlib",
+        "-o",
+        "/workspace/011-integration-proof/split-return-native-pairing/paired_before/test-bin"
+      ],
+      "exit": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "paired_before",
+      "command": [
+        "/workspace/011-integration-proof/split-return-native-pairing/paired_before/test-bin",
+        "--test-threads=1"
+      ],
+      "exit": 101,
+      "log_sha256": "6ed5dc422a73959a7ab35d48043f12e388c32cb8b994da792c07816ef1801355"
+    }
+  ],
+  "conclusion": "Both existing split tests pass before and after; the same-test boundary oracle positive passes current and fails before. This is native proof for fixing the old must_promote honesty pin, not relabeling runtime truth."
+}

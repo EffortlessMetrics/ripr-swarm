@@ -1,0 +1,87 @@
+{
+  "candidate": "b2ee66a10760e9765ef246de69ec1471b2a3789a",
+  "source": "Exact Rust string fixtures extracted from an_early_return_pin_admits_only_the_value_that_return_produces",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "rows": [
+    {
+      "case": "original",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--crate-name",
+        "demo",
+        "--crate-type",
+        "rlib",
+        "/workspace/011-integration-proof/early-return-native-fixture/original/lib.rs",
+        "-o",
+        "/workspace/011-integration-proof/early-return-native-fixture/original/libdemo.rlib"
+      ],
+      "exit": 0,
+      "seconds": 0.06,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "original",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--test",
+        "/workspace/011-integration-proof/early-return-native-fixture/original/test.rs",
+        "--extern",
+        "demo=/workspace/011-integration-proof/early-return-native-fixture/original/libdemo.rlib",
+        "-o",
+        "/workspace/011-integration-proof/early-return-native-fixture/original/test-bin"
+      ],
+      "exit": 1,
+      "seconds": 0.077,
+      "log_sha256": "1fd87409716a8fd5938d2425d300500405290b27bcdddafe378588516fb3ce74"
+    },
+    {
+      "case": "valid_eq_fixture",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--crate-name",
+        "demo",
+        "--crate-type",
+        "rlib",
+        "/workspace/011-integration-proof/early-return-native-fixture/valid_eq_fixture/lib.rs",
+        "-o",
+        "/workspace/011-integration-proof/early-return-native-fixture/valid_eq_fixture/libdemo.rlib"
+      ],
+      "exit": 0,
+      "seconds": 0.061,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "valid_eq_fixture",
+      "command": [
+        "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/rustc",
+        "--edition=2024",
+        "--test",
+        "/workspace/011-integration-proof/early-return-native-fixture/valid_eq_fixture/test.rs",
+        "--extern",
+        "demo=/workspace/011-integration-proof/early-return-native-fixture/valid_eq_fixture/libdemo.rlib",
+        "-o",
+        "/workspace/011-integration-proof/early-return-native-fixture/valid_eq_fixture/test-bin"
+      ],
+      "exit": 0,
+      "seconds": 0.137,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "valid_eq_fixture",
+      "command": [
+        "/workspace/011-integration-proof/early-return-native-fixture/valid_eq_fixture/test-bin",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "counts": {
+        "passed": 1,
+        "failed": 0
+      },
+      "log_sha256": "abd6bf8056b7400c69132ac04c1dd9f44134f5395f1ef31eee13ba5885bfd851"
+    }
+  ],
+  "conclusion": "Original asserting fixture fails Rust type checking for missing PartialEq/Debug; deriving only those traits produces a valid test that executes and passes. Analyzer source unchanged; no source fixture edited while full run active."
+}
