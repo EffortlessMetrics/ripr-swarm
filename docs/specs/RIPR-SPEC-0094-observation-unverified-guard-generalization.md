@@ -561,7 +561,10 @@ outgoing call, including calls to indexed helpers or uppercase callable
 parameters. Only actual parsed `Enum::Variant` constructors are treated as
 non-calling: the enum and function must be established in the same file-root
 scope, no indexed callable may compete for the variant name, and the existing
-enum-declaration and rebinding authority must accept the path. This
+enum-declaration and rebinding authority must accept the path. The existing
+closed-scope authority establishes standard derive bindings; generic function
+or impl contexts remain uncertain. The general entry-type declaration guard
+is unchanged. This
 intentionally leaves unrelated wrapper chains conservative rather than
 using name-only reach to prove absence. Returned-function invocation,
 opaque or unsupported assertion syntax, ambiguous dispatch and implicit
@@ -574,6 +577,7 @@ the per-assertion guard applies.
 
 The full and compact repo views and their published related-test oracle
 read the same refusal. Proof: `assertion_call_kind_separates_same_named_free_and_receiver_owners`,
+`opposite_kind_enum_constructor_admission_preserves_declared_context`,
 `same_named_opposite_kind_wrappers_keep_owner_uncertainty`,
 `opposite_kind_indirect_function_values_keep_owner_uncertainty`,
 `opposite_kind_unrelated_wrappers_keep_call_uncertainty`,

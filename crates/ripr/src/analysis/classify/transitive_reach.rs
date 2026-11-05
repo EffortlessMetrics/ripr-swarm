@@ -1262,11 +1262,6 @@ impl OwnerReach<'_, '_> {
                 snapshot.item_nesting(&function.name, function.start_line, true)
             })
             .is_some_and(|scope| scope.modules.is_empty() && !scope.cfg_gated);
-        let type_parameters: HashSet<String> = syntax
-            .descendants()
-            .filter_map(ast::TypeParam::cast)
-            .filter_map(|parameter| parameter.name().map(|name| name.text().to_string()))
-            .collect();
         syntax.descendants().any(|node| {
             if ast::MethodCallExpr::can_cast(node.kind())
                 || ast::MacroCall::can_cast(node.kind())
@@ -1299,7 +1294,6 @@ impl OwnerReach<'_, '_> {
             let local_enum = root_scope
                 && qualifier.qualifier().is_none()
                 && !self.graph.by_name.contains_key(&*variant.text())
-                && !type_parameters.contains(&*enum_name.text())
                 && snapshot
                     .as_ref()
                     .and_then(|snapshot| snapshot.tree())
@@ -1309,8 +1303,11 @@ impl OwnerReach<'_, '_> {
                             .filter_map(ast::Enum::cast)
                             .any(|item| {
                                 item.name().is_some_and(|name| name.text() == enum_name.text())
-                                    && super::call_identity::entry_data_declaration_is_unambiguous(
+                                    && super::call_identity::data_declaration_name_is_unambiguous(
                                         item.syntax(),
+                                    )
+                                    && super::operand_pin::enum_constructor_context_is_closed(
+                                        &item, function, self.index,
                                     )
                             })
                     });

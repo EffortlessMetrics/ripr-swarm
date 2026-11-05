@@ -1478,8 +1478,8 @@ fn entry_attributes_preserve_items(source: &ra_ap_syntax::SyntaxNode) -> bool {
 
 /// A syntactic data declaration cannot establish an import's kind if a cfg,
 /// rewriting attribute or another declaration/import can select a trait there.
-pub(super) fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
     if !crate::analysis::syntax::supported_targeted_item_context(node)
         || node.ancestors().any(|ancestor| {
             ancestor
@@ -1490,6 +1490,13 @@ pub(super) fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxN
     {
         return false;
     }
+    data_declaration_name_is_unambiguous(node)
+}
+
+/// Same-scope declaration/import authority only. Callers separately establish
+/// whether this item's attributes and enclosing context preserve its kind.
+pub(super) fn data_declaration_name_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let Some(name) = ast::AnyHasName::cast(node.clone()).and_then(|item| item.name()) else {
         return false;
     };

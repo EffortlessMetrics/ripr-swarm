@@ -247,6 +247,40 @@ fn closed_scope(scope: &SyntaxNode, derives: bool) -> bool {
     })
 }
 
+/// Constructor-only admission for a directly declared file-root enum. Reuse
+/// the existing closed-scope and standard-derive binding authority; the broader
+/// entry-type guard intentionally keeps rejecting derives. Generic contexts
+/// can shadow the enum name outside the indexed function fragment.
+pub(in crate::analysis::classify) fn enum_constructor_context_is_closed(
+    item: &ast::Enum,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let Some(scope) = item.syntax().parent() else {
+        return false;
+    };
+    if !ast::SourceFile::can_cast(scope.kind())
+        || item
+            .syntax()
+            .children()
+            .filter_map(ast::Attr::cast)
+            .any(|attr| matches!(attr.simple_name().as_deref(), Some("cfg" | "cfg_attr")))
+    {
+        return false;
+    }
+    let Some(function) = function(owner, index) else {
+        return false;
+    };
+    if function.syntax().ancestors().any(|ancestor| {
+        ancestor
+            .children()
+            .any(|node| ast::GenericParamList::can_cast(node.kind()))
+    }) {
+        return false;
+    }
+    closed_scope(&scope, derives_have_root_context(owner, index))
+}
+
 pub(super) fn context_is_closed(
     owner: &FunctionSummary,
     index: &RustIndex,

@@ -3,6 +3,7 @@
 id = "RIPR-SPEC-0094"
 tests = [
   "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::assertion_call_kind_separates_same_named_free_and_receiver_owners",
+  "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::opposite_kind_enum_constructor_admission_preserves_declared_context",
   "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::same_named_opposite_kind_wrappers_keep_owner_uncertainty",
   "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::opposite_kind_indirect_function_values_keep_owner_uncertainty",
   "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::opposite_kind_unrelated_wrappers_keep_call_uncertainty",
