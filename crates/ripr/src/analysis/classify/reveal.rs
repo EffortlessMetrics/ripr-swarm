@@ -6197,6 +6197,8 @@ pub(in crate::analysis) fn is_inline_expect_snapshot(assertion: &OracleFact) -> 
 mod tests {
     use super::*;
 
+    mod sink_identity_tests;
+
     /// RIPR-SPEC-0228 rule 2: the field collection is read after the owner
     /// call on the same, unrebound binding; comments and strings never call.
     #[test]
