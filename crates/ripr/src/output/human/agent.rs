@@ -30,8 +30,20 @@ use crate::output::path::repository_display_path;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-/// Gap lines printed before the explicit `+N more` line.
-pub(super) const MAX_GAP_LINES: usize = 5;
+/// Gap lines printed when there are few gaps, before the explicit `+N more` line.
+pub(super) const MIN_GAP_LINES: usize = 5;
+/// Hard ceiling on printed gap lines, however large the diff (#13081). Sized so
+/// a realistic report (long paths and ids, about 500 bytes per gap with its test
+/// row) still fits the 6000-byte PR comment with `limits=` and `next=` intact.
+pub(super) const MAX_GAP_LINES: usize = 10;
+
+/// How many gap lines to print for `total` gaps: the floor, plus one line per
+/// eight gaps, never above the ceiling. The `open=` path (unconfirmed findings)
+/// deliberately stays at the floor. The order is still the triage
+/// selector's; this only decides how far down that order the report reads.
+pub(super) fn gap_line_budget(total: usize) -> usize {
+    (MIN_GAP_LINES + total / 8).min(MAX_GAP_LINES)
+}
 /// Character budget for the changed expression and the oracle text.
 const FIELD_BUDGET: usize = 80;
 
@@ -53,11 +65,14 @@ pub(super) fn render(
     // while a test-side gap is still open (#11825).
     let gaps = gap_findings(&triage);
     let mut out = header_line(output, &considered, gaps.len());
+    let incomplete = render_incomplete_analysis(&mut out, output);
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
-        out.push_str(
-            "done=no changed behavior found in scope; static advisory, not runtime proof\n",
-        );
+        out.push_str(if incomplete {
+            "stop=analysis incomplete; zero findings is not a clean result\n"
+        } else {
+            "done=no changed behavior found in scope; static advisory, not runtime proof\n"
+        });
         return out;
     }
     if should_emit_stop(&gaps) {
@@ -65,7 +80,13 @@ pub(super) fn render(
         if !open.is_empty() {
             return render_open_limited(out, output, &considered, &open, drill_in);
         }
-        out.push_str(&terminal_line(&triage, output));
+        if incomplete {
+            out.push_str(
+                "stop=analysis incomplete; retained findings are advisory, not a complete result\n",
+            );
+        } else {
+            out.push_str(&terminal_line(&triage, output));
+        }
         push_limits(&mut out, &considered, &[]);
         if let Some(next) = next {
             out.push_str(&next);
@@ -75,7 +96,8 @@ pub(super) fn render(
     }
 
     let mut tests: Vec<TestRef> = Vec::new();
-    for finding in gaps.iter().take(MAX_GAP_LINES) {
+    let budget = gap_line_budget(gaps.len());
+    for finding in gaps.iter().take(budget) {
         let test_ref =
             strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
         out.push_str(&gap_line(&output.root, finding, test_ref, true));
@@ -84,10 +106,10 @@ pub(super) fn render(
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
     }
-    if gaps.len() > MAX_GAP_LINES {
+    if gaps.len() > budget {
         out.push_str(&format!(
             "+{} more gaps not shown; `--format json` lists all\n",
-            gaps.len() - MAX_GAP_LINES
+            gaps.len() - budget
         ));
     }
     push_limits(&mut out, &considered, &gaps);
@@ -96,6 +118,48 @@ pub(super) fn render(
         out.push('\n');
     }
     out
+}
+
+/// Project the producer's closed completeness decision, before any terminal
+/// claim. Retained gaps may still be useful, but do not complete this run.
+/// The pipeline already projects partial-scope budgets into this outcome.
+fn render_incomplete_analysis(out: &mut String, output: &CheckOutput) -> bool {
+    let Some(outcome) = output
+        .analysis_outcome
+        .as_ref()
+        .filter(|outcome| !outcome.kind.is_complete())
+    else {
+        return false;
+    };
+    out.push_str(&format!(
+        "analysis=incomplete|outcome={}\n",
+        outcome.kind.as_str()
+    ));
+    // One bounded preview keeps the compact surface useful. The recovery is
+    // producer-bounded text and stays whole; clipping it could break a route.
+    if let Some(limitation) = outcome
+        .limitations
+        .iter()
+        .find(|limitation| !limitation.kind.is_advisory_disclosure())
+    {
+        let reason = limitation
+            .bounded_detail
+            .as_deref()
+            .unwrap_or_else(|| limitation.kind.plain_label());
+        out.push_str(&format!(
+            "limitation={}|reason={}|recovery={}\n",
+            limitation.kind.as_str(),
+            field(&clip(reason)),
+            field(&limitation.recovery.detail)
+        ));
+        if outcome.limitations.len() > 1 {
+            out.push_str(&format!(
+                "+{} more analysis limitations; `--format json` lists all\n",
+                outcome.limitations.len() - 1
+            ));
+        }
+    }
+    true
 }
 
 /// `ripr explain --format agent` (#12104): the one-finding counterpart of
@@ -237,7 +301,7 @@ fn render_open_limited(
         "open=a static limit leaves reach unconfirmed, but a related test asserts too weakly to notice the change; not a confirmed gap, and tests may still help\n",
     );
     let mut tests: Vec<TestRef> = Vec::new();
-    for finding in open.iter().take(MAX_GAP_LINES) {
+    for finding in open.iter().take(MIN_GAP_LINES) {
         let test_ref = triage::weak_assertion_row(finding)
             .map(|test| intern_test(&mut tests, &output.root, test));
         out.push_str(&gap_line(&output.root, finding, test_ref, false));
@@ -246,10 +310,10 @@ fn render_open_limited(
     for (index, test) in tests.iter().enumerate() {
         out.push_str(&format!("t{}={}\n", index + 1, test.line));
     }
-    if open.len() > MAX_GAP_LINES {
+    if open.len() > MIN_GAP_LINES {
         out.push_str(&format!(
             "+{} more open findings not shown; `--format json` lists all\n",
-            open.len() - MAX_GAP_LINES
+            open.len() - MIN_GAP_LINES
         ));
     }
     push_limits(&mut out, considered, &[]);

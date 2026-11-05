@@ -663,7 +663,7 @@ mod tests {
         // and repair route, never zero bytes.
         let notice =
             crate::core_error::CoreError::repository_root_unusable("not inside a Git work tree")
-                .refusal_notice();
+                .refusal_notice(&crate::config::config_error_summary);
         let rendered = super::render_refusal(&notice);
         assert!(
             rendered.starts_with("::error title=ripr refusal::"),

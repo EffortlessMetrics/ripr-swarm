@@ -1,134 +1,92 @@
-# Agent cohort: with and without ripr (#12902)
+# Agent cohort: useful outcomes per total effort
 
-Question: do agents given ripr leave fewer escaped defects, in fewer steps, than agents without it?
+Question: do agents given RIPR leave fewer escaped defects, in fewer steps and
+with less total effort, than agents without it?
 
-## Protocol
+The [scoring/accounting core](CORE_CONTRACT.md) owns native quality, costs and
+paired report decisions. This directory adds opt-in agent collection, reference
+qualification, frozen tasks and retained historical observations. It does not
+claim that RIPR saves tokens. Product static classifications are unchanged.
 
-Each task is a small Rust crate with two commits: a base, and a "feature" commit that changes `src/` and adds a thin test file. A headless Claude agent (`claude -p`, narrow tool grant: file tools, `cargo test`, `ripr`, read-only git) is told to strengthen the tests under `tests/` (no `src/` edits) so a later bug in the changed behavior would fail them.
+## Run the instrument before a paid cohort
 
-Arms (same brief, plus one paragraph):
-
-- `A0-none`: `ripr` is shadowed by a failing shim.
-- `A1-diagnostics`: told to run `ripr check --base HEAD~1` first.
-- `A2-packet-loop`: told to run `ripr agent brief --base HEAD~1 --json` first and follow its `next` commands.
-
-Hidden oracle: the agent's final `tests/` are run on the pristine code (must pass) and on each hidden mutant of `src/lib.rs`. Escaped defect rate = surviving mutants / mutants. A catch now requires a nonempty pristine pass, a separately compiled mutant
-whose tests actually fail, and a restored-pristine pass with the same test subject.
-Timeouts, build failures, process errors and missing tests are unresolved, not
-catches. See the [oracle contract](ORACLE_CONTRACT.md). Per run we record turns, tool calls, ripr calls, tokens, cost, wall time (`receipts/`).
-
-Tasks: 8 hand-written single-function tasks with hand-written mutants (each validated killable by a reference suite) and 3 larger multi-function tasks (`calendar`, `expr`, `textfmt`) whose mutants are generated mechanically (`harness/mutate.py`) and kept only if a Sonnet-written oracle suite kills them (`harness/oracle.py`).
-
-## Historical-result qualification
-
-The tables and interpretations below are retained original observations from the
-pre-v3 scorer. That scorer counted timeouts and some other failures as catches;
-these receipts do not retain enough execution evidence to establish which runs,
-if any, were affected. Their numeric values are not rewritten, but they are **not
-requalified results** or evidence of a token-efficiency benefit. New reports label
-legacy quality explicitly and withhold cost per verified success until the native
-controls described below are present. Rerun or independently regrade retained
-artifacts before using historical quality as an acceptance baseline.
-
-## Result (2026-11-04, ripr 0.10.0 installed binary, 99 runs, no invalid runs)
-
-Escaped-defect rate, mean over runs (tasks × reps):
-
-| Model | Arm | Runs | Escape rate | Runs with any escape | Turns | Tokens | Wall s |
-|---|---|---|---|---|---|---|---|
-| Haiku | none | 22 | 0.4% | 3 | 5.2 | 202k | 30 |
-| Haiku | `ripr check` | 22 | 0.7% | 4 | 6.6 | 280k | 34 |
-| Haiku | `ripr agent brief` | 22 | 0.7% | 4 | 13.5 | 712k | 60 |
-| Sonnet | none | 11 | 1.4% | 2 | 5.0 | 197k | 24 |
-| Sonnet | `ripr check` | 11 | 0.2% | 1 | 6.4 | 266k | 29 |
-| Sonnet | `ripr agent brief` | 11 | 1.7% | 3 | 5.6 | 250k | 29 |
-
-**Finding: no measurable lift, because the tasks have no headroom.** Unaided agents already kill over 98% of hidden mutants. The differences between arms are within run-to-run noise (a handful of survivors, mostly the same mutants in `expr` and `calendar`). For Haiku the brief loop cost 3.5× the tokens and 2× the wall time with the same escape rate. This does not show that ripr fails to help; it shows these tasks cannot detect help.
-
-## Second result: real code, config matrix, current main (2026-11-04, ripr 0.11.0 @ 7d04028)
-
-Three published crates already vendored in the local cargo registry (`strsim`, `shlex`, `percent-encoding`; 325-756 lines, doctests off) with 44-50 mechanical mutants each, filtered by two Sonnet-written oracle suites. 36 runs: tasks × {none, `ripr check`, `ripr agent brief`} × {Haiku, Sonnet} × 2 reps, all mandatory use. Receipts: `receipts/real-pilot-main-0.11.0-2026-11-04.jsonl`; scoreboard: `scoreboard/real-pilot-2026-11-04.md`.
-
-- `shlex` and `percent-encoding` still saturate: every run kills every mutant, in every config.
-- `strsim` (756 lines) has headroom. Mean mutants escaped, out of 46, over 4 runs per config (Haiku and Sonnet pooled): none 6.5, `ripr check` 7.5, `ripr agent brief` 9.5. Per-run range is 3 to 13. With 4 runs per cell, none of these gaps is distinguishable from noise, and the direction is not in ripr's favor.
-- Tokens: brief loop 2.2× control for Haiku, about 1× for Sonnet.
-
-So even with headroom, no config of ripr 0.11.0 beat an unaided agent in this pilot. The instrument now separates good from bad runs (escape 3 to 13), so more reps per cell can answer it.
-
-## Third result: full config matrix on `strsim` (2026-11-04, ripr 0.11.0 @ 7d04028)
-
-`strsim` has the headroom, so the whole matrix ran there: 9 configs plus an MCP variant that passes `base`, Haiku and Sonnet, 5 new runs per cell (7 for the none/check/brief cells that also had the earlier 2 runs). 100 runs, none invalid. Receipts: `receipts/strsim-matrix-main-0.11.0-2026-11-04.jsonl`; scoreboard: `scoreboard/strsim-matrix-2026-11-04.md`. Fix rate (zero escaped mutants) is near 0% in every cell, so the comparison is mean escaped-mutant rate, with a permutation test against no ripr.
-
-| Config | Haiku (none 9.0%) | Sonnet (none 17.7%) |
-|---|---|---|
-| `ripr check` | 8.1% | 22.7% (p<0.01) |
-| `ripr check --json` | 8.3% | 17.0% |
-| `ripr check --mode fast` | 18.3% (p=0.03) | 22.6% (p=0.01) |
-| `ripr agent brief` | 14.3% | 18.6% |
-| `ripr agent brief --max-seams 1` | 14.3% | 19.6% |
-| `ripr agent brief --max-seams 10` | 17.4% (p=0.05) | 25.2% (p=0.02) |
-| `ripr agent brief`, optional use | 9.1% | 30.0% (p<0.01) |
-| MCP, no `base` | 12.6% | 39.6% (p<0.01) |
-| MCP, `base: HEAD~1` | 7.0% (p=0.60) | 25.7% (p=0.03) |
-
-Reading it:
-
-- **No config reduced escapes.** Several increased them. The best Haiku configs match no ripr within noise.
-- **Noise is large.** The Sonnet brief-optional cell made zero ripr calls (it is effectively a control with an extra paragraph) and still came out 12 points worse than none. Cells have 5-7 runs; treat only the big gaps as signal, and expect individual p-values to move with more runs (about 30 comparisons were made, none corrected).
-- **MCP default base is a trap.** With no `base`, `ripr_refresh` returned a completed zero-finding `no_scope` snapshot in 10 of 10 runs (#13096). Passing `base` fixed that for Haiku and cut Sonnet from 39.6% to 25.7%, which is still above the 17.7% control.
-- **Fast mode and a large seam cap are the worst output settings;** `--json` is indistinguishable from plain `check`.
-
-## Per-config scoreboard
-
-`harness/scoreboard.py` reports every attempted run, measured-cost coverage,
-completion and hidden-oracle outcomes, then compares matched task/replicate pairs
-within the same cohort, model and turn budget. Missing usage is not zero; failed
-attempts do not disappear. Full RIPR version strings are retained and mixed
-versions within a cohort/config are rejected. See the
-[measurement contract](MEASUREMENT_CONTRACT.md) for receipt/report v3, pairing,
-cache accounting, cost per success and limitations.
-
-Configs live in `CONFIGS` in `harness/run_one.py`: surface (check, brief, MCP),
-optional vs mandatory use, output flags, model and turn cap (`COHORT_MAX_TURNS`).
-Each sweep creates a fresh cohort ID; set `COHORT_ID` only to split one frozen
-experiment across files. Historical tables and receipts above are retained as
-original observations, not recomputed or statistically requalified by this change.
-
-## Limits
-
-- Isolation: the agent's tool grant is narrow (file tools plus `cargo test`, `cargo build`, `ripr` and read-only `git`/`ls`/`cat`), not a general shell, but `cargo test` executes agent-written code and `acceptEdits` lets it write anywhere the process can. Run the harness only in a disposable environment with no secrets; it does not enforce isolation or redaction itself.
-- The historical scorer counted timeouts and other failures as catches, admitted zero-test pristine runs, and graded the agent checkout. The new scorer repairs those mechanisms; historical escape rates still have unverified provenance and are not requalified by this change.
-- One provider (Anthropic), two models. The "two providers" bar is not met; no other provider is reachable from this environment.
-- Mutants for the large and real-code tasks are mechanical (not cargo-mutants, which is not installed here) and filtered by Sonnet-written suites, so bugs those suites could not kill are excluded; this biases toward bugs that are easy to kill.
-- First-party tasks are small (under 120 lines). Real-code tasks are single-crate, and only `src/lib.rs` is mutated.
-- Installed ripr is 0.10.0, not main. Reps per cell are 1–2 per task; no significance test is claimed.
-- Optional use: when ripr was only offered, agents ran it 0 of 3 times (#13050); the arms above force the first call.
-
-## Run
+Python 3.11+ and Git are required; native grading also requires Cargo/Rust.
+From the repository root, run the cheap deterministic proof:
 
 ```sh
-cd benchmarks/agentic/cohort/harness
-python3 validate.py                      # check every mutant is killable by the reference tests (small tasks)
-python3 sweep.py all none,check-mandatory,brief-mandatory haiku 1 3 out.jsonl 4
-python3 scoreboard.py out out.jsonl
-```
-
-Needs `claude` on PATH and `ripr`. Runs create unique trial directories under
-`/tmp/cohort-work`; repeated trials do not overwrite prior transcripts or tests.
-The old `agg.py` is a historical quick summary, not the measurement-integrity
-report. Run the instrument tests without any model or network. Native Cargo
-controls are explicitly skipped when Cargo is unavailable locally:
-
-```sh
-python3 -I benchmarks/agentic/cohort/harness/selftest.py
-```
-
-Run that command from the repository root. The native CI-owned route requires
-Git, Cargo, all five named native controls and zero skips:
-
-```sh
+python3 -I benchmarks/agentic/cohort/harness/selftest.py --require-native
 cargo test -p xtask --test agent_cohort_selftest
 ```
 
-This route runs tiny dependency-free offline crates and instrument tests, not a
-model or paid cohort. Missing native evidence is a failure, never a passing skip.
+These commands launch no model and make no network requests. The strict selftest
+requires all six named native Cargo controls and zero skips. Without Cargo,
+the non-strict selftest can exercise the other boundaries but reports native
+skips explicitly; that is not native qualification.
+
+Validate the authored references without a model:
+
+```sh
+cd benchmarks/agentic/cohort/harness
+python3 validate.py
+```
+
+The default selection contains only tasks with authored references. Explicitly
+selecting a task without one, incomplete scoring, zero mutations or an unknown
+task returns nonzero. Reference qualification and its selection bias are described
+in [the oracle contract](ORACLE_CONTRACT.md).
+
+## Opt-in collection
+
+Collection needs the `claude` executable and an identified `ripr` on PATH, or
+`COHORT_RIPR_BIN` pointing to the selected binary. Run only in a disposable,
+secret-free environment: the narrow tool grant is not a security sandbox, and
+Cargo executes agent-written code. No isolation or redaction is implied.
+
+From the harness directory, the following explicitly consumes provider usage:
+
+```sh
+# One task, three arms, repetitions 1 and 2, one concurrent worker.
+python3 sweep.py shipping none,check-mandatory,brief-mandatory haiku 1 3 out.jsonl 1
+python3 scoreboard.py out out.jsonl
+python3 agg.py out.jsonl
+```
+
+`scoreboard.py` writes JSON and Markdown; `agg.py` prints the same canonical
+report. Neither drops failed attempts or supplies missing costs as zero. The
+model alias in this example is not a pinned model snapshot or a recommendation.
+
+`CONFIGS` in `run_one.py` contains none/check/brief/MCP surfaces, optional or
+mandatory use and output flags. `COHORT_MAX_TURNS` sets the actual turn cap.
+Every sweep generates a fresh cohort ID and each run has a unique directory.
+Set `COHORT_ID` only to join files from one deliberately frozen experiment.
+Reconcile the intended matrix: the current report counts supplied receipts,
+not an independently retained plan of every scheduled attempt.
+
+## Task and evidence boundaries
+
+The first-party Rust tasks contain a base/change pair, thin tests, selected hidden
+mutations and authored references. Larger tasks use filtered mechanical mutations.
+Optional real-code tasks load only the exact crate versions already present in
+the local Cargo registry; unavailable sources do not become fabricated tasks.
+The frozen population and environment must be checked before launching a cohort.
+
+The evaluator reconstructs source/configuration from the task and grades the
+exact archived submitted tests. A catch requires nonempty pristine/mutant/restored
+execution controls; compilation, timeout, process, empty-test and incomplete
+outcomes remain unresolved. A cheaper failed attempt is not a useful result.
+Costs distinguish token components, SDK estimates, agent time and scoring time.
+See [collection/report receipts](MEASUREMENT_CONTRACT.md) for those joins and
+[the core contract](CORE_CONTRACT.md) for the shared decisions.
+
+## Historical results and remaining acceptance
+
+[Historical observations](HISTORICAL_RESULTS.md) preserve the original numerical
+tables and identify their unqualified scorer provenance. Raw receipts, selected
+mutation lists and original generated scoreboards remain unchanged. Reading them
+through a newer reporter does not establish verified quality or a new experiment.
+
+#12902 and #12912 retain the broader work: frozen model/executable identities,
+representative harder tasks, randomized order, a planned-attempt denominator,
+a second provider, Python/TypeScript cohorts and scoreboard integration. A new
+qualified cohort needs its own retained observations and predeclared quality and
+budget criteria. Passing instrument tests alone does not establish effectiveness.

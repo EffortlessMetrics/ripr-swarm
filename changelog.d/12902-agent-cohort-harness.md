@@ -1,3 +1,5 @@
 <!-- section: Added -->
-- Opt-in with/without-ripr agent cohort harness, task suite and first receipts under
-  `benchmarks/agentic/cohort` (#12902); first result is a null on tasks with no headroom.
+- Opt-in agent cohort collection and reference-qualification tools now use the
+  repaired scoring/accounting core; both reporting entrypoints preserve failed
+  attempts and unknown costs, while original datasets remain explicitly
+  unrequalified historical observations (#12902, #12912).

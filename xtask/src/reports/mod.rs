@@ -64,6 +64,7 @@ mod rust_repair_trust;
 mod sarif;
 mod scale_cliff;
 mod seam_inventory_scaling;
+mod slow_tests;
 mod source_promotion;
 mod spec_maintenance;
 mod spec_receipts;
@@ -199,6 +200,7 @@ pub(crate) use sarif::{
 };
 pub(crate) use scale_cliff::scale_cliff_benchmark;
 pub(crate) use seam_inventory_scaling::seam_inventory_scaling_benchmark;
+pub(crate) use slow_tests::slow_test_report;
 pub(crate) use source_promotion::source_promotion;
 pub(crate) use spec_maintenance::spec_digest;
 pub(crate) use spec_maintenance::spec_maintenance;

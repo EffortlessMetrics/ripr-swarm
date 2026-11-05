@@ -2755,7 +2755,8 @@ fn config_load_parse_error_strips_windows_verbatim_prefix() -> Result<(), String
             "Windows UNC verbatim form must render its plain spelling: {unc_windows}"
         ));
     }
-    let notice = crate::core_error::CoreError::config_invalid(windows.clone()).refusal_notice();
+    let notice = crate::core_error::CoreError::config_invalid(windows.clone())
+        .refusal_notice(&crate::config::config_error_summary);
     if notice.message != expected_prefix {
         return Err(format!(
             "JSON refusal message must be the cleaned first line, got: {}",
@@ -2768,7 +2769,8 @@ fn config_load_parse_error_strips_windows_verbatim_prefix() -> Result<(), String
             notice.message
         ));
     }
-    let unix_notice = crate::core_error::CoreError::config_invalid(unix).refusal_notice();
+    let unix_notice = crate::core_error::CoreError::config_invalid(unix)
+        .refusal_notice(&crate::config::config_error_summary);
     if unix_notice.message
         != format!("{verbatim}: invalid ripr.toml: TOML parse error at line 4, column 2")
     {

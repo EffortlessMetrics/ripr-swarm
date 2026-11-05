@@ -2,6 +2,7 @@
 import os
 import shutil
 import subprocess
+import tomllib
 
 
 def sh(cmd, cwd=None, env=None, timeout=300, check=False):
@@ -22,7 +23,12 @@ def build_repo(t, dest):
     if os.path.exists(dest): shutil.rmtree(dest)
     os.makedirs(dest)
     sh("git init -q -b main", dest, GIT, check=True)
-    write(f"{dest}/Cargo.toml", t.get("cargo_toml") or f'[package]\nname = "{t["id"]}"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\npath = "src/lib.rs"\n\n[workspace]\n')
+    manifest = t.get("cargo_toml") or f'[package]\nname = "{t["id"]}"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\npath = "src/lib.rs"\n'
+    # Custom real-code tasks need the same isolation as generated defaults.
+    # Parse the table rather than matching comments or duplicating an existing one.
+    if "workspace" not in tomllib.loads(manifest):
+        manifest += "\n[workspace]\n"
+    write(f"{dest}/Cargo.toml", manifest)
     write(f"{dest}/.gitignore", "target\n")
     write(f"{dest}/src/lib.rs", t["base_src"])
     sh("git add -A && git commit -q -m base", dest, GIT, check=True)

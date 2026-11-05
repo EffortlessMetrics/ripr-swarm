@@ -23,6 +23,9 @@ tar = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 roxmltree = "0.21"
 
+[dev-dependencies]
+proptest = "1"
+
 [features]
 # Producer-to-policy SARIF identity controls need the Perl adapter. They run in
 # the dedicated Perl lane (`--features perl-identity`) so the shared workspace

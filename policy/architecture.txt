@@ -24,3 +24,5 @@ crates/ripr/src/output/**|collect_context|output must not orchestrate context us
 crates/ripr/src/output/**|explain_finding|output must not orchestrate explain use cases
 crates/ripr/src/**|fn gap_record_from_perl_preview_finding|#3225: only one historical Perl preview gap-ledger adapter; extend perl_gap_record_projection instead of duplicating
 !crates/ripr/src/output/gap_decision_ledger.rs|fn gap_record_from_perl_preview_finding|#3225: bespoke markdown adapter pending shared-authority decommission tracked in #3225
+crates/ripr/src/output/**|crate::cli|output must not import CLI adapters
+!crates/ripr/src/output/first_pr.rs|crate::cli|#5193: cfg(test) wrapper drives the first-pr argv entry in the CLI adapter end to end; production output code takes parsed FirstPrOptions and never imports cli

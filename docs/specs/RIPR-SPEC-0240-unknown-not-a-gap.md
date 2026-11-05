@@ -229,6 +229,18 @@ A panicking macro inside a nested `fn`, closure or `macro_rules!` in the
 owner still counts; that over-reads toward `static_unknown`, never toward a
 gap or credit.
 
+Repository seam evidence carries the same `rust_panic_outcome_unresolved`
+limitation in its discrimination summary. The shared static-limitation decision
+honors that producer marker even when every stage remains `yes` or `no`.
+Pilot ranking and agent brief selection withhold the seam, matching repair
+eligibility, and pilot counts it among withheld static limitations. The evidence
+record and its canonical item retain the original stage, state and reason with
+category `rust_panic_outcome_unresolved` and repair route
+`analysis/oracle-semantics-audit-fixes`. The raw seam class and stage states stay
+unchanged. Ordinary unmarked gaps and weak asserting controls remain eligible
+for selection. A pilot with only these limitations names the withheld work and
+provides no repair, after-snapshot or outcome command (#12977).
+
 ### Profile-dependent `debug_assert_eq!`
 
 `debug_assert_eq!` runs under the default `cargo test` profile and is
@@ -728,7 +740,7 @@ under `rust_indirect_owner_call_unresolved`:
   A bounded `.map(owner)` chain that the owner pin credits (RIPR-SPEC-0197,
   #9478 slice A) is `exposed` before this limit is consulted; a refused chain
   that still names the owner as a value (async or method owners, non-matching or
-  non-literal expectations, a change invisible at the first input) keeps this
+  non-literal expectations, a change invisible at every input) keeps this
   limit. A chain whose path is unresolved, shadowed by a local binding, or
   qualified to a different same-leaf function is not a value use of the owner and
   is decided by the ordinary classification rules. A call
@@ -1054,7 +1066,9 @@ read budget are separate work.
 
 ## Scope boundary
 
-- Rust check findings only, except the TypeScript truncated-discovery rule above. The pilot seam rule is RIPR-SPEC-0230 (#5569).
+- Rust check findings, the TypeScript truncated-discovery rule, and the named
+  panic-outcome limitation in repository seam evidence described above. The
+  separate pilot seam rule for unresolved reach is RIPR-SPEC-0230 (#5569).
 - `weakly_exposed` findings are out of scope except for the framework
   oracles above and the profile-dependent `debug_assert_eq!` above (which the
   owner pin would credit as `assert_eq!`): a credited weak oracle is read
@@ -1258,6 +1272,30 @@ Integration: `crates/ripr/tests/owner_pin_execution.rs`
 `a_saturated_test_past_the_related_row_cap_still_withholds_the_gap`,
 `an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence`), plus the unit test
 `gap_admission.rs::tests::a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown`.
+
+Repository seam selection (#12977):
+`crates/ripr/src/output/pilot/tests/panic_outcome.rs`
+(`named_panic_limit_withholds_pilot_and_brief_without_reclassifying`,
+`weak_asserting_should_panic_control_stays_actionable`) and
+`crates/ripr/tests/task_first_facade.rs`
+(`pilot_and_brief_withhold_the_should_panic_limitation`) follow the real
+`#[should_panic]` producer through pilot ranking, withheld counts, evidence
+records and agent brief selection, with a weak asserting control that remains
+actionable. The assertion-free fixture also has unknown propagation, so it
+proves named-reason preservation. The CLI test also adds a snapshot with
+`snapshot_strength = "none"`: its kind supplies propagation while the configured
+strength grants no discrimination. That case requires the named panic limit
+and concrete stages before checking the ranking and brief omission, so it
+distinguishes named-only selection from stage-based withholding.
+The pure analysis producer test
+`an_unrevealed_seam_names_the_typed_limit_once_without_reclassifying` in
+`crates/ripr/src/analysis/test_grip_evidence/panic_outcome/tests.rs` preserves
+concrete stage facts and classification while adding the named marker.
+The output test `named_panic_limit_with_concrete_stages_withholds_pilot_and_brief`
+in `crates/ripr/src/output/pilot/tests/panic_outcome.rs` separately copies the
+real producer's named summary into a controlled concrete-stage consumer pair.
+The marked seam is withheld while the otherwise identical, unmarked
+`ReachableUnrevealed` seam remains selectable.
 
 `crates/ripr/tests/indirect_owner_limit.rs` (function value, pointer binding,
 local and known executors, item macro, inert-macro, `cfg_attr` and

@@ -662,6 +662,12 @@ fn apply_suppression_policy(output: &mut CheckOutput, policy: &Path) -> Result<(
             .iter()
             .filter(|finding| !matched.contains_key(&finding.id)),
     );
+    output.summary.proof_harness_only = crate::analysis::summary::proof_harness_only_count(
+        output
+            .findings
+            .iter()
+            .filter(|finding| !matched.contains_key(&finding.id)),
+    );
     output.suppression = Some(sup::CheckSuppressionOutcome {
         policy_path: policy.display().to_string(),
         suppressed,
@@ -1092,7 +1098,7 @@ fn invoke_perl_lsp_producer(
     );
     match wait_result {
         crate::git::ChildWait::Exited(status) => {
-            if crate::analysis::cancellation::cli_interrupted()
+            if crate::analysis::cancellation::cli_interrupted_after_exit(&status)
                 && let Err(cancelled) = crate::analysis::cancellation::checkpoint()
             {
                 return Err(staging.settled_failure(cancelled));

@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 
 NATIVE_CONTROLS = frozenset({
+    "test_native_workspace.NativeWorkspaceTests.test_custom_manifest_is_isolated_inside_an_enclosing_workspace",
     "test_native_scoring.NativeScoringTests.test_exact_boundary_test_catches_mutant_and_passes_restoration",
     "test_native_scoring.NativeScoringTests.test_smoke_test_survives_the_same_mutant",
     "test_native_scoring.NativeScoringTests.test_zero_tests_is_not_pristine_validation",
