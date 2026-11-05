@@ -1,0 +1,16 @@
+{
+  "base": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+  "candidate": "95b4ebfba2f2d0294ccde20fe9994b45b01faf28",
+  "tree": "fcf67a84b4d8274d668761f268d06b607eabdbd5",
+  "main": "02cddbb272cc54135721dc9d11fceb2f4223cf86",
+  "merge": "e4e5e31efd46fef580bac8f7f60b387b97bf046c",
+  "merge_parents": [
+    "4a76318be653ffc9a45001f216d47f208015c551",
+    "02cddbb272cc54135721dc9d11fceb2f4223cf86"
+  ],
+  "patch_bytes": 330446,
+  "patch_sha256": "54efc75f9822cf625a7d4a467c458bdd9bff65905daa41852ef9564838faff53",
+  "composition": "Clean native merge; preserves coverage/debug stripping, Perl receiver, bounded agent/status output, crate-root foreign glob ancestry. 25 artifacts carried from verified6a producer and explicitly pending new producer regeneration. Cache full1.172/sharded+compact0.174 rejects predecessor1.171/0.173.",
+  "qualification": "6a production18+native4 and13CLI subjects are exact prior-head evidence; current producer build/regeneration/golden run active; no current full or hosted proof claimed.",
+  "scope": "1579 precise typed guard limitation is existing0.13 proof blocker in release-targets, not newly deferred here. Existing fixture SPEC and old exposed golden conflict; no blanket golden blessing. Public1893 trust/selection/publication holds intact."
+}

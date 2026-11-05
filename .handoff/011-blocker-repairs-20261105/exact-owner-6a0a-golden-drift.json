@@ -1,0 +1,3205 @@
+{
+  "schema_version": "0.1",
+  "status": "warn",
+  "drift_count": 133,
+  "provenance": {
+    "binary": "/workspace/12010-proof/target/debug/ripr",
+    "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+    "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+  },
+  "entries": [
+    {
+      "fixture": "boundary_gap_equality_closed",
+      "surface": "human.txt",
+      "expected": "fixtures/boundary_gap_equality_closed/expected/human.txt",
+      "actual": "target/ripr/fixtures/boundary_gap_equality_closed/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 8,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "boundary_operand_unresolved",
+      "surface": "check.json",
+      "expected": "fixtures/boundary_operand_unresolved/expected/check.json",
+      "actual": "target/ripr/fixtures/boundary_operand_unresolved/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 8,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "boundary_operand_unresolved",
+      "surface": "human.txt",
+      "expected": "fixtures/boundary_operand_unresolved/expected/human.txt",
+      "actual": "target/ripr/fixtures/boundary_operand_unresolved/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 16,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "boundary_operand_unresolved",
+      "surface": "human-full.txt",
+      "expected": "fixtures/boundary_operand_unresolved/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/boundary_operand_unresolved/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 86,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "boundary_pairing_sibling_element",
+      "surface": "check.json",
+      "expected": "fixtures/boundary_pairing_sibling_element/expected/check.json",
+      "actual": "target/ripr/fixtures/boundary_pairing_sibling_element/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 31,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "boundary_pairing_sibling_element",
+      "surface": "human.txt",
+      "expected": "fixtures/boundary_pairing_sibling_element/expected/human.txt",
+      "actual": "target/ripr/fixtures/boundary_pairing_sibling_element/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "boundary_pairing_sibling_element",
+      "surface": "human-full.txt",
+      "expected": "fixtures/boundary_pairing_sibling_element/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/boundary_pairing_sibling_element/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 78,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "boundary_pairing_sibling_owner",
+      "surface": "check.json",
+      "expected": "fixtures/boundary_pairing_sibling_owner/expected/check.json",
+      "actual": "target/ripr/fixtures/boundary_pairing_sibling_owner/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 31,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "boundary_pairing_sibling_owner",
+      "surface": "human.txt",
+      "expected": "fixtures/boundary_pairing_sibling_owner/expected/human.txt",
+      "actual": "target/ripr/fixtures/boundary_pairing_sibling_owner/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 10,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "boundary_pairing_sibling_owner",
+      "surface": "human-full.txt",
+      "expected": "fixtures/boundary_pairing_sibling_owner/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/boundary_pairing_sibling_owner/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 84,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "cross_crate_trait_impl_direct_owner_positive",
+      "surface": "check.json",
+      "expected": "fixtures/cross_crate_trait_impl_direct_owner_positive/expected/check.json",
+      "actual": "target/ripr/fixtures/cross_crate_trait_impl_direct_owner_positive/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "cross_crate_trait_impl_direct_owner_positive",
+      "surface": "human-full.txt",
+      "expected": "fixtures/cross_crate_trait_impl_direct_owner_positive/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/cross_crate_trait_impl_direct_owner_positive/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 40,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "error_return_unresolved_guard",
+      "surface": "check.json",
+      "expected": "fixtures/error_return_unresolved_guard/expected/check.json",
+      "actual": "target/ripr/fixtures/error_return_unresolved_guard/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 28,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": ["expected [exposed] -> actual [weakly_exposed]"],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": ["expected [] -> actual [Strengthen the related assertion so it discriminates the changed behavior., The related test `cancelled_return_is_exact` already asserts an exact value; the gap is not the assertion shape. Add a test input that executes the changed error arm and assert the exact variant or payload it produces., The related test `cancelled_return_is_exact` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.]"],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "error_return_unresolved_guard",
+      "surface": "human.txt",
+      "expected": "fixtures/error_return_unresolved_guard/expected/human.txt",
+      "actual": "target/ripr/fixtures/error_return_unresolved_guard/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 42,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "error_variant_boxed_wrapper_downcast_witness",
+      "surface": "check.json",
+      "expected": "fixtures/error_variant_boxed_wrapper_downcast_witness/expected/check.json",
+      "actual": "target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 37,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": ["expected [exposed, reachable_unrevealed, weakly_exposed] -> actual [reachable_unrevealed, weakly_exposed]"],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": ["expected [, Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect., Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.] -> actual [Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect., Add a test input that reaches the changed error path and assert the exact error variant it returns., Assert the exact error variant or payload instead of only is_err()., Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.]"],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "error_variant_boxed_wrapper_downcast_witness",
+      "surface": "human.txt",
+      "expected": "fixtures/error_variant_boxed_wrapper_downcast_witness/expected/human.txt",
+      "actual": "target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 35,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "error_variant_boxed_wrapper_downcast_witness",
+      "surface": "human-full.txt",
+      "expected": "fixtures/error_variant_boxed_wrapper_downcast_witness/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 650,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "helper_chain_one_hop",
+      "surface": "check.json",
+      "expected": "fixtures/helper_chain_one_hop/expected/check.json",
+      "actual": "target/ripr/fixtures/helper_chain_one_hop/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "helper_chain_one_hop",
+      "surface": "human.txt",
+      "expected": "fixtures/helper_chain_one_hop/expected/human.txt",
+      "actual": "target/ripr/fixtures/helper_chain_one_hop/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 2,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "human_full_shared_parse_port",
+      "surface": "check.json",
+      "expected": "fixtures/human_full_shared_parse_port/expected/check.json",
+      "actual": "target/ripr/fixtures/human_full_shared_parse_port/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 5,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "human_full_shared_parse_port",
+      "surface": "human-full.txt",
+      "expected": "fixtures/human_full_shared_parse_port/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/human_full_shared_parse_port/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 123,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "match_arm_proximity_bound_other_function_not_credited",
+      "surface": "check.json",
+      "expected": "fixtures/match_arm_proximity_bound_other_function_not_credited/expected/check.json",
+      "actual": "target/ripr/fixtures/match_arm_proximity_bound_other_function_not_credited/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "match_arm_proximity_other_function_not_credited",
+      "surface": "check.json",
+      "expected": "fixtures/match_arm_proximity_other_function_not_credited/expected/check.json",
+      "actual": "target/ripr/fixtures/match_arm_proximity_other_function_not_credited/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "member_reexport_foreign_trait_keeps_dispatch_allowance",
+      "surface": "check.json",
+      "expected": "fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/expected/check.json",
+      "actual": "target/ripr/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "member_reexport_foreign_trait_keeps_dispatch_allowance",
+      "surface": "human.txt",
+      "expected": "fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/expected/human.txt",
+      "actual": "target/ripr/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "member_reexport_foreign_trait_keeps_dispatch_allowance",
+      "surface": "human-full.txt",
+      "expected": "fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 9,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "module_reach_control_qualified",
+      "surface": "check.json",
+      "expected": "fixtures/module_reach_control_qualified/expected/check.json",
+      "actual": "target/ripr/fixtures/module_reach_control_qualified/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 35,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": ["expected [exposed, weakly_exposed] -> actual [exposed]"],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": ["expected [, The related test `discount_boundary` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.] -> actual []"],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "module_reach_control_qualified",
+      "surface": "human.txt",
+      "expected": "fixtures/module_reach_control_qualified/expected/human.txt",
+      "actual": "target/ripr/fixtures/module_reach_control_qualified/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 42,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "module_reach_super_import_in_file_wrong_module",
+      "surface": "check.json",
+      "expected": "fixtures/module_reach_super_import_in_file_wrong_module/expected/check.json",
+      "actual": "target/ripr/fixtures/module_reach_super_import_in_file_wrong_module/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "module_reach_super_import_in_file_wrong_module",
+      "surface": "human-full.txt",
+      "expected": "fixtures/module_reach_super_import_in_file_wrong_module/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/module_reach_super_import_in_file_wrong_module/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "observation_verified_field_construction",
+      "surface": "check.json",
+      "expected": "fixtures/observation_verified_field_construction/expected/check.json",
+      "actual": "target/ripr/fixtures/observation_verified_field_construction/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "observation_verified_field_construction",
+      "surface": "human.txt",
+      "expected": "fixtures/observation_verified_field_construction/expected/human.txt",
+      "actual": "target/ripr/fixtures/observation_verified_field_construction/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "owner_self_body_same_name_with_caller_control",
+      "surface": "check.json",
+      "expected": "fixtures/owner_self_body_same_name_with_caller_control/expected/check.json",
+      "actual": "target/ripr/fixtures/owner_self_body_same_name_with_caller_control/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "owner_self_body_same_name_with_caller_control",
+      "surface": "human.txt",
+      "expected": "fixtures/owner_self_body_same_name_with_caller_control/expected/human.txt",
+      "actual": "target/ripr/fixtures/owner_self_body_same_name_with_caller_control/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "owner_self_body_same_name_with_caller_control",
+      "surface": "human-full.txt",
+      "expected": "fixtures/owner_self_body_same_name_with_caller_control/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/owner_self_body_same_name_with_caller_control/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 9,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_boundary_oracle_refused",
+      "surface": "human.txt",
+      "expected": "fixtures/predicate_boundary_oracle_refused/expected/human.txt",
+      "actual": "target/ripr/fixtures/predicate_boundary_oracle_refused/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_oracle_execution_false_branch",
+      "surface": "human.txt",
+      "expected": "fixtures/predicate_oracle_execution_false_branch/expected/human.txt",
+      "actual": "target/ripr/fixtures/predicate_oracle_execution_false_branch/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_oracle_execution_reached_uncalled",
+      "surface": "human.txt",
+      "expected": "fixtures/predicate_oracle_execution_reached_uncalled/expected/human.txt",
+      "actual": "target/ripr/fixtures/predicate_oracle_execution_reached_uncalled/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_oracle_execution_shadowed",
+      "surface": "human.txt",
+      "expected": "fixtures/predicate_oracle_execution_shadowed/expected/human.txt",
+      "actual": "target/ripr/fixtures/predicate_oracle_execution_shadowed/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_oracle_execution_uncalled",
+      "surface": "human.txt",
+      "expected": "fixtures/predicate_oracle_execution_uncalled/expected/human.txt",
+      "actual": "target/ripr/fixtures/predicate_oracle_execution_uncalled/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_compound_assigned_binding",
+      "surface": "check.json",
+      "expected": "fixtures/predicate_pairing_compound_assigned_binding/expected/check.json",
+      "actual": "target/ripr/fixtures/predicate_pairing_compound_assigned_binding/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_compound_assigned_binding",
+      "surface": "human.txt",
+      "expected": "fixtures/predicate_pairing_compound_assigned_binding/expected/human.txt",
+      "actual": "target/ripr/fixtures/predicate_pairing_compound_assigned_binding/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 31,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_compound_assigned_binding",
+      "surface": "human-full.txt",
+      "expected": "fixtures/predicate_pairing_compound_assigned_binding/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/predicate_pairing_compound_assigned_binding/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 2,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_mutably_borrowed_binding",
+      "surface": "check.json",
+      "expected": "fixtures/predicate_pairing_mutably_borrowed_binding/expected/check.json",
+      "actual": "target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_mutably_borrowed_binding",
+      "surface": "human.txt",
+      "expected": "fixtures/predicate_pairing_mutably_borrowed_binding/expected/human.txt",
+      "actual": "target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 35,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_mutably_borrowed_binding",
+      "surface": "human-full.txt",
+      "expected": "fixtures/predicate_pairing_mutably_borrowed_binding/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 2,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_newline_split_reassigned_binding",
+      "surface": "check.json",
+      "expected": "fixtures/predicate_pairing_newline_split_reassigned_binding/expected/check.json",
+      "actual": "target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_newline_split_reassigned_binding",
+      "surface": "human.txt",
+      "expected": "fixtures/predicate_pairing_newline_split_reassigned_binding/expected/human.txt",
+      "actual": "target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 35,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_newline_split_reassigned_binding",
+      "surface": "human-full.txt",
+      "expected": "fixtures/predicate_pairing_newline_split_reassigned_binding/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 2,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_reassigned_binding",
+      "surface": "check.json",
+      "expected": "fixtures/predicate_pairing_reassigned_binding/expected/check.json",
+      "actual": "target/ripr/fixtures/predicate_pairing_reassigned_binding/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_reassigned_binding",
+      "surface": "human.txt",
+      "expected": "fixtures/predicate_pairing_reassigned_binding/expected/human.txt",
+      "actual": "target/ripr/fixtures/predicate_pairing_reassigned_binding/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 35,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "predicate_pairing_reassigned_binding",
+      "surface": "human-full.txt",
+      "expected": "fixtures/predicate_pairing_reassigned_binding/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/predicate_pairing_reassigned_binding/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 2,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "returned_comparison_boundary_gap",
+      "surface": "check.json",
+      "expected": "fixtures/returned_comparison_boundary_gap/expected/check.json",
+      "actual": "target/ripr/fixtures/returned_comparison_boundary_gap/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 5,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "returned_comparison_boundary_gap",
+      "surface": "human.txt",
+      "expected": "fixtures/returned_comparison_boundary_gap/expected/human.txt",
+      "actual": "target/ripr/fixtures/returned_comparison_boundary_gap/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "returned_comparison_rival_import",
+      "surface": "check.json",
+      "expected": "fixtures/returned_comparison_rival_import/expected/check.json",
+      "actual": "target/ripr/fixtures/returned_comparison_rival_import/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "returned_comparison_rival_import",
+      "surface": "human-full.txt",
+      "expected": "fixtures/returned_comparison_rival_import/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/returned_comparison_rival_import/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 116,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "returned_explicit_comparison_boundary_gap",
+      "surface": "check.json",
+      "expected": "fixtures/returned_explicit_comparison_boundary_gap/expected/check.json",
+      "actual": "target/ripr/fixtures/returned_explicit_comparison_boundary_gap/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 5,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "returned_explicit_comparison_boundary_gap",
+      "surface": "human.txt",
+      "expected": "fixtures/returned_explicit_comparison_boundary_gap/expected/human.txt",
+      "actual": "target/ripr/fixtures/returned_explicit_comparison_boundary_gap/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_array_element_drop_exit",
+      "surface": "check.json",
+      "expected": "fixtures/rust_array_element_drop_exit/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_array_element_drop_exit/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 6,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_array_element_drop_exit",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_array_element_drop_exit/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_array_element_drop_exit/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 2,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_array_sibling_exit_field",
+      "surface": "check.json",
+      "expected": "fixtures/rust_array_sibling_exit_field/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_array_sibling_exit_field/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 6,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_array_sibling_exit_field",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_array_sibling_exit_field/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_array_sibling_exit_field/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 2,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_constructor_field_observation",
+      "surface": "check.json",
+      "expected": "fixtures/rust_constructor_field_observation/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_constructor_field_observation/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_constructor_field_observation",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_constructor_field_observation/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_constructor_field_observation/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_constructor_field_observation",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_constructor_field_observation/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_constructor_field_observation/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 13,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_copy_builder_field_write",
+      "surface": "check.json",
+      "expected": "fixtures/rust_copy_builder_field_write/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_copy_builder_field_write/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_field_construction_token_coincidence",
+      "surface": "check.json",
+      "expected": "fixtures/rust_field_construction_token_coincidence/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_field_construction_token_coincidence/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 7,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_field_construction_token_coincidence",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_field_construction_token_coincidence/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_field_construction_token_coincidence/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_let_literal_pattern_rebound",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_let_literal_pattern_rebound/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_let_literal_pattern_rebound/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_returned_error_drop_exit",
+      "surface": "check.json",
+      "expected": "fixtures/rust_returned_error_drop_exit/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_returned_error_drop_exit/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_returned_error_drop_exit",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_returned_error_drop_exit/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_returned_error_drop_exit/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 89,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_returned_type_drop_exit",
+      "surface": "check.json",
+      "expected": "fixtures/rust_returned_type_drop_exit/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_returned_type_drop_exit/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_returned_type_drop_exit",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_returned_type_drop_exit/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_returned_type_drop_exit/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_returned_type_drop_wrapped_ok",
+      "surface": "check.json",
+      "expected": "fixtures/rust_returned_type_drop_wrapped_ok/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_returned_type_drop_wrapped_ok/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_returned_type_drop_wrapped_ok",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_returned_type_drop_wrapped_ok/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_returned_type_drop_wrapped_ok/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_boundary",
+      "surface": "check.json",
+      "expected": "fixtures/rust_slice_table_boundary/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_slice_table_boundary/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 5,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_boundary",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_slice_table_boundary/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_slice_table_boundary/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_boundary",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_slice_table_boundary/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_slice_table_boundary/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 11,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_call_exit",
+      "surface": "check.json",
+      "expected": "fixtures/rust_slice_table_call_exit/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_slice_table_call_exit/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_call_exit",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_slice_table_call_exit/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_slice_table_call_exit/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 2,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_call_exit",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_slice_table_call_exit/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_slice_table_call_exit/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 13,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_try_exit",
+      "surface": "check.json",
+      "expected": "fixtures/rust_slice_table_try_exit/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_slice_table_try_exit/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_try_exit",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_slice_table_try_exit/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_slice_table_try_exit/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 2,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_try_exit",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_slice_table_try_exit/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_slice_table_try_exit/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 13,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_zero_elements",
+      "surface": "check.json",
+      "expected": "fixtures/rust_slice_table_zero_elements/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_slice_table_zero_elements/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 5,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_zero_elements",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_slice_table_zero_elements/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_slice_table_zero_elements/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_slice_table_zero_elements",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_slice_table_zero_elements/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_slice_table_zero_elements/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 11,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_boolean_return_discarded",
+      "surface": "check.json",
+      "expected": "fixtures/rust_wrapper_boolean_return_discarded/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_wrapper_boolean_return_discarded/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_boolean_return_discarded",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_wrapper_boolean_return_discarded/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_boolean_return_discarded/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 39,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_boolean_return_discarded",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_wrapper_boolean_return_discarded/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_boolean_return_discarded/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_closure_shadowed_callee",
+      "surface": "check.json",
+      "expected": "fixtures/rust_wrapper_closure_shadowed_callee/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_wrapper_closure_shadowed_callee/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_closure_shadowed_callee",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_wrapper_closure_shadowed_callee/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_closure_shadowed_callee/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 39,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_closure_shadowed_callee",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_wrapper_closure_shadowed_callee/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_closure_shadowed_callee/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_crate_alias_logging_macro",
+      "surface": "check.json",
+      "expected": "fixtures/rust_wrapper_crate_alias_logging_macro/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_wrapper_crate_alias_logging_macro/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_crate_alias_logging_macro",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_wrapper_crate_alias_logging_macro/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_crate_alias_logging_macro/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 39,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_crate_alias_logging_macro",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_wrapper_crate_alias_logging_macro/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_crate_alias_logging_macro/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_macro_bang_bidi_whitespace",
+      "surface": "check.json",
+      "expected": "fixtures/rust_wrapper_macro_bang_bidi_whitespace/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_wrapper_macro_bang_bidi_whitespace/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_macro_bang_bidi_whitespace",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_wrapper_macro_bang_bidi_whitespace/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_macro_bang_bidi_whitespace/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 39,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_macro_bang_bidi_whitespace",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_wrapper_macro_bang_bidi_whitespace/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_macro_bang_bidi_whitespace/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_static_shadowed_callee",
+      "surface": "check.json",
+      "expected": "fixtures/rust_wrapper_static_shadowed_callee/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_wrapper_static_shadowed_callee/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_static_shadowed_callee",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_wrapper_static_shadowed_callee/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_static_shadowed_callee/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_unicode_macro_suffix",
+      "surface": "check.json",
+      "expected": "fixtures/rust_wrapper_unicode_macro_suffix/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_wrapper_unicode_macro_suffix/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_unicode_macro_suffix",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_wrapper_unicode_macro_suffix/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_unicode_macro_suffix/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 39,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_unicode_macro_suffix",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_wrapper_unicode_macro_suffix/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_unicode_macro_suffix/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_user_macro_guard",
+      "surface": "check.json",
+      "expected": "fixtures/rust_wrapper_user_macro_guard/expected/check.json",
+      "actual": "target/ripr/fixtures/rust_wrapper_user_macro_guard/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_user_macro_guard",
+      "surface": "human.txt",
+      "expected": "fixtures/rust_wrapper_user_macro_guard/expected/human.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_user_macro_guard/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 39,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "rust_wrapper_user_macro_guard",
+      "surface": "human-full.txt",
+      "expected": "fixtures/rust_wrapper_user_macro_guard/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/rust_wrapper_user_macro_guard/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "source_promotion_verification",
+      "surface": "human.txt",
+      "expected": "fixtures/source_promotion_verification/expected/human.txt",
+      "actual": "target/ripr/fixtures/source_promotion_verification/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 16,
+      "blessing_reason_required": true,
+      "blessing_reason_present": true,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "source_role_harness_suppression",
+      "surface": "check.json",
+      "expected": "fixtures/source_role_harness_suppression/expected/check.json",
+      "actual": "target/ripr/fixtures/source_role_harness_suppression/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "source_role_harness_suppression",
+      "surface": "human.txt",
+      "expected": "fixtures/source_role_harness_suppression/expected/human.txt",
+      "actual": "target/ripr/fixtures/source_role_harness_suppression/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 31,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "split_test_boundary_oracle",
+      "surface": "check.json",
+      "expected": "fixtures/split_test_boundary_oracle/expected/check.json",
+      "actual": "target/ripr/fixtures/split_test_boundary_oracle/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 10,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": ["expected [exposed, weakly_exposed] -> actual [weakly_exposed]"],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": ["expected [, Add boundary tests for below, equal, and above the changed threshold with exact assertions.] -> actual [Add boundary tests for below, equal, and above the changed threshold with exact assertions., The related test `far` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.]"],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "split_test_boundary_oracle",
+      "surface": "human.txt",
+      "expected": "fixtures/split_test_boundary_oracle/expected/human.txt",
+      "actual": "target/ripr/fixtures/split_test_boundary_oracle/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "tail_comparison_boundary",
+      "surface": "check.json",
+      "expected": "fixtures/tail_comparison_boundary/expected/check.json",
+      "actual": "target/ripr/fixtures/tail_comparison_boundary/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 5,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "tail_comparison_boundary",
+      "surface": "human.txt",
+      "expected": "fixtures/tail_comparison_boundary/expected/human.txt",
+      "actual": "target/ripr/fixtures/tail_comparison_boundary/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 4,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_cast_to_integer_not_exact",
+      "surface": "check.json",
+      "expected": "fixtures/test_cast_to_integer_not_exact/expected/check.json",
+      "actual": "target/ripr/fixtures/test_cast_to_integer_not_exact/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_cast_to_integer_not_exact",
+      "surface": "human-full.txt",
+      "expected": "fixtures/test_cast_to_integer_not_exact/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/test_cast_to_integer_not_exact/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_compared_with_non_literal_not_exact",
+      "surface": "check.json",
+      "expected": "fixtures/test_compared_with_non_literal_not_exact/expected/check.json",
+      "actual": "target/ripr/fixtures/test_compared_with_non_literal_not_exact/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_compared_with_non_literal_not_exact",
+      "surface": "human-full.txt",
+      "expected": "fixtures/test_compared_with_non_literal_not_exact/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/test_compared_with_non_literal_not_exact/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_from_trait_conversion_not_exact",
+      "surface": "check.json",
+      "expected": "fixtures/test_from_trait_conversion_not_exact/expected/check.json",
+      "actual": "target/ripr/fixtures/test_from_trait_conversion_not_exact/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_from_trait_conversion_not_exact",
+      "surface": "human-full.txt",
+      "expected": "fixtures/test_from_trait_conversion_not_exact/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/test_from_trait_conversion_not_exact/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_in_index_read_not_exact",
+      "surface": "check.json",
+      "expected": "fixtures/test_in_index_read_not_exact/expected/check.json",
+      "actual": "target/ripr/fixtures/test_in_index_read_not_exact/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_in_index_read_not_exact",
+      "surface": "human-full.txt",
+      "expected": "fixtures/test_in_index_read_not_exact/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/test_in_index_read_not_exact/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_in_struct_literal_not_exact",
+      "surface": "check.json",
+      "expected": "fixtures/test_in_struct_literal_not_exact/expected/check.json",
+      "actual": "target/ripr/fixtures/test_in_struct_literal_not_exact/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_in_struct_literal_not_exact",
+      "surface": "human-full.txt",
+      "expected": "fixtures/test_in_struct_literal_not_exact/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/test_in_struct_literal_not_exact/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_wrapped_in_some_not_exact",
+      "surface": "check.json",
+      "expected": "fixtures/test_wrapped_in_some_not_exact/expected/check.json",
+      "actual": "target/ripr/fixtures/test_wrapped_in_some_not_exact/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "test_wrapped_in_some_not_exact",
+      "surface": "human-full.txt",
+      "expected": "fixtures/test_wrapped_in_some_not_exact/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/test_wrapped_in_some_not_exact/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "unwrap_err_variant_positive",
+      "surface": "check.json",
+      "expected": "fixtures/unwrap_err_variant_positive/expected/check.json",
+      "actual": "target/ripr/fixtures/unwrap_err_variant_positive/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 13,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": ["probe:src_lib.rs:error_path:6188ddb8", "probe:src_lib.rs:return_value:8fe349d2"],
+      "removed_finding_ids": ["probe:src_lib.rs:error_path:6b37a3bc", "probe:src_lib.rs:return_value:832c68b7"],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "unwrap_err_variant_positive",
+      "surface": "human.txt",
+      "expected": "fixtures/unwrap_err_variant_positive/expected/human.txt",
+      "actual": "target/ripr/fixtures/unwrap_err_variant_positive/human.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 5,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "unwrap_err_variant_positive",
+      "surface": "human-full.txt",
+      "expected": "fixtures/unwrap_err_variant_positive/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/unwrap_err_variant_positive/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 13,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "wildcard_oracle_wildcard_original",
+      "surface": "check.json",
+      "expected": "fixtures/wildcard_oracle_wildcard_original/expected/check.json",
+      "actual": "target/ripr/fixtures/wildcard_oracle_wildcard_original/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "wildcard_oracle_wildcard_original",
+      "surface": "human-full.txt",
+      "expected": "fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/wildcard_oracle_wildcard_original/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "wildcard_oracle_wildcard_wrong",
+      "surface": "check.json",
+      "expected": "fixtures/wildcard_oracle_wildcard_wrong/expected/check.json",
+      "actual": "target/ripr/fixtures/wildcard_oracle_wildcard_wrong/check.json",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 3,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    },
+    {
+      "fixture": "wildcard_oracle_wildcard_wrong",
+      "surface": "human-full.txt",
+      "expected": "fixtures/wildcard_oracle_wildcard_wrong/expected/human-full.txt",
+      "actual": "target/ripr/fixtures/wildcard_oracle_wildcard_wrong/human-full.txt",
+      "provenance": {
+        "binary": "/workspace/12010-proof/target/debug/ripr",
+        "ripr_version": "ripr 0.11.0 (6a0a49bfc7343bc4c06b0395611b228ec52e8b71)",
+        "revision": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71"
+      },
+      "changed_line_count": 1,
+      "blessing_reason_required": true,
+      "blessing_reason_present": false,
+      "added_finding_ids": [],
+      "removed_finding_ids": [],
+      "changed_exposure_classes": [],
+      "changed_probe_families": [],
+      "changed_oracle_strengths": [],
+      "changed_oracle_kinds": [],
+      "changed_stop_reasons": [],
+      "changed_recommendations": [],
+      "static_language_terms": []
+
+    }
+  ],
+  "violations": ["human.txt drift for fixture `boundary_gap_equality_closed`\n  expected: fixtures/boundary_gap_equality_closed/expected/human.txt\n  actual:   target/ripr/fixtures/boundary_gap_equality_closed/human.txt\n  diff:    line 34 expected `  ripr explain --root <cwd>/fixtures/boundary_gap_equality_closed/input --diff <cwd>/fixtures/boundary_gap_equality_clos…` vs actual `  (finding id, for explain/context)`", "check.json drift for fixture `boundary_operand_unresolved`\n  expected: fixtures/boundary_operand_unresolved/expected/check.json\n  actual:   target/ripr/fixtures/boundary_operand_unresolved/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `boundary_operand_unresolved`\n  expected: fixtures/boundary_operand_unresolved/expected/human.txt\n  actual:   target/ripr/fixtures/boundary_operand_unresolved/human.txt\n  diff:    line 19 expected `  Missing check: No strong assertion was detected` vs actual `  Missing check: No assertion was tied to the changed value`", "human-full.txt drift for fixture `boundary_operand_unresolved`\n  expected: fixtures/boundary_operand_unresolved/expected/human-full.txt\n  actual:   target/ripr/fixtures/boundary_operand_unresolved/human-full.txt\n  diff:    line 20 expected `  E4 [findings 1, 3]: discriminator not established (infection_unknown); related oracle: Strong oracle found: exact valu…` vs actual `  E4 [findings 1, 3]: discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_c…`", "check.json drift for fixture `boundary_pairing_sibling_element`\n  expected: fixtures/boundary_pairing_sibling_element/expected/check.json\n  actual:   target/ripr/fixtures/boundary_pairing_sibling_element/check.json\n  diff:    line 200 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…`", "human.txt drift for fixture `boundary_pairing_sibling_element`\n  expected: fixtures/boundary_pairing_sibling_element/expected/human.txt\n  actual:   target/ripr/fixtures/boundary_pairing_sibling_element/human.txt\n  diff:    line 48 expected `    - ./src/lib.rs:3 (weak); kind: return_value; reason: No assertion was tied to the changed value` vs actual `    - ./src/lib.rs:3 (weak); kind: return_value; reason: Discriminator unconfirmed: no admitted discriminating oracle is…`", "human-full.txt drift for fixture `boundary_pairing_sibling_element`\n  expected: fixtures/boundary_pairing_sibling_element/expected/human-full.txt\n  actual:   target/ripr/fixtures/boundary_pairing_sibling_element/human-full.txt\n  diff:    line 15 expected `WARNING ./src/lib.rs:3` vs actual `Shared evidence and guidance`", "check.json drift for fixture `boundary_pairing_sibling_owner`\n  expected: fixtures/boundary_pairing_sibling_owner/expected/check.json\n  actual:   target/ripr/fixtures/boundary_pairing_sibling_owner/check.json\n  diff:    line 188 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…`", "human.txt drift for fixture `boundary_pairing_sibling_owner`\n  expected: fixtures/boundary_pairing_sibling_owner/expected/human.txt\n  actual:   target/ripr/fixtures/boundary_pairing_sibling_owner/human.txt\n  diff:    line 42 expected `  no repair start offered: \\`ripr check\\` reads a gap or limit for this change, but \\`ripr repair\\` judges the surroundi…` vs actual `  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test as…`", "human-full.txt drift for fixture `boundary_pairing_sibling_owner`\n  expected: fixtures/boundary_pairing_sibling_owner/expected/human-full.txt\n  actual:   target/ripr/fixtures/boundary_pairing_sibling_owner/human-full.txt\n  diff:    line 15 expected `WARNING ./src/lib.rs:3` vs actual `Shared evidence and guidance`", "check.json drift for fixture `cross_crate_trait_impl_direct_owner_positive`\n  expected: fixtures/cross_crate_trait_impl_direct_owner_positive/expected/check.json\n  actual:   target/ripr/fixtures/cross_crate_trait_impl_direct_owner_positive/check.json\n  diff:    line 216 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human-full.txt drift for fixture `cross_crate_trait_impl_direct_owner_positive`\n  expected: fixtures/cross_crate_trait_impl_direct_owner_positive/expected/human-full.txt\n  actual:   target/ripr/fixtures/cross_crate_trait_impl_direct_owner_positive/human-full.txt\n  diff:    line 77 expected `  - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern asser…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage withou…`", "check.json drift for fixture `error_return_unresolved_guard`\n  expected: fixtures/error_return_unresolved_guard/expected/check.json\n  actual:   target/ripr/fixtures/error_return_unresolved_guard/check.json\n  diff:    line 6 expected `  \\\"summary\\\": {\\\"changed_rust_files\\\":1,\\\"probes\\\":3,\\\"findings\\\":3,\\\"exposed\\\":3,\\\"weakly_exposed\\\":0,\\\"reachable_unre…` vs actual `  \\\"summary\\\": {\\\"changed_rust_files\\\":1,\\\"probes\\\":3,\\\"findings\\\":3,\\\"exposed\\\":0,\\\"weakly_exposed\\\":3,\\\"reachable_unre…`", "human.txt drift for fixture `error_return_unresolved_guard`\n  expected: fixtures/error_return_unresolved_guard/expected/human.txt\n  actual:   target/ripr/fixtures/error_return_unresolved_guard/human.txt\n  diff:    line 5 expected `Summary: 3 changed behaviors checked: 3 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test …` vs actual `Summary: 3 changed behaviors checked: 0 appear noticed by tests, 3 partly noticed, 0 reached but not noticed, 0 no test …`", "check.json drift for fixture `error_variant_boxed_wrapper_downcast_witness`\n  expected: fixtures/error_variant_boxed_wrapper_downcast_witness/expected/check.json\n  actual:   target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/check.json\n  diff:    line 6 expected `  \\\"summary\\\": {\\\"changed_rust_files\\\":1,\\\"probes\\\":16,\\\"findings\\\":16,\\\"exposed\\\":4,\\\"weakly_exposed\\\":10,\\\"reachable_u…` vs actual `  \\\"summary\\\": {\\\"changed_rust_files\\\":1,\\\"probes\\\":16,\\\"findings\\\":16,\\\"exposed\\\":0,\\\"weakly_exposed\\\":14,\\\"reachable_u…`", "human.txt drift for fixture `error_variant_boxed_wrapper_downcast_witness`\n  expected: fixtures/error_variant_boxed_wrapper_downcast_witness/expected/human.txt\n  actual:   target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/human.txt\n  diff:    line 5 expected `Summary: 16 changed behaviors checked: 4 appear noticed by tests, 10 partly noticed, 2 reached but not noticed, 0 no tes…` vs actual `Summary: 16 changed behaviors checked: 0 appear noticed by tests, 14 partly noticed, 2 reached but not noticed, 0 no tes…`", "human-full.txt drift for fixture `error_variant_boxed_wrapper_downcast_witness`\n  expected: fixtures/error_variant_boxed_wrapper_downcast_witness/expected/human-full.txt\n  actual:   target/ripr/fixtures/error_variant_boxed_wrapper_downcast_witness/human-full.txt\n  diff:    line 5 expected `Summary: 16 changed behavior(s) checked: 4 exposed, 10 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infec…` vs actual `Summary: 16 changed behavior(s) checked: 0 exposed, 14 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infec…`", "check.json drift for fixture `helper_chain_one_hop`\n  expected: fixtures/helper_chain_one_hop/expected/check.json\n  actual:   target/ripr/fixtures/helper_chain_one_hop/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `helper_chain_one_hop`\n  expected: fixtures/helper_chain_one_hop/expected/human.txt\n  actual:   target/ripr/fixtures/helper_chain_one_hop/human.txt\n  diff:    line 18 expected `  Missing check (1 of 2): Changed boundary input is unresolved: boundary operand \\`c\\` is a local or` vs actual `  Missing check (1 of 3): Changed boundary input is unresolved: boundary operand \\`c\\` is a local or`", "check.json drift for fixture `human_full_shared_parse_port`\n  expected: fixtures/human_full_shared_parse_port/expected/check.json\n  actual:   target/ripr/fixtures/human_full_shared_parse_port/check.json\n  diff:    line 216 expected `      \\\"confidence\\\": 0.92,` vs actual `      \\\"confidence\\\": 0.84,`", "human-full.txt drift for fixture `human_full_shared_parse_port`\n  expected: fixtures/human_full_shared_parse_port/expected/human-full.txt\n  actual:   target/ripr/fixtures/human_full_shared_parse_port/human-full.txt\n  diff:    line 101 expected `  weakly_exposed (warning, confidence 0.92)` vs actual `  weakly_exposed (warning, confidence 0.84)`", "check.json drift for fixture `match_arm_proximity_bound_other_function_not_credited`\n  expected: fixtures/match_arm_proximity_bound_other_function_not_credited/expected/check.json\n  actual:   target/ripr/fixtures/match_arm_proximity_bound_other_function_not_credited/check.json\n  diff:    line 182 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "check.json drift for fixture `match_arm_proximity_other_function_not_credited`\n  expected: fixtures/match_arm_proximity_other_function_not_credited/expected/check.json\n  actual:   target/ripr/fixtures/match_arm_proximity_other_function_not_credited/check.json\n  diff:    line 192 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "check.json drift for fixture `member_reexport_foreign_trait_keeps_dispatch_allowance`\n  expected: fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/expected/check.json\n  actual:   target/ripr/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `member_reexport_foreign_trait_keeps_dispatch_allowance`\n  expected: fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/expected/human.txt\n  actual:   target/ripr/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/human.txt\n  diff:    line 15 expected `  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart` vs actual `  Why weak: a related test reaches this change but does not observe the exact changed value`", "human-full.txt drift for fixture `member_reexport_foreign_trait_keeps_dispatch_allowance`\n  expected: fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/expected/human-full.txt\n  actual:   target/ripr/fixtures/member_reexport_foreign_trait_keeps_dispatch_allowance/human-full.txt\n  diff:    line 37 expected `  - discriminator not established (weakly_exposed); related oracle: Strong oracle found: exact value or pattern assertio…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without s…`", "check.json drift for fixture `module_reach_control_qualified`\n  expected: fixtures/module_reach_control_qualified/expected/check.json\n  actual:   target/ripr/fixtures/module_reach_control_qualified/check.json\n  diff:    line 6 expected `  \\\"summary\\\": {\\\"changed_rust_files\\\":1,\\\"probes\\\":2,\\\"findings\\\":2,\\\"exposed\\\":1,\\\"weakly_exposed\\\":1,\\\"reachable_unre…` vs actual `  \\\"summary\\\": {\\\"changed_rust_files\\\":1,\\\"probes\\\":2,\\\"findings\\\":2,\\\"exposed\\\":2,\\\"weakly_exposed\\\":0,\\\"reachable_unre…`", "human.txt drift for fixture `module_reach_control_qualified`\n  expected: fixtures/module_reach_control_qualified/expected/human.txt\n  actual:   target/ripr/fixtures/module_reach_control_qualified/human.txt\n  diff:    line 5 expected `Summary: 2 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test …` vs actual `Summary: 2 changed behaviors checked: 2 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test …`", "check.json drift for fixture `module_reach_super_import_in_file_wrong_module`\n  expected: fixtures/module_reach_super_import_in_file_wrong_module/expected/check.json\n  actual:   target/ripr/fixtures/module_reach_super_import_in_file_wrong_module/check.json\n  diff:    line 30 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human-full.txt drift for fixture `module_reach_super_import_in_file_wrong_module`\n  expected: fixtures/module_reach_super_import_in_file_wrong_module/expected/human-full.txt\n  actual:   target/ripr/fixtures/module_reach_super_import_in_file_wrong_module/human-full.txt\n  diff:    line 36 expected `  - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern asser…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without s…`", "check.json drift for fixture `observation_verified_field_construction`\n  expected: fixtures/observation_verified_field_construction/expected/check.json\n  actual:   target/ripr/fixtures/observation_verified_field_construction/check.json\n  diff:    line 124 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human.txt drift for fixture `observation_verified_field_construction`\n  expected: fixtures/observation_verified_field_construction/expected/human.txt\n  actual:   target/ripr/fixtures/observation_verified_field_construction/human.txt\n  diff:    line 25 expected `  Evidence: reach yes · infection yes · propagation unknown · observation yes · assertion not established` vs actual `  Evidence: reach yes · infection yes · propagation unknown · observation yes · assertion weak`", "check.json drift for fixture `owner_self_body_same_name_with_caller_control`\n  expected: fixtures/owner_self_body_same_name_with_caller_control/expected/check.json\n  actual:   target/ripr/fixtures/owner_self_body_same_name_with_caller_control/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `owner_self_body_same_name_with_caller_control`\n  expected: fixtures/owner_self_body_same_name_with_caller_control/expected/human.txt\n  actual:   target/ripr/fixtures/owner_self_body_same_name_with_caller_control/human.txt\n  diff:    line 15 expected `  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart` vs actual `  Why weak: a related test reaches this change but does not observe the exact changed value`", "human-full.txt drift for fixture `owner_self_body_same_name_with_caller_control`\n  expected: fixtures/owner_self_body_same_name_with_caller_control/expected/human-full.txt\n  actual:   target/ripr/fixtures/owner_self_body_same_name_with_caller_control/human-full.txt\n  diff:    line 37 expected `  - discriminator not established (weakly_exposed); related oracle: Strong oracle found: exact value or pattern assertio…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without s…`", "human.txt drift for fixture `predicate_boundary_oracle_refused`\n  expected: fixtures/predicate_boundary_oracle_refused/expected/human.txt\n  actual:   target/ripr/fixtures/predicate_boundary_oracle_refused/human.txt\n  diff:    line 43 expected `  no repair start offered: \\`ripr check\\` reads a gap or limit for this change, but \\`ripr repair\\` judges the surroundi…` vs actual `  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test as…`", "human.txt drift for fixture `predicate_oracle_execution_false_branch`\n  expected: fixtures/predicate_oracle_execution_false_branch/expected/human.txt\n  actual:   target/ripr/fixtures/predicate_oracle_execution_false_branch/human.txt\n  diff:    line 44 expected `  no repair start offered: \\`ripr check\\` reads a gap or limit for this change, but \\`ripr repair\\` judges the surroundi…` vs actual `  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test as…`", "human.txt drift for fixture `predicate_oracle_execution_reached_uncalled`\n  expected: fixtures/predicate_oracle_execution_reached_uncalled/expected/human.txt\n  actual:   target/ripr/fixtures/predicate_oracle_execution_reached_uncalled/human.txt\n  diff:    line 44 expected `  no repair start offered: \\`ripr check\\` reads a gap or limit for this change, but \\`ripr repair\\` judges the surroundi…` vs actual `  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test as…`", "human.txt drift for fixture `predicate_oracle_execution_shadowed`\n  expected: fixtures/predicate_oracle_execution_shadowed/expected/human.txt\n  actual:   target/ripr/fixtures/predicate_oracle_execution_shadowed/human.txt\n  diff:    line 44 expected `  no repair start offered: \\`ripr check\\` reads a gap or limit for this change, but \\`ripr repair\\` judges the surroundi…` vs actual `  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test as…`", "human.txt drift for fixture `predicate_oracle_execution_uncalled`\n  expected: fixtures/predicate_oracle_execution_uncalled/expected/human.txt\n  actual:   target/ripr/fixtures/predicate_oracle_execution_uncalled/human.txt\n  diff:    line 44 expected `  no repair start offered: \\`ripr check\\` reads a gap or limit for this change, but \\`ripr repair\\` judges the surroundi…` vs actual `  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test as…`", "check.json drift for fixture `predicate_pairing_compound_assigned_binding`\n  expected: fixtures/predicate_pairing_compound_assigned_binding/expected/check.json\n  actual:   target/ripr/fixtures/predicate_pairing_compound_assigned_binding/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `predicate_pairing_compound_assigned_binding`\n  expected: fixtures/predicate_pairing_compound_assigned_binding/expected/human.txt\n  actual:   target/ripr/fixtures/predicate_pairing_compound_assigned_binding/human.txt\n  diff:    line 18 expected `  Missing check: Discriminator unconfirmed: no admitted discriminating oracle is paired with the` vs actual `  Missing check: No strong assertion was detected`", "human-full.txt drift for fixture `predicate_pairing_compound_assigned_binding`\n  expected: fixtures/predicate_pairing_compound_assigned_binding/expected/human-full.txt\n  actual:   target/ripr/fixtures/predicate_pairing_compound_assigned_binding/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner\\'s boundar…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage withou…`", "check.json drift for fixture `predicate_pairing_mutably_borrowed_binding`\n  expected: fixtures/predicate_pairing_mutably_borrowed_binding/expected/check.json\n  actual:   target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `predicate_pairing_mutably_borrowed_binding`\n  expected: fixtures/predicate_pairing_mutably_borrowed_binding/expected/human.txt\n  actual:   target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding/human.txt\n  diff:    line 18 expected `  Missing check: Discriminator unconfirmed: no admitted discriminating oracle is paired with the` vs actual `  Missing check: No strong assertion was detected`", "human-full.txt drift for fixture `predicate_pairing_mutably_borrowed_binding`\n  expected: fixtures/predicate_pairing_mutably_borrowed_binding/expected/human-full.txt\n  actual:   target/ripr/fixtures/predicate_pairing_mutably_borrowed_binding/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner\\'s boundar…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage withou…`", "check.json drift for fixture `predicate_pairing_newline_split_reassigned_binding`\n  expected: fixtures/predicate_pairing_newline_split_reassigned_binding/expected/check.json\n  actual:   target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `predicate_pairing_newline_split_reassigned_binding`\n  expected: fixtures/predicate_pairing_newline_split_reassigned_binding/expected/human.txt\n  actual:   target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding/human.txt\n  diff:    line 18 expected `  Missing check: Discriminator unconfirmed: no admitted discriminating oracle is paired with the` vs actual `  Missing check: No strong assertion was detected`", "human-full.txt drift for fixture `predicate_pairing_newline_split_reassigned_binding`\n  expected: fixtures/predicate_pairing_newline_split_reassigned_binding/expected/human-full.txt\n  actual:   target/ripr/fixtures/predicate_pairing_newline_split_reassigned_binding/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner\\'s boundar…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage withou…`", "check.json drift for fixture `predicate_pairing_reassigned_binding`\n  expected: fixtures/predicate_pairing_reassigned_binding/expected/check.json\n  actual:   target/ripr/fixtures/predicate_pairing_reassigned_binding/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `predicate_pairing_reassigned_binding`\n  expected: fixtures/predicate_pairing_reassigned_binding/expected/human.txt\n  actual:   target/ripr/fixtures/predicate_pairing_reassigned_binding/human.txt\n  diff:    line 18 expected `  Missing check: Discriminator unconfirmed: no admitted discriminating oracle is paired with the` vs actual `  Missing check: No strong assertion was detected`", "human-full.txt drift for fixture `predicate_pairing_reassigned_binding`\n  expected: fixtures/predicate_pairing_reassigned_binding/expected/human-full.txt\n  actual:   target/ripr/fixtures/predicate_pairing_reassigned_binding/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner\\'s boundar…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage withou…`", "check.json drift for fixture `returned_comparison_boundary_gap`\n  expected: fixtures/returned_comparison_boundary_gap/expected/check.json\n  actual:   target/ripr/fixtures/returned_comparison_boundary_gap/check.json\n  diff:    line 28 expected `      \\\"confidence\\\": 0.92,` vs actual `      \\\"confidence\\\": 0.84,`", "human.txt drift for fixture `returned_comparison_boundary_gap`\n  expected: fixtures/returned_comparison_boundary_gap/expected/human.txt\n  actual:   target/ripr/fixtures/returned_comparison_boundary_gap/human.txt\n  diff:    line 14 expected `  Static exposure: weak (severity: warning, confidence 0.92)` vs actual `  Static exposure: weak (severity: warning, confidence 0.84)`", "check.json drift for fixture `returned_comparison_rival_import`\n  expected: fixtures/returned_comparison_rival_import/expected/check.json\n  actual:   target/ripr/fixtures/returned_comparison_rival_import/check.json\n  diff:    line 331 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"high\\\",\\\"summary\\\":\\\"Only relational oracle found; it may…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `returned_comparison_rival_import`\n  expected: fixtures/returned_comparison_rival_import/expected/human-full.txt\n  actual:   target/ripr/fixtures/returned_comparison_rival_import/human-full.txt\n  diff:    line 19 expected `  E4 [findings 1, 3]: discriminator weak: Only relational oracle found; it may not discriminate the changed value exactl…` vs actual `  E4 [findings 1, 3]: local flow reaches returned value: x > 101 (line 2)`", "check.json drift for fixture `returned_explicit_comparison_boundary_gap`\n  expected: fixtures/returned_explicit_comparison_boundary_gap/expected/check.json\n  actual:   target/ripr/fixtures/returned_explicit_comparison_boundary_gap/check.json\n  diff:    line 28 expected `      \\\"confidence\\\": 0.92,` vs actual `      \\\"confidence\\\": 0.84,`", "human.txt drift for fixture `returned_explicit_comparison_boundary_gap`\n  expected: fixtures/returned_explicit_comparison_boundary_gap/expected/human.txt\n  actual:   target/ripr/fixtures/returned_explicit_comparison_boundary_gap/human.txt\n  diff:    line 14 expected `  Static exposure: weak (severity: warning, confidence 0.92)` vs actual `  Static exposure: weak (severity: warning, confidence 0.84)`", "check.json drift for fixture `rust_array_element_drop_exit`\n  expected: fixtures/rust_array_element_drop_exit/expected/check.json\n  actual:   target/ripr/fixtures/rust_array_element_drop_exit/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no fiel…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human-full.txt drift for fixture `rust_array_element_drop_exit`\n  expected: fixtures/rust_array_element_drop_exit/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_array_element_drop_exit/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Discriminator unconfirmed: no field-value assertion observes the constructed field` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage withou…`", "check.json drift for fixture `rust_array_sibling_exit_field`\n  expected: fixtures/rust_array_sibling_exit_field/expected/check.json\n  actual:   target/ripr/fixtures/rust_array_sibling_exit_field/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no fiel…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human-full.txt drift for fixture `rust_array_sibling_exit_field`\n  expected: fixtures/rust_array_sibling_exit_field/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_array_sibling_exit_field/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Discriminator unconfirmed: no field-value assertion observes the constructed field` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage withou…`", "check.json drift for fixture `rust_constructor_field_observation`\n  expected: fixtures/rust_constructor_field_observation/expected/check.json\n  actual:   target/ripr/fixtures/rust_constructor_field_observation/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human.txt drift for fixture `rust_constructor_field_observation`\n  expected: fixtures/rust_constructor_field_observation/expected/human.txt\n  actual:   target/ripr/fixtures/rust_constructor_field_observation/human.txt\n  diff:    line 25 expected `  Evidence: reach yes · infection yes · propagation unknown · observation yes · assertion not established` vs actual `  Evidence: reach yes · infection yes · propagation unknown · observation yes · assertion weak`", "human-full.txt drift for fixture `rust_constructor_field_observation`\n  expected: fixtures/rust_constructor_field_observation/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_constructor_field_observation/human-full.txt\n  diff:    line 37 expected `  - discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern ass…` vs actual `  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression`", "check.json drift for fixture `rust_copy_builder_field_write`\n  expected: fixtures/rust_copy_builder_field_write/expected/check.json\n  actual:   target/ripr/fixtures/rust_copy_builder_field_write/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no fiel…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "check.json drift for fixture `rust_field_construction_token_coincidence`\n  expected: fixtures/rust_field_construction_token_coincidence/expected/check.json\n  actual:   target/ripr/fixtures/rust_field_construction_token_coincidence/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no fiel…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `rust_field_construction_token_coincidence`\n  expected: fixtures/rust_field_construction_token_coincidence/expected/human.txt\n  actual:   target/ripr/fixtures/rust_field_construction_token_coincidence/human.txt\n  diff:    line 25 expected `  Evidence: reach yes · infection yes · propagation unknown · observation yes · assertion not established` vs actual `  Evidence: reach yes · infection yes · propagation unknown · observation yes · assertion weak`", "human.txt drift for fixture `rust_let_literal_pattern_rebound`\n  expected: fixtures/rust_let_literal_pattern_rebound/expected/human.txt\n  actual:   target/ripr/fixtures/rust_let_literal_pattern_rebound/human.txt\n  diff:    line 40 expected `  no repair start offered: \\`ripr check\\` reads a gap or limit for this change, but \\`ripr repair\\` judges the surroundi…` vs actual `  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test as…`", "check.json drift for fixture `rust_returned_error_drop_exit`\n  expected: fixtures/rust_returned_error_drop_exit/expected/check.json\n  actual:   target/ripr/fixtures/rust_returned_error_drop_exit/check.json\n  diff:    line 240 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: a non-p…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `rust_returned_error_drop_exit`\n  expected: fixtures/rust_returned_error_drop_exit/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_returned_error_drop_exit/human-full.txt\n  diff:    line 20 expected `  E5 [findings 1, 3]: discriminator weak: Discriminator unconfirmed: a non-plain Drop on the returned type may exit whil…` vs actual `  E5 [findings 1, 3]: local flow reaches error variant: Result::Err(Cfg { n: x * 3 }) (line 13)`", "check.json drift for fixture `rust_returned_type_drop_exit`\n  expected: fixtures/rust_returned_type_drop_exit/expected/check.json\n  actual:   target/ripr/fixtures/rust_returned_type_drop_exit/check.json\n  diff:    line 146 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: a non-p…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `rust_returned_type_drop_exit`\n  expected: fixtures/rust_returned_type_drop_exit/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_returned_type_drop_exit/human-full.txt\n  diff:    line 76 expected `  - discriminator weak: Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a…` vs actual `  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression`", "check.json drift for fixture `rust_returned_type_drop_wrapped_ok`\n  expected: fixtures/rust_returned_type_drop_wrapped_ok/expected/check.json\n  actual:   target/ripr/fixtures/rust_returned_type_drop_wrapped_ok/check.json\n  diff:    line 146 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: a non-p…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `rust_returned_type_drop_wrapped_ok`\n  expected: fixtures/rust_returned_type_drop_wrapped_ok/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_returned_type_drop_wrapped_ok/human-full.txt\n  diff:    line 76 expected `  - discriminator weak: Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a…` vs actual `  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression`", "check.json drift for fixture `rust_slice_table_boundary`\n  expected: fixtures/rust_slice_table_boundary/expected/check.json\n  actual:   target/ripr/fixtures/rust_slice_table_boundary/check.json\n  diff:    line 28 expected `      \\\"confidence\\\": 0.92,` vs actual `      \\\"confidence\\\": 0.84,`", "human.txt drift for fixture `rust_slice_table_boundary`\n  expected: fixtures/rust_slice_table_boundary/expected/human.txt\n  actual:   target/ripr/fixtures/rust_slice_table_boundary/human.txt\n  diff:    line 14 expected `  Static exposure: weak (severity: warning, confidence 0.92)` vs actual `  Static exposure: weak (severity: warning, confidence 0.84)`", "human-full.txt drift for fixture `rust_slice_table_boundary`\n  expected: fixtures/rust_slice_table_boundary/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_slice_table_boundary/human-full.txt\n  diff:    line 30 expected `  weakly_exposed (warning, confidence 0.92)` vs actual `  weakly_exposed (warning, confidence 0.84)`", "check.json drift for fixture `rust_slice_table_call_exit`\n  expected: fixtures/rust_slice_table_call_exit/expected/check.json\n  actual:   target/ripr/fixtures/rust_slice_table_call_exit/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `rust_slice_table_call_exit`\n  expected: fixtures/rust_slice_table_call_exit/expected/human.txt\n  actual:   target/ripr/fixtures/rust_slice_table_call_exit/human.txt\n  diff:    line 18 expected `  Missing check (1 of 2): Changed boundary input is unresolved: slice length \\`samples.len()\\` is` vs actual `  Missing check (1 of 3): Changed boundary input is unresolved: slice length \\`samples.len()\\` is`", "human-full.txt drift for fixture `rust_slice_table_call_exit`\n  expected: fixtures/rust_slice_table_call_exit/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_slice_table_call_exit/human-full.txt\n  diff:    line 37 expected `  - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern asser…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without s…`", "check.json drift for fixture `rust_slice_table_try_exit`\n  expected: fixtures/rust_slice_table_try_exit/expected/check.json\n  actual:   target/ripr/fixtures/rust_slice_table_try_exit/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"yes\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Strong oracle found: exact value or…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `rust_slice_table_try_exit`\n  expected: fixtures/rust_slice_table_try_exit/expected/human.txt\n  actual:   target/ripr/fixtures/rust_slice_table_try_exit/human.txt\n  diff:    line 18 expected `  Missing check (1 of 2): Changed boundary input is unresolved: slice length \\`samples.len()\\` is` vs actual `  Missing check (1 of 3): Changed boundary input is unresolved: slice length \\`samples.len()\\` is`", "human-full.txt drift for fixture `rust_slice_table_try_exit`\n  expected: fixtures/rust_slice_table_try_exit/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_slice_table_try_exit/human-full.txt\n  diff:    line 37 expected `  - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern asser…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without s…`", "check.json drift for fixture `rust_slice_table_zero_elements`\n  expected: fixtures/rust_slice_table_zero_elements/expected/check.json\n  actual:   target/ripr/fixtures/rust_slice_table_zero_elements/check.json\n  diff:    line 28 expected `      \\\"confidence\\\": 0.92,` vs actual `      \\\"confidence\\\": 0.84,`", "human.txt drift for fixture `rust_slice_table_zero_elements`\n  expected: fixtures/rust_slice_table_zero_elements/expected/human.txt\n  actual:   target/ripr/fixtures/rust_slice_table_zero_elements/human.txt\n  diff:    line 14 expected `  Static exposure: weak (severity: warning, confidence 0.92)` vs actual `  Static exposure: weak (severity: warning, confidence 0.84)`", "human-full.txt drift for fixture `rust_slice_table_zero_elements`\n  expected: fixtures/rust_slice_table_zero_elements/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_slice_table_zero_elements/human-full.txt\n  diff:    line 30 expected `  weakly_exposed (warning, confidence 0.92)` vs actual `  weakly_exposed (warning, confidence 0.84)`", "check.json drift for fixture `rust_wrapper_boolean_return_discarded`\n  expected: fixtures/rust_wrapper_boolean_return_discarded/expected/check.json\n  actual:   target/ripr/fixtures/rust_wrapper_boolean_return_discarded/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `rust_wrapper_boolean_return_discarded`\n  expected: fixtures/rust_wrapper_boolean_return_discarded/expected/human.txt\n  actual:   target/ripr/fixtures/rust_wrapper_boolean_return_discarded/human.txt\n  diff:    line 18 expected `  Analyzer limit: Discriminator unconfirmed: no admitted discriminating oracle is paired with the` vs actual `  Analyzer limit: ripr could not follow the changed value to something a test can check (a return value or side effect)`", "human-full.txt drift for fixture `rust_wrapper_boolean_return_discarded`\n  expected: fixtures/rust_wrapper_boolean_return_discarded/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_wrapper_boolean_return_discarded/human-full.txt\n  diff:    line 46 expected `  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner\\'s boundar…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through helper_owner_call linkage withou…`", "check.json drift for fixture `rust_wrapper_closure_shadowed_callee`\n  expected: fixtures/rust_wrapper_closure_shadowed_callee/expected/check.json\n  actual:   target/ripr/fixtures/rust_wrapper_closure_shadowed_callee/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `rust_wrapper_closure_shadowed_callee`\n  expected: fixtures/rust_wrapper_closure_shadowed_callee/expected/human.txt\n  actual:   target/ripr/fixtures/rust_wrapper_closure_shadowed_callee/human.txt\n  diff:    line 18 expected `  Analyzer limit: Discriminator unconfirmed: no admitted discriminating oracle is paired with the` vs actual `  Analyzer limit: ripr could not follow the changed value to something a test can check (a return value or side effect)`", "human-full.txt drift for fixture `rust_wrapper_closure_shadowed_callee`\n  expected: fixtures/rust_wrapper_closure_shadowed_callee/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_wrapper_closure_shadowed_callee/human-full.txt\n  diff:    line 46 expected `  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner\\'s boundar…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through helper_owner_call linkage withou…`", "check.json drift for fixture `rust_wrapper_crate_alias_logging_macro`\n  expected: fixtures/rust_wrapper_crate_alias_logging_macro/expected/check.json\n  actual:   target/ripr/fixtures/rust_wrapper_crate_alias_logging_macro/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `rust_wrapper_crate_alias_logging_macro`\n  expected: fixtures/rust_wrapper_crate_alias_logging_macro/expected/human.txt\n  actual:   target/ripr/fixtures/rust_wrapper_crate_alias_logging_macro/human.txt\n  diff:    line 18 expected `  Analyzer limit: Discriminator unconfirmed: no admitted discriminating oracle is paired with the` vs actual `  Analyzer limit: ripr could not follow the changed value to something a test can check (a return value or side effect)`", "human-full.txt drift for fixture `rust_wrapper_crate_alias_logging_macro`\n  expected: fixtures/rust_wrapper_crate_alias_logging_macro/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_wrapper_crate_alias_logging_macro/human-full.txt\n  diff:    line 46 expected `  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner\\'s boundar…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through helper_owner_call linkage withou…`", "check.json drift for fixture `rust_wrapper_macro_bang_bidi_whitespace`\n  expected: fixtures/rust_wrapper_macro_bang_bidi_whitespace/expected/check.json\n  actual:   target/ripr/fixtures/rust_wrapper_macro_bang_bidi_whitespace/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `rust_wrapper_macro_bang_bidi_whitespace`\n  expected: fixtures/rust_wrapper_macro_bang_bidi_whitespace/expected/human.txt\n  actual:   target/ripr/fixtures/rust_wrapper_macro_bang_bidi_whitespace/human.txt\n  diff:    line 18 expected `  Analyzer limit: Discriminator unconfirmed: no admitted discriminating oracle is paired with the` vs actual `  Analyzer limit: ripr could not follow the changed value to something a test can check (a return value or side effect)`", "human-full.txt drift for fixture `rust_wrapper_macro_bang_bidi_whitespace`\n  expected: fixtures/rust_wrapper_macro_bang_bidi_whitespace/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_wrapper_macro_bang_bidi_whitespace/human-full.txt\n  diff:    line 46 expected `  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner\\'s boundar…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through helper_owner_call linkage withou…`", "check.json drift for fixture `rust_wrapper_static_shadowed_callee`\n  expected: fixtures/rust_wrapper_static_shadowed_callee/expected/check.json\n  actual:   target/ripr/fixtures/rust_wrapper_static_shadowed_callee/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human-full.txt drift for fixture `rust_wrapper_static_shadowed_callee`\n  expected: fixtures/rust_wrapper_static_shadowed_callee/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_wrapper_static_shadowed_callee/human-full.txt\n  diff:    line 46 expected `  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner\\'s boundar…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through helper_owner_call linkage withou…`", "check.json drift for fixture `rust_wrapper_unicode_macro_suffix`\n  expected: fixtures/rust_wrapper_unicode_macro_suffix/expected/check.json\n  actual:   target/ripr/fixtures/rust_wrapper_unicode_macro_suffix/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `rust_wrapper_unicode_macro_suffix`\n  expected: fixtures/rust_wrapper_unicode_macro_suffix/expected/human.txt\n  actual:   target/ripr/fixtures/rust_wrapper_unicode_macro_suffix/human.txt\n  diff:    line 18 expected `  Analyzer limit: Discriminator unconfirmed: no admitted discriminating oracle is paired with the` vs actual `  Analyzer limit: ripr could not follow the changed value to something a test can check (a return value or side effect)`", "human-full.txt drift for fixture `rust_wrapper_unicode_macro_suffix`\n  expected: fixtures/rust_wrapper_unicode_macro_suffix/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_wrapper_unicode_macro_suffix/human-full.txt\n  diff:    line 46 expected `  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner\\'s boundar…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through helper_owner_call linkage withou…`", "check.json drift for fixture `rust_wrapper_user_macro_guard`\n  expected: fixtures/rust_wrapper_user_macro_guard/expected/check.json\n  actual:   target/ripr/fixtures/rust_wrapper_user_macro_guard/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `rust_wrapper_user_macro_guard`\n  expected: fixtures/rust_wrapper_user_macro_guard/expected/human.txt\n  actual:   target/ripr/fixtures/rust_wrapper_user_macro_guard/human.txt\n  diff:    line 18 expected `  Analyzer limit: Discriminator unconfirmed: no admitted discriminating oracle is paired with the` vs actual `  Analyzer limit: ripr could not follow the changed value to something a test can check (a return value or side effect)`", "human-full.txt drift for fixture `rust_wrapper_user_macro_guard`\n  expected: fixtures/rust_wrapper_user_macro_guard/expected/human-full.txt\n  actual:   target/ripr/fixtures/rust_wrapper_user_macro_guard/human-full.txt\n  diff:    line 46 expected `  - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner\\'s boundar…` vs actual `  - discriminator weak: Discriminator uncredited: strongest oracle reaches only through helper_owner_call linkage withou…`", "human.txt drift for fixture `source_promotion_verification`\n  expected: fixtures/source_promotion_verification/expected/human.txt\n  actual:   target/ripr/fixtures/source_promotion_verification/human.txt\n  diff:    line 38 expected `  ripr explain --root <cwd>/fixtures/source_promotion_verification/input --diff <cwd>/fixtures/source_promotion_verifica…` vs actual `  (finding id, for explain/context)`", "check.json drift for fixture `source_role_harness_suppression`\n  expected: fixtures/source_role_harness_suppression/expected/check.json\n  actual:   target/ripr/fixtures/source_role_harness_suppression/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no admi…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator uncredited: stronges…`", "human.txt drift for fixture `source_role_harness_suppression`\n  expected: fixtures/source_role_harness_suppression/expected/human.txt\n  actual:   target/ripr/fixtures/source_role_harness_suppression/human.txt\n  diff:    line 19 expected `  Missing check: Discriminator unconfirmed: no admitted discriminating oracle is paired with the` vs actual `  Missing check: No strong assertion was detected`", "check.json drift for fixture `split_test_boundary_oracle`\n  expected: fixtures/split_test_boundary_oracle/expected/check.json\n  actual:   target/ripr/fixtures/split_test_boundary_oracle/check.json\n  diff:    line 6 expected `  \\\"summary\\\": {\\\"changed_rust_files\\\":1,\\\"probes\\\":2,\\\"findings\\\":2,\\\"exposed\\\":1,\\\"weakly_exposed\\\":1,\\\"reachable_unre…` vs actual `  \\\"summary\\\": {\\\"changed_rust_files\\\":1,\\\"probes\\\":2,\\\"findings\\\":2,\\\"exposed\\\":0,\\\"weakly_exposed\\\":2,\\\"reachable_unre…`", "human.txt drift for fixture `split_test_boundary_oracle`\n  expected: fixtures/split_test_boundary_oracle/expected/human.txt\n  actual:   target/ripr/fixtures/split_test_boundary_oracle/human.txt\n  diff:    line 5 expected `Summary: 2 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test …` vs actual `Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test …`", "check.json drift for fixture `tail_comparison_boundary`\n  expected: fixtures/tail_comparison_boundary/expected/check.json\n  actual:   target/ripr/fixtures/tail_comparison_boundary/check.json\n  diff:    line 28 expected `      \\\"confidence\\\": 0.92,` vs actual `      \\\"confidence\\\": 0.84,`", "human.txt drift for fixture `tail_comparison_boundary`\n  expected: fixtures/tail_comparison_boundary/expected/human.txt\n  actual:   target/ripr/fixtures/tail_comparison_boundary/human.txt\n  diff:    line 14 expected `  Static exposure: weak (severity: warning, confidence 0.92)` vs actual `  Static exposure: weak (severity: warning, confidence 0.84)`", "check.json drift for fixture `test_cast_to_integer_not_exact`\n  expected: fixtures/test_cast_to_integer_not_exact/expected/check.json\n  actual:   target/ripr/fixtures/test_cast_to_integer_not_exact/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"high\\\",\\\"summary\\\":\\\"Only relational oracle found; it may…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `test_cast_to_integer_not_exact`\n  expected: fixtures/test_cast_to_integer_not_exact/expected/human-full.txt\n  actual:   target/ripr/fixtures/test_cast_to_integer_not_exact/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly` vs actual `  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression`", "check.json drift for fixture `test_compared_with_non_literal_not_exact`\n  expected: fixtures/test_compared_with_non_literal_not_exact/expected/check.json\n  actual:   target/ripr/fixtures/test_compared_with_non_literal_not_exact/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"high\\\",\\\"summary\\\":\\\"Only relational oracle found; it may…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `test_compared_with_non_literal_not_exact`\n  expected: fixtures/test_compared_with_non_literal_not_exact/expected/human-full.txt\n  actual:   target/ripr/fixtures/test_compared_with_non_literal_not_exact/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly` vs actual `  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression`", "check.json drift for fixture `test_from_trait_conversion_not_exact`\n  expected: fixtures/test_from_trait_conversion_not_exact/expected/check.json\n  actual:   target/ripr/fixtures/test_from_trait_conversion_not_exact/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"high\\\",\\\"summary\\\":\\\"Only relational oracle found; it may…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `test_from_trait_conversion_not_exact`\n  expected: fixtures/test_from_trait_conversion_not_exact/expected/human-full.txt\n  actual:   target/ripr/fixtures/test_from_trait_conversion_not_exact/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly` vs actual `  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression`", "check.json drift for fixture `test_in_index_read_not_exact`\n  expected: fixtures/test_in_index_read_not_exact/expected/check.json\n  actual:   target/ripr/fixtures/test_in_index_read_not_exact/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"high\\\",\\\"summary\\\":\\\"Only relational oracle found; it may…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `test_in_index_read_not_exact`\n  expected: fixtures/test_in_index_read_not_exact/expected/human-full.txt\n  actual:   target/ripr/fixtures/test_in_index_read_not_exact/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly` vs actual `  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression`", "check.json drift for fixture `test_in_struct_literal_not_exact`\n  expected: fixtures/test_in_struct_literal_not_exact/expected/check.json\n  actual:   target/ripr/fixtures/test_in_struct_literal_not_exact/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"high\\\",\\\"summary\\\":\\\"Only relational oracle found; it may…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `test_in_struct_literal_not_exact`\n  expected: fixtures/test_in_struct_literal_not_exact/expected/human-full.txt\n  actual:   target/ripr/fixtures/test_in_struct_literal_not_exact/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly` vs actual `  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression`", "check.json drift for fixture `test_wrapped_in_some_not_exact`\n  expected: fixtures/test_wrapped_in_some_not_exact/expected/check.json\n  actual:   target/ripr/fixtures/test_wrapped_in_some_not_exact/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"high\\\",\\\"summary\\\":\\\"Only relational oracle found; it may…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `test_wrapped_in_some_not_exact`\n  expected: fixtures/test_wrapped_in_some_not_exact/expected/human-full.txt\n  actual:   target/ripr/fixtures/test_wrapped_in_some_not_exact/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly` vs actual `  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression`", "check.json drift for fixture `unwrap_err_variant_positive`\n  expected: fixtures/unwrap_err_variant_positive/expected/check.json\n  actual:   target/ripr/fixtures/unwrap_err_variant_positive/check.json\n  diff:    line 9 expected `    \\\"outcome\\\": {\\\"schema_version\\\":\\\"0.1\\\",\\\"kind\\\":\\\"complete_with_findings\\\",\\\"identity\\\":{\\\"repository_identity\\\":n…` vs actual `    \\\"outcome\\\": {\\\"schema_version\\\":\\\"0.1\\\",\\\"kind\\\":\\\"complete_with_findings\\\",\\\"identity\\\":{\\\"repository_identity\\\":n…`; divergence at char 200: expected `...revision\":null,\"input_identity\":\"sha256:9560b1d673eeb52f7b81eb460fb17395cbb0528a...` vs actual `...revision\":null,\"input_identity\":\"sha256:fbe2e9fa62622de9fdc264a53eba841143c9ce1c...`", "human.txt drift for fixture `unwrap_err_variant_positive`\n  expected: fixtures/unwrap_err_variant_positive/expected/human.txt\n  actual:   target/ripr/fixtures/unwrap_err_variant_positive/human.txt\n  diff:    line 13 expected `  File: ./src/lib.rs:8` vs actual `  File: ./src/lib.rs:9`", "human-full.txt drift for fixture `unwrap_err_variant_positive`\n  expected: fixtures/unwrap_err_variant_positive/expected/human-full.txt\n  actual:   target/ripr/fixtures/unwrap_err_variant_positive/human-full.txt\n  diff:    line 21 expected `  E6 [findings 1, 2]: local flow reaches error variant: Result::Err(CalcError::Negative) (line 8)` vs actual `  E6 [findings 1, 2]: local flow reaches error variant: Result::Err(CalcError::Negative) (line 9)`", "check.json drift for fixture `wildcard_oracle_wildcard_original`\n  expected: fixtures/wildcard_oracle_wildcard_original/expected/check.json\n  actual:   target/ripr/fixtures/wildcard_oracle_wildcard_original/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"high\\\",\\\"summary\\\":\\\"Only relational oracle found; it may…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `wildcard_oracle_wildcard_original`\n  expected: fixtures/wildcard_oracle_wildcard_original/expected/human-full.txt\n  actual:   target/ripr/fixtures/wildcard_oracle_wildcard_original/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly` vs actual `  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression`", "check.json drift for fixture `wildcard_oracle_wildcard_wrong`\n  expected: fixtures/wildcard_oracle_wildcard_wrong/expected/check.json\n  actual:   target/ripr/fixtures/wildcard_oracle_wildcard_wrong/check.json\n  diff:    line 42 expected `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"high\\\",\\\"summary\\\":\\\"Only relational oracle found; it may…` vs actual `        \\\"discriminate\\\": {\\\"state\\\":\\\"weak\\\",\\\"confidence\\\":\\\"medium\\\",\\\"summary\\\":\\\"Discriminator unconfirmed: no asse…`", "human-full.txt drift for fixture `wildcard_oracle_wildcard_wrong`\n  expected: fixtures/wildcard_oracle_wildcard_wrong/expected/human-full.txt\n  actual:   target/ripr/fixtures/wildcard_oracle_wildcard_wrong/human-full.txt\n  diff:    line 37 expected `  - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly` vs actual `  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression`"]
+}

@@ -1,0 +1,20 @@
+{
+  "candidate": "6a0a49bfc7343bc4c06b0395611b228ec52e8b71",
+  "fixtures": 61,
+  "surfaces": 133,
+  "class_changes": {
+    "error_return_unresolved_guard": [
+      "expected [exposed] -> actual [weakly_exposed]"
+    ],
+    "error_variant_boxed_wrapper_downcast_witness": [
+      "expected [exposed, reachable_unrevealed, weakly_exposed] -> actual [reachable_unrevealed, weakly_exposed]"
+    ],
+    "module_reach_control_qualified": [
+      "expected [exposed, weakly_exposed] -> actual [exposed]"
+    ],
+    "split_test_boundary_oracle": [
+      "expected [exposed, weakly_exposed] -> actual [weakly_exposed]"
+    ]
+  },
+  "result": "Native golden gate exit1; no blanket blessing; precise1579limitation is existing0.13policy target, historicalSPEC/golden inconsistent; boxed return-site native proof limits old exposure claim."
+}
