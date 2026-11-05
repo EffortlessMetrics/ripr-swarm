@@ -98,6 +98,19 @@ const HARNESS_OWNED_SHORT_FLAGS: &[char] = &['d', 'o', 'j', 't'];
 /// cargo-mutants 27 short flags that take no value (`--caught`, `--unviable`,
 /// `--help`), so a bundled argument such as `-vj8` continues past them.
 const VALUELESS_SHORT_FLAGS: &[char] = &['v', 'V', 'h'];
+const NO_CONTAINING_SEAM: &str = "unmatched_no_containing_seam";
+/// Grip classes `recall_of_missed` always reports, so a class with no missed
+/// mutants is an explicit zero rather than an absent key.
+const RECALL_GRIP_CLASSES: &[&str] = &[
+    "ungripped",
+    "activation_unknown",
+    "strongly_gripped",
+    "opaque",
+    "weakly_gripped",
+    "no_joined_seam",
+];
+const REDERIVE_USAGE: &str =
+    "usage: cargo xtask mutation-spot-check --rederive-summaries <mutation-spot-check.json>";
 const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]";
 
 fn harness_owned_mutants_arg(arg: &str) -> bool {
@@ -126,6 +139,14 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("{USAGE}");
         return Ok(());
+    }
+    if let Some(index) = args.iter().position(|arg| arg == "--rederive-summaries") {
+        if args.len() != 2 || index != 0 {
+            return Err(format!(
+                "--rederive-summaries takes exactly one path and no other argument; {REDERIVE_USAGE}"
+            ));
+        }
+        return rederive_summaries(Path::new(&args[1]));
     }
     let options = parse_options(args)?;
     let binary = match &options.ripr {
@@ -1108,6 +1129,7 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
             )
         })
         .collect::<serde_json::Map<_, _>>();
+    let by_disposition_value = json!(by_disposition);
     json!({
         "schema_version": SCHEMA_VERSION,
         "status": "advisory",
@@ -1127,6 +1149,8 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
         })).collect::<Vec<_>>(),
         "outcomes_by_disposition_and_grip_class": by_disposition,
         "scored_families": families,
+        "recall_of_missed": recall_of_missed(&by_disposition_value),
+        "seam_coverage": seam_coverage(&by_disposition_value),
         "disagreement_examples": disagreements,
         "operator_token_diagnostic": {
             "counts": operator_tokens,
@@ -1139,6 +1163,103 @@ fn build_report(repos: &[RepoRun], examples: usize, analyzer: &str) -> Value {
                 .collect::<Vec<_>>(),
         ),
     })
+}
+
+/// Sum `outcomes_by_disposition_and_grip_class` cells. `keep` receives
+/// (disposition, grip class, outcome); the result is the total count kept.
+fn sum_outcomes(outcomes: &Value, keep: impl Fn(&str, &str, &str) -> bool) -> usize {
+    let mut total = 0;
+    for (disposition, classes) in outcomes.as_object().into_iter().flatten() {
+        for (class, by_outcome) in classes.as_object().into_iter().flatten() {
+            for (outcome, count) in by_outcome.as_object().into_iter().flatten() {
+                if keep(disposition, class, outcome) {
+                    total += count.as_u64().unwrap_or(0) as usize;
+                }
+            }
+        }
+    }
+    total
+}
+
+/// Among runtime-missed mutants across every disposition, how many ripr's grip
+/// class flagged. Advisory and recorded-revision only; not suite adequacy.
+fn recall_of_missed(outcomes: &Value) -> Value {
+    let missed_in =
+        |class: &str| sum_outcomes(outcomes, |_, c, outcome| c == class && outcome == "missed");
+    let missed_total = sum_outcomes(outcomes, |_, _, outcome| outcome == "missed");
+    let mut by_class: BTreeMap<String, usize> = RECALL_GRIP_CLASSES
+        .iter()
+        .map(|class| (class.to_string(), missed_in(class)))
+        .collect();
+    // A grip class outside the known list is still counted, never dropped.
+    let known: usize = by_class.values().sum();
+    if known != missed_total {
+        by_class.insert("other".to_string(), missed_total - known);
+    }
+    let ungripped = by_class.get("ungripped").copied().unwrap_or(0);
+    json!({
+        "missed_total": missed_total,
+        "missed_by_grip_class": by_class,
+        "ungripped_missed": ungripped,
+        "ungripped_share_of_missed": rate(ungripped, missed_total),
+        "claim_boundary": "Advisory. Counts runtime-missed mutants of every disposition by the grip class ripr recorded for them; the recorded checkout revisions and cargo-mutants runs only. A missed mutant that ripr did not flag ungripped is not a ripr error and a share is not suite adequacy.",
+    })
+}
+
+/// How much of the mutant population reaches a canonical-precise seam join.
+fn seam_coverage(outcomes: &Value) -> Value {
+    let mutants_total = sum_outcomes(outcomes, |_, _, _| true);
+    let scoreable = sum_outcomes(outcomes, |_, _, outcome| {
+        SCOREABLE_OUTCOMES.contains(&outcome)
+    });
+    let caught = sum_outcomes(outcomes, |_, _, outcome| outcome == "caught");
+    let missed = sum_outcomes(outcomes, |_, _, outcome| outcome == "missed");
+    let precise = sum_outcomes(outcomes, |d, _, _| d == CANONICAL_PRECISE);
+    let no_seam = sum_outcomes(outcomes, |d, _, _| d == NO_CONTAINING_SEAM);
+    json!({
+        "mutants_total": mutants_total,
+        "with_caught_or_missed_outcome": scoreable,
+        "caught": caught,
+        "missed": missed,
+        "canonical_precise": precise,
+        "canonical_precise_share": rate(precise, mutants_total),
+        "no_containing_seam": no_seam,
+        "no_containing_seam_share": rate(no_seam, mutants_total),
+        "claim_boundary": "Advisory. Shares are of every recorded mutant, including timeout and unviable outcomes; recorded checkout revisions only. Seam coverage is a join-rate fact about ripr's seam inventory, not suite adequacy.",
+    })
+}
+
+/// Offline path: recompute the derived summary rows of a recorded report from
+/// its own `outcomes_by_disposition_and_grip_class`, without re-running
+/// mutation testing. Only `recall_of_missed` and `seam_coverage` change.
+fn rederive_summaries(path: &Path) -> Result<(), String> {
+    let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
+    let mut report: Value =
+        serde_json::from_str(&text).map_err(|err| format!("parse {}: {err}", path.display()))?;
+    let schema = report.get("schema_version").and_then(Value::as_str);
+    if schema != Some(SCHEMA_VERSION) {
+        return Err(format!(
+            "{} has schema_version {schema:?}, expected `{SCHEMA_VERSION}`",
+            path.display()
+        ));
+    }
+    let outcomes = report
+        .get("outcomes_by_disposition_and_grip_class")
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "{} has no outcomes_by_disposition_and_grip_class",
+                path.display()
+            )
+        })?;
+    report["recall_of_missed"] = recall_of_missed(&outcomes);
+    report["seam_coverage"] = seam_coverage(&outcomes);
+    let json_text = serde_json::to_string_pretty(&report)
+        .map_err(|err| format!("serialize {}: {err}", path.display()))?;
+    fs::write(path, format!("{json_text}\n"))
+        .map_err(|err| format!("write {}: {err}", path.display()))?;
+    println!("Re-derived summary rows in {}", path.display());
+    Ok(())
 }
 
 fn example(repo: &RepoRun, record: &Record) -> Value {
@@ -1314,6 +1435,7 @@ fn spot_check_markdown(report: &Value) -> String {
             }
         }
     }
+    out.push_str(&derived_summaries_markdown(report));
     out.push_str("\n## Disagreement examples\n\n");
     let mut any = false;
     for (verdict, rows) in report
@@ -1357,6 +1479,50 @@ fn spot_check_markdown(report: &Value) -> String {
     out
 }
 
+fn derived_summaries_markdown(report: &Value) -> String {
+    let mut out = String::new();
+    if let Some(recall) = report.get("recall_of_missed") {
+        let n = |key: &str| recall.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let cells = recall
+            .get("missed_by_grip_class")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .map(|(class, count)| format!("{class} {count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let share = recall
+            .get("ungripped_share_of_missed")
+            .and_then(Value::as_f64)
+            .map_or_else(|| "n/a".to_string(), |rate| format!("{:.1}%", rate * 100.0));
+        out.push_str(&format!(
+            "\n## Recall of missed mutants\n\n{} runtime-missed mutants across all dispositions: {cells}. Flagged ungripped: {} ({share}). Advisory; not suite adequacy.\n",
+            n("missed_total"),
+            n("ungripped_missed"),
+        ));
+    }
+    if let Some(cov) = report.get("seam_coverage") {
+        let n = |key: &str| cov.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let pct = |key: &str| {
+            cov.get(key)
+                .and_then(Value::as_f64)
+                .map_or_else(|| "n/a".to_string(), |rate| format!("{:.1}%", rate * 100.0))
+        };
+        out.push_str(&format!(
+            "\n## Seam coverage\n\n{} mutants ({} caught, {} missed; {} with a caught or missed outcome). Canonical precise: {} ({}). No containing seam: {} ({}).\n",
+            n("mutants_total"),
+            n("caught"),
+            n("missed"),
+            n("with_caught_or_missed_outcome"),
+            n("canonical_precise"),
+            pct("canonical_precise_share"),
+            n("no_containing_seam"),
+            pct("no_containing_seam_share"),
+        ));
+    }
+    out
+}
+
 fn example_line(row: &Value) -> String {
     let field = |key: &str| row.get(key).and_then(Value::as_str).unwrap_or("");
     format!(
@@ -1382,6 +1548,124 @@ fn example_line(row: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn baseline_outcomes() -> Value {
+        json!({
+            "ambiguous_file_line": {"no_joined_seam": {"caught": 2, "missed": 1}},
+            "ambiguous_span_overlap": {"no_joined_seam": {"caught": 31, "missed": 9, "unviable": 3}},
+            "canonical_precise": {
+                "activation_unknown": {"caught": 285, "missed": 86},
+                "opaque": {"caught": 46, "missed": 1},
+                "strongly_gripped": {"caught": 61, "missed": 2},
+                "ungripped": {"missed": 12}
+            },
+            "file_line_only": {
+                "activation_unknown": {"caught": 46, "missed": 8, "timeout": 3, "unviable": 1},
+                "opaque": {"caught": 15, "timeout": 1},
+                "strongly_gripped": {"caught": 49, "missed": 17, "unviable": 1}
+            },
+            "unmatched_no_containing_seam": {
+                "no_joined_seam": {"caught": 697, "missed": 104, "timeout": 10, "unviable": 32}
+            },
+            "unscoreable_outcome": {
+                "activation_unknown": {"timeout": 4},
+                "strongly_gripped": {"timeout": 1, "unviable": 3}
+            },
+            "unsupported_genre": {
+                "activation_unknown": {"caught": 24, "missed": 53, "unviable": 8},
+                "opaque": {"caught": 8, "missed": 2, "unviable": 8},
+                "strongly_gripped": {"caught": 47, "unviable": 21},
+                "ungripped": {"missed": 22, "unviable": 1}
+            },
+            "unsupported_seam_kind": {
+                "activation_unknown": {"caught": 6, "missed": 4},
+                "opaque": {"caught": 4, "missed": 1, "unviable": 1},
+                "weakly_gripped": {"caught": 4}
+            }
+        })
+    }
+
+    #[test]
+    fn derived_summaries_match_the_recorded_baseline() {
+        let outcomes = baseline_outcomes();
+        let recall = recall_of_missed(&outcomes);
+        assert_eq!(recall["missed_total"], 322);
+        assert_eq!(recall["ungripped_missed"], 34);
+        assert_eq!(recall["missed_by_grip_class"]["ungripped"], 34);
+        assert_eq!(recall["missed_by_grip_class"]["activation_unknown"], 151);
+        assert_eq!(recall["missed_by_grip_class"]["no_joined_seam"], 114);
+        assert_eq!(recall["missed_by_grip_class"]["strongly_gripped"], 19);
+        assert_eq!(recall["missed_by_grip_class"]["opaque"], 4);
+        assert_eq!(recall["missed_by_grip_class"]["weakly_gripped"], 0);
+        assert!(recall["missed_by_grip_class"].get("other").is_none());
+        assert_eq!(recall["ungripped_share_of_missed"], 0.106);
+        let coverage = seam_coverage(&outcomes);
+        assert_eq!(coverage["mutants_total"], 1745);
+        assert_eq!(coverage["canonical_precise"], 493);
+        assert_eq!(coverage["no_containing_seam"], 843);
+        assert_eq!(coverage["missed"], 322);
+        assert_eq!(coverage["canonical_precise_share"], 0.283);
+        assert_eq!(coverage["no_containing_seam_share"], 0.483);
+    }
+
+    #[test]
+    fn derived_summaries_discriminate_dispositions_classes_and_outcomes() {
+        // Positive: a missed ungripped mutant in a non-canonical disposition
+        // still counts. Negative: caught/unviable ungripped and missed
+        // strongly_gripped mutants must not inflate the ungripped count, and
+        // a file_line_only record is not canonical precise.
+        let outcomes = json!({
+            "canonical_precise": {"ungripped": {"caught": 5}},
+            "unsupported_genre": {
+                "ungripped": {"missed": 1, "unviable": 4},
+                "strongly_gripped": {"missed": 3}
+            },
+            "file_line_only": {"mystery_class": {"missed": 2}},
+            "unmatched_no_containing_seam": {"no_joined_seam": {"timeout": 1}}
+        });
+        let recall = recall_of_missed(&outcomes);
+        assert_eq!(recall["missed_total"], 6);
+        assert_eq!(recall["ungripped_missed"], 1);
+        assert_eq!(recall["missed_by_grip_class"]["strongly_gripped"], 3);
+        assert_eq!(recall["missed_by_grip_class"]["other"], 2);
+        let coverage = seam_coverage(&outcomes);
+        assert_eq!(coverage["mutants_total"], 16);
+        assert_eq!(coverage["with_caught_or_missed_outcome"], 11);
+        assert_eq!(coverage["canonical_precise"], 5);
+        assert_eq!(coverage["no_containing_seam"], 1);
+        // Empty input: shares are null, never a divide by zero.
+        let empty = json!({});
+        assert!(recall_of_missed(&empty)["ungripped_share_of_missed"].is_null());
+        assert!(seam_coverage(&empty)["canonical_precise_share"].is_null());
+    }
+
+    #[test]
+    fn rederive_summaries_refuses_other_schemas_and_rewrites_only_summary_rows()
+    -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-rederive-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let path = dir.join("report.json");
+        let write = |schema: &str| {
+            let report = json!({
+                "schema_version": schema,
+                "outcomes_by_disposition_and_grip_class": baseline_outcomes(),
+                "status": "advisory",
+            });
+            fs::write(&path, report.to_string()).map_err(|err| err.to_string())
+        };
+        write("ripr-mutation-spot-check-v1")?;
+        assert!(rederive_summaries(&path).is_err_and(|err| err.contains("expected")));
+        write(SCHEMA_VERSION)?;
+        rederive_summaries(&path)?;
+        let out: Value =
+            serde_json::from_str(&fs::read_to_string(&path).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(out["seam_coverage"]["mutants_total"], 1745);
+        assert_eq!(out["recall_of_missed"]["ungripped_missed"], 34);
+        assert_eq!(out["status"], "advisory");
+        fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+        Ok(())
+    }
 
     #[test]
     fn mutant_diffs_must_match_the_checkout_lines_they_replaced() -> Result<(), String> {

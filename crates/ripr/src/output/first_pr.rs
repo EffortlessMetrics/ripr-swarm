@@ -931,7 +931,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         // to `doctor` (#10713). A root `doctor` also detects as Python keeps
         // `wrong_root` (its `package.json` is likely tooling), and Rust below
         // the root still means a wrong root.
-        let doctor_languages = crate::cli::commands::detect_languages(root);
+        let doctor_languages = crate::config::language_detection::detect_languages(root);
         let doctor_javascript = doctor_languages.contains(&LanguageId::JavaScript);
         if LanguageId::TypeScript.is_available()
             && (doctor_javascript || doctor_languages.contains(&LanguageId::TypeScript))
@@ -4664,7 +4664,7 @@ mod tests {
             &repo,
             &["package.json", "lib/pricing.ts", "lib/pricing.test.ts"],
         )?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::TypeScript),
             "fixture must be TypeScript to doctor: {doctor_languages:?}"
@@ -4728,7 +4728,7 @@ mod tests {
         fs::write(repo.join("index.js"), "module.exports = (x) => x;\n")
             .map_err(|err| format!("write index.js: {err}"))?;
         init_git_repo_with_initial_files(&repo, &["index.js"])?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::JavaScript),
             "fixture must be JavaScript to doctor: {doctor_languages:?}"
@@ -4756,7 +4756,7 @@ mod tests {
         fs::write(repo.join("app.py"), "def f():\n    return 1\n")
             .map_err(|err| format!("write app.py: {err}"))?;
         init_git_repo_with_initial_files(&repo, &["package.json", "app.py"])?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::Python),
             "fixture must be Python to doctor: {doctor_languages:?}"

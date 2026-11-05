@@ -632,6 +632,20 @@
     "scored": 23,
     "unavailable_repos": 0
   },
+  "recall_of_missed": {
+    "claim_boundary": "Advisory. Counts runtime-missed mutants of every disposition by the grip class ripr recorded for them; the recorded checkout revisions and cargo-mutants runs only. A missed mutant that ripr did not flag ungripped is not a ripr error and a share is not suite adequacy.",
+    "missed_by_grip_class": {
+      "activation_unknown": 151,
+      "no_joined_seam": 114,
+      "opaque": 4,
+      "strongly_gripped": 19,
+      "ungripped": 34,
+      "weakly_gripped": 0
+    },
+    "missed_total": 322,
+    "ungripped_missed": 34,
+    "ungripped_share_of_missed": 0.106
+  },
   "repos": [
     {
       "calibration_metrics": {
@@ -889,6 +903,17 @@
       "mutants_scored": 12,
       "seams_scored": 6
     }
+  },
+  "seam_coverage": {
+    "canonical_precise": 493,
+    "canonical_precise_share": 0.283,
+    "caught": 1325,
+    "claim_boundary": "Advisory. Shares are of every recorded mutant, including timeout and unviable outcomes; recorded checkout revisions only. Seam coverage is a join-rate fact about ripr's seam inventory, not suite adequacy.",
+    "missed": 322,
+    "mutants_total": 1745,
+    "no_containing_seam": 843,
+    "no_containing_seam_share": 0.483,
+    "with_caught_or_missed_outcome": 1647
   },
   "status": "advisory"
 }
