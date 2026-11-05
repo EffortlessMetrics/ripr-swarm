@@ -5326,6 +5326,116 @@ impl OwnerReturnPin {
         Some(stripped)
     }
 
+    fn default_trait_call_shape<'a>(
+        &self,
+        operand: &'a str,
+        test: &TestSummary,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> Option<CallShape<'a>> {
+        if self.awaited || self.owner_file != test.file {
+            return None;
+        }
+        let PinCall::Method {
+            trait_scope: Some(trait_scope),
+            ..
+        } = &self.call
+        else {
+            return None;
+        };
+        let owner = index.functions().iter().find(|owner| {
+            owner.file == self.owner_file
+                && owner.start_line == self.owner_start_line
+                && owner.name == self.name
+        })?;
+        let FunctionContainer::Trait { trait_name } = &owner.item.container else {
+            return None;
+        };
+        if trait_name != &trait_scope.trait_name {
+            return None;
+        }
+        let operand = operand.trim();
+        let (callee, args) = operand.split_once('(')?;
+        let prefix = without_rust_whitespace(callee)
+            .strip_suffix(&format!("::{}", self.name))?
+            .to_string();
+        let receiver = args.strip_suffix(')')?.trim().strip_prefix('&')?.trim();
+        if !is_plain_identifier(receiver) {
+            return None;
+        }
+        let facts = index.files().get(&test.file)?;
+        if file_renames_to(&facts.source, trait_name)
+            || file_aliases_type(&facts.source, trait_name)
+            || declares_type(&mask_comments_and_strings(&test.body), trait_name)
+            || declares_trait(&mask_comments_and_strings(&test.body), trait_name)
+            || declared_module_names(&mask_comments_and_strings(&test.body))
+                .contains(&trait_name.as_str())
+            || flattened_use_paths(&test.body).iter().any(|path| {
+                path.path.ends_with(trait_name) || path.alias.as_deref() == Some(trait_name)
+            })
+        {
+            return None;
+        }
+        let parse = parse_clean_source_file(&facts.source)?;
+        let root = parse.tree();
+        let function = root
+            .syntax()
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .find(|function| {
+                function.name().is_some_and(|name| name.text() == self.name)
+                    && facts.source[..usize::from(function.syntax().text_range().start())]
+                        .matches('\n')
+                        .count()
+                        + 1
+                        == self.owner_start_line
+            })?;
+        let parameters = function.param_list()?;
+        let receiver_param = parameters.self_param()?;
+        if parameters.params().next().is_some()
+            || receiver_param.amp_token().is_none()
+            || receiver_param.mut_token().is_some()
+        {
+            return None;
+        }
+        let declaration = function.syntax().ancestors().find_map(ast::Trait::cast)?;
+        let test_modules = syntax
+            .item_nesting(index, &test.file, &test.name, test.start_line)?
+            .modules;
+        let declaration_modules = inline_modules_of(declaration.syntax());
+        let relative = relative_item_import_ranges(trait_name, &root, declaration.syntax());
+        let imported =
+            root.syntax()
+                .descendants()
+                .filter_map(ast::Use::cast)
+                .any(|item| {
+                    relative.iter().any(|range| {
+                        range.contains(&usize::from(item.syntax().text_range().start()))
+                    }) && inline_modules_of(item.syntax()) == test_modules
+                });
+        let names_trait = if prefix == *trait_name || prefix == format!("self::{trait_name}") {
+            test_modules == declaration_modules || imported
+        } else if prefix == format!("crate::{trait_name}") {
+            declaration_modules.is_empty()
+                && syntax
+                    .target_roots(index)
+                    .root(&test.file, index)
+                    .as_deref()
+                    == Some(self.owner_file.as_path())
+        } else {
+            false
+        };
+        let root_file = syntax.target_roots(index).root(&self.owner_file, index)?;
+        (names_trait
+            && !syntax.crate_may_hide_name(
+                index,
+                &root_file,
+                trait_name,
+                syntax.target_roots(index),
+            ))
+        .then_some(CallShape::Method(receiver))
+    }
+
     fn awaited_call_shape<'a>(
         &self,
         poll_context: Option<(&TestSummary, &RustIndex, &OwnerPinSyntax)>,
@@ -5787,8 +5897,10 @@ impl OwnerReturnPin {
                 }
             });
             match (
-                self.awaited_call_shape(poll_context, operands[0], &self.name),
-                self.awaited_call_shape(poll_context, operands[1], &self.name),
+                self.awaited_call_shape(poll_context, operands[0], &self.name)
+                    .or_else(|| self.default_trait_call_shape(operands[0], test, index, syntax)),
+                self.awaited_call_shape(poll_context, operands[1], &self.name)
+                    .or_else(|| self.default_trait_call_shape(operands[1], test, index, syntax)),
                 rendered,
             ) {
                 (_, _, Some(pin)) if renders || indexes => pin,
@@ -16495,15 +16607,6 @@ fn same_file_unit_import_ranges(name: &str, source: &str) -> Vec<std::ops::Range
         return Vec::new();
     };
     let root = parse.tree();
-    let modules = |node: &SyntaxNode| {
-        let mut path = node
-            .ancestors()
-            .filter_map(ast::Module::cast)
-            .filter_map(|m| m.name().map(|n| n.text().to_string()))
-            .collect::<Vec<_>>();
-        path.reverse();
-        path
-    };
     let mut declarations = root
         .syntax()
         .descendants()
@@ -16519,7 +16622,25 @@ fn same_file_unit_import_ranges(name: &str, source: &str) -> Vec<std::ops::Range
     let (Some(declaration), None) = (declarations.next(), declarations.next()) else {
         return Vec::new();
     };
-    let mut wanted = modules(declaration.syntax());
+    relative_item_import_ranges(name, &root, declaration.syntax())
+}
+
+fn inline_modules_of(node: &SyntaxNode) -> Vec<String> {
+    let mut path = node
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .filter_map(|module| module.name().map(|name| name.text().to_string()))
+        .collect::<Vec<_>>();
+    path.reverse();
+    path
+}
+
+fn relative_item_import_ranges(
+    name: &str,
+    root: &ast::SourceFile,
+    declaration: &SyntaxNode,
+) -> Vec<std::ops::Range<usize>> {
+    let mut wanted = inline_modules_of(declaration);
     wanted.push(name.to_string());
     root.syntax()
         .descendants()
@@ -16540,7 +16661,7 @@ fn same_file_unit_import_ranges(name: &str, source: &str) -> Vec<std::ops::Range
                 if path.alias.is_some() {
                     return false;
                 }
-                let mut scope = modules(item.syntax());
+                let mut scope = inline_modules_of(item.syntax());
                 let mut parts = path.path.split("::").peekable();
                 match parts.peek().copied() {
                     Some("self") => {
@@ -16628,7 +16749,8 @@ fn root_unit_import_ranges(name: &str, source: &str) -> Vec<std::ops::Range<usiz
 ///   (`struct name;`), in the test's own file;
 /// - every other spelling of the name in the workspace is an `impl` header
 ///   (`impl name {`, `impl Trait for name {`), a method call (`name.f(..)`)
-///   a `let` initializer (`= name;`), or an explicitly resolved redundant
+///   a `let` initializer (`= name;`), a parser-confirmed shared value
+///   reference (`&name`), or an explicitly resolved redundant
 ///   `self`/`super` import of that same item. Other imports, a type position, a raw
 ///   identifier (`r#name`), a pattern, an enum variant, a macro argument or
 ///   any `const`, `static`, `fn`, `type` or `as` rename refuses;
@@ -16654,6 +16776,72 @@ pub(super) fn unit_struct_value(
     syntax: &OwnerPinSyntax,
 ) -> bool {
     unit_struct_value_in_definition(name, test_file, index, syntax, false)
+}
+
+fn shared_unit_value_offsets(name: &str, source: &str) -> Vec<usize> {
+    if !source.contains('&') {
+        return Vec::new();
+    }
+    let Some(parse) = parse_clean_source_file(source) else {
+        return Vec::new();
+    };
+    let value_offsets = |root: &SyntaxNode| {
+        root.descendants()
+            .filter_map(ast::PathExpr::cast)
+            .filter_map(|expression| {
+                let path = expression.path()?;
+                if path.qualifier().is_some() || path.segment()?.name_ref()?.text() != name {
+                    return None;
+                }
+                let reference = expression.syntax().parent().and_then(ast::RefExpr::cast)?;
+                reference
+                    .mut_token()
+                    .is_none()
+                    .then(|| usize::from(expression.syntax().text_range().start()))
+            })
+            .collect::<Vec<_>>()
+    };
+    let root = parse.tree();
+    let mut offsets = value_offsets(root.syntax());
+    // Assertion token trees are opaque in the file AST. Parse only known
+    // standard assertion payloads as expression operands; this distinguishes
+    // `&Unit` values from type positions without trusting diagnostic strings.
+    for call in root.syntax().descendants().filter_map(ast::MacroCall::cast) {
+        let Some(path) = call.path() else { continue };
+        let path = without_rust_whitespace(&path.syntax().text().to_string());
+        let path = path.trim_start_matches("::");
+        let mut segments = path.split("::").collect::<Vec<_>>();
+        let Some(macro_name) = segments.pop() else {
+            continue;
+        };
+        if !matches!(macro_name, "assert_eq" | "assert_ne" | "assert")
+            || !matches!(segments.as_slice(), [] | ["std"] | ["core"])
+        {
+            continue;
+        }
+        let Some(tokens) = call.token_tree() else {
+            continue;
+        };
+        let text = tokens.syntax().text().to_string();
+        let Some(inner) = text.get(1..text.len().saturating_sub(1)) else {
+            continue;
+        };
+        let prefix = "fn assertion_values() { let _ = (";
+        let wrapped = format!("{prefix}{inner}); }}");
+        let Some(parsed) = parse_clean_source_file(&wrapped) else {
+            continue;
+        };
+        let origin = usize::from(tokens.syntax().text_range().start()) + 1;
+        offsets.extend(
+            value_offsets(parsed.tree().syntax())
+                .into_iter()
+                .filter_map(|offset| {
+                    let inner_offset = offset.checked_sub(prefix.len())?;
+                    (inner_offset < inner.len()).then_some(origin + inner_offset)
+                }),
+        );
+    }
+    offsets
 }
 
 fn unit_struct_value_in_definition(
@@ -16692,13 +16880,16 @@ fn unit_struct_value_in_definition(
         } else {
             Vec::new()
         };
+        let references = shared_unit_value_offsets(name, &facts.source);
         // One spelling in a macro body declares a struct per invocation,
         // so no file that defines a macro may spell the name.
         if unit_struct.macro_files.contains(file) && !whole_word_offsets(&masked, name).is_empty() {
             return false;
         }
         for offset in whole_word_offsets(&masked, name) {
-            if local_imports.iter().any(|range| range.contains(&offset)) {
+            if local_imports.iter().any(|range| range.contains(&offset))
+                || references.contains(&offset)
+            {
                 continue;
             }
             let before = masked[..offset].trim_end();

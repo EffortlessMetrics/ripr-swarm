@@ -4049,3 +4049,74 @@ fn exact_error_kind_projection_keeps_its_own_result_identity() -> Result<(), Str
     }
     Ok(())
 }
+
+#[test]
+fn default_trait_ufcs_result_pins_do_not_lend_identity_to_other_oracles() -> Result<(), String> {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_trait_default_import");
+    let source =
+        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
+    let original = "assert_eq!(self::Counter::advance(&Unit), 8);";
+    assert!(source.contains(original));
+    for (body, exposed) in [
+        (original.to_string(), true),
+        (
+            format!("let factor=4; assert_eq!(factor,4);\n{original}"),
+            true,
+        ),
+        (
+            format!("{original}\nlet factor=4; assert_eq!(factor,4);"),
+            true,
+        ),
+        (
+            "let _=self::Counter::advance(&Unit); let factor=4; assert_eq!(factor,4);".to_string(),
+            false,
+        ),
+        (
+            "assert_eq!(self::Counter::advance(&Unit) * 0, 0);".to_string(),
+            false,
+        ),
+    ] {
+        let scratch = Scratch::create()?;
+        std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
+        std::fs::copy(
+            fixture.join("input/Cargo.toml"),
+            scratch.0.join("Cargo.toml"),
+        )
+        .map_err(|e| e.to_string())?;
+        let input = source.replace(original, &body);
+        std::fs::write(scratch.0.join("src/lib.rs"), &input).map_err(|e| e.to_string())?;
+        let report = check_workspace(CheckInput {
+            root: scratch.0.clone(),
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(
+            report.findings.len(),
+            1,
+            "nonempty default-trait return subject"
+        );
+        assert_eq!(
+            report.findings[0].class == ExposureClass::Exposed,
+            exposed,
+            "{body}: {:?}",
+            report.findings[0]
+        );
+        for wrong in [false, true] {
+            let runtime = if wrong {
+                input.replace("4 * self.step()", "4 + self.step()")
+            } else {
+                input.clone()
+            };
+            source_runtime_control(
+                &runtime,
+                &format!("default_trait_ufcs/wrong={wrong}/{body}"),
+                1,
+                wrong && exposed,
+            )?;
+        }
+    }
+    Ok(())
+}
