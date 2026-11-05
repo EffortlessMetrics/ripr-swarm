@@ -713,3 +713,109 @@ fn returned_array_field_identity_tracks_the_changed_element() -> Result<(), Stri
     }
     Ok(())
 }
+
+#[test]
+fn unit_error_variant_unwrap_identity_preserves_current_binding() -> Result<(), String> {
+    let source = "#[derive(Debug,PartialEq,Eq)]\npub enum CalcError { Negative, TooLarge }\npub fn compute(x:i32)->Result<i32,CalcError> {\n if x<0 { return Err(CalcError::Negative); }\n Ok(x*2)\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,1 +4,1 @@\n- if x<0 { return Err(CalcError::TooLarge); }\n+ if x<0 { return Err(CalcError::Negative); }\n";
+    for (body, exposed) in [
+        (
+            "assert_eq!(compute(-1).unwrap_err(),CalcError::Negative);",
+            true,
+        ),
+        (
+            "let err=compute(-1).unwrap_err();\n assert_eq!(err,CalcError::Negative);",
+            true,
+        ),
+        (
+            "let err=compute(-1).expect_err(\"must reject\");\n assert_eq!(err,CalcError::Negative);",
+            true,
+        ),
+        (
+            "let _=compute(-1);\n let err=CalcError::Negative;\n assert_eq!(err,CalcError::Negative);",
+            false,
+        ),
+        (
+            "let mut err=compute(-1).unwrap_err();\n err=CalcError::Negative;\n assert_eq!(err,CalcError::Negative);",
+            false,
+        ),
+    ] {
+        let test = format!(
+            "use rust_catalog_description_structural_oracle::{{compute,CalcError}};\n#[test]\nfn observes() {{\n {body}\n}}\n"
+        );
+        let report = check_report(source, &test, MANIFEST, diff)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        for family in ["error_path", "return_value"] {
+            let selected: Vec<_> = findings
+                .iter()
+                .filter(|f| f["probe"]["family"] == family)
+                .collect();
+            assert_eq!(selected.len(), 1, "{family}: {report}");
+            assert_eq!(
+                selected[0]["classification"] == "exposed",
+                exposed,
+                "{body}: {report}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn bound_literal_matches_keeps_scalar_identity_and_currentness() -> Result<(), String> {
+    let source = "pub fn score(value:i32)->i32 {\n value+1\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n- value+2\n+ value+1\n";
+    for (body, exposed) in [
+        ("let value=score(1);\n assert!(matches!(value,2));", true),
+        (
+            "let value=score(1);\n assert!(matches!(value,_ if value==2));",
+            true,
+        ),
+        (
+            "let value=score(1);\n assert!(matches!(value,_ if 2==value));",
+            true,
+        ),
+        ("let value=score(1);\n assert!(matches!(value,5));", false),
+        (
+            "let value=score(1);\n assert!(matches!(value,_ if value==5));",
+            false,
+        ),
+        (
+            "let mut value=score(1);\n value=2;\n assert!(matches!(value,2));",
+            false,
+        ),
+        (
+            "let _=score(1);\n let value=2;\n assert!(matches!(value,2));",
+            false,
+        ),
+        (
+            "let value={let _=score(1);2};\n assert!(matches!(value,2));",
+            false,
+        ),
+        (
+            "let value=score(1);\n let other=2;\n assert!(matches!(value,_ if other==2));",
+            false,
+        ),
+        (
+            "let value=score(1);\n assert!(matches!(value,_ if value==2 || true));",
+            false,
+        ),
+    ] {
+        let test = format!(
+            "use rust_catalog_description_structural_oracle::score;\n#[test]\nfn observes() {{\n {body}\n}}\n"
+        );
+        let report = check_report(source, &test, MANIFEST, diff)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        let selected: Vec<_> = findings
+            .iter()
+            .filter(|f| f["probe"]["family"] == "return_value")
+            .collect();
+        assert_eq!(selected.len(), 1, "{report}");
+        assert_eq!(
+            selected[0]["classification"] == "exposed",
+            exposed,
+            "{body}: {report}"
+        );
+    }
+    Ok(())
+}
