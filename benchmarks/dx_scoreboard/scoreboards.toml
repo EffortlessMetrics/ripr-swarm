@@ -1272,6 +1272,237 @@ source = "ingest:agent-stub"
 # rebuilds the seam inventory (#5459); not measured until the stub
 # evaluation reports per-call seconds per repository.
 
+# Muse plugin v1: one canonical record per invocation, never a population rate.
+# Only optional structured observations produce numbers; sparse context does not.
+# The zero-floor higher-is-better convention on resource rows is context-only:
+# it is NOT a recommendation to consume more, an efficiency target or a baseline.
+# Missing measurements stay not_measured. See docs/verification/muse-plugin-eval.md.
+
+[[metric]]
+id = "agent.muse_setup_passed"
+board = "agent"
+title = "Observed plugin load and MCP availability"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_static_exposed_after"
+board = "agent"
+title = "Supplied after report class is exposed (static only)"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_durable_ready_reported"
+board = "agent"
+title = "Supplied durable attempt is current, compliant and ready_to_finish"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_original_test_passed"
+board = "agent"
+title = "Named test passed on the intended implementation"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_wrong_control_test_failed"
+board = "agent"
+title = "Named test failed by assertion on the deliberately wrong implementation"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_restored_test_passed"
+board = "agent"
+title = "Named test passed after restoring the intended implementation"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_executed_discrimination"
+board = "agent"
+title = "All three supplied test executions demonstrate the named discrimination"
+unit = "outcome"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_model_calls"
+board = "agent"
+title = "Observed model calls in this Muse trial (context only)"
+unit = "calls"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_tool_calls"
+board = "agent"
+title = "Observed tool calls in this Muse trial (context only)"
+unit = "calls"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_elapsed_ms"
+board = "agent"
+title = "Observed Muse trial elapsed time (context only)"
+unit = "ms"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = true
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_peak_rss_bytes"
+board = "agent"
+title = "Observed Muse trial peak RSS (context only)"
+unit = "bytes"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = true
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_input_tokens"
+board = "agent"
+title = "Observed input tokens including cached input (context only)"
+unit = "tokens"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_cached_input_tokens"
+board = "agent"
+title = "Observed cached input tokens (context only)"
+unit = "tokens"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_uncached_input_tokens"
+board = "agent"
+title = "Observed input tokens minus cached input (context only)"
+unit = "tokens"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_output_tokens"
+board = "agent"
+title = "Observed output tokens (context only)"
+unit = "tokens"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+[[metric]]
+id = "agent.muse_total_tokens"
+board = "agent"
+title = "Observed input plus output tokens in this trial (context only)"
+unit = "tokens"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+per_repo = true
+source = "ingest:muse-plugin"
+review_on_change = true
+
+
 # --------------------------------------------------------------- corpus ----
 #
 # The shared Rust corpus (`benchmarks/rust_corpus/manifest.json`) run by

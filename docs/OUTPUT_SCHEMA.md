@@ -163,6 +163,7 @@ records that distinction.
 | `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
+| `schemas/ripr/muse-plugin-eval.schema.json` | `muse-plugin-eval-v1` | `xtask/src/reports/dx_scoreboard/muse_plugin.rs`; canonical Muse evaluation record with optional structured observations; [contract](verification/muse-plugin-eval.md) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
 | `schemas/ripr/pr-evidence.schema.json` | `0.1` | `crates/ripr/src/app/pr_evidence.rs` (installed `ripr pr-evidence`) and `xtask/src/reports/pr_evidence.rs` (xtask compatibility); PR evidence envelope |
 | `schemas/ripr/repair-assurance.schema.json` | `1` | `crates/ripr/src/domain/verification_result.rs`; reserved assurance vocabulary and execution result |

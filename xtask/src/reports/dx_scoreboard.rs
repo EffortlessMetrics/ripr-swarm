@@ -23,6 +23,7 @@
 //! Cloning the real-repository corpus is opt-in (`--clone`).
 
 mod measure;
+mod muse_plugin;
 mod population;
 
 use serde::Deserialize;
@@ -239,8 +240,9 @@ pub(crate) fn dx_scoreboard(args: &[String]) -> Result<(), String> {
     let options = parse_options(args)?;
     let config = load_config(&options.config)?;
     let mut samples = Vec::new();
+    let mut muse_runs = std::collections::BTreeSet::new();
     for path in &options.ingest {
-        samples.extend(load_ingest(path, &config)?);
+        samples.extend(load_ingest(path, &config, &mut muse_runs)?);
     }
     samples.extend(file_samples(&config, &options.boards)?);
     let mut context = measure::measure(&config, &options, &mut samples)?;
@@ -680,10 +682,27 @@ fn ceiling_breaches(
 /// Read a `ripr-dx-scoreboard-input-v1` file produced by another harness.
 /// Every metric id must exist and declare `ingest:<source>` for the file's
 /// `source`, so a harness cannot overwrite a number this command measures.
-pub(crate) fn load_ingest(path: &Path, config: &Config) -> Result<Vec<Sample>, String> {
+pub(crate) fn load_ingest(
+    path: &Path,
+    config: &Config,
+    muse_runs: &mut std::collections::BTreeSet<String>,
+) -> Result<Vec<Sample>, String> {
     let text = fs::read_to_string(path).map_err(|err| format!("read {}: {err}", path.display()))?;
     let value = parse_ingest_text(&text).map_err(|err| format!("{}: {err}", path.display()))?;
-    parse_ingest(&value, config).map_err(|err| format!("{}: {err}", path.display()))
+    let mut samples =
+        parse_ingest(&value, config).map_err(|err| format!("{}: {err}", path.display()))?;
+    muse_plugin::register_run(&value, muse_runs).map_err(|err| format!("{}: {err}", path.display()))?;
+    if value["schema_version"].as_str() == Some(muse_plugin::SCHEMA_VERSION)
+        && let Some(first) = samples.first_mut()
+    {
+        use sha2::{Digest, Sha256};
+        first.detail.push_str(&format!(
+            "; input_receipt={} sha256={:x}",
+            path.display(),
+            Sha256::digest(text.as_bytes())
+        ));
+    }
+    Ok(samples)
 }
 
 /// Accept one JSON document, or JSON Lines whose every row is
@@ -693,6 +712,9 @@ pub(crate) fn parse_ingest_text(text: &str) -> Result<Value, String> {
     if let Ok(value) = serde_json::from_str::<Value>(text)
         && !is_row(&value)
     {
+        if value["schema_version"].as_str() == Some(muse_plugin::SCHEMA_VERSION) {
+            muse_plugin::validate_text(text)?;
+        }
         return Ok(value);
     }
     let mut rows = Vec::new();
@@ -779,6 +801,11 @@ fn record_ingested_identity(context: &mut RunContext, ingest: &[PathBuf]) {
 }
 
 pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>, String> {
+    if value["schema_version"].as_str() == Some(muse_plugin::SCHEMA_VERSION) {
+        let converted = muse_plugin::to_input(value)?;
+        let samples = parse_ingest(&converted, config)?;
+        return muse_plugin::complete_projection(value, config, samples);
+    }
     if value["schema_version"].as_str() == Some(FIRST_RUN_SCHEMA_VERSION) {
         let converted = first_run_to_input(value)?;
         return parse_ingest(&converted, config);
@@ -810,7 +837,8 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
     }
     if value["schema_version"].as_str() != Some(INPUT_SCHEMA_VERSION) {
         return Err(format!(
-            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, `{PILOT_RANKING_SCHEMA_VERSION}`, `{}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines",
+            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, `{PILOT_RANKING_SCHEMA_VERSION}`, `{}`, `{}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines",
+            muse_plugin::SCHEMA_VERSION,
             super::REPORT_SCHEMA_VERSION
         ));
     }
@@ -827,22 +855,7 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
         let id = row["id"]
             .as_str()
             .ok_or("ingest metric row needs an `id`")?;
-        let def = config
-            .metric
-            .iter()
-            .find(|metric| metric.id == id)
-            .ok_or_else(|| {
-                format!(
-                    "ingest names unknown metric `{id}`; declare it in \
-                     benchmarks/dx_scoreboard/scoreboards.toml or drop it from the receipt"
-                )
-            })?;
-        if def.source != format!("ingest:{source}") {
-            return Err(format!(
-                "metric `{id}` is sourced from `{}`, not `ingest:{source}`",
-                def.source
-            ));
-        }
+        ingest_metric(id, source, config)?;
         let number = row["value"]
             .as_f64()
             .filter(|number| number.is_finite())
@@ -879,6 +892,27 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
         });
     }
     Ok(samples)
+}
+
+/// Both numeric rows and explicit native missing observations use this owner.
+fn ingest_metric<'a>(id: &str, source: &str, config: &'a Config) -> Result<&'a MetricDef, String> {
+    let def = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == id)
+        .ok_or_else(|| {
+            format!(
+                "ingest names unknown metric `{id}`; declare it in \
+                 benchmarks/dx_scoreboard/scoreboards.toml or drop it from the receipt"
+            )
+        })?;
+    if def.source != format!("ingest:{source}") {
+        return Err(format!(
+            "metric `{id}` is sourced from `{}`, not `ingest:{source}`",
+            def.source
+        ));
+    }
+    Ok(def)
 }
 
 /// Convert a `first_run.v1` receipt into scoreboard input rows:
@@ -2648,6 +2682,12 @@ pub(crate) fn compare_with_baseline(
     context: &RunContext,
     baseline: Option<&Value>,
 ) -> Value {
+    if def.source == "ingest:muse-plugin" {
+        return json!({
+            "comparable": false,
+            "reason": "Muse plugin v1 records one supplied trial; baseline trend and efficacy comparisons are not defined",
+        });
+    }
     let Some(baseline) = baseline else {
         return json!({"comparable": false, "reason": "no baseline supplied"});
     };

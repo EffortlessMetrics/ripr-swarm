@@ -24,11 +24,13 @@ verification.
 | [PR evidence contract](pr-evidence-contract.md) | Diff-scoped evidence summary, review guidance fields, and routing signal. |
 | [Artifact layout](artifact-layout.md) | Standard paths for committed badge endpoints and generated CI artifacts. |
 | [Annotation policy](annotation-policy.md) | Non-blocking annotation rules and the inline-comment opt-in boundary. |
+| [Muse plugin evaluation input](muse-plugin-eval.md) | Canonical Muse record, optional structured observations, and DX ingestion limits. |
 
 Machine-readable schemas live under `schemas/`:
 
 | Schema | Validates |
 | --- | --- |
+| [`schemas/ripr/muse-plugin-eval.schema.json`](../../schemas/ripr/muse-plugin-eval.schema.json) | Canonical Muse evaluation record; synthetic consumer fixture, not measured plugin proof. |
 | [`schemas/badges/shields-endpoint.schema.json`](../../schemas/badges/shields-endpoint.schema.json) | Public committed badge endpoint JSON. |
 | [`schemas/ripr/pr-evidence.schema.json`](../../schemas/ripr/pr-evidence.schema.json) | Canonical PR evidence summary packet. |
 | [`schemas/ripr/review-comments.schema.json`](../../schemas/ripr/review-comments.schema.json) | `ripr review-comments` guidance output. |
