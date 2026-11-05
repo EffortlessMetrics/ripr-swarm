@@ -3162,9 +3162,7 @@ fn analyze_related_assertions(
                     || (is_effect_family(&probe.family)
                         && !is_proximity_only(*reason)
                         && has_token_match
-                        && confirms_observation
-                        && effect_kind_confirms
-                        && effect_observer_confirms(assertion)
+                        && observation_confirmed
                         && (return_admission.effect_state_carried)(test, assertion));
                 // Keep strength, kind, and confirmation on one assertion.
                 // An equally strong confirmed oracle wins over an unrelated

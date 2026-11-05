@@ -13,7 +13,12 @@ fn check(test: &str) -> Result<String, String> {
     check_source(SOURCE, test)
 }
 
-fn check_source(source: &str, test: &str) -> Result<String, String> {
+fn check_report(
+    source: &str,
+    test: &str,
+    manifest: &str,
+    diff_text: &str,
+) -> Result<serde_json::Value, String> {
     struct Scratch(std::path::PathBuf);
     impl Drop for Scratch {
         fn drop(&mut self) {
@@ -35,11 +40,11 @@ fn check_source(source: &str, test: &str) -> Result<String, String> {
     std::fs::create_dir(&dir.0).map_err(|e| e.to_string())?;
     std::fs::create_dir(dir.path().join("src")).map_err(|e| e.to_string())?;
     std::fs::create_dir(dir.path().join("tests")).map_err(|e| e.to_string())?;
-    std::fs::write(dir.path().join("Cargo.toml"), MANIFEST).map_err(|e| e.to_string())?;
+    std::fs::write(dir.path().join("Cargo.toml"), manifest).map_err(|e| e.to_string())?;
     std::fs::write(dir.path().join("src/lib.rs"), source).map_err(|e| e.to_string())?;
     std::fs::write(dir.path().join("tests/catalog.rs"), test).map_err(|e| e.to_string())?;
     let diff = dir.path().join("change.diff");
-    std::fs::write(&diff, DIFF).map_err(|e| e.to_string())?;
+    std::fs::write(&diff, diff_text).map_err(|e| e.to_string())?;
     let report = check_workspace(CheckInput {
         root: dir.path().into(),
         diff_file: Some(diff),
@@ -51,6 +56,11 @@ fn check_source(source: &str, test: &str) -> Result<String, String> {
     let json: serde_json::Value =
         serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
             .map_err(|e| e.to_string())?;
+    Ok(json)
+}
+
+fn check_source(source: &str, test: &str) -> Result<String, String> {
+    let json = check_report(source, test, MANIFEST, DIFF)?;
     let findings = json["findings"].as_array().ok_or("missing findings")?;
     assert_eq!(findings.len(), 1, "{json}");
     assert_eq!(
@@ -262,6 +272,37 @@ fn discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle() ->
     ] {
         let test = format!("{prefix}{assertions}\n}}\n");
         assert_eq!(check(&test)?, expected, "{assertions}");
+    }
+    Ok(())
+}
+
+/// Preserve the established persisted-effect observer while refusing an
+/// assertion on a different instance after the same owner call.
+#[test]
+fn persisted_effect_observer_retains_identity_without_lending_it_to_another_instance()
+-> Result<(), String> {
+    let source =
+        include_str!("../../../fixtures/observation_verified_side_effect/input/src/lib.rs");
+    let test = include_str!(
+        "../../../fixtures/observation_verified_side_effect/input/tests/process_tests.rs"
+    );
+    let manifest =
+        include_str!("../../../fixtures/observation_verified_side_effect/input/Cargo.toml");
+    let diff = include_str!("../../../fixtures/observation_verified_side_effect/diff.patch");
+    let unrelated = test.replace(
+        "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
+        "let other = Notifier::new(); assert_eq!(*other.sent.borrow(), Vec::<String>::new());",
+    );
+    assert_ne!(unrelated, test);
+    for (test, expected) in [(test, "exposed"), (unrelated.as_str(), "weakly_exposed")] {
+        let report = check_report(source, test, manifest, diff)?;
+        let finding = report["findings"]
+            .as_array()
+            .ok_or("missing findings")?
+            .iter()
+            .find(|finding| finding["probe"]["family"] == "side_effect")
+            .ok_or("side-effect row missing")?;
+        assert_eq!(finding["classification"], expected, "{report}");
     }
     Ok(())
 }
