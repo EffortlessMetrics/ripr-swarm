@@ -143,6 +143,71 @@ fn a_literal_redacted_field_remains_a_gap_while_its_sibling_is_unresolved() -> R
 }
 
 #[test]
+fn field_snapshot_limits_follow_each_field_expression_across_layouts() -> Result<(), String> {
+    for construction in [
+        "Record {\n id: format!(\"{}-1\", prefix),\n items: items.iter().count(),\n }",
+        "Record {\n id: format!(\"{}-1\", prefix), items: items.iter().count(),\n }",
+        "Record {\n items: items.iter().count(), id: format!(\"{}-1\", prefix),\n }",
+        "Record { id: format!(\"{}-1\", prefix), items: items.iter().count() }",
+        "Record {\n id:\n format!(\"{}-1\", prefix),\n items:\n items.iter().count(),\n }",
+    ] {
+        let source = format!(
+            "pub struct Record {{ pub id: String, pub items: usize }}
+pub fn make_record(prefix: &str, items: &[u32]) -> Record {{
+    {construction}
+}}
+#[cfg(test)] mod tests {{
+    use super::*;
+    #[test] fn snapshot() {{
+        let record = make_record(\"ord\", &[1, 2]);
+        insta::assert_json_snapshot!(record, {{\".id\" => \"[id]\"}});
+    }}
+}}
+"
+        );
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+        let context = CompactGripContext::new(&index);
+        let fields: Vec<_> = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index)
+            .into_iter()
+            .filter(|seam| seam.kind() == SeamKind::FieldConstruction)
+            .collect();
+        assert_eq!(fields.len(), 2, "{construction}: {fields:?}");
+        for (expression, expected) in [
+            ("id: format!(\"{}-1\", prefix)", false),
+            ("items: items.iter().count()", true),
+        ] {
+            let seam = fields
+                .iter()
+                .find(|seam| {
+                    seam.expression().split_whitespace().eq(expression.split_whitespace())
+                })
+                .ok_or_else(|| format!("missing {expression} field in {construction}"))?;
+            for evidence in [
+                evidence_for_seam(seam, &index),
+                compact_evidence_for_seam(seam, &context),
+            ] {
+                assert_eq!(classify_seam(seam, &evidence), SeamGripClass::WeaklyGripped);
+                for stage in [
+                    &evidence.reach,
+                    &evidence.activate,
+                    &evidence.propagate,
+                    &evidence.observe,
+                ] {
+                    assert_eq!(stage.state, StageState::Yes, "{construction}: {evidence:?}");
+                }
+                assert_eq!(evidence.discriminate.state, StageState::Weak);
+                assert_eq!(
+                    evidence.names_static_limit(LIMIT),
+                    expected,
+                    "{construction}: {seam:?} {evidence:?}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn unrelated_or_shadowed_snapshot_values_do_not_name_the_limit() -> Result<(), String> {
     for body in [
         "let other = Record { id: String::new(), items: 0 };

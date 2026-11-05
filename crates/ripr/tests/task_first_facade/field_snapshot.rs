@@ -54,6 +54,10 @@ fn pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls() -> R
     for (name, oracle, limited, selected, actionable) in [
         ("settings", SETTINGS, [true, true], [false, false], 1),
         ("literal", LITERAL, [false, true], [true, false], 2),
+        ("literal-same-line", LITERAL, [false, true], [true, false], 2),
+        ("literal-reversed", LITERAL, [false, true], [true, false], 2),
+        ("literal-inline-record", LITERAL, [false, true], [true, false], 2),
+        ("literal-multiline", LITERAL, [false, true], [true, false], 2),
         (
             "weak",
             "assert!(record.items > 0);",
@@ -109,6 +113,29 @@ fn pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls() -> R
             "record_oracle"
         };
         populate(root, oracle, test_name)?;
+        let source_path = root.join("src/lib.rs");
+        let source = std::fs::read_to_string(&source_path).map_err(|error| error.to_string())?;
+        let changed = match name {
+            "literal-same-line" => source.replace("prefix),\n        items:", "prefix), items:"),
+            "literal-reversed" => source.replace(
+                "id: format!(\"{}-1\", prefix),\n        items: items.iter().count(),",
+                "items: items.iter().count(), id: format!(\"{}-1\", prefix),",
+            ),
+            "literal-inline-record" => source
+                .replace("Record {\n        id:", "Record { id:")
+                .replace("prefix),\n        items:", "prefix), items:")
+                .replace("count(),\n    }", "count() }"),
+            "literal-multiline" => source
+                .replace("id: format!", "id:\n            format!")
+                .replace("items: items.iter()", "items:\n            items.iter()"),
+            _ => source.clone(),
+        };
+        if name.starts_with("literal-") {
+            assert_ne!(changed, source, "the requested layout must change the source");
+            std::fs::write(&source_path, changed).map_err(|error| error.to_string())?;
+            run_git(root, &["add", "src/lib.rs"])?;
+            git_commit(root, "field initializer layout")?;
+        }
         let root_arg = root.to_string_lossy().into_owned();
         let pilot = run_ripr(root, &["pilot", "--root", &root_arg, "--quiet"])?;
         assert_exit(&pilot, 0, "pilot on the field snapshot fixture");
@@ -131,13 +158,26 @@ fn pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls() -> R
             .ok_or("pilot must retain top_actionable_seams")?;
         let seams = exposure["seams"].as_array().ok_or("missing repo seams")?;
         assert_eq!(seams.len(), 3, "one return and two field seams: {exposure}");
-        for (index, line) in [8, 9].into_iter().enumerate() {
+        for (index, expression) in [
+            (0, "id: format!(\"{}-1\", prefix)"),
+            (1, "items: items.iter().count()"),
+        ] {
             let matches: Vec<_> = seams
                 .iter()
-                .filter(|entry| entry["kind"] == "field_construction" && entry["line"] == line)
+                .filter(|entry| {
+                    entry["kind"] == "field_construction"
+                        && entry["expression"]
+                            .as_str()
+                            .is_some_and(|text| {
+                                text.split_whitespace().eq(expression.split_whitespace())
+                            })
+                })
                 .collect();
-            assert_eq!(matches.len(), 1, "one intended field at line {line}");
+            assert_eq!(matches.len(), 1, "one intended field expression {expression}");
             let seam = matches[0];
+            if !name.starts_with("literal-") {
+                assert_eq!(seam["line"], [8, 9][index]);
+            }
             let seam_id = seam["seam_id"].as_str().ok_or("missing seam identity")?;
             let record = &seam["evidence_record"];
             let limits = record["static_limitations"]
@@ -148,7 +188,7 @@ fn pilot_and_brief_honor_real_field_snapshot_limits_and_preserve_controls() -> R
                 limited[index],
                 "{name}: {record}"
             );
-            let expected_class = if matches!(name, "exact" | "exact-snapshot") && line == 9 {
+            let expected_class = if matches!(name, "exact" | "exact-snapshot") && index == 1 {
                 "strongly_gripped"
             } else {
                 "weakly_gripped"

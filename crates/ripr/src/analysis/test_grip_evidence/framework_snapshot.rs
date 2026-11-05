@@ -42,9 +42,10 @@ pub(super) fn withhold<'a>(
     else {
         return false;
     };
-    let Some(changed_text) = owner.body.lines().nth(changed_line - owner.start_line) else {
+    let Some(_) = owner.body.lines().nth(changed_line - owner.start_line) else {
         return false;
     };
+    let changed_text = seam.expression();
     // One witness establishes uncertainty. Search the full set, but retain
     // only that witness so compact evidence cannot grow with every test.
     let Some(judged) = direct_related

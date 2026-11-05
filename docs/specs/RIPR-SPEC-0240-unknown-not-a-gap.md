@@ -450,7 +450,9 @@ non-ignored related test matches one of these shapes:
   settings scopes, type aliases and dynamic selectors remain unsupported.
   Snapshot-byte identity and positive projection credit remain with #8121.
   The same reader governs candidate field changes in
-  repository seam evidence (#13278). On weak or unrevealed field seams, both
+  repository seam evidence (#13278). The adapter supplies each extracted field
+  expression while retaining owner-span checks, preserving field identity when
+  initializers share a line or span several lines. On weak or unrevealed field seams, both
   full and compact producers read every directly related, nonignored test
   before detail caps, naming `rust_framework_oracle_unresolved` in the
   discrimination summary using the reserved `<code>: ` prefix. A test name or
