@@ -2825,6 +2825,7 @@ dependencies = [
  "flate2",
  "home",
  "num-bigint",
+ "proptest",
  "ra_ap_syntax",
  "rayon",
  "repo-policy",

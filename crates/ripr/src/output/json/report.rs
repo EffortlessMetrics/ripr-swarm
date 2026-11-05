@@ -792,6 +792,11 @@ fn summary_json(out: &mut String, output: &CheckOutput) {
             s.conflicting_expressions
         ));
     }
+    // Additive (#12921): findings reached only by an unevaluated proof harness,
+    // a subset of `no_static_path`; present only when greater than zero.
+    if s.proof_harness_only > 0 {
+        out.push_str(&format!(",\"proof_harness_only\":{}", s.proof_harness_only));
+    }
     // Additive (#2103): per-language changed-file counts, one entry per
     // adapter that ran, sorted by language wire string. `changed_rust_files`
     // above carries the Rust adapter's count only.

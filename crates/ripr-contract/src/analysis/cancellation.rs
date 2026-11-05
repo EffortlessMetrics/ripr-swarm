@@ -361,6 +361,54 @@ pub fn cli_interrupted() -> bool {
     })
 }
 
+/// How long a producer's death by SIGINT waits for this process's own
+/// cooperative interrupt flag. A terminal Ctrl-C signals the whole process
+/// group; the producer can be reaped before this process has run its handler.
+const SIGINT_FLAG_GRACE: Duration = Duration::from_secs(1);
+
+/// Whether a producer that just exited was stopped by an interrupt of this
+/// CLI run (#12935). Death by SIGINT (or exit 130) under a token that owns an
+/// interrupt flag is decided from that flag, not from which process observed
+/// the group signal first: the flag is awaited for a bounded grace so an
+/// interrupt reads as cancellation, never as an exporter failure. A SIGINT
+/// death with no interrupt flag, or whose flag never arrives, stays an
+/// ordinary producer failure. MCP/LSP `with_server_interrupt` tokens also
+/// carry the flag and get the same bounded wait.
+pub fn cli_interrupted_after_exit(status: &std::process::ExitStatus) -> bool {
+    cli_interrupted_after_exit_within(status, SIGINT_FLAG_GRACE)
+}
+
+fn cli_interrupted_after_exit_within(status: &std::process::ExitStatus, grace: Duration) -> bool {
+    if cli_interrupted() {
+        return true;
+    }
+    if !exited_by_sigint(status) {
+        return false;
+    }
+    let Some(token) = current_token() else {
+        return false;
+    };
+    let Some(flag) = token.0.interrupted.as_ref() else {
+        return false;
+    };
+    let deadline = Instant::now() + grace;
+    while !flag.load(Ordering::SeqCst) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    flag.load(Ordering::SeqCst)
+}
+
+#[cfg(unix)]
+fn exited_by_sigint(status: &std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal() == Some(2) || status.code() == Some(130)
+}
+
+#[cfg(not(unix))]
+fn exited_by_sigint(_status: &std::process::ExitStatus) -> bool {
+    false
+}
+
 /// Hand standalone stdout publication to native interruption. Ordinary
 /// library/budget tokens retain their existing checkpoint semantics.
 pub fn begin_cli_publication() -> Result<(), String> {
@@ -416,6 +464,55 @@ pub fn is_cancellation_error(error: &str) -> bool {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[cfg(unix)]
+    #[test]
+    fn producer_sigint_death_is_cancellation_once_the_cli_flag_arrives() -> Result<(), String> {
+        let status = std::process::Command::new("sh")
+            .args(["-c", "kill -INT $$"])
+            .status()
+            .map_err(|e| e.to_string())?;
+        assert!(
+            exited_by_sigint(&status),
+            "fixture must die by SIGINT: {status:?}"
+        );
+        let flag = Arc::new(AtomicBool::new(false));
+        let token = AnalysisCancellationToken::with_interrupt_flags(
+            flag.clone(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        // The flag lands after the producer's exit is already observed.
+        let late = std::thread::spawn({
+            let flag = flag.clone();
+            move || {
+                std::thread::sleep(Duration::from_millis(50));
+                flag.store(true, Ordering::SeqCst);
+            }
+        });
+        let interrupted = with_token(&token, || cli_interrupted_after_exit(&status));
+        late.join()
+            .map_err(|_panic| "flag thread failed".to_string())?;
+        assert!(
+            interrupted,
+            "SIGINT death with a late CLI flag is an interrupt"
+        );
+
+        // Negative: no flag ever arrives, so it stays a producer failure.
+        let silent = AnalysisCancellationToken::with_interrupt_flags(
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let failed = with_token(&silent, || {
+            cli_interrupted_after_exit_within(&status, Duration::from_millis(20))
+        });
+        assert!(!failed, "an unannounced SIGINT death must stay a failure");
+        // Negative: an ordinary token owns no flag to await.
+        let ordinary = AnalysisCancellationToken::new();
+        assert!(!with_token(&ordinary, || cli_interrupted_after_exit(
+            &status
+        )));
+        Ok(())
+    }
 
     #[cfg(unix)]
     #[test]

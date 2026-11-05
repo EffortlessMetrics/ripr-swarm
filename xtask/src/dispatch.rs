@@ -96,6 +96,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::TestOracleReport => super::reports::test_oracle_report(),
         XtaskCommand::TestEfficiencyReport => super::reports::test_efficiency_report(),
+        XtaskCommand::SlowTestReport(args) => super::reports::slow_test_report(&args),
         XtaskCommand::BadgeArtifacts => super::reports::badge_artifacts(),
         XtaskCommand::RepoBadgeArtifacts(args) => super::reports::repo_badge_artifacts(&args),
         XtaskCommand::BadgeBasis(args) => super::reports::badge_basis(&args),
@@ -246,6 +247,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::policy::check_changelog_fragments_with_args(&args)
         }
         XtaskCommand::FoldChangelog(args) => super::policy::fold_changelog(&args),
+        XtaskCommand::InstallReceipt(args) => super::policy::install_receipt(&args),
         XtaskCommand::CheckReadmeState => super::check_readme_state(),
         XtaskCommand::MarkdownLinks => super::markdown_links(),
         XtaskCommand::CheckPrShape(args) => super::check_pr_shape_with_args(&args),

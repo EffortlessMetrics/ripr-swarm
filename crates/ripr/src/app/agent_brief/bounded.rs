@@ -268,6 +268,23 @@ impl crate::analysis::ScopedEvidenceConsumer for BoundedAgentBrief<'_> {
     fn retained_payloads(&self) -> usize {
         self.candidates.len()
     }
+
+    fn second_stage_filter<'s>(
+        &'s self,
+        index: &crate::analysis::RustIndex,
+    ) -> Option<crate::analysis::SecondStageFilter<'s>> {
+        // Fallback seams are discarded once any scoped seam is represented, so
+        // narrowing is only sound after a first-stage seam matched.
+        if !self.matched_scope {
+            return None;
+        }
+        let related = self
+            .changed_scope
+            .related_tests_possible(index.tests().iter().map(|test| test.file.as_path()));
+        Some(Box::new(move |seam| {
+            self.changed_scope.can_match_non_fallback(seam, related)
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -390,6 +407,194 @@ mod tests {
             selection.top_seams[0].why_now.reason,
             AgentBriefWhyNowReason::SameFileSeam
         );
+        Ok(())
+    }
+
+    /// Delegates to a real `BoundedAgentBrief` and records which seams reach
+    /// evidence. `narrow` false hides the second-stage filter, the baseline.
+    struct Recording<'a, 'b> {
+        inner: &'b mut BoundedAgentBrief<'a>,
+        narrow: bool,
+        evaluated: Vec<String>,
+    }
+
+    impl crate::analysis::ScopedEvidenceConsumer for Recording<'_, '_> {
+        fn in_first_stage(&self, seam: &RepoSeam) -> bool {
+            self.inner.in_first_stage(seam)
+        }
+        fn observe(&mut self, ordinal: usize, entry: ClassifiedSeam) -> Result<(), String> {
+            self.evaluated.push(format!(
+                "{}::{}",
+                entry.seam.file().display(),
+                entry.seam.owner()
+            ));
+            self.inner.observe(ordinal, entry)
+        }
+        fn first_stage_sufficient(&self) -> bool {
+            self.inner.first_stage_sufficient()
+        }
+        fn retained_payloads(&self) -> usize {
+            self.inner.retained_payloads()
+        }
+        fn second_stage_filter<'s>(
+            &'s self,
+            index: &crate::analysis::RustIndex,
+        ) -> Option<crate::analysis::SecondStageFilter<'s>> {
+            if self.narrow {
+                self.inner.second_stage_filter(index)
+            } else {
+                None
+            }
+        }
+    }
+
+    const LIB_PLAIN: &str = "pub fn eligible(n: i32) -> bool { n >= 10 }\n";
+    const LIB_WITH_TEST: &str = "pub fn eligible(n: i32) -> bool { n >= 10 }\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn boundary() { assert!(eligible(10)); }\n}\n";
+    const CALLER: &str =
+        "pub fn caller(n: i32) -> bool { if eligible(n) { n > 1 } else { n < 0 } }\n";
+
+    type FixtureRun = (Vec<String>, Vec<(String, String)>, Vec<String>);
+
+    /// Returns (evaluated seams, selected `(owner, why_now)`, warnings).
+    fn run_fixture(label: &str, lib: &str, narrow: bool) -> Result<FixtureRun, String> {
+        run_fixture_at(label, lib, narrow, true)
+    }
+
+    /// `hit` false points the changed line and owner at nothing, so no
+    /// first-stage seam matches and every seam is a fallback.
+    fn run_fixture_at(
+        label: &str,
+        lib: &str,
+        narrow: bool,
+        hit: bool,
+    ) -> Result<FixtureRun, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-bounded-{label}-{}-{narrow}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        for (name, text) in [
+            ("src/lib.rs", format!("mod caller;\n{lib}")),
+            ("src/caller.rs", CALLER.to_string()),
+        ] {
+            let path = root.join(name);
+            std::fs::create_dir_all(path.parent().ok_or("no parent")?)
+                .map_err(|e| e.to_string())?;
+            std::fs::write(&path, text).map_err(|e| e.to_string())?;
+        }
+        let mut working_set =
+            AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        let (line, owner) = if hit { (2, "eligible") } else { (90, "absent") };
+        working_set.changed_lines = vec![AgentBriefLine::new("src/lib.rs", line)];
+        working_set.changed_owners = vec![AgentBriefChangedOwner::new("src/lib.rs", line, owner)];
+        let config = RiprConfig::default();
+        let mut brief =
+            BoundedAgentBrief::new(&working_set, 10, AgentBriefPolicy::from_config(&config))?;
+        let mut recording = Recording {
+            inner: &mut brief,
+            narrow,
+            evaluated: Vec::new(),
+        };
+        crate::analysis::inventory_diff_scoped_streamed_seams_at_with_config(
+            &root,
+            &config,
+            &[PathBuf::from("src/lib.rs")],
+            &["eligible".to_string()],
+            &mut recording,
+        )?;
+        let evaluated = recording.evaluated;
+        let selection = brief.selection()?;
+        let selected = selection
+            .top_seams
+            .iter()
+            .map(|item| {
+                (
+                    item.seam.seam.owner().to_string(),
+                    format!("{:?}", item.why_now.reason),
+                )
+            })
+            .collect();
+        let warnings = selection.warnings.clone();
+        let _ = std::fs::remove_dir_all(&root);
+        Ok((evaluated, selected, warnings))
+    }
+
+    #[test]
+    fn unmatchable_caller_seam_is_not_evaluated_but_selection_is_unchanged() -> Result<(), String> {
+        let (wide, wide_sel, wide_warn) = run_fixture("neg-wide", LIB_PLAIN, false)?;
+        let (narrow, narrow_sel, narrow_warn) = run_fixture("neg-narrow", LIB_PLAIN, true)?;
+        assert!(
+            wide.iter().any(|id| id.contains("caller.rs")),
+            "baseline must evaluate the caller-file seam: {wide:?}"
+        );
+        assert!(
+            narrow.iter().any(|id| id.ends_with("::eligible")),
+            "first-stage seam is still evaluated: {narrow:?}"
+        );
+        assert!(
+            !narrow.iter().any(|id| id.contains("caller.rs")),
+            "caller seam cannot match a non-fallback why-now: {narrow:?}"
+        );
+        assert!(narrow.len() < wide.len());
+        assert!(!narrow_sel.is_empty());
+        assert_eq!(wide_sel, narrow_sel);
+        assert_eq!(wide_warn, narrow_warn);
+        Ok(())
+    }
+
+    #[test]
+    fn caller_seam_stays_evaluated_when_a_working_set_file_holds_tests() -> Result<(), String> {
+        let (wide, wide_sel, wide_warn) = run_fixture("pos-wide", LIB_WITH_TEST, false)?;
+        let (narrow, narrow_sel, narrow_warn) = run_fixture("pos-narrow", LIB_WITH_TEST, true)?;
+        assert!(
+            narrow.iter().any(|id| id.contains("caller.rs")),
+            "a related test in a working-set file keeps the related-test routes open: {narrow:?}"
+        );
+        assert_eq!(wide.len(), narrow.len());
+        assert_eq!(wide_sel, narrow_sel);
+        assert_eq!(wide_warn, narrow_warn);
+        Ok(())
+    }
+
+    #[test]
+    fn predicate_keeps_changed_same_file_and_related_routes_only() {
+        let mut working_set =
+            AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
+        working_set.changed_lines = vec![AgentBriefLine::new("src/lib.rs", 2)];
+        let scope = AgentBriefChangedScope::new(&working_set);
+        let same_file = classified(
+            "src/lib.rs",
+            9,
+            "lib::other",
+            "n > 0",
+            SeamGripClass::WeaklyGripped,
+        );
+        let caller = classified(
+            "src/caller.rs",
+            1,
+            "caller::a",
+            "n > 0",
+            SeamGripClass::WeaklyGripped,
+        );
+        assert!(scope.can_match_non_fallback(&same_file.seam, false));
+        assert!(!scope.can_match_non_fallback(&caller.seam, false));
+        assert!(scope.can_match_non_fallback(&caller.seam, true));
+        assert!(!scope.related_tests_possible([Path::new("tests/other.rs")]));
+        assert!(scope.related_tests_possible([Path::new("./src/lib.rs")]));
+    }
+
+    #[test]
+    fn without_a_first_stage_match_nothing_is_skipped() -> Result<(), String> {
+        let (wide, wide_sel, wide_warn) = run_fixture_at("nm-wide", LIB_PLAIN, false, false)?;
+        let (narrow, narrow_sel, narrow_warn) =
+            run_fixture_at("nm-narrow", LIB_PLAIN, true, false)?;
+        assert!(
+            narrow.iter().any(|id| id.contains("caller.rs")),
+            "with no scoped match every seam is a fallback and must be evaluated: {narrow:?}"
+        );
+        assert_eq!(wide, narrow);
+        assert_eq!(wide_sel, narrow_sel);
+        assert_eq!(wide_warn, narrow_warn);
         Ok(())
     }
 }

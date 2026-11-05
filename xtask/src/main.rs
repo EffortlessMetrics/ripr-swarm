@@ -62,6 +62,8 @@ mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;
+#[cfg(test)]
+mod output_properties;
 mod package_qualification;
 mod packaged_repair_receipt;
 mod policy;
@@ -23866,6 +23868,18 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
         );
     }
 
+    if path.starts_with("benchmarks/muse-plugin/fixtures/")
+        && (path.ends_with(".ts")
+            || path.ends_with(".tsx")
+            || path.ends_with(".js")
+            || path.ends_with(".jsx")
+            || path.ends_with(".py"))
+    {
+        return Some(
+            "Muse plugin evaluation fixtures are analyzed inputs for the plugin scenarios (#13106); the TypeScript weak-assertion fixture must stay TypeScript to exercise the analyzer honestly.",
+        );
+    }
+
     None
 }
 
@@ -23983,6 +23997,14 @@ fn network_policy_patterns() -> Vec<String> {
         concat!("async-", "std"),
         concat!("Invoke-", "WebRequest"),
         concat!("Invoke-", "RestMethod"),
+        // Python network literals (#13092): stdlib fetch/socket surfaces
+        // that were previously invisible in tracked .py files. Split with
+        // concat! so the gate does not flag its own source. Deliberately
+        // excludes urllib.parse, which performs no network behavior.
+        concat!("urllib.", "request"),
+        concat!("url", "open"),
+        concat!("import so", "cket"),
+        concat!("http.", "client"),
     ]
     .iter()
     .map(|value| value.to_string())

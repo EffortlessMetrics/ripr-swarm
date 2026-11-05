@@ -68,6 +68,14 @@ const FIRST_RUN_WORKFLOW_LINES: &str = "workflow_lines";
 const DEFAULT_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
 const DEFAULT_CORPUS_DIR: &str = "target/ripr/dx-scoreboard/corpus";
 const DEFAULT_TIMEOUT_MS: u64 = 900_000;
+/// Measured warm-check runs per repository after the warm-up run. Three is
+/// the smallest count with a median that survives one outlier; the cold
+/// instruments stay at one run.
+pub(crate) const DEFAULT_WARM_SAMPLES: usize = 3;
+/// Upper bound on `--samples` so a typo cannot hold a hosted runner for hours.
+const MAX_WARM_SAMPLES: usize = 50;
+/// The metric whose peak-memory ceiling a repository's `size_tier` supplies.
+pub(crate) const TIER_RSS_METRIC: &str = "speed.warm_check_peak_rss_mb";
 const BOARDS: [&str; 9] = [
     "speed",
     "ci",
@@ -80,7 +88,7 @@ const BOARDS: [&str; 9] = [
     "repair",
 ];
 
-const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>]
+const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>] [--samples <n>]
 
 Measures the developer-experience scoreboards declared in
 benchmarks/dx_scoreboard/scoreboards.toml and writes
@@ -94,6 +102,10 @@ target/ripr/reports/dx-scoreboard.{json,md}.
   --ripr-bin <path>   measure this binary instead of building release ripr
   --ingest <file>     merge metrics measured by another harness
   --baseline <file>   compare against an earlier dx-scoreboard.json
+  --samples <n>       measured warm-check runs per repository after the warm-up
+                      (default 3, at most 50); speed.warm_check_p50_ms and
+                      speed.warm_check_p95_ms are nearest-rank over them, and
+                      peak memory is the maximum. Cold instruments stay at one run
   --gate              exit nonzero when a metric regresses past its margin
                       or an instrument or case comparison fails";
 
@@ -112,6 +124,23 @@ pub(crate) struct Config {
     pub(crate) corpus: Vec<CorpusEntry>,
     #[serde(default)]
     pub(crate) metric: Vec<MetricDef>,
+    /// Repository-size tiers with the peak-memory bar each one is held to.
+    #[serde(default)]
+    pub(crate) size_tier: Vec<SizeTier>,
+}
+
+/// A repository-size tier. `peak_rss_mb` is the release-ladder bar for warm
+/// `ripr check` peak memory at that size (docs/METRICS.md, R1). A corpus
+/// entry naming the tier is held to it as a hard ceiling on
+/// `speed.warm_check_peak_rss_mb` unless the entry sets a different
+/// ceiling; a looser one needs a dated `memory_ratchet` note.
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct SizeTier {
+    pub(crate) id: String,
+    pub(crate) description: String,
+    pub(crate) peak_rss_mb: f64,
+    /// Where the bar comes from: `ladder` or `ladder_hard_cap`.
+    pub(crate) bar_source: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -145,6 +174,14 @@ pub(crate) struct CorpusEntry {
     /// a complete result or any other limit fails the row (#12052).
     #[serde(default)]
     pub(crate) expected_partial: Option<String>,
+    /// Name of a `[[size_tier]]`; supplies the default peak-memory ceiling.
+    #[serde(default)]
+    pub(crate) size_tier: Option<String>,
+    /// Dated note required when this entry's `speed.warm_check_peak_rss_mb`
+    /// ceiling is looser than its tier's bar: current ceiling, ladder bar
+    /// and the date it was set.
+    #[serde(default)]
+    pub(crate) memory_ratchet: Option<String>,
 }
 
 /// Languages a corpus entry may declare.
@@ -204,6 +241,8 @@ pub(crate) struct Options {
     baseline: Option<PathBuf>,
     gate: bool,
     pub(crate) timeout_ms: u64,
+    /// Measured warm-check runs per repository after the warm-up run.
+    pub(crate) samples: usize,
 }
 
 /// One observation of a metric, optionally for one corpus repository.
@@ -339,6 +378,7 @@ pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
         baseline: None,
         gate: false,
         timeout_ms: DEFAULT_TIMEOUT_MS,
+        samples: DEFAULT_WARM_SAMPLES,
     };
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -383,6 +423,18 @@ pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
                         .ok_or_else(|| {
                             format!("--timeout-ms must be a positive integer, got `{raw}`")
                         })?;
+            }
+            "--samples" => {
+                let raw = value("--samples")?;
+                options.samples = raw
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| (1..=MAX_WARM_SAMPLES).contains(n))
+                    .ok_or_else(|| {
+                        format!(
+                            "--samples must be an integer from 1 to {MAX_WARM_SAMPLES}, got `{raw}`"
+                        )
+                    })?;
             }
             other => return Err(format!("unknown dx-scoreboard argument: {other}\n{USAGE}")),
         }
@@ -436,6 +488,8 @@ pub(crate) fn corpus_from_manifest(value: &Value) -> Result<(String, Vec<CorpusE
             // entry in the inline list only.
             ceilings: BTreeMap::new(),
             expected_partial: None,
+            size_tier: None,
+            memory_ratchet: None,
             // A present non-string value is an error, not an absent field:
             // reading it as absent would file the entry under `rust`.
             language: match &repo["language"] {
@@ -505,7 +559,7 @@ pub(crate) fn validate_corpus(corpus: &[CorpusEntry]) -> Result<(), String> {
 }
 
 pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
-    let config: Config =
+    let mut config: Config =
         toml::from_str(text).map_err(|err| format!("parse dx scoreboard config: {err}"))?;
     if config.schema_version != CONFIG_SCHEMA_VERSION {
         return Err(format!(
@@ -569,8 +623,91 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
             ));
         }
     }
+    apply_size_tiers(&mut config)?;
     validate_ceilings(&config)?;
     Ok(config)
+}
+
+/// Resolve each entry's `size_tier` into its peak-memory ceiling. An entry
+/// with no explicit ceiling takes the tier bar. An explicit ceiling tighter
+/// than or equal to the bar stands. A looser one is a ratchet toward the
+/// bar and must say so, with a date, in `memory_ratchet`; a ratchet note on
+/// an entry that meets its bar is stale and refused.
+fn apply_size_tiers(config: &mut Config) -> Result<(), String> {
+    let mut tiers = BTreeMap::new();
+    for tier in &config.size_tier {
+        if tiers.insert(tier.id.clone(), tier.clone()).is_some() {
+            return Err(format!("duplicate size_tier `{}`", tier.id));
+        }
+        if tier.description.trim().is_empty() {
+            return Err(format!("size_tier `{}` needs a description", tier.id));
+        }
+        if !tier.peak_rss_mb.is_finite() || tier.peak_rss_mb <= 0.0 {
+            return Err(format!(
+                "size_tier `{}` peak_rss_mb must be a positive number",
+                tier.id
+            ));
+        }
+        if !["ladder", "ladder_hard_cap"].contains(&tier.bar_source.as_str()) {
+            return Err(format!(
+                "size_tier `{}` bar_source must be `ladder` or `ladder_hard_cap`",
+                tier.id
+            ));
+        }
+    }
+    for entry in &mut config.corpus {
+        let Some(tier_id) = entry.size_tier.clone() else {
+            if entry.memory_ratchet.is_some() {
+                return Err(format!(
+                    "corpus `{}` sets memory_ratchet without a size_tier",
+                    entry.id
+                ));
+            }
+            continue;
+        };
+        let Some(tier) = tiers.get(&tier_id) else {
+            return Err(format!(
+                "corpus `{}` names unknown size_tier `{tier_id}`",
+                entry.id
+            ));
+        };
+        match entry.ceilings.get(TIER_RSS_METRIC).copied() {
+            None => {
+                if entry.memory_ratchet.is_some() {
+                    return Err(format!(
+                        "corpus `{}` has a memory_ratchet note but no explicit `{TIER_RSS_METRIC}` ceiling",
+                        entry.id
+                    ));
+                }
+                entry
+                    .ceilings
+                    .insert(TIER_RSS_METRIC.to_string(), tier.peak_rss_mb);
+            }
+            Some(ceiling) if ceiling > tier.peak_rss_mb => {
+                let note = entry.memory_ratchet.as_deref().unwrap_or_default();
+                let dated = note
+                    .split(|c: char| !(c.is_ascii_digit() || c == '-'))
+                    .any(|word| {
+                        word.len() == 10 && word.as_bytes()[4] == b'-' && word.as_bytes()[7] == b'-'
+                    });
+                if !dated || !note.contains(&format!("{ceiling}")) {
+                    return Err(format!(
+                        "corpus `{}` ceiling {ceiling} MB exceeds size_tier `{tier_id}` bar {} MB; memory_ratchet must state the current ceiling and a YYYY-MM-DD date",
+                        entry.id, tier.peak_rss_mb
+                    ));
+                }
+            }
+            Some(_) => {
+                if entry.memory_ratchet.is_some() {
+                    return Err(format!(
+                        "corpus `{}` meets its size_tier `{tier_id}` bar, so its memory_ratchet note is stale",
+                        entry.id
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Each corpus ceiling must name a measured per-repository metric where
@@ -2171,6 +2308,43 @@ pub(crate) fn build_report(
         .map(|row| json!({"metric": row["id"], "reason": row["baseline"]["reason"]}))
         .collect();
     let ceiling_breaches = ceiling_breaches(config, boards, samples, context);
+    // Boards whose selected metrics produced no evidence at all this run:
+    // nothing comparable with the baseline and no measured value (e.g. an
+    // ingest board run without its receipt). A measured-but-incomparable
+    // metric (runner class, population, or grain mismatch) is listed as
+    // uncompared and does not count here — that pass is a pinned contract.
+    // A gate that passes when nothing it selected was even measured is a
+    // false pass, so a run where every selected metric is value-less fails
+    // and names those boards.
+    let zero_evidence_boards: Vec<Value> = boards
+        .iter()
+        .filter(|board| {
+            let rows: Vec<&Value> = metrics
+                .iter()
+                .filter(|row| row["board"].as_str() == Some(board.as_str()))
+                .collect();
+            !rows.is_empty()
+                && rows
+                    .iter()
+                    .all(|row| row["baseline"]["comparable"] != true && row["value"].is_null())
+        })
+        .map(|board| json!(board))
+        .collect();
+    let no_comparable_evidence = baseline.is_some()
+        && !metrics.is_empty()
+        && metrics
+            .iter()
+            .all(|row| row["baseline"]["comparable"] != true && row["value"].is_null());
+    // The field names the boards the gate failed for, so it is populated
+    // only in that case. A mixed run that passes keeps it empty rather than
+    // printing a no-evidence board beside a passing gate; per-board failure
+    // would also fail the nightly, which selects every board without the
+    // ingest receipts several boards need.
+    let zero_evidence_boards = if gate && no_comparable_evidence {
+        zero_evidence_boards
+    } else {
+        Vec::new()
+    };
     let gate_status = if !gate {
         "not_run"
     } else if !ceiling_breaches.is_empty() {
@@ -2181,6 +2355,8 @@ pub(crate) fn build_report(
         } else {
             "fail"
         }
+    } else if no_comparable_evidence {
+        "fail"
     } else if regressions.is_empty() && failed.is_empty() && comparison_failures.is_empty() {
         "pass"
     } else {
@@ -2210,6 +2386,7 @@ pub(crate) fn build_report(
             "failed_instruments": failed,
             "failed_comparisons": comparison_failures,
             "ceiling_breaches": ceiling_breaches,
+            "zero_evidence_boards": zero_evidence_boards,
             "review": review,
             "uncompared": uncompared,
         },
@@ -2827,6 +3004,7 @@ fn missing_repos(row: &Value, base_row: &Value) -> Vec<String> {
 fn status_counts(rows: &[&Value]) -> Value {
     let mut counts = BTreeMap::from([
         ("meets_target", 0_u64),
+        ("partial", 0),
         ("below_target", 0),
         ("not_measured", 0),
         ("failed", 0),
@@ -2834,7 +3012,14 @@ fn status_counts(rows: &[&Value]) -> Value {
         ("comparison_failed", 0),
     ]);
     for row in rows {
-        if let Some(status) = row["status"].as_str()
+        // Keep the metric's target judgment, but do not advertise an
+        // incompletely measured cohort as wholly meeting its target.
+        let status = if row["status"] == "meets_target" && partially_measured(row) {
+            Some("partial")
+        } else {
+            row["status"].as_str()
+        };
+        if let Some(status) = status
             && let Some(slot) = counts.get_mut(status)
         {
             *slot += 1;
@@ -2859,6 +3044,8 @@ fn board_status(counts: &Value) -> &'static str {
         "attention"
     } else if get("below_target") > 0 {
         "gaps"
+    } else if get("partial") > 0 {
+        "partial"
     } else if get("meets_target") == 0 {
         "not_measured"
     } else if get("not_measured") > 0 {
@@ -2866,6 +3053,12 @@ fn board_status(counts: &Value) -> &'static str {
     } else {
         "meets_target"
     }
+}
+
+/// Completeness of the selected numeric measurement, independent of its target
+/// or regression judgment. Older receipts may omit the optional partial flag.
+pub(crate) fn partially_measured(metric: &Value) -> bool {
+    metric["partial"] == true && metric["value"].as_f64().is_some()
 }
 
 fn gate_failure_message(report: &Value) -> String {
@@ -2938,6 +3131,16 @@ fn gate_failure_message(report: &Value) -> String {
             breach["reason"].as_str().unwrap_or("?")
         ));
     }
+    for board in report["gate"]["zero_evidence_boards"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        lines.push(format!(
+            "  no measured evidence for board {}: no selected metric was measured this run or could be compared with the baseline",
+            board.as_str().unwrap_or("?")
+        ));
+    }
     lines.push("see target/ripr/reports/dx-scoreboard.md".to_string());
     lines.join("\n")
 }
@@ -2946,6 +3149,12 @@ pub(crate) fn render_markdown(report: &Value) -> String {
     let mut out = String::new();
     out.push_str("# ripr developer-experience scoreboards\n\n");
     let rollup = &report["rollup"];
+    let partial_count = rollup["partial"].as_u64().unwrap_or(0);
+    let partial_note = if partial_count == 0 {
+        String::new()
+    } else {
+        format!(", {partial_count} partially measured")
+    };
     out.push_str(&format!(
         "Revision `{}` · {} · runner `{}`\n\n",
         report["revision"].as_str().unwrap_or("unknown"),
@@ -2953,7 +3162,7 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         report["runner_class"].as_str().unwrap_or("unknown"),
     ));
     out.push_str(&format!(
-        "**Rollup:** {} meet target, {} below target, {} not measured, {} failed, {} regressed. Gate: `{}`.\n\n",
+        "**Rollup:** {} meet target{partial_note}, {} below target, {} not measured, {} failed, {} regressed. Gate: `{}`.\n\n",
         rollup["meets_target"],
         rollup["below_target"],
         rollup["not_measured"],
@@ -2988,6 +3197,16 @@ pub(crate) fn render_markdown(report: &Value) -> String {
             item["reason"].as_str().unwrap_or("missing evidence")
         ));
     }
+    for board in report["gate"]["zero_evidence_boards"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&format!(
+            "\n**No measured evidence** for board `{}`: no selected metric was measured this run or could be compared with the baseline.\n",
+            board.as_str().unwrap_or("?")
+        ));
+    }
     let uncompared = report["gate"]["uncompared"]
         .as_array()
         .map(Vec::as_slice)
@@ -3020,10 +3239,21 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         }
         out.push('\n');
     }
-    out.push_str("| Board | Status | Meets | Below | Not measured |\n|---|---|---:|---:|---:|\n");
+    if partial_count > 0 {
+        out.push_str("| Board | Status | Meets | Partial | Below | Not measured |\n|---|---|---:|---:|---:|---:|\n");
+    } else {
+        out.push_str(
+            "| Board | Status | Meets | Below | Not measured |\n|---|---|---:|---:|---:|\n",
+        );
+    }
     for board in report["boards"].as_array().into_iter().flatten() {
+        let partial_cell = if partial_count > 0 {
+            format!(" {} |", board["counts"]["partial"].as_u64().unwrap_or(0))
+        } else {
+            String::new()
+        };
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} |{partial_cell} {} | {} |\n",
             board["id"].as_str().unwrap_or("?"),
             board["status"].as_str().unwrap_or("?"),
             board["counts"]["meets_target"],
@@ -3069,7 +3299,7 @@ pub(crate) fn render_markdown(report: &Value) -> String {
                 display_value(&metric["value"]),
                 comparator(metric),
                 display_value(&metric["target"]),
-                metric["status"].as_str().unwrap_or("?"),
+                display_status(metric),
                 baseline_cell(&metric["baseline"]),
             ));
         }
@@ -3120,6 +3350,15 @@ fn comparator(metric: &Value) -> &'static str {
         "≥"
     } else {
         "≤"
+    }
+}
+
+fn display_status(metric: &Value) -> String {
+    let status = metric["status"].as_str().unwrap_or("?");
+    if partially_measured(metric) {
+        format!("{status} (partially measured)")
+    } else {
+        status.to_string()
     }
 }
 

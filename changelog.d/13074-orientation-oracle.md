@@ -1,3 +1,5 @@
 <!-- section: Internal / CI -->
-- `cargo xtask` checks the required repository-orientation scenario IDs and
-  compares synthetic authority and release routing against independent inputs (#13074).
+- Repository orientation keeps historical refusal, unavailable captured GitHub
+  state, and candidate overlap, blocked and partial acceptance ahead of a
+  matching source-release hint; focused controls preserve positive routing and
+  explicit inventory limitations (#13083).
