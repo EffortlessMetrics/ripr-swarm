@@ -254,7 +254,32 @@ mod tests {
     }
 
     fn ok_log() -> String {
-        format!("test {FACADE_TEST} ... ok\n")
+        // The parent replays the captured child diagnostic before libtest
+        // prints the parent's own result. Exercise that real producer format.
+        let child = crate::run::TimedOutput {
+            status: None,
+            stdout: format!(
+                "\nrunning 1 test\ntest {FACADE_TEST} ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"
+            ),
+            stderr:
+                "policy facade phase: check_file_policy\npolicy facade child checks completed\n"
+                    .to_string(),
+            duration: std::time::Duration::ZERO,
+            timed_out: false,
+        };
+        format!(
+            "{}\ntest {FACADE_TEST} ... ok\n",
+            crate::tests::policy_facade_child_diagnostic(&child)
+        )
+    }
+
+    #[test]
+    fn child_diagnostic_does_not_duplicate_the_parent_observation() {
+        let log = ok_log();
+        assert!(facade_observation(&log).is_some_and(|row| row.outcome == "ok"));
+        assert!(log.contains("policy facade phase: check_file_policy"));
+        let duplicate = format!("{log}test {FACADE_TEST} ... ok\n");
+        assert!(facade_observation(&duplicate).is_none());
     }
 
     #[test]

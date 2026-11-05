@@ -29724,10 +29724,7 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
         "isolated policy facade checks",
     )?
     .output;
-    let diagnostic = format!(
-        "policy facade child status={:?}, timed_out={}, stdout={}, stderr={}",
-        output.status, output.timed_out, output.stdout, output.stderr
-    );
+    let diagnostic = policy_facade_child_diagnostic(&output);
     if output.timed_out
         || !output.status.is_some_and(|status| status.success())
         || !output.stdout.lines().any(|line| line == "running 1 test")
@@ -29742,6 +29739,16 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
     }
     eprintln!("{diagnostic}");
     Ok(())
+}
+
+pub(crate) fn policy_facade_child_diagnostic(output: &crate::run::TimedOutput) -> String {
+    // Quote captured streams so their libtest rows remain diagnostic data.
+    // Replaying raw newlines would make the retained log count the child's
+    // result again as a second observation of the parent facade test.
+    format!(
+        "policy facade child status={:?}, timed_out={}, stdout={:?}, stderr={:?}",
+        output.status, output.timed_out, output.stdout, output.stderr
+    )
 }
 
 fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
