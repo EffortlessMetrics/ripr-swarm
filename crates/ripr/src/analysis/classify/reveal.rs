@@ -11632,7 +11632,7 @@ impl RetryBuilder { pub fn new()->Self { Self { attempts: 4, delay_ms: 100 } } p
             let facts = crate::analysis::rust_index::summarize_file(test.file.clone(), source);
             index.insert_file_only(test.file.clone(), facts);
         }
-        let syntax = super::OwnerPinSyntax::default();
+        let syntax = crate::analysis::classify::OwnerPinSyntax::default();
         reveal_evidence_with_value_identity(probe, related, &|test, assertion| {
             crate::analysis::classify::builder_override::owner_field_read_identity(
                 probe, &index, test, assertion, &syntax,

@@ -471,9 +471,12 @@ fn field_origin(
                 if !mentions_identifier(statement.syntax(), &binding) {
                     return true;
                 }
-                // Reading a binding into another owned value does not mutate it.
+                // A let initializer can also assign or call a mutating method.
+                // Only a direct alias or field read is an inert intervening read.
                 if let ast::Stmt::LetStmt(statement) = statement {
-                    return !borrows_mutably(statement.syntax(), &binding);
+                    return statement
+                        .initializer()
+                        .is_some_and(|expression| plain_binding_read(expression, &binding));
                 }
                 let ast::Stmt::ExprStmt(statement) = statement else {
                     return false;
@@ -497,6 +500,21 @@ fn field_origin(
         _ => false,
     }
 }
+fn plain_binding_read(mut expression: ast::Expr, binding: &str) -> bool {
+    loop {
+        let next = match expression {
+            ast::Expr::PathExpr(path) => {
+                return single_identifier(&path).as_deref() == Some(binding);
+            }
+            ast::Expr::ParenExpr(paren) => paren.expr(),
+            ast::Expr::FieldExpr(field) => field.expr(),
+            _ => return false,
+        };
+        let Some(next) = next else { return false };
+        expression = next;
+    }
+}
+
 fn discarded_method_keeps_scalar(index: &RustIndex, ty: &str, name: &str, field: &str) -> bool {
     let Some(definition) = declared_once(index, ty) else {
         return false;
