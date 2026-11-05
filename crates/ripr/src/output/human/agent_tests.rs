@@ -874,6 +874,82 @@ fn explain_agent_preview_controls_stay_closed_without_established_evidence() {
         true,
     );
     assert!(!suppressed.contains("open="), "{suppressed}");
+    // An opaque preview finding (unsupported evidence class) is not a gap:
+    // it keeps its stop and never projects an open= test-side action.
+    let mut opaque = preview_weak_gap("probe:a", 2);
+    opaque.class = ExposureClass::StaticUnknown;
+    let text = explained(&opaque);
+    assert!(text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+}
+
+/// #13277 check surface: a run whose only finding is a preview weak gap still
+/// stops (no test-side gap is offered), but the bounded record must project
+/// the producer-owned discriminator and the related test, and the terminal
+/// must not claim nothing more is fixable while the guided repair route is
+/// unavailable (`agent card` refuses these seams with `seam_not_found`).
+#[test]
+fn check_agent_preview_only_run_projects_the_discriminator_and_stops_advisory() {
+    let text = rendered(&output(vec![preview_weak_gap("probe:a", 2)]));
+    assert!(text.contains(" gaps=0 "), "{text}");
+    assert!(
+        text.contains("weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50|test=t1|id=probe:a"),
+        "{text}"
+    );
+    assert!(text.contains("t1=tests/t.rs:3 discount_runs"), "{text}");
+    assert!(
+        text.contains(
+            "stop=preview-language evidence is advisory only and offers no guided repair route"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("an independent test-side improvement may still be possible"),
+        "{text}"
+    );
+    assert!(
+        text.contains("static advisory, not runtime proof"),
+        "{text}"
+    );
+    // Negative assertions: the old misleading terminal and the hidden
+    // discriminator are both rejected, not just a new phrase searched for.
+    assert!(
+        !text.contains("nothing more is fixable from the test side"),
+        "{text}"
+    );
+    assert!(!text.contains("nothing more is fixable"), "{text}");
+    assert!(!text.contains("|missing=-|"), "{text}");
+    assert!(text.contains("limits=weakly_exposed:1"), "{text}");
+    assert!(
+        text.lines().any(|line| line == "next=ripr explain probe:a"),
+        "{text}"
+    );
+    // The explain drill-in for the same finding keeps the open= advisory.
+    let drill = explained(&preview_weak_gap("probe:a", 2));
+    assert!(
+        drill.contains("open=preview-language evidence is advisory"),
+        "{drill}"
+    );
+    assert!(!drill.contains("nothing more is fixable"), "{drill}");
+}
+
+/// A preview finding without a producer-established discriminator has nothing
+/// to project: the record keeps `missing=-` and the terminal stays the honest
+/// advisory stop.
+#[test]
+fn check_agent_preview_record_without_a_discriminator_keeps_missing_dash() {
+    let mut bare = preview_weak_gap("probe:a", 2);
+    bare.activation.missing_discriminators.clear();
+    let text = rendered(&output(vec![bare]));
+    assert!(
+        text.contains("weakly_exposed|src/lib.rs:2|pct >= 50|missing=-|test=t1|id=probe:a"),
+        "{text}"
+    );
+    assert!(
+        text.contains("stop=preview-language evidence is advisory only"),
+        "{text}"
+    );
+    assert!(!text.contains("nothing more is fixable"), "{text}");
 }
 
 #[test]
