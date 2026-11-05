@@ -54,4 +54,4 @@ class NativeScoringTests(unittest.TestCase):
         r = self.lib.score(task, self.repo, self.target)
         self.assertEqual(r["killed"], 0, r)
         self.assertEqual(r["unresolved"], [0], r)
-        self.assertEqual(r["mutant_results"][0]["test"]["status"], "incomplete", r)
+        self.assertEqual(r["mutant_results"][0]["test"]["status"], "process_error", r)
