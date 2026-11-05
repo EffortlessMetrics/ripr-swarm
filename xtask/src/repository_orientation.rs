@@ -771,7 +771,10 @@ mod tests {
         let mut scenario = release_scenario()?;
         scenario.historical_campaign_ref = Some("historical release-control campaign".to_string());
         let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
-        assert_eq!(receipt.disposition, OrientationDispositionV1::HistoricalOnly);
+        assert_eq!(
+            receipt.disposition,
+            OrientationDispositionV1::HistoricalOnly
+        );
         assert_eq!(receipt.selected_issue, None);
         assert!(
             receipt
@@ -805,8 +808,16 @@ mod tests {
         for (issue, disposition, selected_issue) in [
             (9101, OrientationDispositionV1::DuplicateBlocked, None),
             (9104, OrientationDispositionV1::NoSafeWork, None),
-            (9109, OrientationDispositionV1::PartialAcceptance, Some(9109)),
-            (9202, OrientationDispositionV1::SourceReleaseRoute, Some(1463)),
+            (
+                9109,
+                OrientationDispositionV1::PartialAcceptance,
+                Some(9109),
+            ),
+            (
+                9202,
+                OrientationDispositionV1::SourceReleaseRoute,
+                Some(1463),
+            ),
         ] {
             scenario.issue_number = Some(issue);
             let receipt = run_repository_orientation_scenario(&workspace_path(""), &scenario)?;
