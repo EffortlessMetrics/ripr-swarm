@@ -718,6 +718,7 @@ jobs:
           python3 -I "$trusted/$path" --repository "$REPOSITORY" --pr "$PR_NUMBER" --head "$EXPECTED_HEAD"
       - name: Recheck initially admitted eligibility
         id: eligibility
+        timeout-minutes: 2
         if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'))
         env:
           GH_TOKEN: ${{ github.token }}
@@ -741,7 +742,37 @@ jobs:
             [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || return 1
             [[ "$EXPECTED_REQUEST" == "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]] || return 1
             read_pr() {
-              pr=$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER") || return
+              local response status_line headers http=unframed native=0
+              pr=
+              response=$(timeout --kill-after=1s 15s gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --method GET --include 2>/dev/null) || native=$?
+              # gh writes an LF status line, CRLF headers, then a CRLF blank line.
+              # Only that frame classifies a retry; stderr and body text do not.
+              status_line=${response%%$'\n'*}
+              if [[ "$response" != *$'\n'* ]] || ! [[ "$status_line" =~ ^HTTP/[0-9]+\.[0-9]+\ ([0-9]{3})\ [[:print:]]+$ ]]; then
+                echo "::error::PR read has an invalid HTTP frame (native exit $native)"
+                return "$((native == 0 ? 1 : native))"
+              fi
+              http=${BASH_REMATCH[1]}
+              headers=${response#*$'\n'}
+              if [[ "$headers" == $'\r\n'* ]]; then pr=${headers#$'\r\n'}
+              elif [[ "$headers" == *$'\r\n\r\n'* ]]; then
+                pr=${headers#*$'\r\n\r\n'}
+                headers=${headers%%$'\r\n\r\n'*}
+                if ! printf '%s' "$headers" | jq -Rse 'split("\r\n") | all(test("^[^[:space:]:]+: [^\\r\\n]*$"))' >/dev/null; then
+                  echo "::error::PR read has invalid HTTP headers (native exit $native, HTTP $http)"
+                  pr=; return "$((native == 0 ? 1 : native))"
+                fi
+              else
+                echo "::error::PR read has an incomplete HTTP frame (native exit $native, HTTP $http)"
+                return "$((native == 0 ? 1 : native))"
+              fi
+              if [ "$native" -ne 0 ]; then
+                echo "::error::PR read failed at stage $why (native exit $native, HTTP $http, collection $collection/3)"
+                [[ "$native:$http" =~ ^1:(502|503|504)$ ]] && retry_pr_read=true
+                pr=; return "$native"
+              fi
+              [ "$http" = 200 ] || { pr=; return 1; }
+              jq -se 'length == 1 and (.[0] | type == "object")' <<<"$pr" >/dev/null || return
               # A history-sync admission (#12437) also needs its label to still be present.
               jq -e --arg repo "$REPOSITORY" --arg head "$EXPECTED_HEAD" --argjson number "$PR_NUMBER" --arg event "$EVENT_NAME" --arg reason "${ADMISSION_REASON:-}" '
                 .number == $number and .state == "open" and .draft == false and
@@ -821,7 +852,16 @@ jobs:
           # without this the log shows only an exit code (#8858).
           why=before_check
           trap 'rc=$?; [ "$rc" -eq 0 ] || echo "::error::eligibility recheck refused at stage $why (exit $rc) for PR #$PR_NUMBER head $EXPECTED_HEAD"; [ "$rc" -eq 0 ] || [ "$why" != admission_binding ] || [ "$GITHUB_RUN_ATTEMPT" -le 1 ] || { [ "$EVENT_NAME" = merge_group ] && echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Re-queue the pull request to qualify a new merge group (#8858)." || echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Remove and re-add merge-ready to start a fresh run (#8858)."; }' EXIT
-          current_eligibility
+          # Retry only a classified PR transport failure, within this admission.
+          # Re-entering discards every prior PR, review page and pagination cursor.
+          collection=0
+          while :; do
+            collection=$((collection + 1)); retry_pr_read=false
+            if current_eligibility; then break; else rc=$?; fi
+            if [ "$retry_pr_read" != true ] || [[ "$why" != pull_request_state && "$why" != pull_request_state_after_threads ]] || [ "$collection" -ge 3 ]; then exit "$rc"; fi
+            echo "::warning::Retrying the complete eligibility collection after a transient PR read; admission $EXPECTED_REQUEST is unchanged"
+            sleep 1
+          done
       - name: Require the extension e2e result for the admitted head
         id: vscode
         if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'
