@@ -47,6 +47,7 @@ mod expected_binding;
 mod fallible_check;
 mod fixture_receiver;
 mod helper_arguments;
+mod ordinary_library_target;
 pub(in crate::analysis::classify) mod path_value;
 pub(super) mod result_map;
 pub(super) mod returned_closure;
@@ -433,6 +434,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     execution_contexts: SyncMemo<BTreeMap<PathBuf, Arc<Option<ExecutionContext>>>>,
     /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
     target_roots: OnceLock<TargetRoots>,
+    /// Current Cargo target ownership for the closed ordinary helper profile.
+    /// The shared inventory probes once per indexed workspace snapshot.
+    ordinary_library_targets: ordinary_library_target::TargetInventories,
     /// Names of the workspace's `macro_rules!` macros, scanned once per run
     /// (RIPR-SPEC-0351 out-parameter owner scan).
     workspace_macro_names: OnceLock<Vec<String>>,

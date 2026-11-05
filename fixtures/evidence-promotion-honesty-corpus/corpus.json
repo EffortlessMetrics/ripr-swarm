@@ -17806,6 +17806,139 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "expected_class", "class": "no_static_path" }
       ]
+    },
+    {
+      "id": "rust_asserted_u32_helper_discarded",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/asserted_u32_helper_discarded",
+      "vector": "closed_asserted_u32_helper_discarded",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "u32_reads_what_was_written",
+          "file": "src/lib.rs",
+          "line": 12,
+          "kind": "unknown",
+          "strength": "none",
+          "relation_reason": "direct_owner_call",
+          "miss": "no_assertion"
+        }
+      ]
+    },
+    {
+      "id": "rust_asserted_u32_helper_lossy",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/asserted_u32_helper_lossy",
+      "vector": "closed_asserted_u32_helper_lossy",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "u32_reads_what_was_written",
+          "file": "src/lib.rs",
+          "line": 12,
+          "kind": "unknown",
+          "strength": "none",
+          "relation_reason": "helper_owner_call",
+          "miss": "assertion_not_credited"
+        }
+      ]
+    },
+    {
+      "id": "rust_asserted_u32_helper_positive",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/asserted_u32_helper_positive",
+      "vector": "closed_asserted_u32_helper_positive",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "u32_reads_what_was_written",
+          "file": "src/lib.rs",
+          "line": 12,
+          "kind": "relational_check",
+          "strength": "strong",
+          "relation_reason": "helper_owner_call",
+          "miss": null
+        }
+      ]
+    },
+    {
+      "id": "rust_asserted_u32_helper_wrong_owner",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/asserted_u32_helper_wrong_owner",
+      "vector": "closed_asserted_u32_helper_wrong_owner",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "u32_reads_what_was_written",
+          "file": "src/lib.rs",
+          "line": 12,
+          "kind": "unknown",
+          "strength": "none",
+          "relation_reason": "same_test_file",
+          "miss": "no_call_path"
+        }
+      ]
     }
   ]
 }

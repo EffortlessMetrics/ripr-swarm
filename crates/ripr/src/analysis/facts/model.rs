@@ -9,6 +9,9 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct WorkspaceRootAuthority {
     pub(crate) root: PathBuf,
+    /// Captured with the workspace authority, never read during validation.
+    #[serde(default)]
+    pub(crate) invocation_dir: Option<PathBuf>,
     pub(crate) workspace_identity: String,
     pub(crate) files: BTreeMap<PathBuf, WorkspaceFileAuthority>,
     #[serde(skip, default)]
@@ -19,6 +22,7 @@ impl Clone for WorkspaceRootAuthority {
     fn clone(&self) -> Self {
         Self {
             root: self.root.clone(),
+            invocation_dir: self.invocation_dir.clone(),
             workspace_identity: self.workspace_identity.clone(),
             files: self.files.clone(),
             current_files: Arc::new(Mutex::new(BTreeMap::new())),
@@ -29,6 +33,7 @@ impl Clone for WorkspaceRootAuthority {
 impl PartialEq for WorkspaceRootAuthority {
     fn eq(&self, other: &Self) -> bool {
         self.root == other.root
+            && self.invocation_dir == other.invocation_dir
             && self.workspace_identity == other.workspace_identity
             && self.files == other.files
     }
@@ -44,6 +49,60 @@ pub(crate) struct WorkspaceFileAuthority {
 }
 
 impl WorkspaceRootAuthority {
+    /// Source facts use index-relative paths; diff locations may instead carry
+    /// the caller's relative root prefix. Both spellings must resolve against
+    /// the captured anchors exactly, without suffix matching or filesystem IO.
+    pub(crate) fn source_path_matches(
+        root: &Path,
+        invocation_dir: &Path,
+        expected: &Path,
+        path: &Path,
+    ) -> bool {
+        if !invocation_dir.is_absolute()
+            || invocation_dir
+                .components()
+                .any(|component| matches!(component, Component::ParentDir))
+        {
+            return false;
+        }
+        if Self::root_relative_source_path(root, path).as_deref() == Some(expected) {
+            return true;
+        }
+        path.is_relative()
+            && Self::root_relative_source_path(root, &invocation_dir.join(path)).as_deref()
+                == Some(expected)
+    }
+
+    /// Map a source location to the index's root-relative spelling. This is
+    /// lexical identity only: parent traversal and foreign roots are refused,
+    /// and no filesystem resolution or matching path suffix grants identity.
+    pub(crate) fn root_relative_source_path(root: &Path, path: &Path) -> Option<PathBuf> {
+        let root = crate::analysis::plain_drive_verbatim_path(root, cfg!(windows));
+        let path = crate::analysis::plain_drive_verbatim_path(path, cfg!(windows));
+        if !root.is_absolute()
+            || root
+                .components()
+                .chain(path.components())
+                .any(|component| matches!(component, Component::ParentDir))
+        {
+            return None;
+        }
+        let relative = if path.is_absolute() {
+            path.strip_prefix(&root).ok()?
+        } else {
+            path.as_path()
+        };
+        let mut clean = PathBuf::new();
+        for component in relative.components() {
+            match component {
+                Component::Normal(part) => clean.push(part),
+                Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+            }
+        }
+        (!clean.as_os_str().is_empty()).then_some(clean)
+    }
+
     #[cfg(test)]
     pub(crate) fn from_index(root: &Path, files: &BTreeMap<PathBuf, FileFacts>) -> Self {
         Self::from_sources(
@@ -98,6 +157,7 @@ impl WorkspaceRootAuthority {
         }
         Self {
             root: canonical_root,
+            invocation_dir: std::env::current_dir().ok(),
             workspace_identity: source_digest(canonical.as_bytes()),
             files: authorities,
             current_files: Arc::new(Mutex::new(BTreeMap::new())),

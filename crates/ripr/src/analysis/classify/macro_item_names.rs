@@ -260,11 +260,12 @@ fn passes_name_as_bare_argument(masked_arguments: &str, name: &str) -> bool {
     let word_edge = |c: Option<char>| c.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
     top_level.match_indices(name).any(|(at, _)| {
         let end = at + name.len();
-        let before = top_level[..at].trim_end();
+        let prefix = top_level[..at]
+            .strip_suffix("r#")
+            .unwrap_or(&top_level[..at]);
+        let before = prefix.trim_end();
         let after = top_level[end..].trim_start();
-        if !word_edge(top_level[..at].chars().next_back())
-            || !word_edge(top_level[end..].chars().next())
-        {
+        if !word_edge(prefix.chars().next_back()) || !word_edge(top_level[end..].chars().next()) {
             return false;
         }
         // `fn name(..)` inside an argument declares the name; it is not a call.
@@ -395,10 +396,21 @@ fn declares_item_through_binder(masked: &str) -> bool {
 }
 
 fn identifier_tokens(masked: &str) -> Vec<&str> {
-    masked
-        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
-        .filter(|token| !token.is_empty())
-        .collect()
+    let word = |character: char| character.is_ascii_alphanumeric() || character == '_';
+    let mut remaining = masked;
+    let mut tokens = Vec::new();
+    while let Some(start) = remaining.find(word) {
+        remaining = &remaining[start..];
+        // Keep the raw prefix with its identifier: `fn r#name` declares
+        // `name`, while a call of `r#type` is not the `type` keyword.
+        let prefix = if remaining.starts_with("r#") { 2 } else { 0 };
+        let end = remaining[prefix..]
+            .find(|character| !word(character))
+            .map_or(remaining.len(), |end| prefix + end);
+        tokens.push(&remaining[..end]);
+        remaining = &remaining[end..];
+    }
+    tokens
 }
 
 #[cfg(test)]
@@ -406,6 +418,122 @@ mod tests {
     use super::{file_has_non_local_defining_macro_invocation, macro_may_define_item_named};
 
     const SHADOW: &str = "macro_rules! fake {\n    () => {\n        fn suit_color(_s: char) -> u8 { 1 }\n    };\n}\n";
+
+    #[test]
+    fn raw_item_names_in_invoked_macros_keep_their_binding_identity() {
+        for item in [
+            "fn r#name() {}",
+            "const r#name: u8 = 1;",
+            "static r#name: u8 = 1;",
+            "static mut r#name: u8 = 1;",
+            "type r#name = u8;",
+            "struct r#name;",
+            "enum r#name { Value }",
+            "trait r#name {}",
+            "mod r#name {}",
+        ] {
+            let source = format!("macro_rules! emit {{ () => {{ {item} }}; }} emit!();");
+            for name in ["name", "r#name"] {
+                assert!(macro_may_define_item_named(&source, name), "{item}: {name}");
+            }
+            assert!(
+                !macro_may_define_item_named(&source, "other_name"),
+                "{item}"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_imports_bind_only_their_leaf_or_renamed_name() {
+        for import in [
+            "use other::r#name;",
+            "use other::{thing, r#name};",
+            "use other::thing as r#name;",
+            "use other::{r#type as r#name};",
+        ] {
+            let source = format!("macro_rules! emit {{ () => {{ {import} }}; }} emit!();");
+            assert!(macro_may_define_item_named(&source, "name"), "{import}");
+            assert!(macro_may_define_item_named(&source, "r#name"), "{import}");
+        }
+        for import in [
+            "use other::r#name as alias;",
+            "use other::{r#name as alias};",
+            "use r#name::leaf;",
+            "use other::r#name_extra;",
+        ] {
+            let source = format!("macro_rules! emit {{ () => {{ {import} }}; }} emit!();");
+            assert!(!macro_may_define_item_named(&source, "name"), "{import}");
+        }
+    }
+
+    #[test]
+    fn raw_item_names_in_macro_arguments_are_declarations() {
+        for invocation in [
+            "emit!(fn r#name() {});",
+            "emit!(pub const fn r#name() {});",
+            "emit!(pub static mut r#name: u8 = 1);",
+        ] {
+            assert!(
+                macro_may_define_item_named(invocation, "name"),
+                "{invocation}"
+            );
+            let passthrough = format!(
+                "macro_rules! emit {{ ($($tokens:tt)*) => {{ $($tokens)* }}; }} {invocation}"
+            );
+            assert!(
+                macro_may_define_item_named(&passthrough, "name"),
+                "{invocation}"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_calls_paths_and_keyword_names_do_not_declare_the_queried_item() {
+        for invocation in [
+            "emit!(r#name());",
+            "emit!(other.r#name());",
+            "emit!(module::r#name);",
+            "emit!(fn r#name_extra() {});",
+        ] {
+            assert!(
+                !macro_may_define_item_named(invocation, "name"),
+                "{invocation}"
+            );
+        }
+        for item in ["fn other() { r#name(); }", "fn r#type() { name(); }"] {
+            let source = format!("macro_rules! emit {{ () => {{ {item} }}; }} emit!();");
+            assert!(!macro_may_define_item_named(&source, "name"), "{item}");
+        }
+    }
+
+    #[test]
+    fn raw_generated_owner_shadows_the_original_wire_converter() {
+        let original = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/rust-verdict-corpus/subjects/authored-mined-wire/src/lib.rs.txt"
+        ));
+        assert_eq!(
+            original
+                .matches("u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])")
+                .count(),
+            1
+        );
+        assert_eq!(original.matches("    use super::*;").count(), 1);
+        let source = original
+            .replacen(
+                "u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])",
+                "u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])",
+                1,
+            )
+            .replacen(
+                "    use super::*;",
+                "    use super::*; macro_rules! shadow { () => { fn r#read_u32(b: &[u8])->u32 { u32::from_be_bytes([b[0],b[1],b[2],b[3]]) } }; } shadow!();",
+                1,
+            );
+        // The unchanged native test calls the generated converter and still
+        // passes beside the wrong production owner. It cannot observe that owner.
+        assert!(macro_may_define_item_named(&source, "read_u32"));
+    }
 
     #[test]
     fn an_invoked_local_macro_declaring_the_name_may_define_it() {

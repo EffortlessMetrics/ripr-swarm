@@ -874,6 +874,77 @@ narrow/generic type, non-literal input, two-call and macro refusals) and
 - `domain/probe.rs` — `StopReason::HelperIdentityUnresolved`.
 - `output/human/explain.rs` — ADR 0019 gloss via `describe()`.
 
+## Asserted primitive equality helper (#13181)
+
+A same-file `#[cfg(test)]` helper may observe a production `u32` return without
+forwarding that return unchanged. The closed profile is one root free owner
+`fn owner(bytes: &[u8]) -> u32`, imported into one ordinary test module through
+`use super::*`, and an unannotated helper with exactly one immutable builtin
+`u32` parameter and a sole tail `owner(&parameter.to_be_bytes()) == parameter`.
+The production owner's name uses the existing bounded plain ASCII identifier
+grammar, matching the helper-name premise. All parsed identifier tokens in the
+file must have ASCII spellings, including macro definitions, arguments and
+ordinary declarations. Rust [normalizes identifiers to NFC, including macro
+inputs](https://doc.rust-lang.org/reference/identifiers.html#normalization), so
+an unproved Unicode spelling can bind the same name as an ASCII owner. Unicode
+comments and strings remain supported. Unproved identifier spellings supply no
+comparison receipt; this profile does not extend the shared macro scanner's
+identifier grammar.
+The same source file must be the exact root of one current Cargo library target
+collected under Cargo defaults with the ordinary libtest harness. The shared
+target inventory binds metadata ownership, selected default package membership,
+collection and required features to the owning manifest's `harness` and `test`
+settings. Disabled, unavailable,
+ambiguous and unproved target shapes supply no receipt. Target decisions are
+memoized only for the current indexed workspace and manifest identity.
+The comparison is builtin integer equality; its expected operand is the same
+unchanged parameter. No projection, discarded comparison, replacement Boolean,
+custom type, import alias, generic operator, statement or early exit is admitted.
+
+The selected ordinary `#[test]` contains exactly one unlabeled `for` expression
+over a nonempty inline array. Rows are builtin `u32` literals or the builtin
+`u32::MAX` minus a literal without underflow. Each row reaches exactly the
+positive standard `assert!(helper(row))`; diagnostics, negation, extra statements,
+conditional bypasses, dynamic/attributed rows and shadowed macros are refused.
+Unsupported rows supply no receipt. The producer owns this closed execution
+profile; it does not weaken the generic constant-table grammar.
+
+The producer binds the actual parsed owner/helper/test declarations, the helper
+comparison, the asserted invocation, primitive type and method identities, and
+the concrete big-endian byte input for each admitted row. It checks current
+source/module/macro provenance through the shared assertion-context authority.
+Ordinary and macro-generated owner/helper/primitive shadowing refuse admission;
+non-local defining macros and nested macro expansion remain outside the profile.
+A source commitment plus semantic and validation digests retain this binding.
+The receipt is reconstructed from current indexed source, never inferred from a
+name, copied oracle strength, raw value fact, or test pass. Generic extraction
+may retain no oracle for this table; only after the closed source/row/execution
+proof may the producer supply the exact parsed standard assertion to the
+owner-bound credited view. The raw `TestFact` and generic loop grammar remain
+unchanged. Sibling custom attributes and derives, macro-emitted imports or
+unknown attributes, and imports/shadows of the permitted builtin derive names
+refuse this profile.
+
+Diff evidence and repository grip evidence consume the same receipt for the
+matching whole-return source identity. Existing activation/discrimination limits
+still apply. Only the exact selected assertion gains owner-relative strong
+comparison evidence; extracted oracle facts retain their original kind. No
+other assertion or input row inherits that authority. The evidence names the
+helper and selected test with `asserted_u32_helper_comparison`; native test
+outcomes remain a separate observation. Classified cache generations change
+when this semantic authority changes.
+
+`helper_wrapper_reach::test_local_helper_hop_is_part_of_the_oracle` remains an
+abstention for a loose test-local projection. Production weak-gap handling,
+independent ordinary direct assertions, QuickCheck registration, explicit
+property runners, arbitrary helpers and framework/model support are unchanged.
+
+Code: `analysis/classify/helper_transfer/boolean_comparison.rs` owns the source
+receipt; `analysis/classifier/evidence.rs` and
+`analysis/test_grip_evidence.rs` consume it. Tests:
+`crates/ripr/tests/asserted_boolean_helper.rs`, retaining the complete
+`authored-mined-wire` subject and its original case diff.
+
 ## Metrics
 
 No new metric; helper-owned probes with resolvable chains move from

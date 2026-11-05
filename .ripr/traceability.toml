@@ -12740,6 +12740,10 @@ id = "RIPR-SPEC-0159"
 name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
+  "crates/ripr/src/analysis/classify/macro_item_names.rs::tests",
+  "crates/ripr/src/analysis/workspace/cargo_targets/ordinary_library_tests.rs",
+  "crates/ripr/tests/asserted_boolean_helper.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/asserted_boolean_helper.rs",
   "crates/ripr/tests/concat_literal_return.rs",
   "crates/ripr/tests/pub_api_method_entry_reach.rs",
   "crates/ripr/tests/helper_wrapper_reach.rs::qualified_helper_effect_keeps_reach_without_propagation",
@@ -12930,6 +12934,12 @@ tests = [
   "crates/ripr/src/analysis/facts/build.rs::tests::root_library_name_reads_lib_name_then_package_and_refuses_moved_roots",
 ]
 fixtures = [
+  "fixtures/asserted_u32_helper_positive",
+  "fixtures/asserted_u32_helper_discarded",
+  "fixtures/asserted_u32_helper_wrong_owner",
+  "fixtures/asserted_u32_helper_lossy",
+  "fixtures/evidence-promotion-honesty-corpus/corpus.json",
+  "fixtures/rust-verdict-corpus/cases/mined-bool-property-read-u32.json",
   "fixtures/rust_qualified_helper_effect_reach",
   "fixtures/module_reach_control_qualified",
   "fixtures/module_reach_bare_import_control",
@@ -12966,6 +12976,12 @@ fixtures = [
   "fixtures/helper_chain_method_entry",
 ]
 code = [
+  "crates/ripr/src/analysis/classify/owner_pin/ordinary_library_target.rs",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs",
+  "crates/ripr/src/analysis/classify/macro_item_names.rs",
+  "crates/ripr/src/analysis/facts/model.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer/boolean_comparison.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/field_projection.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/qualified_hop.rs",
   "crates/ripr/src/analysis/classify/helper_transfer/returned_ledger.rs",
@@ -12979,7 +12995,14 @@ code = [
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
 ]
-outputs = []
+outputs = [
+  "fixtures/asserted_u32_helper_positive/expected/check.json",
+  "fixtures/asserted_u32_helper_discarded/expected/check.json",
+  "fixtures/asserted_u32_helper_wrong_owner/expected/check.json",
+  "fixtures/asserted_u32_helper_lossy/expected/check.json",
+  "fixtures/asserted_u32_helper_positive/expected/human.txt",
+  "fixtures/rust-verdict-corpus/expected/rows/mined-bool-property-read-u32.json",
+]
 metrics = [
   "unit_test_pass_rate",
   "golden_fixture_pass_rate",

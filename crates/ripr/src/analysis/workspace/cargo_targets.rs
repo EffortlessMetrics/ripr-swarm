@@ -53,6 +53,9 @@ use std::path::{Path, PathBuf};
 
 use super::source_role::SourceRoleContext;
 
+#[cfg(test)]
+mod ordinary_library_tests;
+
 /// Declared explicit target paths for one workspace, keyed by nothing —
 /// a flat set is all the role model needs.
 #[derive(Clone, Debug, Default)]
@@ -270,14 +273,14 @@ pub(crate) enum CargoHarnessVerdict {
 /// `cargo metadata` runs at most once per batch and each manifest is read
 /// and parsed at most once, so a batch of registrations in one workspace
 /// costs one probe, not one per registration.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ManifestInventory {
     manifests: BTreeMap<PathBuf, OwnedManifest>,
     metadata: MetadataState,
 }
 
-/// One `kind = ["test"]` metadata owner for a resolved source path
-/// (#3634, `test` flag since #7265).
+/// One metadata owner for a resolved source path. Existing integration-test
+/// verdicts and the closed ordinary-library profile retain separate maps.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct MetadataTestOwner {
     manifest_dir: PathBuf,
@@ -287,6 +290,18 @@ struct MetadataTestOwner {
     /// when `required-features` are unmet under cargo defaults (#7266),
     /// even though `kind` stays `["test"]`.
     test_enabled: bool,
+}
+
+#[derive(Clone, Copy)]
+enum MetadataTargetKind {
+    IntegrationTest,
+    OrdinaryLibrary,
+}
+
+#[derive(Clone, Debug, Default)]
+struct MetadataTargetOwners {
+    tests: BTreeMap<PathBuf, Vec<MetadataTestOwner>>,
+    libraries: BTreeMap<PathBuf, Vec<MetadataTestOwner>>,
 }
 
 /// Lookup of one registration path against the metadata inventory.
@@ -299,21 +314,21 @@ enum InventoryLookup {
 /// The lazily initialized `cargo metadata` view of the analyzed workspace
 /// (#3634). `Failed` records an unavailable probe so the whole batch
 /// fails closed instead of re-spawning per verdict.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 enum MetadataState {
     #[default]
     Unloaded,
     Failed,
-    /// Workspace test targets keyed by their lexically resolved source
+    /// Workspace targets keyed by their lexically resolved source
     /// path; each entry lists the owning package manifest directories
     /// with the cargo target name (#3637 review), metadata `test` flag
     /// (#7265), and default-feature `required-features` satisfaction
     /// (#7266).
-    Loaded(BTreeMap<PathBuf, Vec<MetadataTestOwner>>),
+    Loaded(MetadataTargetOwners),
 }
 
 /// The memoized parse outcome for one owning manifest directory.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum OwnedManifest {
     /// No manifest exists at this directory.
     Absent,
@@ -447,6 +462,41 @@ impl ManifestInventory {
         }
     }
 
+    /// The closed ordinary helper profile requires the exact root of one
+    /// library target that Cargo collects with libtest under its defaults.
+    /// Child modules, other target kinds and ambiguous owners grant nothing.
+    /// Metadata owns target identity and collection; its owning manifest owns
+    /// the harness flag, which Cargo metadata does not expose.
+    pub(crate) fn ordinary_library_test_target(
+        &mut self,
+        workspace_root: &Path,
+        file: &Path,
+    ) -> bool {
+        let (_, InventoryLookup::Present(owners)) =
+            self.lookup_target_owners(workspace_root, file, MetadataTargetKind::OrdinaryLibrary)
+        else {
+            return false;
+        };
+        let [owner] = owners.as_slice() else {
+            return false;
+        };
+        if !owner.test_enabled {
+            return false;
+        }
+        let OwnedManifest::Parsed { value, .. } = self.manifest_at(&owner.manifest_dir) else {
+            return false;
+        };
+        value.get("lib").is_none_or(|library| {
+            library.as_table().is_some_and(|library| {
+                ["harness", "test"].iter().all(|key| {
+                    library
+                        .get(*key)
+                        .is_none_or(|value| value.as_bool() == Some(true))
+                })
+            })
+        })
+    }
+
     /// Resolve the registration path against cargo's inventory keys.
     /// Two forms are tried: the as-given absolute path, and the real
     /// path behind any symlinks. Cargo echoes the path family it was
@@ -471,6 +521,19 @@ impl ManifestInventory {
         workspace_root: &Path,
         registration_target: &Path,
     ) -> (PathBuf, InventoryLookup) {
+        self.lookup_target_owners(
+            workspace_root,
+            registration_target,
+            MetadataTargetKind::IntegrationTest,
+        )
+    }
+
+    fn lookup_target_owners(
+        &mut self,
+        workspace_root: &Path,
+        registration_target: &Path,
+        kind: MetadataTargetKind,
+    ) -> (PathBuf, InventoryLookup) {
         let joined = workspace_root.join(registration_target);
         let absolute = std::path::absolute(&joined).unwrap_or(joined);
         let anchored = lexical(&normalize(&crate::analysis::plain_drive_verbatim_path(
@@ -480,6 +543,10 @@ impl ManifestInventory {
         self.ensure_workspace_metadata(workspace_root);
         let lookup = match &self.metadata {
             MetadataState::Loaded(targets) => {
+                let targets = match kind {
+                    MetadataTargetKind::IntegrationTest => &targets.tests,
+                    MetadataTargetKind::OrdinaryLibrary => &targets.libraries,
+                };
                 let owners = targets.get(&anchored).cloned().or_else(|| {
                     // `fs::canonicalize` returns verbatim `\\?\`
                     // paths on Windows; stripped to the plain drive
@@ -596,9 +663,7 @@ fn cargo_metadata_command(workspace_root: &Path) -> std::process::Command {
 /// temp file rather than a pipe so a large workspace cannot fill the OS
 /// pipe buffer and deadlock against the poll; the file is removed on
 /// every path.
-fn run_workspace_cargo_metadata(
-    workspace_root: &Path,
-) -> Option<BTreeMap<PathBuf, Vec<MetadataTestOwner>>> {
+fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataTargetOwners> {
     let manifest_path = workspace_root.join("Cargo.toml");
     if !manifest_path.is_file() {
         return None;
@@ -639,7 +704,16 @@ fn run_workspace_cargo_metadata(
                     std::fs::read(&stdout_path)
                         .ok()
                         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-                        .map(|value| workspace_test_target_owners(&value))
+                        .map(|value| MetadataTargetOwners {
+                            tests: workspace_target_owners(
+                                &value,
+                                MetadataTargetKind::IntegrationTest,
+                            ),
+                            libraries: workspace_target_owners(
+                                &value,
+                                MetadataTargetKind::OrdinaryLibrary,
+                            ),
+                        })
                 }
                 // Tree cleanup could not be confirmed after the probe
                 // ended abnormally: the wait contract only guarantees a
@@ -724,9 +798,9 @@ fn required_features_satisfied(target: &serde_json::Value, enabled: &BTreeSet<St
     }
 }
 
-/// The workspace test-target inventory from parsed `cargo metadata`
+/// A target-kind inventory from the same parsed `cargo metadata`
 /// (#3634). With `--no-deps`, `packages` is exactly the workspace member
-/// set — cargo's own membership resolution. Each `kind: ["test"]` target
+/// set — cargo's own membership resolution. Each selected target
 /// contributes its lexically resolved `src_path` (Cargo 1.95 may
 /// normalize declared `..` segments in `src_path`; lexical collapse on
 /// both sides covers either spelling) mapped to the owning package's
@@ -737,14 +811,33 @@ fn required_features_satisfied(target: &serde_json::Value, enabled: &BTreeSet<St
 /// target (#3637 review). `required-features` is compared against the
 /// package's default-enabled features from the same metadata document
 /// (#7266): the probe does not pass `--features` / `--all-features`.
-fn workspace_test_target_owners(
+/// The integration-test selector preserves its existing kind/test defaults;
+/// ordinary library admission requires exact `kind: ["lib"]` and `test: true`.
+fn workspace_target_owners(
     value: &serde_json::Value,
+    kind: MetadataTargetKind,
 ) -> BTreeMap<PathBuf, Vec<MetadataTestOwner>> {
     let mut owners: BTreeMap<PathBuf, Vec<MetadataTestOwner>> = BTreeMap::new();
     let Some(packages) = value.get("packages").and_then(serde_json::Value::as_array) else {
         return owners;
     };
     for package in packages {
+        // Metadata enumerates every workspace member even when a bare
+        // `cargo test` selects only default-members. This stricter package
+        // premise belongs only to the new ordinary-library profile; existing
+        // integration-target inventory semantics stay unchanged.
+        if matches!(kind, MetadataTargetKind::OrdinaryLibrary) {
+            let Some(id) = package.get("id").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if !value
+                .get("workspace_default_members")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|members| members.iter().any(|member| member.as_str() == Some(id)))
+            {
+                continue;
+            }
+        }
         let manifest_dir = package
             .get("manifest_path")
             .and_then(serde_json::Value::as_str)
@@ -758,16 +851,19 @@ fn workspace_test_target_owners(
         };
         let enabled_features = default_enabled_features(package);
         for target in targets {
-            let is_test = target
+            let selected_kind = target
                 .get("kind")
                 .and_then(serde_json::Value::as_array)
-                .is_some_and(|kinds| {
-                    kinds
+                .is_some_and(|kinds| match kind {
+                    MetadataTargetKind::IntegrationTest => kinds
                         .iter()
                         .filter_map(serde_json::Value::as_str)
-                        .any(|kind| kind == "test")
+                        .any(|kind| kind == "test"),
+                    MetadataTargetKind::OrdinaryLibrary => {
+                        kinds.len() == 1 && kinds[0].as_str() == Some("lib")
+                    }
                 });
-            if !is_test {
+            if !selected_kind {
                 continue;
             }
             let Some(src_path) = target.get("src_path").and_then(serde_json::Value::as_str) else {
@@ -776,10 +872,11 @@ fn workspace_test_target_owners(
             let Some(name) = target.get("name").and_then(serde_json::Value::as_str) else {
                 continue;
             };
-            let metadata_test = target
-                .get("test")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(true);
+            let metadata_test = target.get("test").and_then(serde_json::Value::as_bool);
+            let metadata_test = match kind {
+                MetadataTargetKind::IntegrationTest => metadata_test.unwrap_or(true),
+                MetadataTargetKind::OrdinaryLibrary => metadata_test == Some(true),
+            };
             let test_enabled =
                 metadata_test && required_features_satisfied(target, &enabled_features);
             owners
