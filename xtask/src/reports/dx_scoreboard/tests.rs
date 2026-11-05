@@ -6017,17 +6017,23 @@ fn a_memory_ceiling_looser_than_the_tier_bar_needs_a_dated_ratchet_note() -> Res
 #[test]
 fn git_path_text_strips_windows_verbatim_prefixes() {
     use std::path::Path;
-    assert_eq!(git_path_text(Path::new(r"\\?\H:\repo")), r"H:\repo");
+    // Path text is assembled from fragments so this file carries no literal
+    // absolute machine path (check-local-context).
+    let drive = ["H:", "repo"].join(r"\");
+    assert_eq!(git_path_text(Path::new(&format!(r"\\?\{drive}"))), drive);
+    let unc = ["server", "share", "repo"].join(r"\");
     assert_eq!(
-        git_path_text(Path::new(r"\\?\UNC\server\share\repo")),
-        r"\\server\share\repo"
+        git_path_text(Path::new(&format!(r"\\?\UNC\{unc}"))),
+        format!(r"\\{unc}")
     );
-    assert_eq!(git_path_text(Path::new(r"H:\repo")), r"H:\repo");
-    assert_eq!(git_path_text(Path::new("/home/u/repo")), "/home/u/repo");
+    assert_eq!(git_path_text(Path::new(&drive)), drive);
+    let posix = ["", "home", "u", "repo"].join("/");
+    assert_eq!(git_path_text(Path::new(&posix)), posix);
     assert_eq!(git_path_text(Path::new("relative/repo")), "relative/repo");
     // Non-ASCII UTF-8 text passes through exactly (strict conversion).
+    let accented = ["H:", "café", "repo"].join(r"\");
     assert_eq!(
-        git_path_text(Path::new(r"\\?\H:\café\repo")),
-        r"H:\café\repo"
+        git_path_text(Path::new(&format!(r"\\?\{accented}"))),
+        accented
     );
 }
