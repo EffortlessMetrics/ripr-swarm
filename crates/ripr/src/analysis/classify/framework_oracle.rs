@@ -221,6 +221,12 @@ pub(in crate::analysis) fn insta_field_snapshot_limitation(
     changed_text: &str,
     owner: &str,
 ) -> Option<&'static str> {
+    // Masking preserves offsets and cannot introduce an absent macro name.
+    if field_name(changed_text).is_none()
+        || !INSTA_MACROS.iter().any(|name| test.body.contains(*name))
+    {
+        return None;
+    }
     insta_field_snapshot_limit(test, changed_text, owner).map(Idiom::advice)
 }
 

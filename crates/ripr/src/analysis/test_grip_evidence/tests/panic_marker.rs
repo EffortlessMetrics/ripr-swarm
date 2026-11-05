@@ -2,13 +2,17 @@ use super::*;
 use crate::analysis::classify::insta_field_snapshot_limitation;
 use crate::analysis::seam_classification::classify_seam;
 use crate::domain::StaticLimitKind;
-use crate::output::evidence_record::static_limitations_for;
 
 const PANIC: StaticLimitKind = StaticLimitKind::RustPanicOutcomeUnresolved;
 const FRAMEWORK: StaticLimitKind = StaticLimitKind::RustFrameworkOracleUnresolved;
 
 #[test]
 fn ordinary_panic_token_test_name_stays_unmarked_in_full_and_compact() -> Result<(), String> {
+    ordinary_panic_token_entries().map(|_| ())
+}
+
+fn ordinary_panic_token_entries() -> Result<Vec<(ClassifiedSeam, bool)>, String> {
+    let mut entries = Vec::new();
     for name in ["ordinary_weak_assertion", PANIC.as_str()] {
         let source = format!(
             "#[test] fn {name}() {{
@@ -31,19 +35,20 @@ fn ordinary_panic_token_test_name_stays_unmarked_in_full_and_compact() -> Result
                     assert_eq!(stage.state, StageState::Yes, "{entry:?}");
                 }
                 assert_eq!(entry.evidence.discriminate.state, StageState::Weak);
-                assert!(
-                    static_limitations_for(&entry)
-                        .iter()
-                        .all(|limit| limit.category != PANIC.as_str())
-                );
+                entries.push((entry, false));
             }
         }
     }
-    Ok(())
+    Ok(entries)
 }
 
 #[test]
 fn full_and_compact_preserve_real_panic_and_weak_assertion_control() -> Result<(), String> {
+    real_panic_entries().map(|_| ())
+}
+
+fn real_panic_entries() -> Result<Vec<(ClassifiedSeam, bool)>, String> {
+    let mut entries = Vec::new();
     let lib = "pub fn div(a: i32, b: i32) -> i32 {
     if b == 1 {
         panic!(\"zero\");
@@ -98,25 +103,33 @@ fn t() {{ div(1, 0); }}
                     SeamGripClass::WeaklyGripped
                 }
             );
-            let named: Vec<_> = static_limitations_for(&entry)
-                .into_iter()
-                .filter(|limit| limit.category == PANIC.as_str())
-                .collect();
-            assert_eq!(named.len(), usize::from(expected));
             if expected {
-                assert_eq!(named[0].stage, "discriminate");
-                assert_eq!(named[0].state, "no");
-                assert_eq!(named[0].reason, entry.evidence.discriminate.summary);
+                assert_eq!(entry.evidence.discriminate.state, StageState::No);
                 assert!(
-                    named[0]
-                        .reason
+                    entry
+                        .evidence
+                        .discriminate
+                        .summary
                         .starts_with(&format!("{}: ", PANIC.as_str()))
                 );
-                assert!(named[0].reason.contains("passes only if something panics"));
+                assert!(
+                    entry
+                        .evidence
+                        .discriminate
+                        .summary
+                        .contains("passes only if something panics")
+                );
             }
+            entries.push((entry, expected));
         }
     }
-    Ok(())
+    Ok(entries)
+}
+
+pub(crate) fn panic_marker_test_entries() -> Result<Vec<(ClassifiedSeam, bool)>, String> {
+    let mut entries = ordinary_panic_token_entries()?;
+    entries.extend(real_panic_entries()?);
+    Ok(entries)
 }
 
 #[test]

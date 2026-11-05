@@ -5699,3 +5699,6 @@ fn sort_value_facts(values: &mut Vec<ValueFact>) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::panic_marker::panic_marker_test_entries;

@@ -32,7 +32,16 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-bound-cloned-unused-callback.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-eager-literal-callback.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-ordinary-value-clone.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-same-named-call-kinds.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-same-named-call-kinds.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-exact.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-inline.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-literal.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-other.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-settings.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-weak.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-coexist.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-collision.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-neutral.json"
   ],
   "cases": [
     {

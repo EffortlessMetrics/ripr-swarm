@@ -1,7 +1,7 @@
 use super::*;
 use crate::analysis::classify_seam;
 use crate::analysis::repair_route::{RepairPacketIneligibility, repair_packet_eligibility};
-use crate::analysis::test_grip_evidence::evidence_for_seams;
+use crate::analysis::test_grip_evidence::{evidence_for_seams, panic_marker_test_entries};
 use crate::app::agent_brief::{
     AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
 };
@@ -338,5 +338,21 @@ fn source_mentions_do_not_manufacture_a_panic_limitation() -> Result<(), String>
             .iter()
             .all(|row| row.category != limit.as_str())
     );
+    let entries = panic_marker_test_entries()?;
+    assert_eq!(entries.len(), 16, "all real full and compact marker cases");
+    for (entry, expected) in entries {
+        let named: Vec<_> = static_limitations_for(&entry)
+            .into_iter()
+            .filter(|row| row.category == limit.as_str())
+            .collect();
+        assert_eq!(named.len(), usize::from(expected));
+        if expected {
+            assert_eq!(named[0].stage, "discriminate");
+            assert_eq!(named[0].state, "no");
+            assert_eq!(named[0].reason, entry.evidence.discriminate.summary);
+            assert!(named[0].reason.starts_with(&format!("{}: ", limit.as_str())));
+            assert!(named[0].reason.contains("passes only if something panics"));
+        }
+    }
     Ok(())
 }
