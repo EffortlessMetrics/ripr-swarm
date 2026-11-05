@@ -474,17 +474,43 @@ fn load_receipts(dirs: &[PathBuf]) -> Result<BTreeMap<String, Value>, String> {
     Ok(by_date)
 }
 
+/// A scoreboard value counts only when its source row completed
+/// (`meets_target` or `below_target`). A `failed`, `incomplete` or otherwise
+/// inadmissible row can retain the worst numeric sample, which must not read
+/// as an established result.
 fn dx_metric(report: &Value, id: &str) -> Option<f64> {
     report["metrics"]
         .as_array()?
         .iter()
         .find(|m| m["id"] == json!(id))
-        .filter(|m| m["status"] != json!("not_measured"))
+        .filter(|m| matches!(m["status"].as_str(), Some("meets_target" | "below_target")))
         .and_then(|m| m["value"].as_f64())
+}
+
+/// The source status of a row that carries a value but is not admissible, so the
+/// page can say why it shows nothing.
+fn dx_inadmissible(report: &Value, id: &str) -> Option<String> {
+    let row = report["metrics"]
+        .as_array()?
+        .iter()
+        .find(|m| m["id"] == json!(id))?;
+    let status = row["status"].as_str()?;
+    (!matches!(status, "meets_target" | "below_target" | "not_measured"))
+        .then(|| status.to_string())
 }
 
 fn pct(value: f64) -> String {
     format!("{:.1}%", value * 100.0)
+}
+
+/// The value as text, or why there is none: a source row that failed or was
+/// inadmissible says so instead of reading as simply unmeasured.
+fn absent_text(value: &Value, source_status: &Value, fmt: fn(f64) -> String) -> String {
+    match (value.as_f64(), source_status.as_str()) {
+        (Some(v), _) => fmt(v),
+        (None, Some(status)) => format!("not established (source row {status})"),
+        (None, None) => "not measured".to_string(),
+    }
 }
 
 fn state(met: Option<bool>) -> &'static str {
@@ -529,6 +555,7 @@ fn evaluate(
         .as_f64()
         .unwrap_or(1000.0);
     let agent = dx.and_then(|r| dx_metric(r, "agent.fix_success_rate"));
+    let agent_status = dx.and_then(|r| dx_inadmissible(r, "agent.fix_success_rate"));
     let agent_bar = bars["agent_fix_success_rate"]["bar"]
         .as_f64()
         .unwrap_or(1.0);
@@ -543,9 +570,15 @@ fn evaluate(
         ),
         ("python", "trust.verdict_corpus_python_false_actionable"),
     ];
-    let fa: Vec<(&str, Option<f64>)> = fa_ids
+    let fa: Vec<(&str, Option<f64>, Option<String>)> = fa_ids
         .iter()
-        .map(|(lang, id)| (*lang, dx.and_then(|r| dx_metric(r, id))))
+        .map(|(lang, id)| {
+            (
+                *lang,
+                dx.and_then(|r| dx_metric(r, id)),
+                dx.and_then(|r| dx_inadmissible(r, id)),
+            )
+        })
         .collect();
 
     let mut failures = Vec::new();
@@ -619,10 +652,10 @@ fn evaluate(
         "numbers": {
             "repair_start_rate": {"bar": bar_rate, "by_language": start_rows},
             "first_useful_result_p50_ms": {"value": p50, "bar": p50_bar, "met": p50.map(|v| v < p50_bar), "gated": false},
-            "agent_fix_success_rate": {"value": agent, "bar": agent_bar, "met": agent.map(|v| v >= agent_bar), "source": "dx-scoreboard agent.fix_success_rate"},
+            "agent_fix_success_rate": {"value": agent, "source_status": agent_status, "bar": agent_bar, "met": agent.map(|v| v >= agent_bar), "source": "dx-scoreboard agent.fix_success_rate"},
             "false_actionable_rate": {
                 "bar": fa_bar,
-                "by_language": fa.iter().map(|(lang, v)| json!({"language": lang, "value": v, "met": v.map(|x| x <= fa_bar)})).collect::<Vec<_>>(),
+                "by_language": fa.iter().map(|(lang, v, status)| json!({"language": lang, "value": v, "source_status": status, "met": v.map(|x| x <= fa_bar)})).collect::<Vec<_>>(),
                 "source": "dx-scoreboard trust.verdict_corpus_*false_actionable",
             },
         },
@@ -673,7 +706,7 @@ fn render_markdown(page: &Value) -> String {
     let a = &n["agent_fix_success_rate"];
     out.push_str(&format!(
         "| Agent fix success | {} | at least {} | {} |\n",
-        a["value"].as_f64().map_or("not measured".to_string(), pct),
+        absent_text(&a["value"], &a["source_status"], pct),
         pct(a["bar"].as_f64().unwrap_or(0.0)),
         state(a["met"].as_bool()),
     ));
@@ -682,9 +715,7 @@ fn render_markdown(page: &Value) -> String {
         out.push_str(&format!(
             "| False-actionable rate, {} verdict corpus | {} | at most {} | {} |\n",
             row["language"].as_str().unwrap_or("?"),
-            row["value"]
-                .as_f64()
-                .map_or("not measured".to_string(), pct),
+            absent_text(&row["value"], &row["source_status"], pct),
             pct(f["bar"].as_f64().unwrap_or(0.0)),
             state(row["met"].as_bool()),
         ));
@@ -954,6 +985,33 @@ mod tests {
             dx_metric(&report, "trust.verdict_corpus_false_actionable"),
             Some(0.0)
         );
+    }
+
+    #[test]
+    fn a_failed_source_row_with_a_value_is_not_established() -> Result<(), String> {
+        let dx = json!({"metrics": [
+            {"id": "agent.fix_success_rate", "status": "failed", "value": 1.0},
+            {"id": "trust.verdict_corpus_false_actionable", "status": "incomplete", "value": 0.0},
+            {"id": "trust.verdict_corpus_python_false_actionable", "status": "meets_target", "value": 0.0},
+        ]});
+        let e = evaluate(
+            &by_date(vec![receipt("2026-11-04", "xtask_measure", 7, vec![])]),
+            &bars(),
+            Some(&dx),
+        )?;
+        let agent = &e.page["numbers"]["agent_fix_success_rate"];
+        assert_eq!(agent["value"], Value::Null);
+        assert_eq!(agent["met"], Value::Null);
+        assert_eq!(agent["source_status"], json!("failed"));
+        let page = render_markdown(&e.page);
+        assert!(page.contains("| Agent fix success | not established (source row failed) |"));
+        assert!(!page.contains("| Agent fix success | 100.0% |"));
+        // The complete positive case still reads as met.
+        let python = &e.page["numbers"]["false_actionable_rate"]["by_language"][2];
+        assert_eq!(python["met"], json!(true));
+        let rust = &e.page["numbers"]["false_actionable_rate"]["by_language"][0];
+        assert_eq!(rust["met"], Value::Null);
+        Ok(())
     }
 
     #[test]
