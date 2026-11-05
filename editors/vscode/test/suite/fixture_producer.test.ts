@@ -100,7 +100,7 @@ suite('Genuine fixture producer process boundary', function () {
     const filename = path.join(root, 'native argv echo.js');
     fs.writeFileSync(filename, 'process.stdout.write(JSON.stringify(process.argv.slice(2)));');
     const expected = ['', 'directory with spaces/host', 'embedded"quote', 'backslashes\\"quote',
-      'C:\\directory with spaces\\', 'two trailing\\\\', '& literal | < > % !'];
+      String.raw`C:\path\to\directory with spaces` + '\\', 'two trailing\\\\', '& literal | < > % !'];
     const transcript = await runFixtureProducer(process.execPath, [filename, ...expected], {
       cwd: root, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeoutMs: nativeBudget
     });
