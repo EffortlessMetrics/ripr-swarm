@@ -5376,8 +5376,11 @@ mod tests {
             !baseline.is_ambiguous(),
             "retained attempt artifacts beyond the exact-capture budget must not make the baseline ambiguous"
         );
-        fs::write(fixture.root.join("tests/pricing.rs"), SELECTED_TEST_COMPLIANT_EDIT)
-            .map_err(|err| format!("write selected test: {err}"))?;
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            SELECTED_TEST_COMPLIANT_EDIT,
+        )
+        .map_err(|err| format!("write selected test: {err}"))?;
         assert_eq!(
             evaluate_repository_edit_cage(&baseline)?.status,
             EditCageVerdictStatus::Compliant
