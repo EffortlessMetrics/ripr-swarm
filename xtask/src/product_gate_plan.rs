@@ -1032,7 +1032,10 @@ mod tests {
             "[profile.ci]\n",
             "[profile.ci]\noverrides = [{ filter = \"test(slow)\", retries = 3 }]\n",
         );
-        assert_ne!(inline, without_override, "fixture must add inline overrides");
+        assert_ne!(
+            inline, without_override,
+            "fixture must add inline overrides"
+        );
         toml::from_str::<toml::Value>(&inline).expect("inline override must parse");
         assert!(
             nextest_config_violations(&inline)
@@ -1065,7 +1068,10 @@ mod tests {
 
         let quoted = row
             .replace("profile.ci.overrides", "\"profile\".\"ci\".\"overrides\"")
-            .replace("junit.store-success-output", "\"junit\".\"store-success-output\"");
+            .replace(
+                "junit.store-success-output",
+                "\"junit\".\"store-success-output\"",
+            );
         assert!(nextest_config_violations(&format!("{base}\n{quoted}")).is_empty());
         let inline = format!(
             "[profile.ci]\nretries = 0\noverrides = [{{ filter = {filter:?}, junit = {{ store-success-output = true }} }}]\n[profile.ci.junit]\npath = 'junit.xml'\n"
