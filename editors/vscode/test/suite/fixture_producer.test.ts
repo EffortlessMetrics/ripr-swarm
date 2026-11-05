@@ -72,7 +72,9 @@ suite('Genuine fixture producer process boundary', function () {
   function run(source: string, extra: Partial<Parameters<typeof runFixtureProducer>[2]> = {}): Promise<string> {
     fs.writeFileSync(path.join(root, 'fixture.js'), source);
     return runFixtureProducer(process.execPath, ['fixture.js'], {
-      cwd: root, env: { ...process.env, RIPR_FIXTURE_CONTROL: 'literal value with spaces' },
+      cwd: root, env: {
+        ...process.env, ELECTRON_RUN_AS_NODE: '1', RIPR_FIXTURE_CONTROL: 'literal value with spaces'
+      },
       timeoutMs: nativeBudget, ...extra
     });
   }
@@ -101,6 +103,12 @@ suite('Genuine fixture producer process boundary', function () {
       assert.ok(error.stderr.includes('native stderr'));
       return true;
     });
+  });
+
+  test('retains the final transcript before accepting native success', async () => {
+    const expected = `${'producer output\n'.repeat(32_768)}final producer receipt\n`;
+    const transcript = await run(`process.stdout.write(${JSON.stringify(expected)});`);
+    assert.strictEqual(transcript, expected);
   });
 
   test('reports the actual missing executable as a spawn failure', async () => {
@@ -135,8 +143,7 @@ suite('Genuine fixture producer process boundary', function () {
   });
 
   for (const mode of ['timeout-after-primary-exit', 'cancel-active-tree'] as const) {
-    const title = mode === 'timeout-after-primary-exit' && process.platform === 'win32' ? 'timeout-active-job' : mode;
-    test(`${title} terminates an owned descendant that ignores SIGTERM and inherits pipes`, async function () {
+    test(`${mode} terminates an owned descendant that ignores SIGTERM and inherits pipes`, async function () {
       this.timeout(60_000);
       fs.writeFileSync(path.join(root, 'descendant.js'), `
         process.on('SIGTERM', () => {});
@@ -152,20 +159,27 @@ suite('Genuine fixture producer process boundary', function () {
         const timer = setInterval(() => {
           if (fs.existsSync('descendant.pid')) {
             clearInterval(timer);
-            // The Windows Job Object closes descendants with its native parent;
-            // keep that parent alive to exercise the Windows deadline itself.
-            ${mode === 'timeout-after-primary-exit' && process.platform !== 'win32'
+            ${mode === 'timeout-after-primary-exit'
               ? 'child.unref(); process.exit(0);' : 'setInterval(() => {}, 1000);'}
           }
         }, 20);
       `, { signal: cancelled.signal, timeoutMs: mode === 'timeout-after-primary-exit' ? nativeBudget : 30_000 });
       // Attach the rejection handler before waiting for the child handshake.
-      const observed = outcome.then(value => ({ value }), error => ({ error }));
+      let settled = false;
+      const observed = outcome.then(value => ({ value }), error => ({ error })).then(result => {
+        settled = true;
+        return result;
+      });
       await waitFor(() => fs.existsSync(path.join(root, 'descendant.pid')), 'descendant did not establish the cleanup subject');
       const parent = Number(fs.readFileSync(path.join(root, 'parent.pid'), 'utf8'));
       const descendant = Number(fs.readFileSync(path.join(root, 'descendant.pid'), 'utf8'));
       ownedPids.add(parent); ownedPids.add(descendant);
       assert.ok(running(descendant), 'the descendant must actually be alive before the control');
+      if (mode === 'timeout-after-primary-exit') {
+        await waitFor(() => !running(parent), 'the primary did not exit before the pipe-holding control');
+        assert.strictEqual(settled, false, 'the producer settled before exercising inherited pipes');
+        assert.ok(running(descendant), 'the descendant must still hold pipes after primary exit');
+      }
       if (mode === 'cancel-active-tree') { cancelled.abort('explicit-stop'); }
       const result = await within(observed);
       assert.ok('error' in result && result.error instanceof FixtureProducerError, JSON.stringify(result));
@@ -188,15 +202,24 @@ suite('Genuine fixture producer adapter', () => {
   let oldPath: string | undefined;
   let oldTimeout: string | undefined;
   let oldCase: string | undefined;
+  let oldElectron: string | undefined;
 
   setup(function () {
     if (process.platform === 'win32') { this.skip(); return; }
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-queue-adapter-'));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr queue adapter '));
     oldPath = process.env.PATH;
     oldTimeout = process.env.RIPR_TEST_PRODUCER_TIMEOUT_MS;
     oldCase = process.env.RIPR_FIXTURE_CASE;
+    oldElectron = process.env.ELECTRON_RUN_AS_NODE;
     const cargo = path.join(root, 'cargo');
-    fs.writeFileSync(cargo, `#!${process.execPath}
+    const interpreter = path.join(root, 'node runtime');
+    const script = path.join(root, 'cargo fixture.js');
+    const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
+    // A shebang cannot quote an interpreter path containing spaces. Exercise
+    // the same quoted exec boundary for both the mock Cargo and its interpreter.
+    fs.writeFileSync(interpreter, `#!/bin/sh\nexec ${quote(process.execPath)} "$@"\n`, { mode: 0o700 });
+    fs.writeFileSync(cargo, `#!/bin/sh\nexec ${quote(interpreter)} ${quote(script)} "$@"\n`, { mode: 0o700 });
+    fs.writeFileSync(script, `
 const fs = require('fs'), path = require('path');
 const output = process.env.RIPR_CORPUS_PROOF_EXPORT_DIR;
 if (process.env.RIPR_FIXTURE_CASE === 'timeout') {
@@ -220,14 +243,18 @@ if (process.env.RIPR_FIXTURE_CASE === 'timeout') {
     console.log('1 passed; 0 failed; 0 ignored');
   }
 }
-`, { mode: 0o700 });
+`);
     process.env.PATH = `${root}${path.delimiter}${oldPath}`;
+    process.env.ELECTRON_RUN_AS_NODE = '1';
     process.env.RIPR_TEST_PRODUCER_TIMEOUT_MS = '5000';
     delete process.env.RIPR_FIXTURE_CASE;
   });
   teardown(() => {
     if (process.platform === 'win32') { return; }
-    for (const [key, value] of [['PATH', oldPath], ['RIPR_TEST_PRODUCER_TIMEOUT_MS', oldTimeout], ['RIPR_FIXTURE_CASE', oldCase]]) {
+    for (const [key, value] of [
+      ['PATH', oldPath], ['RIPR_TEST_PRODUCER_TIMEOUT_MS', oldTimeout],
+      ['RIPR_FIXTURE_CASE', oldCase], ['ELECTRON_RUN_AS_NODE', oldElectron]
+    ]) {
       if (value === undefined) { delete process.env[key!]; }
       else { process.env[key!] = value; }
     }

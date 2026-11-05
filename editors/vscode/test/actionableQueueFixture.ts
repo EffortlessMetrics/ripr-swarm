@@ -73,7 +73,9 @@ export async function runFixtureProducer(
     let failure: { kind: string; message: string } | undefined;
     let child: ReturnType<typeof spawnProbeProcess>;
     try {
-      child = spawnProbeProcess(command, args, false, { cwd: options.cwd, env: options.env });
+      child = spawnProbeProcess(command, args, false, {
+        cwd: options.cwd, env: options.env, drainOutput: true
+      });
     } catch (error) {
       reject(new FixtureProducerError('spawn_failure', `fixture producer could not start: ${String(error)}`));
       return;
