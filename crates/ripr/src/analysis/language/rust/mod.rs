@@ -4038,52 +4038,59 @@ mod tests {
 
     #[test]
     fn repo_omits_generator_stimulus_but_keeps_product_gap() -> Result<(), String> {
-        let root = temp_root("generator-repo-gap")?;
-        write(
-            &root.join("Cargo.toml"),
-            "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck='1'\n",
-        )?;
-        write(
-            &root.join("src/lib.rs"),
-            "use quickcheck::Arbitrary;\nstruct Pair(u8);\nimpl quickcheck::Arbitrary for Pair {\n    fn arbitrary(g: &mut quickcheck::Gen) -> Self {\n        Pair(u8::arbitrary(g).wrapping_add(2))\n    }\n}\npub fn product(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
-        )?;
-        let result = RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
-        assert!(
-            result.findings.iter().all(|f| f.probe.location.line != 5),
-            "generator evidence is not a repo-wide production subject: {:?}",
-            result.findings
-        );
-        let product: Vec<_> = result
-            .findings
-            .iter()
-            .filter(|f| f.probe.location.line == 9)
-            .collect();
-        assert!(
-            !product.is_empty(),
-            "product subject must be seeded: {:?}",
-            result.findings
-        );
-        assert!(
-            product.iter().any(|f| f.canonical_gap.is_some()),
-            "ordinary product retains a canonical gap: {product:?}"
-        );
-        // The same source must be probeable when provider identity is not verified.
-        write(
-            &root.join("Cargo.toml"),
-            "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck={version='1',optional=true}\n",
-        )?;
-        let unverified =
-            RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
-        assert!(
-            unverified
-                .findings
-                .iter()
-                .any(|f| f.probe.location.line == 5),
-            "unverified generator expression must be probeable: {:?}",
-            unverified.findings
-        );
-        fs::remove_dir_all(root).map_err(|error| error.to_string())?;
-        Ok(())
+        crate::testing::compiler_environment::plain(
+            module_path!(),
+            "repo_omits_generator_stimulus_but_keeps_product_gap",
+            || {
+                let root = temp_root("generator-repo-gap")?;
+                write(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck='1'\n",
+                )?;
+                write(
+                    &root.join("src/lib.rs"),
+                    "use quickcheck::Arbitrary;\nstruct Pair(u8);\nimpl quickcheck::Arbitrary for Pair {\n    fn arbitrary(g: &mut quickcheck::Gen) -> Self {\n        Pair(u8::arbitrary(g).wrapping_add(2))\n    }\n}\npub fn product(a: u8) -> u8 {\n    a.wrapping_add(2)\n}\n",
+                )?;
+                let result =
+                    RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+                assert!(
+                    result.findings.iter().all(|f| f.probe.location.line != 5),
+                    "generator evidence is not a repo-wide production subject: {:?}",
+                    result.findings
+                );
+                let product: Vec<_> = result
+                    .findings
+                    .iter()
+                    .filter(|f| f.probe.location.line == 9)
+                    .collect();
+                assert!(
+                    !product.is_empty(),
+                    "product subject must be seeded: {:?}",
+                    result.findings
+                );
+                assert!(
+                    product.iter().any(|f| f.canonical_gap.is_some()),
+                    "ordinary product retains a canonical gap: {product:?}"
+                );
+                // The same source must be probeable when provider identity is not verified.
+                write(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname='generator'\nversion='0.1.0'\nedition='2024'\n[dependencies]\nquickcheck={version='1',optional=true}\n",
+                )?;
+                let unverified =
+                    RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+                assert!(
+                    unverified
+                        .findings
+                        .iter()
+                        .any(|f| f.probe.location.line == 5),
+                    "unverified generator expression must be probeable: {:?}",
+                    unverified.findings
+                );
+                fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+                Ok(())
+            },
+        )
     }
 
     fn repo_options(root: &Path) -> AnalysisOptions {
