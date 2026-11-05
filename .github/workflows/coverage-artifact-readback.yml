@@ -1,0 +1,417 @@
+name: Temporary Perl Coverage artifact readback
+
+on:
+  push:
+    branches:
+      - codex/13163-lcov-artifact-readback
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  readback:
+    if: github.repository == 'EffortlessMetrics/ripr-swarm' && github.event_name == 'push' && github.ref == 'refs/heads/codex/13163-lcov-artifact-readback'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Inspect the fixed completed Coverage artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import signal
+          import sys
+          import tempfile
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          REPO = "EffortlessMetrics/ripr-swarm"
+          HEAD = "908636876f6ecbd0c2b8ad74e733e0376f4eb328"
+          MERGE = "d4ce66f7e249765a789a57db21c4abd9243b9d99"
+          BASE = "734389b783aad8b017dde07cf06a0bbf5eee77e6"
+          TREE = "fb19425c95d539f8d3421712ce827993247e7018"
+          RUN, ATTEMPT, JOB, ARTIFACT = 42090707075, 2, 127477780506, 13449366409
+          ZIP_BYTES = 6108639
+          ZIP_SHA = "16e83b17719c106098bd5f1c009537616db5fb8a076ae3067b1fad35aee1c129"
+          READER_SHA = "d7f5872d438bcad490f366aadc90540ce40c8c78c7cacac2ec72c291cb65617c"
+          NATIVE_ROOT = "/home/runner/work/ripr-swarm/ripr-swarm"
+          TOKEN = os.environ.pop("GH_TOKEN", "")
+          STAGE = "initialization"
+          READER_B64 = """
+          IiIiSW5zcGVjdCBhIGJvdW5kZWQgTENPViBaSVAgYWdhaW5zdCBjYWxsZXItc3VwcGxpZWQgcmV2aXNpb24vc291cmNlIHByb2Jlcy4KCkludmVudG9yeSBz
+          Y2hlbWEgKHJpcHIuYm91bmRfbGNvdl9pbnZlbnRvcnkudjEpOgogIGJpbmRpbmc6IHtoZWFkLCBjaGVja291dCwgYmFzZSwgYXJjaGl2ZV9zaGEyNTYsIG5h
+          dGl2ZV9zb3VyY2Vfcm9vdH0KICBzb3VyY2VzOiBbe3JlcG9zaXRvcnlfcGF0aCwgbG9jYWxfcGF0aCwgZ2l0X2Jsb2IsIHNoYTI1NiwKICAgICAgICAgICAg
+          IHByb2JlczogW3tsaW5lLCBzdGF0ZW1lbnQsIGV4cGVjdGVkX3N0YXRlLCBwdXJwb3NlP31dfV0KQWxsIHBhdGhzIGluIHNvdXJjZXMgYXJlIGV4YWN0OiBy
+          ZXBvc2l0b3J5X3BhdGggaXMgcmVsYXRpdmUsIGxvY2FsX3BhdGggYWJzb2x1dGUuCmV4cGVjdGVkX3N0YXRlIGlzIGNvdmVyZWQsIG1hcHBlZF96ZXJvLCBv
+          ciBub3RfbWFwcGVkLiBzdGF0ZW1lbnQgbXVzdCBtYXRjaCB0aGUKdHJpbW1lZCBleGFjdCBzb3VyY2UgbGluZS4gTm8gcHJvYmUgcmVsb2NhdGlvbiwgY291
+          bnRlciBzdW1tYXRpb24gYWNyb3NzIGFsaWFzZXMsCm9yIHBlci10ZXN0IGF0dHJpYnV0aW9uIGlzIHBlcmZvcm1lZC4gVGhlIGNhbGxlciBtdXN0IGluZGVw
+          ZW5kZW50bHkgZXN0YWJsaXNoCnRoZSBuYXRpdmUgcnVuL2FyY2hpdmUvR2l0IHJlbGF0aW9uc2hpcDsgdGhpcyBvZmZsaW5lIHJlYWRlciBjaGVja3Mgc3Vw
+          cGxpZWQKYmluZGluZ3MgYW5kIGxvY2FsIGJ5dGVzLCBub3QgR2l0SHViIG9yIGNvbXBsZXRpb24gb2YgbmF0aXZlIHRlc3QgZXhlY3V0aW9uLgoKRXhpdCAw
+          OiB2YWxpZCByZXBvcnQgYW5kIGFsbCBleHBlY3RlZCBwcm9iZSBzdGF0ZXMgbWF0Y2guCkV4aXQgMTogdmFsaWQgcmVwb3J0IGJ1dCBhIHByb2JlIHN0YXRl
+          IGRpZmZlcnMgKGluY2x1ZGluZyByZXF1aXJlZCB6ZXJvL21pc3NpbmcpLgpFeGl0IDI6IHJlamVjdGVkIGJpbmRpbmcsIG1hbGZvcm1lZC9hbWJpZ3VvdXMg
+          Y29yZSByZWNvcmRzLCBvciByZXNvdXJjZSBidWRnZXQuCiIiIgoKaW1wb3J0IGFyZ3BhcnNlCmltcG9ydCBjb2xsZWN0aW9ucwppbXBvcnQgaGFzaGxpYgpp
+          bXBvcnQgaW8KaW1wb3J0IGpzb24KaW1wb3J0IHBvc2l4cGF0aAppbXBvcnQgcmUKaW1wb3J0IHN5cwppbXBvcnQgemlwZmlsZQpmcm9tIHBhdGhsaWIgaW1w
+          b3J0IFBhdGgKCgpMSU1JVFMgPSB7CiAgICAiYXJjaGl2ZV9ieXRlcyI6IDY0ICogMTAyNCAqIDEwMjQsCiAgICAidW5jb21wcmVzc2VkX2J5dGVzIjogNTEy
+          ICogMTAyNCAqIDEwMjQsCiAgICAibWVtYmVycyI6IDgsCiAgICAibGluZV9ieXRlcyI6IDEwMjQgKiAxMDI0LAogICAgImludmVudG9yeV9ieXRlcyI6IDEw
+          MjQgKiAxMDI0LAogICAgInNvdXJjZV9ieXRlcyI6IDE2ICogMTAyNCAqIDEwMjQsCiAgICAic291cmNlcyI6IDMyLAogICAgInByb2JlcyI6IDEyOCwKfQpT
+          VEFURVMgPSB7ImNvdmVyZWQiLCAibWFwcGVkX3plcm8iLCAibm90X21hcHBlZCJ9ClNVTU1BUllfRklFTERTID0geyJGTkYiLCAiRk5IIiwgIkxGIiwgIkxI
+          IiwgIkJSRiIsICJCUkgifQoKCmNsYXNzIFJlamVjdGVkKEV4Y2VwdGlvbik6CiAgICBkZWYgX19pbml0X18oc2VsZiwgY29kZSwgZGV0YWlsKToKICAgICAg
+          ICBzdXBlcigpLl9faW5pdF9fKGRldGFpbCkKICAgICAgICBzZWxmLmNvZGUgPSBjb2RlCgoKZGVmIHJlcXVpcmUoY29uZGl0aW9uLCBjb2RlLCBkZXRhaWwp
+          OgogICAgaWYgbm90IGNvbmRpdGlvbjoKICAgICAgICByYWlzZSBSZWplY3RlZChjb2RlLCBkZXRhaWwpCgoKZGVmIGJvdW5kZWRfcmVhZChwYXRoLCBsaW1p
+          dCk6CiAgICB3aXRoIFBhdGgocGF0aCkub3BlbigicmIiKSBhcyBzdHJlYW06CiAgICAgICAgZGF0YSA9IHN0cmVhbS5yZWFkKGxpbWl0ICsgMSkKICAgIHJl
+          cXVpcmUobGVuKGRhdGEpIDw9IGxpbWl0LCAiYnVkZ2V0IiwgZiJ7cGF0aH06IGV4Y2VlZHMge2xpbWl0fSBieXRlcyIpCiAgICByZXR1cm4gZGF0YQoKCmRl
+          ZiBkaWdlc3QoZGF0YSk6CiAgICByZXR1cm4gaGFzaGxpYi5zaGEyNTYoZGF0YSkuaGV4ZGlnZXN0KCkKCgpkZWYgZ2l0X2Jsb2IoZGF0YSk6CiAgICByZXR1
+          cm4gaGFzaGxpYi5zaGExKGIiYmxvYiAiICsgc3RyKGxlbihkYXRhKSkuZW5jb2RlKCkgKyBiIlwwIiArIGRhdGEpLmhleGRpZ2VzdCgpCgoKZGVmIHVuc2ln
+          bmVkKHRleHQsIHBvc2l0aXZlPUZhbHNlKToKICAgIHJlcXVpcmUoYm9vbChyZS5mdWxsbWF0Y2gociJbMC05XXsxLDIwfSIsIHRleHQpKSwgImNvdW50ZXIi
+          LCAiaW52YWxpZCBpbnRlZ2VyIikKICAgIHZhbHVlID0gaW50KHRleHQpCiAgICByZXF1aXJlKHZhbHVlIDw9IDIqKjY0IC0gMSBhbmQgKHZhbHVlID4gMCBv
+          ciBub3QgcG9zaXRpdmUpLAogICAgICAgICAgICAiY291bnRlciIsICJpbnRlZ2VyIG91dHNpZGUgYWRtaXR0ZWQgcmFuZ2UiKQogICAgcmV0dXJuIHZhbHVl
+          CgoKZGVmIG5vcm1hbGl6ZShwYXRoKToKICAgIHJldHVybiBwb3NpeHBhdGgubm9ybXBhdGgocGF0aC5yZXBsYWNlKCJcXCIsICIvIikpCgoKZGVmIGxvYWRf
+          aW52ZW50b3J5KHBhdGgsIGV4cGVjdGVkKToKICAgIGRhdGEgPSBib3VuZGVkX3JlYWQocGF0aCwgTElNSVRTWyJpbnZlbnRvcnlfYnl0ZXMiXSkKICAgIGlu
+          dmVudG9yeSA9IGpzb24ubG9hZHMoZGF0YSkKICAgIHJlcXVpcmUoaW52ZW50b3J5LmdldCgic2NoZW1hIikgPT0gInJpcHIuYm91bmRfbGNvdl9pbnZlbnRv
+          cnkudjEiLAogICAgICAgICAgICAiaW52ZW50b3J5IiwgInVuc3VwcG9ydGVkIGludmVudG9yeSBzY2hlbWEiKQogICAgYmluZGluZyA9IGludmVudG9yeVsi
+          YmluZGluZyJdCiAgICBmb3IgbmFtZSBpbiAoImhlYWQiLCAiY2hlY2tvdXQiLCAiYmFzZSIsICJhcmNoaXZlX3NoYTI1NiIpOgogICAgICAgIHZhbHVlID0g
+          YmluZGluZy5nZXQobmFtZSkKICAgICAgICBzaXplID0gNjQgaWYgbmFtZSA9PSAiYXJjaGl2ZV9zaGEyNTYiIGVsc2UgNDAKICAgICAgICByZXF1aXJlKGlz
+          aW5zdGFuY2UodmFsdWUsIHN0cikgYW5kIGJvb2wocmUuZnVsbG1hdGNoKGYiWzAtOWEtZl17e3tzaXplfX19IiwgdmFsdWUpKQogICAgICAgICAgICAgICAg
+          YW5kIHNldCh2YWx1ZSkgIT0geyIwIn0sICJiaW5kaW5nIiwgZiJtaXNzaW5nIG9yIGludmFsaWQge25hbWV9IikKICAgICAgICByZXF1aXJlKHZhbHVlID09
+          IGV4cGVjdGVkW25hbWVdLCAiYmluZGluZyIsIGYic3VwcGxpZWQge25hbWV9IG1pc21hdGNoIikKICAgIHByZWZpeCA9IGJpbmRpbmcuZ2V0KCJuYXRpdmVf
+          c291cmNlX3Jvb3QiKQogICAgcmVxdWlyZShpc2luc3RhbmNlKHByZWZpeCwgc3RyKSBhbmQgcHJlZml4LnN0YXJ0c3dpdGgoIi8iKQogICAgICAgICAgICBh
+          bmQgbm9ybWFsaXplKHByZWZpeCkgPT0gcHJlZml4IGFuZCBwcmVmaXggIT0gIi8iLAogICAgICAgICAgICAiYmluZGluZyIsICJuYXRpdmVfc291cmNlX3Jv
+          b3QgbXVzdCBiZSBhbiBleGFjdCBhYnNvbHV0ZSBQT1NJWCBwYXRoIikKICAgIHNvdXJjZXMgPSBpbnZlbnRvcnlbInNvdXJjZXMiXQogICAgcmVxdWlyZShp
+          c2luc3RhbmNlKHNvdXJjZXMsIGxpc3QpIGFuZCAwIDwgbGVuKHNvdXJjZXMpIDw9IExJTUlUU1sic291cmNlcyJdLAogICAgICAgICAgICAiaW52ZW50b3J5
+          IiwgInNvdXJjZSBjb3VudCBvdXRzaWRlIGFkbWl0dGVkIGJ1ZGdldCIpCiAgICBwYXRocywgcHJvYmVzLCBzb3VyY2VfcmVjZWlwdHMgPSBzZXQoKSwgW10s
+          IFtdCiAgICBmb3Igc291cmNlIGluIHNvdXJjZXM6CiAgICAgICAgcGF0aCA9IHNvdXJjZVsicmVwb3NpdG9yeV9wYXRoIl0KICAgICAgICByZXF1aXJlKGlz
+          aW5zdGFuY2UocGF0aCwgc3RyKSBhbmQgcGF0aCBhbmQgbm90IHBhdGguc3RhcnRzd2l0aCgiLyIpCiAgICAgICAgICAgICAgICBhbmQgIlxcIiBub3QgaW4g
+          cGF0aCBhbmQgbm9ybWFsaXplKHBhdGgpID09IHBhdGgKICAgICAgICAgICAgICAgIGFuZCAiLi4iIG5vdCBpbiBwYXRoLnNwbGl0KCIvIikgYW5kIHBhdGgg
+          bm90IGluIHBhdGhzLAogICAgICAgICAgICAgICAgImludmVudG9yeSIsICJhbWJpZ3VvdXMgb3IgaW52YWxpZCByZXBvc2l0b3J5IHBhdGgiKQogICAgICAg
+          IHBhdGhzLmFkZChwYXRoKQogICAgICAgIGxvY2FsID0gUGF0aChzb3VyY2VbImxvY2FsX3BhdGgiXSkKICAgICAgICByZXF1aXJlKGxvY2FsLmlzX2Fic29s
+          dXRlKCksICJpbnZlbnRvcnkiLCAibG9jYWwgc291cmNlIHBhdGggbXVzdCBiZSBhYnNvbHV0ZSIpCiAgICAgICAgY29udGVudCA9IGJvdW5kZWRfcmVhZChs
+          b2NhbCwgTElNSVRTWyJzb3VyY2VfYnl0ZXMiXSkKICAgICAgICByZXF1aXJlKGRpZ2VzdChjb250ZW50KSA9PSBzb3VyY2VbInNoYTI1NiJdIGFuZCBnaXRf
+          YmxvYihjb250ZW50KSA9PSBzb3VyY2VbImdpdF9ibG9iIl0sCiAgICAgICAgICAgICAgICAic291cmNlX2JpbmRpbmciLCBmInNvdXJjZSBieXRlL2Jsb2Ig
+          bWlzbWF0Y2g6IHtwYXRofSIpCiAgICAgICAgbGluZXMgPSBjb250ZW50LmRlY29kZSgidXRmLTgiLCBlcnJvcnM9InN0cmljdCIpLnNwbGl0bGluZXMoKQog
+          ICAgICAgIHNlbGVjdGVkID0gc291cmNlWyJwcm9iZXMiXQogICAgICAgIHJlcXVpcmUoaXNpbnN0YW5jZShzZWxlY3RlZCwgbGlzdCkgYW5kIHNlbGVjdGVk
+          LCAiaW52ZW50b3J5IiwgInNvdXJjZSBoYXMgbm8gcHJvYmVzIikKICAgICAgICBzZWVuX2xpbmVzID0gc2V0KCkKICAgICAgICBmb3IgcHJvYmUgaW4gc2Vs
+          ZWN0ZWQ6CiAgICAgICAgICAgIG51bWJlciA9IHByb2JlWyJsaW5lIl0KICAgICAgICAgICAgcmVxdWlyZSh0eXBlKG51bWJlcikgaXMgaW50IGFuZCAwIDwg
+          bnVtYmVyIDw9IGxlbihsaW5lcykgYW5kIG51bWJlciBub3QgaW4gc2Vlbl9saW5lcywKICAgICAgICAgICAgICAgICAgICAiaW52ZW50b3J5IiwgZiJpbnZh
+          bGlkL2R1cGxpY2F0ZSBleGFjdCBwcm9iZSBsaW5lOiB7cGF0aH0iKQogICAgICAgICAgICBzZWVuX2xpbmVzLmFkZChudW1iZXIpCiAgICAgICAgICAgIHJl
+          cXVpcmUoaXNpbnN0YW5jZShwcm9iZVsic3RhdGVtZW50Il0sIHN0cikgYW5kIHByb2JlWyJzdGF0ZW1lbnQiXQogICAgICAgICAgICAgICAgICAgIGFuZCBs
+          aW5lc1tudW1iZXIgLSAxXS5zdHJpcCgpID09IHByb2JlWyJzdGF0ZW1lbnQiXSwKICAgICAgICAgICAgICAgICAgICAic291cmNlX2xpbmUiLCBmImV4YWN0
+          IHByb2JlIHRleHQgbWlzbWF0Y2g6IHtwYXRofTp7bnVtYmVyfSIpCiAgICAgICAgICAgIHJlcXVpcmUocHJvYmVbImV4cGVjdGVkX3N0YXRlIl0gaW4gU1RB
+          VEVTLCAiaW52ZW50b3J5IiwgImludmFsaWQgZXhwZWN0ZWQgc3RhdGUiKQogICAgICAgICAgICBwcm9iZXMuYXBwZW5kKHsqKnByb2JlLCAicmVwb3NpdG9y
+          eV9wYXRoIjogcGF0aCwgIm1hcHBpbmdzIjogW119KQogICAgICAgIHNvdXJjZV9yZWNlaXB0cy5hcHBlbmQoeyJyZXBvc2l0b3J5X3BhdGgiOiBwYXRoLCAi
+          bG9jYWxfcGF0aCI6IHN0cihsb2NhbCksCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgImJ5dGVzIjogbGVuKGNvbnRlbnQpLCAic2hhMjU2Ijog
+          ZGlnZXN0KGNvbnRlbnQpLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICJnaXRfYmxvYiI6IGdpdF9ibG9iKGNvbnRlbnQpfSkKICAgIHJlcXVp
+          cmUobGVuKHByb2JlcykgPD0gTElNSVRTWyJwcm9iZXMiXSwgImJ1ZGdldCIsICJ0b28gbWFueSBwcm9iZXMiKQogICAgcmV0dXJuIGJpbmRpbmcsIHByb2Jl
+          cywgc291cmNlX3JlY2VpcHRzLCBkaWdlc3QoZGF0YSkKCgpkZWYgaW5zcGVjdChhcmNoaXZlLCBpbnZlbnRvcnksIGV4cGVjdGVkKToKICAgIGJpbmRpbmcs
+          IHByb2Jlcywgc291cmNlcywgaW52ZW50b3J5X2hhc2ggPSBsb2FkX2ludmVudG9yeShpbnZlbnRvcnksIGV4cGVjdGVkKQogICAgZGF0YSA9IGJvdW5kZWRf
+          cmVhZChhcmNoaXZlLCBMSU1JVFNbImFyY2hpdmVfYnl0ZXMiXSkKICAgIHJlcXVpcmUoZGlnZXN0KGRhdGEpID09IGJpbmRpbmdbImFyY2hpdmVfc2hhMjU2
+          Il0sICJhcmNoaXZlX2JpbmRpbmciLCAiWklQIGRpZ2VzdCBtaXNtYXRjaCIpCiAgICB3YW50ZWQgPSB7YmluZGluZ1sibmF0aXZlX3NvdXJjZV9yb290Il0g
+          KyAiLyIgKyBzWyJyZXBvc2l0b3J5X3BhdGgiXToKICAgICAgICAgICAgICBzWyJyZXBvc2l0b3J5X3BhdGgiXSBmb3IgcyBpbiBzb3VyY2VzfQogICAgcmVw
+          b3J0ID0gewogICAgICAgICJzY2hlbWEiOiAicmlwci5ib3VuZF9sY292X2luc3BlY3Rpb24udjEiLCAiYmluZGluZyI6IGJpbmRpbmcsCiAgICAgICAgImlu
+          dmVudG9yeSI6IHsicGF0aCI6IHN0cihpbnZlbnRvcnkpLCAic2hhMjU2IjogaW52ZW50b3J5X2hhc2h9LAogICAgICAgICJzb3VyY2VzIjogc291cmNlcywg
+          ImFyY2hpdmUiOiB7InBhdGgiOiBzdHIoYXJjaGl2ZSksICJieXRlcyI6IGxlbihkYXRhKSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg
+          ICAgICAgInNoYTI1NiI6IGRpZ2VzdChkYXRhKX0sCiAgICAgICAgImJ1ZGdldHMiOiBMSU1JVFMsICJzZWxlY3RlZF9yZWNvcmRzIjogW10sICJzb3VyY2Vf
+          cmVjb3JkcyI6IDAsCiAgICAgICAgImxpbmVfcmVjb3JkcyI6IDAsICJwb3NpdGl2ZV9saW5lX3JlY29yZHMiOiAwLAogICAgICAgICJyYXdfZmllbGRfY291
+          bnRzIjogY29sbGVjdGlvbnMuQ291bnRlcigpLAogICAgICAgICJleHBvcnRlZF9zdW1tYXJ5X3RvdGFscyI6IGNvbGxlY3Rpb25zLkNvdW50ZXIoKSwKICAg
+          ICAgICAibGltaXRzIjogWwogICAgICAgICAgICAiQmluZGluZ3MgYXJlIGNhbGxlciBzdXBwbGllZDsgbm8gcmVtb3RlIHJ1bi9HaXQgdmVyaWZpY2F0aW9u
+          IGlzIHBlcmZvcm1lZC4iLAogICAgICAgICAgICAiQ29yZSBTRi9EQSBmcmFtaW5nIGFuZCBjb3VudGVycyBhcmUgY2hlY2tlZDsgb3RoZXIgTENPViBmaWVs
+          ZHMgYXJlIHJldGFpbmVkIGFzIG1ldGFkYXRhLiIsCiAgICAgICAgICAgICJSYXcgREEvRk4gY291bnRzIG5lZWQgbm90IGVxdWFsIGV4cG9ydGVkIExGL0xI
+          L0ZORi9GTkggc3VtbWFyaWVzOyBlcXVhbGl0eSBpcyBub3QgcmVxdWlyZWQuIiwKICAgICAgICAgICAgIkFsaWFzIHJlY29yZHMgYW5kIG1hcHBlZCBjb3Vu
+          dHMgcmVtYWluIHNlcGFyYXRlOyBubyBwZXItdGVzdCBvciBwZXItYmluYXJ5IGF0dHJpYnV0aW9uLiIsCiAgICAgICAgICAgICJTdHJ1Y3R1cmFsIHJlcG9y
+          dCBjb21wbGV0aW9uIGRvZXMgbm90IGVzdGFibGlzaCB3aG9sZSBuYXRpdmUgZXhlY3V0aW9uIG9yIGFsbC1zb3VyY2UgY29tcGxldGVuZXNzLiIsCiAgICAg
+          ICAgXSwKICAgIH0KICAgIHNlZW5fcmVjb3Jkcywgc3BlbGxpbmdzID0gc2V0KCksIGNvbGxlY3Rpb25zLmRlZmF1bHRkaWN0KGxpc3QpCiAgICBpbnZlbnRv
+          cnlfZGlnZXN0LCBsY292X2RpZ2VzdCA9IGhhc2hsaWIuc2hhMjU2KCksIGhhc2hsaWIuc2hhMjU2KCkKICAgIGN1cnJlbnQsIHRlc3RfbmFtZSwgcGVuZGlu
+          Z190ZXN0ID0gTm9uZSwgIiIsIEZhbHNlCiAgICBhY3R1YWxfYnl0ZXMsIHBoeXNpY2FsX2xpbmVzLCBtYXhfbGluZV9ieXRlcywgbGFzdCA9IDAsIDAsIDAs
+          IGIiIgogICAgd2l0aCB6aXBmaWxlLlppcEZpbGUoaW8uQnl0ZXNJTyhkYXRhKSkgYXMgYnVuZGxlOgogICAgICAgIG1lbWJlcnMgPSBbaXRlbSBmb3IgaXRl
+          bSBpbiBidW5kbGUuaW5mb2xpc3QoKSBpZiBub3QgaXRlbS5pc19kaXIoKV0KICAgICAgICByZXF1aXJlKDAgPCBsZW4obWVtYmVycykgPD0gTElNSVRTWyJt
+          ZW1iZXJzIl0sICJidWRnZXQiLCAiaW52YWxpZCBmaWxlLW1lbWJlciBjb3VudCIpCiAgICAgICAgcmVxdWlyZShsZW4oe2kuZmlsZW5hbWUgZm9yIGkgaW4g
+          bWVtYmVyc30pID09IGxlbihtZW1iZXJzKSwKICAgICAgICAgICAgICAgICJhbWJpZ3VvdXNfbWVtYmVyIiwgImR1cGxpY2F0ZSBaSVAgbWVtYmVyIG5hbWVz
+          IikKICAgICAgICB0b3RhbCA9IHN1bShpLmZpbGVfc2l6ZSBmb3IgaSBpbiBtZW1iZXJzKQogICAgICAgIHJlcXVpcmUodG90YWwgPD0gTElNSVRTWyJ1bmNv
+          bXByZXNzZWRfYnl0ZXMiXSwgImJ1ZGdldCIsICJaSVAgZXhwYW5zaW9uIGV4Y2VlZHMgYnVkZ2V0IikKICAgICAgICBjYW5kaWRhdGVzID0gW2kgZm9yIGkg
+          aW4gbWVtYmVycyBpZiBpLmZpbGVuYW1lLmVuZHN3aXRoKCJsY292LmluZm8iKV0KICAgICAgICByZXF1aXJlKGxlbihjYW5kaWRhdGVzKSA9PSAxIGFuZCBj
+          YW5kaWRhdGVzWzBdLmZpbGVfc2l6ZSA+IDAsCiAgICAgICAgICAgICAgICAibWVtYmVyIiwgImV4cGVjdGVkIGV4YWN0bHkgb25lIG5vbmVtcHR5IGxjb3Yu
+          aW5mbyBtZW1iZXIiKQogICAgICAgIGl0ZW0gPSBjYW5kaWRhdGVzWzBdCiAgICAgICAgcmVwb3J0WyJhcmNoaXZlIl0udXBkYXRlKG1lbWJlcj1pdGVtLmZp
+          bGVuYW1lLCBtZW1iZXJfY291bnQ9bGVuKG1lbWJlcnMpLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBkZWNsYXJlZF91bmNvbXByZXNzZWRf
+          Ynl0ZXM9dG90YWwsIG1lbWJlcl9ieXRlcz1pdGVtLmZpbGVfc2l6ZSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgbWVtYmVyX2NyYzMyPWZv
+          cm1hdChpdGVtLkNSQywgIjA4eCIpKQogICAgICAgIHdpdGggYnVuZGxlLm9wZW4oaXRlbSkgYXMgc3RyZWFtOgogICAgICAgICAgICB3aGlsZSBUcnVlOgog
+          ICAgICAgICAgICAgICAgcmF3ID0gc3RyZWFtLnJlYWRsaW5lKExJTUlUU1sibGluZV9ieXRlcyJdICsgMSkKICAgICAgICAgICAgICAgIGlmIG5vdCByYXc6
+          CiAgICAgICAgICAgICAgICAgICAgYnJlYWsKICAgICAgICAgICAgICAgIHJlcXVpcmUobGVuKHJhdykgPD0gTElNSVRTWyJsaW5lX2J5dGVzIl0sICJidWRn
+          ZXQiLCAib3ZlcnNpemVkIExDT1YgbGluZSIpCiAgICAgICAgICAgICAgICBhY3R1YWxfYnl0ZXMgKz0gbGVuKHJhdykKICAgICAgICAgICAgICAgIHJlcXVp
+          cmUoYWN0dWFsX2J5dGVzIDw9IExJTUlUU1sidW5jb21wcmVzc2VkX2J5dGVzIl0sICJidWRnZXQiLCAiYWN0dWFsIGV4cGFuc2lvbiBleGNlZWRzIGJ1ZGdl
+          dCIpCiAgICAgICAgICAgICAgICBsY292X2RpZ2VzdC51cGRhdGUocmF3KQogICAgICAgICAgICAgICAgcGh5c2ljYWxfbGluZXMgKz0gMQogICAgICAgICAg
+          ICAgICAgbWF4X2xpbmVfYnl0ZXMgPSBtYXgobWF4X2xpbmVfYnl0ZXMsIGxlbihyYXcpKQogICAgICAgICAgICAgICAgbGFzdCA9IHJhdwogICAgICAgICAg
+          ICAgICAgbGluZSA9IHJhdy5kZWNvZGUoInV0Zi04IiwgZXJyb3JzPSJzdHJpY3QiKS5yZW1vdmVzdWZmaXgoIlxuIikucmVtb3Zlc3VmZml4KCJcciIpCiAg
+          ICAgICAgICAgICAgICByZXF1aXJlKCJcMCIgbm90IGluIGxpbmUsICJzeW50YXgiLCAiTlVMIGluIExDT1YgaW5wdXQiKQogICAgICAgICAgICAgICAgdGFn
+          LCBzZXBhcmF0b3IsIHZhbHVlID0gbGluZS5wYXJ0aXRpb24oIjoiKQogICAgICAgICAgICAgICAgcmVwb3J0WyJyYXdfZmllbGRfY291bnRzIl1bdGFnXSAr
+          PSAxCiAgICAgICAgICAgICAgICBpZiB0YWcgPT0gIlROIiBhbmQgc2VwYXJhdG9yOgogICAgICAgICAgICAgICAgICAgIHJlcXVpcmUoY3VycmVudCBpcyBO
+          b25lIGFuZCBub3QgcGVuZGluZ190ZXN0LCAiZnJhbWluZyIsICJtaXNwbGFjZWQvZHVwbGljYXRlIFROIikKICAgICAgICAgICAgICAgICAgICB0ZXN0X25h
+          bWUsIHBlbmRpbmdfdGVzdCA9IHZhbHVlLCBUcnVlCiAgICAgICAgICAgICAgICBlbGlmIHRhZyA9PSAiU0YiIGFuZCBzZXBhcmF0b3I6CiAgICAgICAgICAg
+          ICAgICAgICAgcmVxdWlyZShjdXJyZW50IGlzIE5vbmUgYW5kIHZhbHVlLCAiZnJhbWluZyIsICJtaXNzaW5nIG9yIG5lc3RlZCBTRiIpCiAgICAgICAgICAg
+          ICAgICAgICAgc291cmNlID0gbm9ybWFsaXplKHZhbHVlKQogICAgICAgICAgICAgICAgICAgIHBhdGggPSB3YW50ZWQuZ2V0KHNvdXJjZSkKICAgICAgICAg
+          ICAgICAgICAgICBjb2xsaXNpb25zID0gW3AgZm9yIHAgaW4gd2FudGVkLnZhbHVlcygpIGlmIHNvdXJjZS5lbmRzd2l0aCgiLyIgKyBwKV0KICAgICAgICAg
+          ICAgICAgICAgICByZXF1aXJlKHBhdGggaXMgbm90IE5vbmUgb3Igbm90IGNvbGxpc2lvbnMsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAiYW1iaWd1
+          b3VzX3NvdXJjZV9tYXBwaW5nIiwgInByb2JlIHN1ZmZpeCBvY2N1cnMgb3V0c2lkZSBib3VuZCBuYXRpdmUgc291cmNlIHJvb3QiKQogICAgICAgICAgICAg
+          ICAgICAgIHJlcXVpcmUoKHRlc3RfbmFtZSwgdmFsdWUpIG5vdCBpbiBzZWVuX3JlY29yZHMsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAiYW1iaWd1
+          b3VzX3JlY29yZCIsICJyZXBlYXRlZCByYXcgc291cmNlL3Rlc3QgcmVjb3JkIikKICAgICAgICAgICAgICAgICAgICBzZWVuX3JlY29yZHMuYWRkKCh0ZXN0
+          X25hbWUsIHZhbHVlKSkKICAgICAgICAgICAgICAgICAgICBjdXJyZW50ID0geyJpbmRleCI6IHJlcG9ydFsic291cmNlX3JlY29yZHMiXSArIDEsICJzZl9p
+          bnB1dF9saW5lIjogcGh5c2ljYWxfbGluZXMsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAicmF3X3NvdXJjZSI6IHZhbHVlLCAibm9ybWFsaXpl
+          ZF9zb3VyY2UiOiBzb3VyY2UsICJ0ZXN0X25hbWUiOiB0ZXN0X25hbWUsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAicmVwb3NpdG9yeV9wYXRo
+          IjogcGF0aCwgImNvdW50cyI6IHt9LCAic3VtbWFyeSI6IHt9fQogICAgICAgICAgICAgICAgZWxpZiB0YWcgPT0gIkRBIiBhbmQgc2VwYXJhdG9yOgogICAg
+          ICAgICAgICAgICAgICAgIHJlcXVpcmUoY3VycmVudCBpcyBub3QgTm9uZSwgImZyYW1pbmciLCAiREEgb3V0c2lkZSBzb3VyY2UgcmVjb3JkIikKICAgICAg
+          ICAgICAgICAgICAgICBmaWVsZHMgPSB2YWx1ZS5zcGxpdCgiLCIpCiAgICAgICAgICAgICAgICAgICAgcmVxdWlyZShsZW4oZmllbGRzKSBpbiAoMiwgMykg
+          YW5kIChsZW4oZmllbGRzKSA9PSAyIG9yIGZpZWxkc1syXSksCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAiZGFfc3ludGF4IiwgImludmFsaWQgREEg
+          ZmllbGQgY291bnQvY2hlY2tzdW0iKQogICAgICAgICAgICAgICAgICAgIG51bWJlciwgY291bnQgPSB1bnNpZ25lZChmaWVsZHNbMF0sIFRydWUpLCB1bnNp
+          Z25lZChmaWVsZHNbMV0pCiAgICAgICAgICAgICAgICAgICAgcmVxdWlyZShudW1iZXIgbm90IGluIGN1cnJlbnRbImNvdW50cyJdLCAiZHVwbGljYXRlX2Rh
+          IiwgInJlcGVhdGVkL2NvbmZsaWN0aW5nIERBIGxpbmUiKQogICAgICAgICAgICAgICAgICAgIGN1cnJlbnRbImNvdW50cyJdW251bWJlcl0gPSBjb3VudAog
+          ICAgICAgICAgICAgICAgICAgIHJlcG9ydFsibGluZV9yZWNvcmRzIl0gKz0gMQogICAgICAgICAgICAgICAgICAgIHJlcG9ydFsicG9zaXRpdmVfbGluZV9y
+          ZWNvcmRzIl0gKz0gY291bnQgPiAwCiAgICAgICAgICAgICAgICBlbGlmIGxpbmUgPT0gImVuZF9vZl9yZWNvcmQiOgogICAgICAgICAgICAgICAgICAgIHJl
+          cXVpcmUoY3VycmVudCBpcyBub3QgTm9uZSwgImZyYW1pbmciLCAiZW5kX29mX3JlY29yZCB3aXRob3V0IHNvdXJjZSIpCiAgICAgICAgICAgICAgICAgICAg
+          cmVwb3J0WyJzb3VyY2VfcmVjb3JkcyJdICs9IDEKICAgICAgICAgICAgICAgICAgICByZWNvcmQgPSB7azogdiBmb3IgaywgdiBpbiBjdXJyZW50Lml0ZW1z
+          KCkgaWYgayAhPSAiY291bnRzIn0KICAgICAgICAgICAgICAgICAgICByZWNvcmQudXBkYXRlKGxpbmVfcmVjb3Jkcz1sZW4oY3VycmVudFsiY291bnRzIl0p
+          LAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgcG9zaXRpdmVfbGluZV9yZWNvcmRzPXN1bShjID4gMCBmb3IgYyBpbiBjdXJyZW50WyJjb3Vu
+          dHMiXS52YWx1ZXMoKSkpCiAgICAgICAgICAgICAgICAgICAgc3BlbGxpbmdzW2N1cnJlbnRbIm5vcm1hbGl6ZWRfc291cmNlIl1dLmFwcGVuZCh7CiAgICAg
+          ICAgICAgICAgICAgICAgICAgICJyZWNvcmQiOiBjdXJyZW50WyJpbmRleCJdLCAicmF3X3NvdXJjZSI6IGN1cnJlbnRbInJhd19zb3VyY2UiXSwgInRlc3Rf
+          bmFtZSI6IHRlc3RfbmFtZX0pCiAgICAgICAgICAgICAgICAgICAgaW52ZW50b3J5X2RpZ2VzdC51cGRhdGUoanNvbi5kdW1wcyhyZWNvcmQsIHNvcnRfa2V5
+          cz1UcnVlKS5lbmNvZGUoKSArIGIiXG4iKQogICAgICAgICAgICAgICAgICAgIGlmIGN1cnJlbnRbInJlcG9zaXRvcnlfcGF0aCJdIGlzIG5vdCBOb25lOgog
+          ICAgICAgICAgICAgICAgICAgICAgICByZXBvcnRbInNlbGVjdGVkX3JlY29yZHMiXS5hcHBlbmQocmVjb3JkKQogICAgICAgICAgICAgICAgICAgICAgICBm
+          b3IgcHJvYmUgaW4gcHJvYmVzOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgcHJvYmVbInJlcG9zaXRvcnlfcGF0aCJdID09IGN1cnJlbnRbInJl
+          cG9zaXRvcnlfcGF0aCJdIGFuZCBwcm9iZVsibGluZSJdIGluIGN1cnJlbnRbImNvdW50cyJdOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHBy
+          b2JlWyJtYXBwaW5ncyJdLmFwcGVuZCh7InJlY29yZCI6IGN1cnJlbnRbImluZGV4Il0sICJyYXdfc291cmNlIjogY3VycmVudFsicmF3X3NvdXJjZSJdLAog
+          ICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgInRlc3RfbmFtZSI6IHRlc3RfbmFtZSwgImNvdW50Ijog
+          Y3VycmVudFsiY291bnRzIl1bcHJvYmVbImxpbmUiXV19KQogICAgICAgICAgICAgICAgICAgIGN1cnJlbnQsIHRlc3RfbmFtZSwgcGVuZGluZ190ZXN0ID0g
+          Tm9uZSwgIiIsIEZhbHNlCiAgICAgICAgICAgICAgICBlbHNlOgogICAgICAgICAgICAgICAgICAgIHJlcXVpcmUoY3VycmVudCBpcyBub3QgTm9uZSBhbmQg
+          c2VwYXJhdG9yIGFuZCB0YWcsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAiZnJhbWluZyIsICJ1bmZyYW1lZCBvciBtYWxmb3JtZWQgTENPViBtZXRh
+          ZGF0YSIpCiAgICAgICAgICAgICAgICAgICAgaWYgdGFnIGluIFNVTU1BUllfRklFTERTOgogICAgICAgICAgICAgICAgICAgICAgICByZXF1aXJlKHRhZyBu
+          b3QgaW4gY3VycmVudFsic3VtbWFyeSJdLCAic3VtbWFyeV9zeW50YXgiLCAiZHVwbGljYXRlIHN1bW1hcnkgZmllbGQiKQogICAgICAgICAgICAgICAgICAg
+          ICAgICBjdXJyZW50WyJzdW1tYXJ5Il1bdGFnXSA9IHVuc2lnbmVkKHZhbHVlKQogICAgICAgICAgICAgICAgICAgICAgICByZXBvcnRbImV4cG9ydGVkX3N1
+          bW1hcnlfdG90YWxzIl1bdGFnXSArPSBjdXJyZW50WyJzdW1tYXJ5Il1bdGFnXQogICAgcmVxdWlyZShhY3R1YWxfYnl0ZXMgPT0gaXRlbS5maWxlX3NpemUs
+          ICJtZW1iZXJfc2l6ZSIsICJzZWxlY3RlZCBMQ09WIG1lbWJlciBzaXplIGRpZmZlcnMgZnJvbSBkZWNsYXJlZCBzaXplIikKICAgIHJlcXVpcmUoY3VycmVu
+          dCBpcyBOb25lIGFuZCBub3QgcGVuZGluZ190ZXN0LCAidW5maW5pc2hlZF9yZWNvcmQiLCAiTENPViBlbmRzIGluc2lkZSBhIHJlY29yZCIpCiAgICByZXF1
+          aXJlKHJlcG9ydFsic291cmNlX3JlY29yZHMiXSA+IDAgYW5kIHJlcG9ydFsicG9zaXRpdmVfbGluZV9yZWNvcmRzIl0gPiAwLAogICAgICAgICAgICAiZW1w
+          dHlfZXhlY3V0aW9uIiwgIm5vIGNvbXBsZXRlZCBzb3VyY2UgcmVjb3JkcyB3aXRoIHBvc2l0aXZlIGxpbmUgY291bnRzIikKICAgIHJlcG9ydFsiYXJjaGl2
+          ZSJdLnVwZGF0ZShhY3R1YWxfbWVtYmVyX2J5dGVzPWFjdHVhbF9ieXRlcywgbGNvdl9zaGEyNTY9bGNvdl9kaWdlc3QuaGV4ZGlnZXN0KCksCiAgICAgICAg
+          ICAgICAgICAgICAgICAgICAgICAgcGh5c2ljYWxfbGluZXM9cGh5c2ljYWxfbGluZXMsIG1heF9saW5lX2J5dGVzPW1heF9saW5lX2J5dGVzLAogICAgICAg
+          ICAgICAgICAgICAgICAgICAgICAgIGZpbmFsX25ld2xpbmU9bGFzdC5lbmRzd2l0aChiIlxuIiksIGNvbXBsZXRlX3JlYWRfY3JjX3ZlcmlmaWVkPVRydWUp
+          CiAgICByZXBvcnRbInVuaXF1ZV9ub3JtYWxpemVkX3NvdXJjZXMiXSA9IGxlbihzcGVsbGluZ3MpCiAgICByZXBvcnRbInNvdXJjZV9pbnZlbnRvcnlfc2hh
+          MjU2Il0gPSBpbnZlbnRvcnlfZGlnZXN0LmhleGRpZ2VzdCgpCiAgICByZXBvcnRbInNvdXJjZV9hbGlhc2VzIl0gPSBbeyJub3JtYWxpemVkX3NvdXJjZSI6
+          IHAsICJyZWNvcmRzIjogcnN9CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgZm9yIHAsIHJzIGluIHNwZWxsaW5ncy5pdGVtcygpIGlmIGxlbihy
+          cykgPiAxXQogICAgZm9yIHByb2JlIGluIHByb2JlczoKICAgICAgICBjb3VudHMgPSBbcm93WyJjb3VudCJdIGZvciByb3cgaW4gcHJvYmVbIm1hcHBpbmdz
+          Il1dCiAgICAgICAgcHJvYmVbInN0YXRlIl0gPSAiY292ZXJlZCIgaWYgYW55KGNvdW50ID4gMCBmb3IgY291bnQgaW4gY291bnRzKSBlbHNlICJtYXBwZWRf
+          emVybyIgaWYgY291bnRzIGVsc2UgIm5vdF9tYXBwZWQiCiAgICAgICAgcHJvYmVbIm1hdGNoZXNfZXhwZWN0ZWQiXSA9IHByb2JlWyJzdGF0ZSJdID09IHBy
+          b2JlWyJleHBlY3RlZF9zdGF0ZSJdCiAgICByZXBvcnRbInByb2JlcyJdID0gcHJvYmVzCiAgICByZXBvcnRbInN0YXR1cyJdID0gImFjY2VwdGVkIiBpZiBh
+          bGwocFsibWF0Y2hlc19leHBlY3RlZCJdIGZvciBwIGluIHByb2JlcykgZWxzZSAicHJvYmVfZXhwZWN0YXRpb25fZmFpbGVkIgogICAgcmV0dXJuIHJlcG9y
+          dAoKCmRlZiBtYWluKGFyZ3Y9Tm9uZSk6CiAgICBwYXJzZXIgPSBhcmdwYXJzZS5Bcmd1bWVudFBhcnNlcihkZXNjcmlwdGlvbj1fX2RvY19fKQogICAgcGFy
+          c2VyLmFkZF9hcmd1bWVudCgiYXJjaGl2ZSIsIHR5cGU9UGF0aCkKICAgIHBhcnNlci5hZGRfYXJndW1lbnQoIi0taW52ZW50b3J5IiwgdHlwZT1QYXRoLCBy
+          ZXF1aXJlZD1UcnVlKQogICAgZm9yIG5hbWUgaW4gKCJoZWFkIiwgImNoZWNrb3V0IiwgImJhc2UiLCAiYXJjaGl2ZS1zaGEyNTYiKToKICAgICAgICBwYXJz
+          ZXIuYWRkX2FyZ3VtZW50KCItLWV4cGVjdC0iICsgbmFtZSwgcmVxdWlyZWQ9VHJ1ZSkKICAgIGFyZ3MgPSBwYXJzZXIucGFyc2VfYXJncyhhcmd2KQogICAg
+          ZXhwZWN0ZWQgPSB7bmFtZTogZ2V0YXR0cihhcmdzLCAiZXhwZWN0XyIgKyBuYW1lKSBmb3IgbmFtZSBpbiAoImhlYWQiLCAiY2hlY2tvdXQiLCAiYmFzZSIs
+          ICJhcmNoaXZlX3NoYTI1NiIpfQogICAgdHJ5OgogICAgICAgIHJlcG9ydCA9IGluc3BlY3QoYXJncy5hcmNoaXZlLCBhcmdzLmludmVudG9yeSwgZXhwZWN0
+          ZWQpCiAgICAgICAgY29kZSA9IDAgaWYgcmVwb3J0WyJzdGF0dXMiXSA9PSAiYWNjZXB0ZWQiIGVsc2UgMQogICAgZXhjZXB0IChSZWplY3RlZCwgT1NFcnJv
+          ciwgVW5pY29kZUVycm9yLCBWYWx1ZUVycm9yLCBLZXlFcnJvciwgVHlwZUVycm9yLCB6aXBmaWxlLkJhZFppcEZpbGUpIGFzIGVycm9yOgogICAgICAgIHJl
+          cG9ydCA9IHsic3RhdHVzIjogInJlamVjdGVkIiwgInJlYXNvbl9jb2RlIjogZ2V0YXR0cihlcnJvciwgImNvZGUiLCAiaW5wdXQiKSwgImVycm9yIjogc3Ry
+          KGVycm9yKX0KICAgICAgICBjb2RlID0gMgogICAgcHJpbnQoanNvbi5kdW1wcyhyZXBvcnQsIGluZGVudD0yLCBzb3J0X2tleXM9VHJ1ZSkpCiAgICByZXR1
+          cm4gY29kZQoKCmlmIF9fbmFtZV9fID09ICJfX21haW5fXyI6CiAgICBzeXMuZXhpdChtYWluKCkpCg==
+          """
+
+          class ReadbackFailure(Exception):
+              pass
+
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+
+          def require(condition, reason):
+              if not condition:
+                  raise ReadbackFailure(reason)
+
+          def deadline(signum, frame):
+              raise ReadbackFailure("overall_deadline")
+
+          def read_bounded(response, limit):
+              data = response.read(limit + 1)
+              require(len(data) <= limit, "http_body_budget")
+              return data
+
+          def api_request(path):
+              require(path.startswith("/") and not path.startswith("//"), "api_path")
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{REPO}{path}",
+                  headers={
+                      "Authorization": f"Bearer {TOKEN}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "ripr-fixed-artifact-readback",
+                  },
+                  method="GET",
+              )
+              return OPENER.open(request, timeout=15)
+
+          def api_json(path, limit=1024 * 1024):
+              with api_request(path) as response:
+                  require(response.status == 200, "api_status")
+                  return json.loads(read_bounded(response, limit).decode("utf-8", errors="strict"))
+
+          def artifact_bytes():
+              try:
+                  with api_request(f"/actions/artifacts/{ARTIFACT}/zip"):
+                      raise ReadbackFailure("artifact_redirect_missing")
+              except urllib.error.HTTPError as error:
+                  try:
+                      require(error.code == 302, "artifact_redirect_status")
+                      location = error.headers.get("Location", "")
+                  finally:
+                      error.close()
+              require(0 < len(location) <= 16384, "artifact_location_budget")
+              parsed = urllib.parse.urlsplit(location)
+              require(
+                  parsed.scheme == "https"
+                  and re.fullmatch(r"productionresultssa[0-9]+\.blob\.core\.windows\.net", parsed.hostname or "")
+                  and parsed.port in (None, 443)
+                  and parsed.username is None
+                  and parsed.password is None
+                  and not parsed.fragment,
+                  "artifact_host",
+              )
+              request = urllib.request.Request(
+                  location, headers={"User-Agent": "ripr-fixed-artifact-readback"}, method="GET"
+              )
+              with OPENER.open(request, timeout=15) as response:
+                  require(response.status == 200, "artifact_download_status")
+                  data = read_bounded(response, 64 * 1024 * 1024)
+              require(len(data) == ZIP_BYTES, "artifact_size")
+              require(hashlib.sha256(data).hexdigest() == ZIP_SHA, "artifact_digest")
+              return data
+
+          def source_bytes(path, blob, sha, size):
+              payload = api_json(f"/contents/{path}?ref={MERGE}", 128 * 1024)
+              require(
+                  payload.get("type") == "file"
+                  and payload.get("path") == path
+                  and payload.get("sha") == blob
+                  and payload.get("encoding") == "base64",
+                  "source_metadata",
+              )
+              data = base64.b64decode("".join(payload["content"].split()), validate=True)
+              require(len(data) == size and hashlib.sha256(data).hexdigest() == sha, "source_bytes")
+              actual_blob = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+              require(actual_blob == blob, "source_git_blob")
+              return data
+
+          def run():
+              global STAGE, TOKEN
+              require(bool(TOKEN), "missing_read_token")
+              STAGE = "fixed_git_objects"
+              commits = {sha: api_json(f"/git/commits/{sha}") for sha in (MERGE, HEAD, BASE)}
+              require(all(value.get("sha") == key for key, value in commits.items()), "git_identity")
+              require(commits[MERGE].get("tree", {}).get("sha") == TREE, "merge_tree")
+              require([p.get("sha") for p in commits[MERGE].get("parents", [])] == [BASE, HEAD], "merge_parents")
+              STAGE = "fixed_run_attempt"
+              run_meta = api_json(f"/actions/runs/{RUN}/attempts/{ATTEMPT}")
+              require(
+                  run_meta.get("id") == RUN and run_meta.get("run_attempt") == ATTEMPT
+                  and run_meta.get("head_sha") == HEAD
+                  and run_meta.get("status") == "completed" and run_meta.get("conclusion") == "success",
+                  "run_binding",
+              )
+              STAGE = "fixed_job"
+              job_meta = api_json(f"/actions/jobs/{JOB}")
+              require(
+                  job_meta.get("id") == JOB and job_meta.get("run_id") == RUN
+                  and job_meta.get("run_attempt") == ATTEMPT and job_meta.get("head_sha") == HEAD
+                  and job_meta.get("status") == "completed" and job_meta.get("conclusion") == "success",
+                  "job_binding",
+              )
+              STAGE = "fixed_artifact"
+              artifact_meta = api_json(f"/actions/artifacts/{ARTIFACT}")
+              require(
+                  artifact_meta.get("id") == ARTIFACT and artifact_meta.get("name") == "rust-lcov"
+                  and artifact_meta.get("size_in_bytes") == ZIP_BYTES
+                  and artifact_meta.get("digest") == "sha256:" + ZIP_SHA
+                  and artifact_meta.get("expired") is False
+                  and artifact_meta.get("workflow_run", {}).get("id") == RUN
+                  and artifact_meta.get("workflow_run", {}).get("head_sha") == HEAD,
+                  "artifact_binding",
+              )
+              STAGE = "exact_sources"
+              specs = [
+                  {
+                      "repository_path": "crates/ripr/src/analysis/language/perl/boundary_input.rs",
+                      "git_blob": "4e75cb83690b7183584b7bb108e37a53d1ae4191",
+                      "sha256": "f2f8a4e23e48a7a80aa4bbf7de811b60e26f305085bbbf4703383be4d934ba8d",
+                      "bytes": 44712,
+                      "probes": [
+                          {"line": 600, "statement": "qualifier_end -= 1;", "expected_state": "covered"},
+                          {"line": 603, "statement": "let mut end = qualifier_end - 2;", "expected_state": "covered"},
+                          {"line": 612, "statement": "return false;", "expected_state": "covered"},
+                          {"line": 615, "statement": "return package == Some(receiver.as_str());", "expected_state": "covered"},
+                      ],
+                  },
+              ]
+              contents = [source_bytes(s["repository_path"], s["git_blob"], s["sha256"], s["bytes"]) for s in specs]
+              STAGE = "fixed_artifact_download"
+              archive = artifact_bytes()
+              TOKEN = ""
+              STAGE = "reader_identity"
+              reader = base64.b64decode("".join(READER_B64.split()), validate=True)
+              require(len(reader) == 15448 and hashlib.sha256(reader).hexdigest() == READER_SHA, "reader_digest")
+              binding = {
+                  "head": HEAD, "checkout": MERGE, "base": BASE, "checkout_tree": TREE,
+                  "archive_sha256": ZIP_SHA, "native_source_root": NATIVE_ROOT,
+                  "repository": REPO, "run_id": RUN, "attempt": ATTEMPT, "job_id": JOB, "artifact_id": ARTIFACT,
+                  "scope": "Fixed existing artifact readback; not a build, test rerun, new qualification or source attestation.",
+              }
+              print("RIPR_FIXED_LCOV_BINDING_BEGIN_v1", flush=True)
+              print(json.dumps({"binding": binding, "archive_bytes": len(archive), "reader_sha256": READER_SHA,
+                                "source_receipts": [{k: v for k, v in s.items() if k != "probes"} for s in specs]}, sort_keys=True), flush=True)
+              print("RIPR_FIXED_LCOV_BINDING_END_v1", flush=True)
+              STAGE = "bound_reader"
+              with tempfile.TemporaryDirectory(prefix="ripr-fixed-artifact-") as temporary:
+                  root = Path(temporary)
+                  archive_path, inventory_path, reader_path = root / "artifact.zip", root / "inventory.json", root / "reader.py"
+                  archive_path.write_bytes(archive)
+                  reader_path.write_bytes(reader)
+                  for index, (spec, content) in enumerate(zip(specs, contents)):
+                      local = root / f"source-{index}.rs"
+                      local.write_bytes(content)
+                      spec["local_path"] = str(local)
+                  inventory_path.write_text(json.dumps({"schema": "ripr.bound_lcov_inventory.v1", "binding": binding, "sources": specs}), encoding="utf-8")
+                  namespace = {"__name__": "fixed_artifact_reader", "__file__": str(reader_path)}
+                  exec(compile(reader, str(reader_path), "exec"), namespace)
+                  print("RIPR_FIXED_LCOV_INSPECTION_BEGIN_v1", flush=True)
+                  code = namespace["main"]([
+                      str(archive_path), "--inventory", str(inventory_path),
+                      "--expect-head", HEAD, "--expect-checkout", MERGE, "--expect-base", BASE,
+                      "--expect-archive-sha256", ZIP_SHA,
+                  ])
+                  print("RIPR_FIXED_LCOV_INSPECTION_END_v1", flush=True)
+                  require(type(code) is int and code in (0, 1, 2), "reader_exit")
+                  return code
+
+          signal.signal(signal.SIGALRM, deadline)
+          signal.alarm(180)
+          try:
+              exit_code = run()
+          except Exception as error:
+              if isinstance(error, urllib.error.HTTPError):
+                  error.close()
+              reason = str(error) if isinstance(error, ReadbackFailure) else "input_or_transport_error"
+              print("RIPR_FIXED_LCOV_ERROR_BEGIN_v1", flush=True)
+              print(json.dumps({"status": "rejected", "stage": STAGE, "reason": reason,
+                                "error_type": type(error).__name__}, sort_keys=True), flush=True)
+              print("RIPR_FIXED_LCOV_ERROR_END_v1", flush=True)
+              exit_code = 2
+          finally:
+              signal.alarm(0)
+          print(f"RIPR_FIXED_LCOV_EXIT={exit_code}", flush=True)
+          sys.exit(exit_code)
+          PY
