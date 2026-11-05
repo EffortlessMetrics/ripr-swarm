@@ -17,12 +17,10 @@
 //! passes unconditionally (unrelated main movement invalidates nothing), and
 //! every unresolvable or unparseable state fails closed instead of passing.
 //!
-//! Known limit: on a hosted checkout of GitHub's synthetic pull-request merge
-//! ref, `git merge-base origin/main HEAD` returns the base tip rather than the
-//! PR branch's original fork, so a PR whose claimed value is identical to a
-//! value a sibling already landed can read as "untouched". The merge-queue
-//! qualification of the real merge composition is the authority for that
-//! interaction; this local/PR gate is a shift-left check, not the final word.
+//! The hosted synthetic-merge correction requires GitHub Actions pull-request
+//! merge context bound to this checkout's HEAD. Ordinary local merges always
+//! keep working-tree reads, including local edits and merge-result changes.
+//! Single-parent merge-queue shapes remain outside this PR-ref correction.
 //!
 //! The gate compares registry constants only — never fixture values (the
 //! historical 1.74/1.78/1.119 pins in the stale-cache-rejection fixtures are
@@ -34,9 +32,9 @@
 //! is `git merge-base <base> HEAD`. On GitHub's synthetic PR merge ref
 //! (`refs/pull/<n>/merge`) HEAD is a merge commit whose first parent is the
 //! base tip; evaluating HEAD there would alias fork and base tip and hide the
-//! sibling-collision class, so the gate detects that shape and evaluates the
-//! PR head tree (the merge commit's second parent) against its true fork
-//! instead.
+//! sibling-collision class, so the gate verifies hosted context and that shape,
+//! then evaluates the PR head tree (the merge commit's second parent) against
+//! its true fork instead.
 
 use std::cmp::Ordering;
 use std::path::Path;
@@ -251,8 +249,8 @@ struct ResolvedBase {
 /// the base tip: evaluating HEAD directly would alias fork and base tip and
 /// hide the sibling-collision class — a sibling that merged generation `X`
 /// plus this PR claiming the same `X` produces a clean merge with
-/// `head == fork == base_tip == X`, which must still fail. In that mode the
-/// claim surface is the PR head tree (the merge commit's second parent) and
+/// `head == fork == base_tip == X`, which must still fail. Only explicit hosted
+/// PR-merge context bound to HEAD may select this mode. The claim surface is the PR head tree (the merge commit's second parent) and
 /// the fork is that head's true merge-base with the first parent.
 struct EvaluationPoints {
     /// `None` reads the working tree; `Some(sha)` reads blobs at that commit.
@@ -260,13 +258,60 @@ struct EvaluationPoints {
     fork_commit: String,
 }
 
+/// Platform context is an explicit input, not an inference from parent shape.
+/// A reusable workflow retains the calling pull-request event/ref/SHA; rust-gates
+/// checks out that SHA. Bind the advertised merge identity to this repository's
+/// actual HEAD before selecting a different claim tree.
+fn hosted_pr_merge_commit(
+    actions: Option<&str>,
+    event: Option<&str>,
+    reference: Option<&str>,
+    commit: Option<&str>,
+) -> Option<String> {
+    if actions != Some("true") || event != Some("pull_request") {
+        return None;
+    }
+    let number = reference?
+        .strip_prefix("refs/pull/")?
+        .strip_suffix("/merge")?;
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let commit = commit?;
+    is_sha(commit).then(|| commit.to_string())
+}
+
 fn resolve_evaluation_points(root: &Path, base: &ResolvedBase) -> Result<EvaluationPoints, String> {
-    let second_parent = git_rev_parse(root, "HEAD^2")?;
-    let Some(second_parent) = second_parent else {
-        return Ok(EvaluationPoints {
-            head_ref: None,
-            fork_commit: base.head_merge_base.clone(),
-        });
+    let actions = std::env::var("GITHUB_ACTIONS").ok();
+    let event = std::env::var("GITHUB_EVENT_NAME").ok();
+    let reference = std::env::var("GITHUB_REF").ok();
+    let commit = std::env::var("GITHUB_SHA").ok();
+    let hosted_merge = hosted_pr_merge_commit(
+        actions.as_deref(),
+        event.as_deref(),
+        reference.as_deref(),
+        commit.as_deref(),
+    );
+    resolve_evaluation_points_with_hosted_merge(root, base, hosted_merge.as_deref())
+}
+
+fn resolve_evaluation_points_with_hosted_merge(
+    root: &Path,
+    base: &ResolvedBase,
+    hosted_merge: Option<&str>,
+) -> Result<EvaluationPoints, String> {
+    let ordinary = || EvaluationPoints {
+        head_ref: None,
+        fork_commit: base.head_merge_base.clone(),
+    };
+    let Some(hosted_merge) = hosted_merge else {
+        return Ok(ordinary());
+    };
+    if git_rev_parse(root, "HEAD")?.as_deref() != Some(hosted_merge) {
+        return Ok(ordinary());
+    }
+    let Some(second_parent) = git_rev_parse(root, "HEAD^2")? else {
+        return Ok(ordinary());
     };
     let first_parent = git_rev_parse(root, "HEAD^1")?
         .ok_or_else(|| "HEAD has a second parent but no first parent".to_string())?;
@@ -277,12 +322,7 @@ fn resolve_evaluation_points(root: &Path, base: &ResolvedBase) -> Result<Evaluat
             fork_commit,
         })
     } else {
-        // An ordinary merge commit on a branch (for example a lane merging
-        // main into its own branch): the branch head stays the claim surface.
-        Ok(EvaluationPoints {
-            head_ref: None,
-            fork_commit: base.head_merge_base.clone(),
-        })
+        Ok(ordinary())
     }
 }
 
@@ -998,7 +1038,7 @@ mod tests {
     fn merge_ref_resolution_surfaces_sibling_collision_in_a_real_repo() -> Result<(), String> {
         use super::{
             EvaluationPoints, ResolvedBase, production_blob_reader, resolve_base,
-            resolve_evaluation_points,
+            resolve_evaluation_points_with_hosted_merge,
         };
         let root = crate::tests::temp_dir("generation-pins-merge-ref");
         let run = |args: &[&str]| -> Result<String, String> {
@@ -1006,37 +1046,7 @@ mod tests {
                 .map(|text| text.trim().to_string())
         };
         let commit_with = |value: &str, message: &str| -> Result<String, String> {
-            // Write each defining file once so shared-file registry rows do
-            // not overwrite the classified generation or one another.
-            for (file, text) in synthetic_texts(|family| {
-                if family == "classified_seam_cache" {
-                    value.to_string()
-                } else {
-                    "5.5".to_string()
-                }
-            }) {
-                let path = root.join(file);
-                std::fs::create_dir_all(path.parent().ok_or("fixture path has no parent")?)
-                    .map_err(|error| format!("create {}: {error}", path.display()))?;
-                std::fs::write(&path, text)
-                    .map_err(|error| format!("write {}: {error}", path.display()))?;
-            }
-            // Establish the stimulus through the production reader before
-            // Git commits it: every declaration must survive the fixture write.
-            let reader = production_blob_reader(&root);
-            for pin in GENERATION_PINS {
-                let expected = if pin.family == "classified_seam_cache" {
-                    value
-                } else {
-                    "5.5"
-                };
-                assert_eq!(
-                    super::read_generation(&reader, None, pin)?,
-                    expected,
-                    "fixture generation for {}",
-                    pin.family
-                );
-            }
+            write_fixture_generations(&root, value)?;
             run(&["add", "-A"])?;
             run(&[
                 "-c",
@@ -1082,7 +1092,14 @@ mod tests {
         run(&["reset", "--hard", &merge_commit])?;
 
         let resolved: ResolvedBase = resolve_base(&root, None)?;
-        let points: EvaluationPoints = resolve_evaluation_points(&root, &resolved)?;
+        let hosted = super::hosted_pr_merge_commit(
+            Some("true"),
+            Some("pull_request"),
+            Some("refs/pull/123/merge"),
+            Some(&merge_commit),
+        );
+        let points: EvaluationPoints =
+            resolve_evaluation_points_with_hosted_merge(&root, &resolved, hosted.as_deref())?;
         let head_ref = points
             .head_ref
             .clone()
@@ -1119,6 +1136,183 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    fn write_fixture_generations(root: &std::path::Path, value: &str) -> Result<(), String> {
+        // Write each defining file once so shared-file registry rows do
+        // not overwrite the classified generation or one another.
+        for (file, text) in synthetic_texts(|family| {
+            if family == "classified_seam_cache" {
+                value.to_string()
+            } else {
+                "5.5".to_string()
+            }
+        }) {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().ok_or("fixture path has no parent")?)
+                .map_err(|error| format!("create {}: {error}", path.display()))?;
+            std::fs::write(&path, text)
+                .map_err(|error| format!("write {}: {error}", path.display()))?;
+        }
+        // Establish the stimulus through the production reader before
+        // Git commits it: every declaration must survive the fixture write.
+        let reader = super::production_blob_reader(root);
+        for pin in GENERATION_PINS {
+            let expected = if pin.family == "classified_seam_cache" {
+                value
+            } else {
+                "5.5"
+            };
+            assert_eq!(
+                super::read_generation(&reader, None, pin)?,
+                expected,
+                "fixture generation for {}",
+                pin.family
+            );
+        }
+        Ok(())
+    }
+
+    fn ordinary_merge_fixture(label: &str) -> Result<std::path::PathBuf, String> {
+        let root = crate::tests::temp_dir(label);
+        let run = |args: &[&str]| super::git_capture(&root, args, "ordinary merge fixture");
+        run(&["init"])?;
+        run(&["config", "user.name", "Fixture"])?;
+        run(&["config", "user.email", "fixture@example.invalid"])?;
+        write_fixture_generations(&root, "5.5")?;
+        run(&["add", "-A"])?;
+        run(&["commit", "-m", "base 5.5"])?;
+        let base = run(&["rev-parse", "HEAD"])?;
+        run(&["update-ref", "refs/remotes/origin/main", base.trim()])?;
+        run(&["checkout", "-b", "feature"])?;
+        std::fs::write(root.join("feature.txt"), "ordinary branch change\n")
+            .map_err(|error| error.to_string())?;
+        run(&["add", "feature.txt"])?;
+        run(&["commit", "-m", "feature change, generation untouched"])?;
+        run(&["checkout", "-"])?;
+        run(&["merge", "--no-ff", "feature", "-m", "ordinary local merge"])?;
+        Ok(root)
+    }
+
+    fn assert_ordinary_merge_stale_claim(root: &std::path::Path) -> Result<(), String> {
+        let base = super::resolve_base(root, None)?;
+        // This is exactly the ambiguous parent shape from the review, but
+        // absent hosted context it must keep the current working tree.
+        assert_eq!(
+            super::git_rev_parse(root, "HEAD^1")?,
+            Some(base.base_tip_commit.clone())
+        );
+        let points = super::resolve_evaluation_points_with_hosted_merge(root, &base, None)?;
+        assert!(
+            points.head_ref.is_none(),
+            "ordinary merge must read the working tree"
+        );
+        let violations = claimed_generation_violations(
+            &super::production_blob_reader(root),
+            &base.base_ref,
+            &points.fork_commit,
+            points.head_ref.as_deref(),
+        );
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("4.4") && violations[0].contains("stale"),
+            "{violations:?}"
+        );
+        // An unrelated advertised hosted SHA also cannot select HEAD^2.
+        let mismatched =
+            super::resolve_evaluation_points_with_hosted_merge(root, &base, Some(&"a".repeat(40)))?;
+        assert!(mismatched.head_ref.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_local_merge_keeps_dirty_worktree_generation_claim() -> Result<(), String> {
+        let root = ordinary_merge_fixture("generation-pins-local-dirty")?;
+        write_fixture_generations(&root, "4.4")?;
+        assert_ordinary_merge_stale_claim(&root)?;
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_local_merge_keeps_merge_result_generation_claim() -> Result<(), String> {
+        let root = ordinary_merge_fixture("generation-pins-local-result")?;
+        write_fixture_generations(&root, "4.4")?;
+        super::git_capture(&root, &["add", "-A"], "stage merge result")?;
+        super::git_capture(
+            &root,
+            &["commit", "--amend", "--no-edit"],
+            "record merge result",
+        )?;
+        assert_ordinary_merge_stale_claim(&root)?;
+        let _ = std::fs::remove_dir_all(root);
+        Ok(())
+    }
+
+    #[test]
+    fn hosted_merge_context_requires_actions_pr_merge_ref_and_sha() {
+        let sha = "b".repeat(40);
+        assert_eq!(
+            super::hosted_pr_merge_commit(
+                Some("true"),
+                Some("pull_request"),
+                Some("refs/pull/123/merge"),
+                Some(&sha)
+            ),
+            Some(sha.clone())
+        );
+        for (actions, event, reference, commit) in [
+            (
+                None,
+                Some("pull_request"),
+                Some("refs/pull/123/merge"),
+                Some(sha.as_str()),
+            ),
+            (
+                Some("false"),
+                Some("pull_request"),
+                Some("refs/pull/123/merge"),
+                Some(sha.as_str()),
+            ),
+            (
+                Some("true"),
+                Some("push"),
+                Some("refs/pull/123/merge"),
+                Some(sha.as_str()),
+            ),
+            (
+                Some("true"),
+                Some("merge_group"),
+                Some("refs/pull/123/merge"),
+                Some(sha.as_str()),
+            ),
+            (
+                Some("true"),
+                Some("pull_request"),
+                Some("refs/heads/main"),
+                Some(sha.as_str()),
+            ),
+            (
+                Some("true"),
+                Some("pull_request"),
+                Some("refs/pull/123/head"),
+                Some(sha.as_str()),
+            ),
+            (
+                Some("true"),
+                Some("pull_request"),
+                Some("refs/pull/nope/merge"),
+                Some(sha.as_str()),
+            ),
+            (
+                Some("true"),
+                Some("pull_request"),
+                Some("refs/pull/123/merge"),
+                Some("invalid"),
+            ),
+        ] {
+            assert!(super::hosted_pr_merge_commit(actions, event, reference, commit).is_none());
+        }
     }
 
     /// Synthetic per-family texts: every defining file declares each of its
