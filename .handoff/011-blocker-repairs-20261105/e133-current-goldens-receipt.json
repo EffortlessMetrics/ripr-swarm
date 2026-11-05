@@ -1,0 +1,108 @@
+{
+  "stage": "current-goldens",
+  "candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+  "tree": "945114e13bdd8c02bf5b8ac429837b838465cbfd",
+  "command": [
+    "/workspace/12010-proof/target/debug/xtask",
+    "goldens",
+    "check"
+  ],
+  "native_exit": 1,
+  "guard_stop": null,
+  "seconds": 90.06,
+  "counts": null,
+  "log_sha256": "4e265b7ff9f2b6ac20239a7fb501da946f368ae9e02ded3748ac6e414958e3e4",
+  "peak_cgroup_memory_bytes": 4134100992,
+  "samples": [
+    {
+      "utc": "2026-11-05T18:23:27.883379+00:00",
+      "stage": "current-goldens",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 1039507,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 4012343296,
+      "workspace_free_bytes": 21705596928,
+      "temp_free_bytes": 9428467712
+    },
+    {
+      "utc": "2026-11-05T18:23:37.887009+00:00",
+      "stage": "current-goldens",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 1039507,
+      "elapsed": 10.01,
+      "cgroup_memory_bytes": 4062461952,
+      "workspace_free_bytes": 21696876544,
+      "temp_free_bytes": 9428467712
+    },
+    {
+      "utc": "2026-11-05T18:23:47.889758+00:00",
+      "stage": "current-goldens",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 1039507,
+      "elapsed": 20.01,
+      "cgroup_memory_bytes": 4073336832,
+      "workspace_free_bytes": 21685788672,
+      "temp_free_bytes": 9428467712
+    },
+    {
+      "utc": "2026-11-05T18:23:57.892023+00:00",
+      "stage": "current-goldens",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 1039507,
+      "elapsed": 30.01,
+      "cgroup_memory_bytes": 4084629504,
+      "workspace_free_bytes": 21673635840,
+      "temp_free_bytes": 9428467712
+    },
+    {
+      "utc": "2026-11-05T18:24:07.894336+00:00",
+      "stage": "current-goldens",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 1039507,
+      "elapsed": 40.01,
+      "cgroup_memory_bytes": 4105236480,
+      "workspace_free_bytes": 21659467776,
+      "temp_free_bytes": 9428467712
+    },
+    {
+      "utc": "2026-11-05T18:24:17.895595+00:00",
+      "stage": "current-goldens",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 1039507,
+      "elapsed": 50.01,
+      "cgroup_memory_bytes": 4134100992,
+      "workspace_free_bytes": 21648093184,
+      "temp_free_bytes": 9428467712
+    },
+    {
+      "utc": "2026-11-05T18:24:27.897067+00:00",
+      "stage": "current-goldens",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 1039507,
+      "elapsed": 60.02,
+      "cgroup_memory_bytes": 4103503872,
+      "workspace_free_bytes": 21645111296,
+      "temp_free_bytes": 9428467712
+    },
+    {
+      "utc": "2026-11-05T18:24:37.903560+00:00",
+      "stage": "current-goldens",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 1039507,
+      "elapsed": 70.02,
+      "cgroup_memory_bytes": 4107145216,
+      "workspace_free_bytes": 21644050432,
+      "temp_free_bytes": 9428467712
+    },
+    {
+      "utc": "2026-11-05T18:24:47.915621+00:00",
+      "stage": "current-goldens",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 1039507,
+      "elapsed": 80.03,
+      "cgroup_memory_bytes": 4107907072,
+      "workspace_free_bytes": 21644050432,
+      "temp_free_bytes": 9428467712
+    }
+  ]
+}

@@ -1,0 +1,1614 @@
+{
+  "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+  "producer": {
+    "path": "/workspace/011-integration-proof/frozen-e133/ripr",
+    "sha256": "f1aeec96f6f369d9a878e61b57c3b1d6c358ad532ec352ebe791f26f50357ef7",
+    "version": "ripr 0.11.0 (e133ffc21a8acdd3eed6734373465ab83b03c226)"
+  },
+  "rows": [
+    {
+      "fixture": "boundary_pairing_sibling_element",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/boundary_pairing_sibling_element/input/Cargo.toml",
+        "fixtures/boundary_pairing_sibling_element/input/src/lib.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-_q4dccxo/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/boundary_pairing_sibling_element/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "adbbb353577aa2bbe19ae9ade6243da0646c7b5130933733c6eecc07e1b14b17",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "predicate",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 3
+        },
+        {
+          "family": "return_value",
+          "class": "exposed",
+          "owner": null,
+          "line": 3
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-_q4dccxo/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "ad2ee79311b74ad8c521a4ad0aa35b9cad1cc473823d54953faf1a5f739cfbd2",
+        "stderr_sha256": "ee2eebaf004772d33f3e771c96ffa2b648fabb2e2ce415148e1cc65ef4b33b29",
+        "tests": [
+          {
+            "name": "same_test_separate_owners",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/boundary_pairing_sibling_element/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-_q4dccxo/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.403,
+        "stdout_sha256": "ad2ee79311b74ad8c521a4ad0aa35b9cad1cc473823d54953faf1a5f739cfbd2",
+        "stderr_sha256": "a24aaff42fc544dbf8cd109fc2a15e04182f46de46262cdb3b4b97316ea6a167",
+        "tests": [
+          {
+            "name": "same_test_separate_owners",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": []
+    },
+    {
+      "fixture": "boundary_pairing_sibling_owner",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/boundary_pairing_sibling_owner/input/Cargo.toml",
+        "fixtures/boundary_pairing_sibling_owner/input/src/lib.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-fixveze7/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/boundary_pairing_sibling_owner/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "5440cca7673769bb221bfc5ed6d24bbb3541137a98ccf14401e939683ad65eaf",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "predicate",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 3
+        },
+        {
+          "family": "return_value",
+          "class": "exposed",
+          "owner": null,
+          "line": 3
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-fixveze7/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "ad2ee79311b74ad8c521a4ad0aa35b9cad1cc473823d54953faf1a5f739cfbd2",
+        "stderr_sha256": "5bb10d6e62a666ca4935a7e992521ecae461440a2addf01a915d9539bd9d6892",
+        "tests": [
+          {
+            "name": "same_test_separate_owners",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/boundary_pairing_sibling_owner/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-fixveze7/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "ad2ee79311b74ad8c521a4ad0aa35b9cad1cc473823d54953faf1a5f739cfbd2",
+        "stderr_sha256": "6b35044671cdc38115ce847d325d4ad931cca12d82e99644455a63a8ec5749db",
+        "tests": [
+          {
+            "name": "same_test_separate_owners",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": []
+    },
+    {
+      "fixture": "error_return_unresolved_guard",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/error_return_unresolved_guard/input/Cargo.toml",
+        "fixtures/error_return_unresolved_guard/input/src/lib.rs",
+        "fixtures/error_return_unresolved_guard/input/tests/q.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-f21zqysj/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/error_return_unresolved_guard/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "f1ac59b17f3c5adc7321322ccfe44af26304612892d26a24ea72b51daf7a875b",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "error_path",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 16
+        },
+        {
+          "family": "field_construction",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 16
+        },
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 16
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-f21zqysj/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "c4bd6fbdbb33f5d7da55ef2f8227481ff414a672e9b445d88f0e6ed4bafd3838",
+        "stderr_sha256": "5f163946f107d745262c8a53098aabc03db8aadc59de5c2059795ab2c5e9e644",
+        "tests": [
+          {
+            "name": "cancelled_return_is_exact",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/error_return_unresolved_guard/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-f21zqysj/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.402,
+        "stdout_sha256": "c4bd6fbdbb33f5d7da55ef2f8227481ff414a672e9b445d88f0e6ed4bafd3838",
+        "stderr_sha256": "6ddfe0a51d071ea333b16bd204a6b34d14283395236443aaa4df2a29adb14c4e",
+        "tests": [
+          {
+            "name": "cancelled_return_is_exact",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": []
+    },
+    {
+      "fixture": "error_variant_boxed_wrapper_downcast_witness",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/error_variant_boxed_wrapper_downcast_witness/input/Cargo.toml",
+        "fixtures/error_variant_boxed_wrapper_downcast_witness/input/src/lib.rs",
+        "fixtures/error_variant_boxed_wrapper_downcast_witness/input/tests/errors.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-8333e5xy/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/error_variant_boxed_wrapper_downcast_witness/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "f8117d5fa404e23fc6c7a31a13f074b06b8bd6dc20b0d1e3f57e7c89b52ffe80",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "error_path",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 45
+        },
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 45
+        },
+        {
+          "family": "error_path",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 48
+        },
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 48
+        },
+        {
+          "family": "error_path",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 56
+        },
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 56
+        },
+        {
+          "family": "error_path",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 67
+        },
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 67
+        },
+        {
+          "family": "error_path",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 81
+        },
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 81
+        },
+        {
+          "family": "error_path",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 95
+        },
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 95
+        },
+        {
+          "family": "error_path",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 109
+        },
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 109
+        },
+        {
+          "family": "error_path",
+          "class": "reachable_unrevealed",
+          "owner": null,
+          "line": 123
+        },
+        {
+          "family": "return_value",
+          "class": "reachable_unrevealed",
+          "owner": null,
+          "line": 123
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-8333e5xy/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "5fc4e3b6923f3bce2694399c06acfcd31de2c3fe6c0a23146443da1110ae27ae",
+        "stderr_sha256": "b17eb2ef0de38d6332b076ad7b8852e31110fc23c1f691f026f339c28c9ff0f0",
+        "tests": [
+          {
+            "name": "checksum_summary_pins_wrong_sibling_variant",
+            "status": "FAILED"
+          },
+          {
+            "name": "glyph_summary_downcast_witness_on_stringified_wrapper",
+            "status": "FAILED"
+          },
+          {
+            "name": "length_summary_only_checks_is_err",
+            "status": "ok"
+          },
+          {
+            "name": "parse_summary_boxed_variant_propagates_malformed_source",
+            "status": "ok"
+          },
+          {
+            "name": "parse_summary_fails_closed_on_malformed_source",
+            "status": "ok"
+          },
+          {
+            "name": "render_summary_observes_other_enum_variant",
+            "status": "FAILED"
+          },
+          {
+            "name": "theme_summary_ignores_matches_result",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/error_variant_boxed_wrapper_downcast_witness/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-8333e5xy/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "guard_stop": null,
+        "seconds": 0.603,
+        "stdout_sha256": "643a2331fc4902ce0bc5a800d3496330688499528068ab8ece2b7b6a79613a5d",
+        "stderr_sha256": "41fc3db0f1cb119b226647712ab456cc1ad0396754db2fa5f62db065a3cbee75",
+        "tests": [
+          {
+            "name": "checksum_summary_pins_wrong_sibling_variant",
+            "status": "FAILED"
+          },
+          {
+            "name": "glyph_summary_downcast_witness_on_stringified_wrapper",
+            "status": "ok"
+          },
+          {
+            "name": "length_summary_only_checks_is_err",
+            "status": "ok"
+          },
+          {
+            "name": "parse_summary_boxed_variant_propagates_malformed_source",
+            "status": "FAILED"
+          },
+          {
+            "name": "parse_summary_fails_closed_on_malformed_source",
+            "status": "FAILED"
+          },
+          {
+            "name": "render_summary_observes_other_enum_variant",
+            "status": "FAILED"
+          },
+          {
+            "name": "theme_summary_ignores_matches_result",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": [
+        {
+          "name": "glyph_summary_downcast_witness_on_stringified_wrapper",
+          "input": "FAILED",
+          "before": "ok"
+        },
+        {
+          "name": "parse_summary_boxed_variant_propagates_malformed_source",
+          "input": "ok",
+          "before": "FAILED"
+        },
+        {
+          "name": "parse_summary_fails_closed_on_malformed_source",
+          "input": "ok",
+          "before": "FAILED"
+        }
+      ]
+    },
+    {
+      "fixture": "module_reach_control_qualified",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/module_reach_control_qualified/input/Cargo.toml",
+        "fixtures/module_reach_control_qualified/input/src/inner.rs",
+        "fixtures/module_reach_control_qualified/input/src/lib.rs",
+        "fixtures/module_reach_control_qualified/input/tests/api.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-n_3mcluk/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/module_reach_control_qualified/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "a5bbdddf7159d6dfd9d094447d452e2ef6c9f27dfd45c306ca4b0897d5f657dd",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "predicate",
+          "class": "exposed",
+          "owner": null,
+          "line": 2
+        },
+        {
+          "family": "return_value",
+          "class": "exposed",
+          "owner": null,
+          "line": 2
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-n_3mcluk/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "695f92093bd71e49a04e3e5c4adb6a6eda934a9c27ebb475d7dafe91beeadd80",
+        "stderr_sha256": "977ee669ea4afed11043103d95b71bcb7771a2d9b3523567a8a772ef17bc9318",
+        "tests": [
+          {
+            "name": "discount_boundary",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/module_reach_control_qualified/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-n_3mcluk/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.402,
+        "stdout_sha256": "695f92093bd71e49a04e3e5c4adb6a6eda934a9c27ebb475d7dafe91beeadd80",
+        "stderr_sha256": "977ee669ea4afed11043103d95b71bcb7771a2d9b3523567a8a772ef17bc9318",
+        "tests": [
+          {
+            "name": "discount_boundary",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": []
+    },
+    {
+      "fixture": "observation_verified_call_deletion",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/observation_verified_call_deletion/input/Cargo.toml",
+        "fixtures/observation_verified_call_deletion/input/src/lib.rs",
+        "fixtures/observation_verified_call_deletion/input/tests/store_tests.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-4nmngms8/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/observation_verified_call_deletion/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "d9fcb0fecdf33b1c1289826ae4a23654e75c69f4489ea454cc2dd09a127dcc9c",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "call_deletion",
+          "class": "exposed",
+          "owner": null,
+          "line": 15
+        },
+        {
+          "family": "side_effect",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 15
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-4nmngms8/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "66fb0fbc88b985a90c80fe1f9564eeb9775c72556bb4e2f2f940eb2349817c8c",
+        "stderr_sha256": "6bd0ca2b6f87d2b33f82c62a271656697d60c0ba7b58e1a2df5b5fd888cbda03",
+        "tests": [
+          {
+            "name": "store_result_inserts_result_key_with_value",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/observation_verified_call_deletion/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.203,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-4nmngms8/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "guard_stop": null,
+        "seconds": 0.402,
+        "stdout_sha256": "58fc690566923cc9f01e40c78516429f8572decf0f43bc2c1a2808ef236804e9",
+        "stderr_sha256": "7e0c89d7e65f40332b937ef1ecd6e5ec1afbdcc3a2cd08e659d9169d278c52be",
+        "tests": [
+          {
+            "name": "store_result_inserts_result_key_with_value",
+            "status": "FAILED"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": [
+        {
+          "name": "store_result_inserts_result_key_with_value",
+          "input": "ok",
+          "before": "FAILED"
+        }
+      ]
+    },
+    {
+      "fixture": "owner_name_collision_helper_keeps_credit",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/owner_name_collision_helper_keeps_credit/input/Cargo.toml",
+        "fixtures/owner_name_collision_helper_keeps_credit/input/src/lib.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-l3vdyetj/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/owner_name_collision_helper_keeps_credit/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "98fae9e706c4e71273ff7e0cfc3a3530a14f5b992e60023bc009936c11414ec8",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 11
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-l3vdyetj/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "1b23c375b9bb32bae7f4a80770f7db6827ec35a8ad83a52a707203b8ecc4262e",
+        "stderr_sha256": "8e78d956d65a98f2d39f61dcd96e64e637228a57c2d87fb25998cfac805b0e9c",
+        "tests": [
+          {
+            "name": "tests::len_counts_items",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/owner_name_collision_helper_keeps_credit/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-l3vdyetj/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "guard_stop": null,
+        "seconds": 0.403,
+        "stdout_sha256": "44590c152db2ef4e261ee006d9abb6a014a205d68933144a9941496a3ba9a554",
+        "stderr_sha256": "59559fd4670ac4ac799ecdfb2b3c234f9f4fa0e9ab34829d162de7b19ade984d",
+        "tests": [
+          {
+            "name": "tests::len_counts_items",
+            "status": "FAILED"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": [
+        {
+          "name": "tests::len_counts_items",
+          "input": "ok",
+          "before": "FAILED"
+        }
+      ]
+    },
+    {
+      "fixture": "rust_same_method_owner_type_positive",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/rust_same_method_owner_type_positive/input/Cargo.toml",
+        "fixtures/rust_same_method_owner_type_positive/input/src/lib.rs",
+        "fixtures/rust_same_method_owner_type_positive/input/tests/size_hints.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-s4exjwue/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/rust_same_method_owner_type_positive/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "dff6d52efc18636e374a11998f565ffa06e3cd6568d6ecc0ac286a0241702c17",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 22
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-s4exjwue/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.404,
+        "stdout_sha256": "158a775a886c95aa3008c227b1bfea9816daad6f566ef9f9268d65ee7059a281",
+        "stderr_sha256": "e4e7137d009083a0dc5ab2bab2b74b9d79fb6ce11044cd7382a9b11c4917c340",
+        "tests": [
+          {
+            "name": "while_some_size_hint_upper_bound",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/rust_same_method_owner_type_positive/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-s4exjwue/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "bd9e5d68b92f0bf521c1d595918120cf4614edfc759c442ddf287094bb6ab35a",
+        "stderr_sha256": "35d384332be958eb9269d0d03845ad9b39317e0d6867fcf84a42e08901741a45",
+        "tests": [
+          {
+            "name": "while_some_size_hint_upper_bound",
+            "status": "FAILED"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": [
+        {
+          "name": "while_some_size_hint_upper_bound",
+          "input": "ok",
+          "before": "FAILED"
+        }
+      ]
+    },
+    {
+      "fixture": "unwrap_err_variant_positive",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/unwrap_err_variant_positive/input/Cargo.toml",
+        "fixtures/unwrap_err_variant_positive/input/src/lib.rs",
+        "fixtures/unwrap_err_variant_positive/input/tests/errors.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-cp7qe2ue/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/unwrap_err_variant_positive/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "920938ed6e1866a25f6aa955fdd9bd600074905f6ee03c1f08a967aba3815c86",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "error_path",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 8
+        },
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 8
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-cp7qe2ue/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "4fb6fd1c0ecb49b49cf2abd7ec8a9deb96beb5e7abff371dfc33b2ea297004d3",
+        "stderr_sha256": "58f3f372f0bbf71065c087a2da54f0a86da429205d8d434209724032cb0ad658",
+        "tests": [
+          {
+            "name": "negative_input_rejects_with_negative_error",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/unwrap_err_variant_positive/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-cp7qe2ue/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "guard_stop": null,
+        "seconds": 0.404,
+        "stdout_sha256": "f0194afb35b008418d605a8d2fb0a67da5719850952e246d17e18cec25e1d61d",
+        "stderr_sha256": "6b4e337f5b1df64d9aa58a23a8ab85c211eb8a924ecdc20aa0ad18541a0e8dae",
+        "tests": [
+          {
+            "name": "negative_input_rejects_with_negative_error",
+            "status": "FAILED"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": [
+        {
+          "name": "negative_input_rejects_with_negative_error",
+          "input": "ok",
+          "before": "FAILED"
+        }
+      ]
+    },
+    {
+      "fixture": "wildcard_oracle_exact_original",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/wildcard_oracle_exact_original/input/Cargo.toml",
+        "fixtures/wildcard_oracle_exact_original/input/src/lib.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-zey2yn94/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/wildcard_oracle_exact_original/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "ed4cddb64a8b8b47b519fbd207c9efa7cc944cd04836a4aefb5228feb7ca37e5",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 2
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-zey2yn94/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "6d329c41c2dc1e3e9b828956f515eda6c2467f9e0350c34965e0e1313582b573",
+        "stderr_sha256": "ab10f214076cc43965e1fa87d9fb1e63315dde7a4f87343d1958257578cfe571",
+        "tests": [
+          {
+            "name": "tests::observes_score",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/wildcard_oracle_exact_original/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-zey2yn94/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "dce4bdac892e26251c302dc8cb5572538152083470513548e15e6c1bd39b1f17",
+        "stderr_sha256": "a170f5f373d73e23db219109e1c762fa27cc968750218de5226694edbaa55462",
+        "tests": [
+          {
+            "name": "tests::observes_score",
+            "status": "FAILED"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": [
+        {
+          "name": "tests::observes_score",
+          "input": "ok",
+          "before": "FAILED"
+        }
+      ]
+    },
+    {
+      "fixture": "wildcard_oracle_exact_wrong",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/wildcard_oracle_exact_wrong/input/Cargo.toml",
+        "fixtures/wildcard_oracle_exact_wrong/input/src/lib.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-c79afb17/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/wildcard_oracle_exact_wrong/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.209,
+        "stdout_sha256": "486a3a3621bacb84ce7e0f952cee0698e1af2fbc990dcacc27c02614c0b71de0",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 2
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-c79afb17/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "7b6c19c42ea268a38c6bf62ed8aa8c45275f559120a37978befd4bbab52b6b0e",
+        "stderr_sha256": "c0070a3feadb20ef1a6a256b4d155d457a510abdf8faeb902d67e2c312eddb41",
+        "tests": [
+          {
+            "name": "tests::observes_score",
+            "status": "FAILED"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/wildcard_oracle_exact_wrong/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-c79afb17/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "6d329c41c2dc1e3e9b828956f515eda6c2467f9e0350c34965e0e1313582b573",
+        "stderr_sha256": "8ac5ec0120dfa196f3cb82c6bfbf1b56a396c49862c4329a6e35550162915c35",
+        "tests": [
+          {
+            "name": "tests::observes_score",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": [
+        {
+          "name": "tests::observes_score",
+          "input": "FAILED",
+          "before": "ok"
+        }
+      ]
+    },
+    {
+      "fixture": "wildcard_oracle_guarded_original",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/wildcard_oracle_guarded_original/input/Cargo.toml",
+        "fixtures/wildcard_oracle_guarded_original/input/src/lib.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-8gms1qxu/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/wildcard_oracle_guarded_original/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "737218b140b05e388d7f86367a91690e40509b57909e425c6dbaab1460cf9144",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 2
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-8gms1qxu/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.401,
+        "stdout_sha256": "6d329c41c2dc1e3e9b828956f515eda6c2467f9e0350c34965e0e1313582b573",
+        "stderr_sha256": "9763f19de718edd9c2b7f9a0ab1b656a5a781d7e9611d4d97c54a2f6898c0e45",
+        "tests": [
+          {
+            "name": "tests::observes_score",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/wildcard_oracle_guarded_original/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-8gms1qxu/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "9ef1d5e0f3dd5d682811eb08ce4a73ee1cb8657e7a0eb21bb8838c311fcd614e",
+        "stderr_sha256": "1aee2969507e68fc0419db670ba6095b789c2c1e5242fe4d9c4a85e308a5f405",
+        "tests": [
+          {
+            "name": "tests::observes_score",
+            "status": "FAILED"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": [
+        {
+          "name": "tests::observes_score",
+          "input": "ok",
+          "before": "FAILED"
+        }
+      ]
+    },
+    {
+      "fixture": "wildcard_oracle_guarded_wrong",
+      "source_candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "source_files": [
+        "fixtures/wildcard_oracle_guarded_wrong/input/Cargo.toml",
+        "fixtures/wildcard_oracle_guarded_wrong/input/src/lib.rs"
+      ],
+      "producer": {
+        "command": [
+          "/workspace/011-integration-proof/frozen-e133/ripr",
+          "check",
+          "--root",
+          "/dev/shm/ripr-011-qualification/golden-native-ohmoxsm6/input",
+          "--diff",
+          "/workspace/011-integration-proof/golden-native-pairs/wildcard_oracle_guarded_wrong/diff.patch",
+          "--mode",
+          "fast",
+          "--format",
+          "json"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.201,
+        "stdout_sha256": "ae4921cee874fe24062be70b437c1a35a04b96299563b082e83c584552cc07ae",
+        "stderr_sha256": "9d6272d35d6da165aa3dbc3684e9b20830e852aca1f11d209be9e8c7801d499d",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "findings": [
+        {
+          "family": "return_value",
+          "class": "weakly_exposed",
+          "owner": null,
+          "line": 2
+        }
+      ],
+      "input": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-ohmoxsm6/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 101,
+        "guard_stop": null,
+        "seconds": 0.402,
+        "stdout_sha256": "3a3df0331bad5bc416bed9c9de7fb31039c6198f3f12d287b54b7b1c5a0663cd",
+        "stderr_sha256": "2c32fd9fb2b314618c497e5cc038f6521d6709771d2ba0e81abf136f98d8beb6",
+        "tests": [
+          {
+            "name": "tests::observes_score",
+            "status": "FAILED"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "reverse_patch": {
+        "command": [
+          "git",
+          "apply",
+          "--reverse",
+          "--whitespace=nowarn",
+          "/workspace/011-integration-proof/golden-native-pairs/wildcard_oracle_guarded_wrong/diff.patch"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.202,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "tests": [],
+        "nonempty_test_execution": false
+      },
+      "before": {
+        "command": [
+          "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+          "test",
+          "--offline",
+          "--manifest-path",
+          "/dev/shm/ripr-011-qualification/golden-native-ohmoxsm6/input/Cargo.toml",
+          "--target-dir",
+          "/workspace/011-integration-proof/golden-native-pairs/target",
+          "--",
+          "--test-threads=1"
+        ],
+        "exit": 0,
+        "guard_stop": null,
+        "seconds": 0.402,
+        "stdout_sha256": "6d329c41c2dc1e3e9b828956f515eda6c2467f9e0350c34965e0e1313582b573",
+        "stderr_sha256": "41d30165aa97820cf3db146d90319124eab66ca6713affd58ed8737cfbbe7227",
+        "tests": [
+          {
+            "name": "tests::observes_score",
+            "status": "ok"
+          }
+        ],
+        "nonempty_test_execution": true
+      },
+      "changed_native_test_outcomes": [
+        {
+          "name": "tests::observes_score",
+          "input": "FAILED",
+          "before": "ok"
+        }
+      ]
+    }
+  ],
+  "limitation": "Native paired outcomes diagnose golden drift; compile failures and zero-test executions do not establish observation. Complete-project failure may include deliberately wrong sibling controls; named test changes are retained."
+}

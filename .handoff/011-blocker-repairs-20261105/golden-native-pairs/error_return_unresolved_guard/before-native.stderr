@@ -1,0 +1,5 @@
+   Compiling error_return_unresolved_guard v0.1.0 (/dev/shm/ripr-011-qualification/golden-native-f21zqysj/input)
+    Finished `test` profile [unoptimized] target(s) in 0.28s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/error_return_unresolved_guard-f1a31a061bcb704b)
+     Running tests/q.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/q-c95560cf5fa9ccb4)
+   Doc-tests error_return_unresolved_guard

@@ -1,0 +1,5 @@
+   Compiling observation_verified_call_deletion_fixture v0.1.0 (/dev/shm/ripr-011-qualification/golden-native-4nmngms8/input)
+    Finished `test` profile [unoptimized] target(s) in 0.30s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/observation_verified_call_deletion_fixture-a25ef7346bbd7573)
+     Running tests/store_tests.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/store_tests-a41e7f2ff52bdd29)
+error: test failed, to rerun pass `--test store_tests`

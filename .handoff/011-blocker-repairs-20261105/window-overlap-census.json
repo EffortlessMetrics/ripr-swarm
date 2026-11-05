@@ -1,0 +1,289 @@
+{
+  "source": "Most recently updated100openPRs returned by connected GitHub; exact100ceiling, NOT a complete repository census",
+  "inspected_nondraft_prs": 60,
+  "errors": [],
+  "overlapping": [
+    {
+      "pr": 13320,
+      "head": "e9ce6779b3d4072285547b3b57073ae19d77ea71",
+      "branch": "fix/4006-path-inventory-propagation",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T15:11:39Z",
+      "title": "feat(release): propagate path-record counts and NUL digests into the ledger and preflight inputs (#4006)",
+      "overlap": [
+        "docs/OUTPUT_SCHEMA.md"
+      ]
+    },
+    {
+      "pr": 13314,
+      "head": "478a4c7d38e0dc76fa5764558a8a3ad572ef2cec",
+      "branch": "perf/inventory-single-pass",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T14:43:27Z",
+      "title": "perf(seam-inventory): fold corpus hash into single-pass index build on proved misses (#8643)",
+      "overlap": [
+        "crates/ripr/src/analysis/seam_inventory.rs"
+      ]
+    },
+    {
+      "pr": 13165,
+      "head": "b91395a62e893991650da1acc6c87f6218e8b8f6",
+      "branch": "feat/muse-plugin-eval-canonical",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T09:49:40Z",
+      "title": "feat(eval): ingest canonical Muse plugin observations (#13120)",
+      "overlap": [
+        "docs/OUTPUT_SCHEMA.md"
+      ]
+    },
+    {
+      "pr": 13110,
+      "head": "b26a029816bbda99f318178bafbfabe54bb4f3c7",
+      "branch": "impl-child-12506",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T17:35:38Z",
+      "title": "perf(analysis): publish the compact-classified cache family from classified cold walks (#12506)",
+      "overlap": [
+        "crates/ripr/src/analysis/seam_inventory.rs"
+      ]
+    },
+    {
+      "pr": 13059,
+      "head": "ef750a13caaeb8e8e63b8b8184a29e50d0333a8c",
+      "branch": "claude/project-thread-diccvm",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T01:28:31Z",
+      "title": "fix(analysis): withhold no_static_path when dependent crates host tests (Advances #5395)",
+      "overlap": [
+        "docs/OUTPUT_SCHEMA.md"
+      ]
+    },
+    {
+      "pr": 13013,
+      "head": "89e08a367bc3157f28f93d55ff0b7bdba72f60e4",
+      "branch": "claude/project-thread-7ve6u2",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T01:43:11Z",
+      "title": "feat(schema): define ChangeVerificationPlanV1 as pure projection (Closes #5163)",
+      "overlap": [
+        "crates/ripr/src/analysis/seam_inventory.rs"
+      ]
+    },
+    {
+      "pr": 12988,
+      "head": "52ba9f63e66dda818ef335db78c0dbc0dea5e266",
+      "branch": "codex/12981-computed-local-boundary",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T17:46:19Z",
+      "title": "fix: exclude computed local operands from boundary evidence",
+      "overlap": [
+        "crates/ripr/src/analysis/seam_cache.rs",
+        "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs",
+        "docs/OUTPUT_SCHEMA.md",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
+        "xtask/src/tests/rust_corpus_projection.rs"
+      ]
+    },
+    {
+      "pr": 12941,
+      "head": "2301b46646c90770e17c254a4d9387358a4dc616",
+      "branch": "perf/9216-compact-rust-file-facts",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T01:45:33Z",
+      "title": "perf(cache): compact Rust file-fact storage (#9216)",
+      "overlap": [
+        "crates/ripr/src/analysis/seam_cache.rs"
+      ]
+    },
+    {
+      "pr": 12863,
+      "head": "6f3f9634069250313acfb5733f3bf3720735ba2a",
+      "branch": "claude/project-thread-3nm0c4",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T11:09:13Z",
+      "title": "fix(oracles): positive Err-enclosing allowlist for exact variant pins (#12474)",
+      "overlap": [
+        "crates/ripr/src/analysis/seam_cache.rs",
+        "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs",
+        "docs/OUTPUT_SCHEMA.md",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-receipt.json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json",
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
+        "xtask/src/tests/rust_corpus_projection.rs"
+      ]
+    },
+    {
+      "pr": 12723,
+      "head": "7996c4c69fc82ccd9039a028a0828226a48cd5e4",
+      "branch": "fix-12414",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T11:09:24Z",
+      "title": "fix(rust): an inserted guard names its activating domain instead of the equality boundary",
+      "overlap": [
+        "crates/ripr/src/analysis/seam_cache.rs",
+        "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs",
+        "docs/OUTPUT_SCHEMA.md",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+        "xtask/src/tests/rust_corpus_projection.rs"
+      ]
+    },
+    {
+      "pr": 12691,
+      "head": "5b04329c585394771f43d4912c33e5b455220caf",
+      "branch": "cursor/adapter-fed-boundary-grip-12610-121c",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T01:40:17Z",
+      "title": "fix(grip): refuse adapter-fed oracles on predicate boundaries (Closes #12610)",
+      "overlap": [
+        "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json"
+      ]
+    },
+    {
+      "pr": 12690,
+      "head": "72432c685ae8bb9ae1d251a432a3ad4f7b628fd9",
+      "branch": "cursor/positive-err-enclosing-12474-5530",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T01:40:15Z",
+      "title": "fix(oracles): positive Err-enclosing allowlist for exact variant pins (Closes #12474)",
+      "overlap": [
+        "crates/ripr/src/analysis/seam_cache.rs",
+        "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs",
+        "docs/OUTPUT_SCHEMA.md",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
+        "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
+        "xtask/src/tests/rust_corpus_projection.rs"
+      ]
+    },
+    {
+      "pr": 12669,
+      "head": "247ca70213442b268c8a302ba53783f970129a11",
+      "branch": "cursor/ts-for-of-table-quoted-words-f4de",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T01:28:47Z",
+      "title": "fix(typescript): syntax-aware for...of table guards for quoted with/eval (Closes #12572)",
+      "overlap": [
+        "crates/ripr/src/analysis/seam_cache.rs",
+        "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs",
+        "xtask/src/tests/rust_corpus_projection.rs"
+      ]
+    },
+    {
+      "pr": 12647,
+      "head": "960742a3a2782cffceb692b5ebcacc49f39229f8",
+      "branch": "cursor/split-assertion-not-credited-5446-a980",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T01:43:17Z",
+      "title": "feat(evidence): split assertion_not_credited into inert vs admission-unproven (Advances #5446)",
+      "overlap": [
+        "docs/OUTPUT_SCHEMA.md"
+      ]
+    },
+    {
+      "pr": 12587,
+      "head": "23f214388676dd0be8d2f41905e10eb994c7734b",
+      "branch": "cursor/macro-expect-method-disambig-7901-89e1",
+      "github_author": "EffortlessSteven",
+      "updated_at": "2026-11-05T01:40:26Z",
+      "title": "fix(syntax): disambiguate method .expect from expect! in macro arguments (#7901)",
+      "overlap": [
+        "crates/ripr/src/analysis/seam_cache.rs"
+      ]
+    }
+  ],
+  "nonoverlapping": [
+    13326,
+    13324,
+    13322,
+    13321,
+    13317,
+    13307,
+    13303,
+    13288,
+    13274,
+    13265,
+    13259,
+    13228,
+    13182,
+    13168,
+    13166,
+    13159,
+    13158,
+    13129,
+    13093,
+    13077,
+    13051,
+    13022,
+    13021,
+    13018,
+    13014,
+    13012,
+    12979,
+    12969,
+    12967,
+    12966,
+    12965,
+    12964,
+    12883,
+    12693,
+    12688,
+    12686,
+    12679,
+    12676,
+    12657,
+    12653,
+    12651,
+    12650,
+    12641,
+    12626,
+    12588
+  ],
+  "scope": "Only merges touching the enumerated cache/inventory/consumer and25retained artifact paths; no hold on branch development or unrelated PRs",
+  "decision": "Proposal only; no hold or protection change applied"
+}

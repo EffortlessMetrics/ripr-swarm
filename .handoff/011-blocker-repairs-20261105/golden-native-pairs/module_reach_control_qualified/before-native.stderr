@@ -1,0 +1,5 @@
+   Compiling qual_reach v0.0.0 (/dev/shm/ripr-011-qualification/golden-native-n_3mcluk/input)
+    Finished `test` profile [unoptimized] target(s) in 0.26s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/qual_reach-ef5e7e8ca14c2970)
+     Running tests/api.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/api-8f8a0e34b14bc879)
+   Doc-tests qual_reach

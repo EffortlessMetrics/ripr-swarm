@@ -1,0 +1,4 @@
+   Compiling wildcard-oracle-guarded-original v0.0.0 (/dev/shm/ripr-011-qualification/golden-native-8gms1qxu/input)
+    Finished `test` profile [unoptimized] target(s) in 0.18s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/wildcard_oracle_guarded_original-51243743ee322778)
+   Doc-tests wildcard_oracle_guarded_original

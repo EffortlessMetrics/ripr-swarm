@@ -1,0 +1,4 @@
+   Compiling wildcard-oracle-exact-original v0.0.0 (/dev/shm/ripr-011-qualification/golden-native-zey2yn94/input)
+    Finished `test` profile [unoptimized] target(s) in 0.21s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/wildcard_oracle_exact_original-7c096710b92d7164)
+   Doc-tests wildcard_oracle_exact_original

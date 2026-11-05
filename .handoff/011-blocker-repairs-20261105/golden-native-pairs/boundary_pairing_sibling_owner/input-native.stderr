@@ -1,0 +1,19 @@
+   Compiling composition-proof v0.0.0 (/dev/shm/ripr-011-qualification/golden-native-fixveze7/input)
+warning: function `gate` is never used
+ --> src/lib.rs:2:12
+  |
+2 |     pub fn gate(input: u32) -> bool {
+  |            ^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `gate` is never used
+ --> src/lib.rs:7:12
+  |
+7 |     pub fn gate(input: u32) -> bool {
+  |            ^^^^
+
+warning: `composition-proof` (lib) generated 2 warnings
+    Finished `test` profile [unoptimized] target(s) in 0.22s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/composition_proof-eb07b24c26829e5f)
+   Doc-tests composition_proof

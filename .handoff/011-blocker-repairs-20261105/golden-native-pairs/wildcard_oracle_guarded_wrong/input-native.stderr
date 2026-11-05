@@ -1,0 +1,4 @@
+   Compiling wildcard-oracle-guarded-wrong v0.0.0 (/dev/shm/ripr-011-qualification/golden-native-ohmoxsm6/input)
+    Finished `test` profile [unoptimized] target(s) in 0.20s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/wildcard_oracle_guarded_wrong-1f9eb265040a0f3e)
+error: test failed, to rerun pass `--lib`

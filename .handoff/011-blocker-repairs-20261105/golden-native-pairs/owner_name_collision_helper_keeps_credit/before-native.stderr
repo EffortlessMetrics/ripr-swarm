@@ -1,0 +1,4 @@
+   Compiling owner_name_collision_helper_keeps_credit_fixture v0.1.0 (/dev/shm/ripr-011-qualification/golden-native-l3vdyetj/input)
+    Finished `test` profile [unoptimized] target(s) in 0.20s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/owner_name_collision_helper_keeps_credit_fixture-86b3651c9f3aac3d)
+error: test failed, to rerun pass `--lib`

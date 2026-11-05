@@ -1,0 +1,202 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "/dev/shm/ripr-011-qualification/golden-native-4nmngms8/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":1,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"conflicting_expressions":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:99c9f8e29127b68f665d24832c7373796caa5f9bebbb7528f7b9955a581c9970","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:call_deletion:c13d820a",
+      "canonical_gap_id": "gap:rust:src/lib.rs:store_result:call_deletion:call_deletion:cache.insert_lit726573756c745f6b6579_result",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:store_result:call_deletion:call_deletion:cache.insert_lit726573756c745f6b6579_result",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "store_result",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "cache.insert_lit726573756c745f6b6579_result"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:call_deletion:c13d820a",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 15,
+        "expression": "cache.insert(\"result_key\", result)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach store_result: store_result_inserts_result_key_with_value"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence state write: cache.insert(\"result_key\", result)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach store_result: store_result_inserts_result_key_with_value", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence state write: cache.insert(\"result_key\", result)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches state write: cache.insert(\"result_key\", result) (line 15)", "related test tests/store_tests.rs:4 store_result_inserts_result_key_with_value uses strong exact value oracle: assert_eq!(cache.inserted, vec![\"result_key=42\".to_string()]);", "source function argument value result = 42 at line 6", "source assertion argument value \"result_key=42\" at line 7"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"cache.insert(\"result_key\", result)","line":15}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence state write: cache.insert(\"result_key\", result)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach store_result: store_result_inserts_result_key_with_value", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "6": "store_result(&mut cache, 42);",
+        "7": "assert_eq!(cache.inserted, vec![\"result_key=42\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 6,
+            "value": "result = 42",
+            "context": "function_argument"
+          },
+          {
+            "line": 7,
+            "value": "\"result_key=42\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 6,
+          "value": "result = 42",
+          "context": "function_argument"
+        },
+        {
+          "line": 7,
+          "value": "\"result_key=42\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "store_result_inserts_result_key_with_value",
+          "file": "tests/store_tests.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(cache.inserted, vec![\"result_key=42\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:side_effect:4c5f48f0",
+      "canonical_gap_id": "gap:rust:src/lib.rs:store_result:side_effect:side_effect:cache.insert_lit726573756c745f6b6579_result",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:store_result:side_effect:side_effect:cache.insert_lit726573756c745f6b6579_result",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "store_result",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "cache.insert_lit726573756c745f6b6579_result"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:side_effect:4c5f48f0",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 15,
+        "expression": "cache.insert(\"result_key\", result)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach store_result: store_result_inserts_result_key_with_value"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence state write: cache.insert(\"result_key\", result)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach store_result: store_result_inserts_result_key_with_value", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence state write: cache.insert(\"result_key\", result)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "local flow reaches state write: cache.insert(\"result_key\", result) (line 15)", "related test tests/store_tests.rs:4 store_result_inserts_result_key_with_value uses strong exact value oracle: assert_eq!(cache.inserted, vec![\"result_key=42\".to_string()]);", "source function argument value result = 42 at line 6", "source assertion argument value \"result_key=42\" at line 7"],
+      "flow_sinks": [
+        {"kind":"state_write","text":"cache.insert(\"result_key\", result)","line":15}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence state write: cache.insert(\"result_key\", result)", "Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach store_result: store_result_inserts_result_key_with_value"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "6": "store_result(&mut cache, 42);",
+        "7": "assert_eq!(cache.inserted, vec![\"result_key=42\".to_string()]);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 6,
+            "value": "result = 42",
+            "context": "function_argument"
+          },
+          {
+            "line": 7,
+            "value": "\"result_key=42\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 6,
+          "value": "result = 42",
+          "context": "function_argument"
+        },
+        {
+          "line": 7,
+          "value": "\"result_key=42\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "store_result_inserts_result_key_with_value",
+          "file": "tests/store_tests.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(cache.inserted, vec![\"result_key=42\".to_string()]);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "suggested_next_action": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+,
+  "language_completeness": {"completeness":"complete","languages":[{"disclosure":"silent","findings":2,"language":"rust","limitations":[],"status":"complete"}],"mode":"diff","schema_version":"language_completeness.v1","total_findings":2},
+  "canonical_next_action": {"schema_version":"canonical_next_action.v1","producer":"check_top_result","subject":{"root":"/dev/shm/ripr-011-qualification/golden-native-4nmngms8/input","diff_source":{"committed":{"base":null,"head":null}},"item":"probe:src_lib.rs:side_effect:4c5f48f0"},"currentness":{"head_expected":null,"head_observed":null,"config_expected":null,"config_observed":null},"action_class":"inspect_details","stop":{"kind":"check_triage","case":"top_gap","detail_route":"ripr explain --root /dev/shm/ripr-011-qualification/golden-native-4nmngms8/input --diff /workspace/011-integration-proof/golden-native-pairs/observation_verified_call_deletion/diff.patch --mode fast probe:src_lib.rs:side_effect:4c5f48f0"},"alternatives":[{"label":"considered finding probe:src_lib.rs:call_deletion:c13d820a","route":"ripr explain --root /dev/shm/ripr-011-qualification/golden-native-4nmngms8/input --diff /workspace/011-integration-proof/golden-native-pairs/observation_verified_call_deletion/diff.patch --mode fast probe:src_lib.rs:call_deletion:c13d820a"}],"non_claim":"Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."}
+}

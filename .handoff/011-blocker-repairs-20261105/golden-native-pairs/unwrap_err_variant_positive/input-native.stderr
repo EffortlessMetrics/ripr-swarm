@@ -1,0 +1,5 @@
+   Compiling unwrap_err_variant_positive_fixture v0.1.0 (/dev/shm/ripr-011-qualification/golden-native-cp7qe2ue/input)
+    Finished `test` profile [unoptimized] target(s) in 0.29s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/unwrap_err_variant_positive_fixture-ba4b40c69193ec2e)
+     Running tests/errors.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/errors-fc78c969f22377df)
+   Doc-tests unwrap_err_variant_positive_fixture

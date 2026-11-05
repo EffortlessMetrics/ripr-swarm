@@ -1,0 +1,4 @@
+   Compiling wildcard-oracle-exact-wrong v0.0.0 (/dev/shm/ripr-011-qualification/golden-native-c79afb17/input)
+    Finished `test` profile [unoptimized] target(s) in 0.18s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/wildcard_oracle_exact_wrong-9fc3c05fbc8b7c51)
+error: test failed, to rerun pass `--lib`

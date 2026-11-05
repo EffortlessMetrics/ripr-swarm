@@ -1,0 +1,25 @@
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test negative_input_rejects_with_negative_error ... FAILED
+
+failures:
+
+---- negative_input_rejects_with_negative_error stdout ----
+
+thread 'negative_input_rejects_with_negative_error' (1080184) panicked at tests/errors.rs:6:5:
+assertion `left == right` failed
+  left: TooLarge
+ right: Negative
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    negative_input_rejects_with_negative_error
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

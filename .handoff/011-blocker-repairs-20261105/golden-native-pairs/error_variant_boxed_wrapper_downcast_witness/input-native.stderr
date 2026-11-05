@@ -1,0 +1,16 @@
+   Compiling boxed_wrapper_downcast_witness_fixture v0.1.0 (/dev/shm/ripr-011-qualification/golden-native-8333e5xy/input)
+warning: unused imports: `try_glyph_summary`, `try_length_summary`, and `try_theme_summary`
+ --> tests/errors.rs:3:67
+  |
+3 |     length_summary, parse_summary, render_summary, theme_summary, try_glyph_summary,
+  |                                                                   ^^^^^^^^^^^^^^^^^
+4 |     try_length_summary, try_parse_summary, try_theme_summary,
+  |     ^^^^^^^^^^^^^^^^^^                     ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `boxed_wrapper_downcast_witness_fixture` (test "errors") generated 1 warning (run `cargo fix --test "errors" -p boxed_wrapper_downcast_witness_fixture` to apply 1 suggestion)
+    Finished `test` profile [unoptimized] target(s) in 0.37s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/boxed_wrapper_downcast_witness_fixture-0c625bf4fa8e39d4)
+     Running tests/errors.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/errors-2a2f8b8d02fee11f)
+error: test failed, to rerun pass `--test errors`
