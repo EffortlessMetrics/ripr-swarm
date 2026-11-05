@@ -101,6 +101,7 @@ reproduced by a checked-in instrument. Refresh with each new baseline.
 | Precision | 96.8% (61 of 63) | 97% | no |
 | Recall, strict (flagged ungripped) | 10.6% (34 of 322 runtime-missed); Rust only | 80% | no |
 | Recall, flagged or honest unknown (ungripped, weakly_gripped, activation_unknown, opaque) | 58.7% (189 of 322: 34 + 0 + 151 + 4); Rust only, Python and TypeScript not established | 80% | no |
+| Replaces cargo-mutants (`replacement_criterion.verdict`) | not_yet: precision (96.8%), flagged-or-unknown recall (58.7%) and scored coverage (28.3%) not met; time met on one crate (ripr 0.225 s vs full cargo-mutants 128 s on rust-hex, ratio 0.002); Python/TypeScript real-mutant agreement not established; Rust only | every thresholded criterion met, none not established. Precision and recall bars are the R2 rows above; scored coverage at least 50% (a majority of mutants get a scored verdict) and ripr time at most 10% of full cargo-mutants are agent-chosen | no |
 | Agent lift, FV strength, retention | not measured | see R3 | not established |
 
 Result: R0 is not yet met (first value across channels is unproven), and R1

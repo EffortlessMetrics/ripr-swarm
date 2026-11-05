@@ -693,6 +693,11 @@ pub(super) fn machine_refusal_document(
             &envelope_input.root,
             envelope_input.base.as_deref(),
         ))),
+        OutputFormat::SarifCompact => Some(Ok(output::sarif::render_refusal_sarif_compact(
+            &notice,
+            &envelope_input.root,
+            envelope_input.base.as_deref(),
+        ))),
         // GitHub: one workflow-command error annotation, escaped like every
         // other line of the format.
         OutputFormat::Github => Some(Ok(output::github::render_refusal(&notice))),
