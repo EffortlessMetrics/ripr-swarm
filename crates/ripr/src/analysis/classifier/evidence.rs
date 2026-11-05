@@ -1777,7 +1777,7 @@ impl ClassifiedProbeEvidence {
                                 "{} in {} at {}:{}",
                                 assertion_name,
                                 test.name,
-                                test.file.display(),
+                                crate::analysis::stable_path_text(&test.file),
                                 assertion.line
                             ),
                             macro_name,
