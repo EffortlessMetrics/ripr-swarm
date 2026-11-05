@@ -10,7 +10,7 @@ use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode,
-    ast::{self, HasArgList, HasAttrs, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName},
 };
 use std::collections::{BTreeMap, BTreeSet};
 
