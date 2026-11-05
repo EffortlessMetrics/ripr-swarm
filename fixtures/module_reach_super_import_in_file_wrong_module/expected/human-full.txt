@@ -36,7 +36,7 @@ Evidence
   - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
   - local flow reaches returned value: 10 <= qty (line 2)
   - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(10), 5); misses: no established call path to the changed code; linked by file location only
-  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 4); misses: no established call path to the changed code; linked by file location only
+  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 4); misses
   - source assertion argument value 10 at line 20
   - source assertion argument value 5 at line 20
   - source assertion argument value 4 at line 21
@@ -95,7 +95,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: 10 <= qty (line 2)
   - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(10), 5); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 4); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:19 discount_boundary uses strong exact value oracle: assert_eq!(order_discount(9), 4); unconfirmed
   - source assertion argument value 10 at line 20
   - source assertion argument value 5 at line 20
   - source assertion argument value 4 at line 21

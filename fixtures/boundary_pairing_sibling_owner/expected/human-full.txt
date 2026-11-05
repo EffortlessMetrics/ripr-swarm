@@ -80,7 +80,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: input >= 10 (line 3)
   - related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(a::gate(11), true); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(b::gate(10), true); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test src/lib.rs:12 same_test_separate_owners uses strong exact value oracle: assert_eq!(b::gate(10), true); unconfirmed
   - source function argument value input = 10 at line 13
   - source function argument value input == 10 at line 13
   - source assertion argument value true at line 14

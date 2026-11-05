@@ -4,6 +4,14 @@
 //! the drill-in, so it lists every retained test ripr examined with what it
 //! concluded about each one, says what a test would need to change the
 //! verdict, and spells out each stop reason.
+//!
+//! Each fact renders exactly once (the agent-efficiency study, Nov 2-4, measured
+//! the explain context triple-rendering each related test's assertion and
+//! repeating the observation hedge once per mention): rows inside the Evidence
+//! window keep their assertion and miss sentence in the Evidence row, and the
+//! verdict block below references that row instead of re-listing either. Rows
+//! beyond the window have no Evidence row, so their full verdict and checked
+//! assertion stay here — they are the only copy.
 
 use crate::domain::{
     ExposureClass, Finding, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss,
@@ -11,6 +19,16 @@ use crate::domain::{
 };
 use crate::output::path::display_path;
 use crate::output::related_test_miss::{checked_assertion_text, related_test_miss_reason};
+
+/// How many leading assertion rows the Evidence window renders
+/// (`evidence_lines::MAX_RELATED_TESTS_SHOWN`): those rows carry the
+/// assertion and miss sentence the verdict block would otherwise repeat.
+const EVIDENCE_WINDOW_ROWS: usize = super::evidence_lines::MAX_RELATED_TESTS_SHOWN;
+
+/// Pointer appended to a verdict whose facts the Evidence rows above already
+/// state, so the drill-in keeps the verdict label without re-listing the
+/// reason or assertion.
+const EVIDENCE_REFERENCE: &str = " (see Evidence above)";
 
 pub(crate) fn render_verdict_explanation(
     finding: &Finding,
@@ -33,23 +51,39 @@ pub(crate) fn render_verdict_explanation(
         for rows in groups {
             // The test is judged by its strongest assertion; a weaker row's
             // reason must not speak for a test that also asserts exactly.
-            let lead = rows
+            let (lead_index, lead) = rows
                 .iter()
                 .copied()
-                .min_by_key(|row| strength_order(&row.oracle_strength))
+                .min_by_key(|(index, row)| (strength_order(&row.oracle_strength), *index))
                 .unwrap_or(rows[0]);
             let lead_verdict = row_verdict(lead, finding);
             // #8746: when the lead row's assertion text was not recorded but
             // another row of the same test printed one below, the bare
             // "assertion not recorded" fallback is suppressed — it would
             // contradict the `checked:` lines the reader is about to see.
-            let group_printed_an_assertion = rows.iter().any(|row| row.oracle.is_some());
+            let group_printed_an_assertion = rows.iter().any(|(_, row)| row.oracle.is_some());
+            // Rows inside the Evidence window already state their assertion
+            // and miss sentence in the Evidence rows above; the verdict block
+            // keeps the verdict label and points there instead of re-listing
+            // the reason or the assertion. The reference is honest only when
+            // an Evidence row actually carries the facts, so a row with a
+            // recorded miss (or a recorded assertion) but no Evidence slot
+            // keeps its full form below.
+            let lead_covered = evidence_window_covers(lead_index, lead, finding);
             if lead_verdict == ASSERTION_NOT_RECORDED && group_printed_an_assertion {
                 out.push_str(&format!(
                     "  - {}:{} {}\n",
                     display_path(&lead.file),
                     lead.line,
                     lead.name
+                ));
+            } else if lead_covered {
+                out.push_str(&format!(
+                    "  - {}:{} {}: {}{EVIDENCE_REFERENCE}\n",
+                    display_path(&lead.file),
+                    lead.line,
+                    lead.name,
+                    lead_verdict_label(lead, finding)
                 ));
             } else {
                 out.push_str(&format!(
@@ -59,8 +93,14 @@ pub(crate) fn render_verdict_explanation(
                     lead.name
                 ));
             }
-            for row in &rows {
+            for (index, row) in &rows {
                 if let Some(oracle) = &row.oracle {
+                    if evidence_window_covers(*index, row, finding) {
+                        // The assertion and this row's verdict are in the
+                        // Evidence row above; re-listing them here would
+                        // duplicate facts the reader just read.
+                        continue;
+                    }
                     let verdict = row_verdict(row, finding);
                     let note = if verdict == lead_verdict {
                         String::new()
@@ -160,18 +200,44 @@ fn strength_order(strength: &OracleStrength) -> u8 {
     }
 }
 
-/// Rows of the same test (name, file, line), in first-seen order.
-fn group_rows_by_test(rows: &[RelatedTest]) -> Vec<Vec<&RelatedTest>> {
-    let mut groups: Vec<Vec<&RelatedTest>> = Vec::new();
-    for row in rows {
+/// Rows of the same test (name, file, line), in first-seen order, with each
+/// row's index into `finding.related_tests` so the loop can tell which rows
+/// the Evidence window above already rendered.
+fn group_rows_by_test(rows: &[RelatedTest]) -> Vec<Vec<(usize, &RelatedTest)>> {
+    let mut groups: Vec<Vec<(usize, &RelatedTest)>> = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
         match groups.iter_mut().find(|group| {
-            group[0].name == row.name && group[0].file == row.file && group[0].line == row.line
+            group[0].1.name == row.name
+                && group[0].1.file == row.file
+                && group[0].1.line == row.line
         }) {
-            Some(group) => group.push(row),
-            None => groups.push(vec![row]),
+            Some(group) => group.push((index, row)),
+            None => groups.push(vec![(index, row)]),
         }
     }
     groups
+}
+
+/// Whether the Evidence window renders this row: the window shows the leading
+/// [`EVIDENCE_WINDOW_ROWS`] assertion rows, and a row's facts (assertion and
+/// miss sentence) appear there whenever the row kept its assertion or carries
+/// a miss reason. A row with neither — the retention fact #8746 glosses — has
+/// no Evidence row carrying its verdict, so the verdict block stays the only
+/// copy and renders the full form.
+fn evidence_window_covers(index: usize, row: &RelatedTest, finding: &Finding) -> bool {
+    index < EVIDENCE_WINDOW_ROWS
+        && (row.oracle.is_some() || related_test_miss_reason(row, &finding.probe.family).is_some())
+}
+
+/// The short verdict label for a covered lead row: the miss/unconfirmed word
+/// when the row carries a reason (the sentence itself is in the Evidence row),
+/// otherwise the oracle projection or retention verdict as usual.
+fn lead_verdict_label(row: &RelatedTest, finding: &Finding) -> String {
+    if related_test_miss_reason(row, &finding.probe.family).is_some() {
+        crate::output::related_test_miss::related_test_miss_label(row).to_string()
+    } else {
+        row_verdict(row, finding)
+    }
 }
 
 /// Whether the finding stopped at a reach edge ripr could not resolve, which
@@ -529,22 +595,18 @@ mod tests {
             strong,
         ];
         let text = render_verdict_explanation(&finding, None);
+        // The lead row is the strong assertion; its miss sentence and both
+        // rows' assertions live in the Evidence rows (stated once), so the
+        // verdict block keeps the label and references them.
         assert!(
-            text.contains(
-                "  - tests/parse.rs:7 parses_empty: misses: no test input reaches `len == 0`\n"
-            ),
+            text.contains("  - tests/parse.rs:7 parses_empty: misses (see Evidence above)\n"),
             "{text}"
         );
         assert!(
-            text.contains(
-                "      checked: assert!(parse(\"a\").is_ok()) (misses: assertion too weak to tell the old behavior from the new)\n"
-            ),
-            "{text}"
+            !text.contains("      checked: "),
+            "in-window rows must not re-list assertions: {text}"
         );
-        assert!(
-            text.contains("      checked: assert_eq!(parse(\"a\"), Ok(1))\n"),
-            "{text}"
-        );
+        assert!(!text.contains("no test input reaches `len == 0`"), "{text}");
     }
     #[test]
     fn an_unselected_arm_is_an_input_to_select_not_an_assertion_to_make() {
@@ -586,7 +648,9 @@ mod tests {
     }
 
     /// #5508: a Perl row whose observation ripr could not confirm is an
-    /// unknown, so the explanation does not introduce it as a miss.
+    /// unknown, so the explanation does not introduce it as a miss. The
+    /// reason sentence itself lives in the Evidence row (stated once per
+    /// test); the verdict block keeps the label and references it.
     #[test]
     fn an_unconfirmed_observation_is_not_labelled_a_miss() {
         let mut finding = sample_perl_finding();
@@ -597,12 +661,14 @@ mod tests {
         )];
         let text = render_verdict_explanation(&finding, None);
         assert!(
-            text.contains(
-                "  - tests/parse.rs:7 parses_empty: unconfirmed: ripr could not confirm that this assertion observes the changed behavior\n"
-            ),
+            text.contains("  - tests/parse.rs:7 parses_empty: unconfirmed (see Evidence above)\n"),
             "{text}"
         );
         assert!(!text.contains("misses: ripr could not confirm"), "{text}");
+        assert!(
+            !text.contains("unconfirmed: ripr could not confirm"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -678,13 +744,200 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("assertion not recorded"), "{text}");
-        // The sibling row keeps its own verdict as a note, since the
-        // suppressed lead no longer states one.
+        // Both rows are inside the Evidence window, so the sibling's
+        // assertion and verdict stay in the Evidence rows; nothing is
+        // re-listed here.
         assert!(
-            text.contains(
-                "      checked: assert_eq!(parse(\"a\"), Ok(1)) (weak exact value oracle)\n"
+            !text.contains("      checked: "),
+            "in-window rows must not re-list assertions: {text}"
+        );
+    }
+
+    /// A second distinct test identity, so a finding can carry more than one
+    /// examined test.
+    fn row_for(
+        name: &str,
+        line: usize,
+        oracle: &str,
+        strength: OracleStrength,
+        miss: RelatedTestMiss,
+    ) -> RelatedTest {
+        RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/parse.rs"),
+            line,
+            oracle: Some(oracle.to_string()),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: strength,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: Some(miss),
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        }
+    }
+
+    /// The full `ripr explain` render (finding sections plus the verdict
+    /// explanation), the surface the agent-efficiency study (Nov 2-4) measured.
+    fn full_explain_render(finding: &Finding) -> String {
+        crate::output::human::render_finding_with_context_command_and_files(
+            finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:test",
+            std::path::Path::new("."),
+            None,
+        )
+    }
+
+    /// Agent-efficiency study (Nov 2-4): the explain context triple-rendered
+    /// each related test's assertion (Evidence row + `checked:` re-list) and
+    /// repeated the observation hedge once per mention. The needed-subset
+    /// contract: every fact appears exactly once — assertions live in the
+    /// Evidence rows, the verdict block references them, and the hedge is
+    /// stated once per test.
+    #[test]
+    fn explain_states_each_assertion_and_hedge_once_per_test() {
+        const HEDGE: &str =
+            "ripr could not confirm that this assertion observes the changed behavior";
+        let mut finding = sample_perl_finding();
+        finding.related_tests = vec![
+            row_for(
+                "discount_below_threshold",
+                7,
+                "is(My::App::discount(100), 10, 'below')",
+                OracleStrength::Strong,
+                RelatedTestMiss::ObservationUnconfirmed,
             ),
-            "{text}"
+            row_for(
+                "discount_far_above",
+                12,
+                "is(My::App::discount(10_000), 1_000, 'above')",
+                OracleStrength::Strong,
+                RelatedTestMiss::ObservationUnconfirmed,
+            ),
+        ];
+
+        let rendered = full_explain_render(&finding);
+
+        assert_eq!(
+            rendered.matches(HEDGE).count(),
+            2,
+            "the observation hedge must be stated once per test, not per assertion mention: {rendered}"
+        );
+        assert_eq!(
+            rendered
+                .matches("is(My::App::discount(100), 10, 'below')")
+                .count(),
+            1,
+            "each assertion must render exactly once (in Evidence): {rendered}"
+        );
+        assert_eq!(
+            rendered
+                .matches("is(My::App::discount(10_000), 1_000, 'above')")
+                .count(),
+            1,
+            "each assertion must render exactly once (in Evidence): {rendered}"
+        );
+        assert!(
+            !rendered.contains("      checked: "),
+            "in-window assertions must not be re-listed in Why this verdict: {rendered}"
+        );
+    }
+
+    /// Rows beyond the Evidence window have no Evidence row to reference, so
+    /// their full verdict and checked assertion must survive in the verdict
+    /// block — they are the only copy of those facts.
+    #[test]
+    fn explain_keeps_the_full_verdict_for_rows_outside_the_evidence_window() {
+        const HEDGE: &str =
+            "ripr could not confirm that this assertion observes the changed behavior";
+        let mut finding = sample_perl_finding();
+        let mut rows = (0..5)
+            .map(|index| {
+                row_for(
+                    &format!("in_window_{index}"),
+                    7 + index,
+                    &format!("is(My::App::discount({index}), 10, 'row {index}')"),
+                    OracleStrength::Strong,
+                    RelatedTestMiss::ObservationUnconfirmed,
+                )
+            })
+            .collect::<Vec<_>>();
+        rows.push(row_for(
+            "beyond_window",
+            42,
+            "is(My::App::discount(50), 5, 'beyond')",
+            OracleStrength::Strong,
+            RelatedTestMiss::ObservationUnconfirmed,
+        ));
+        finding.related_tests = rows;
+
+        let rendered = full_explain_render(&finding);
+
+        // Exactly one hedge mention per test: five in Evidence rows, and the
+        // sixth only in its verdict line (no Evidence row carries it).
+        assert_eq!(
+            rendered.matches(HEDGE).count(),
+            6,
+            "one hedge mention per examined test: {rendered}"
+        );
+        assert_eq!(
+            rendered
+                .matches("is(My::App::discount(50), 5, 'beyond')")
+                .count(),
+            1,
+            "the out-of-window assertion renders once, in its checked line: {rendered}"
+        );
+        assert!(
+            rendered.contains("      checked: is(My::App::discount(50), 5, 'beyond')"),
+            "the out-of-window row keeps its full verdict and checked assertion: {rendered}"
+        );
+    }
+
+    /// A test judged by several retained assertion rows states the shared
+    /// miss reason once, not once per assertion row.
+    #[test]
+    fn evidence_states_a_repeated_miss_reason_once_per_test() {
+        const HEDGE: &str =
+            "ripr could not confirm that this assertion observes the changed behavior";
+        let mut finding = sample_perl_finding();
+        finding.related_tests = vec![
+            row_for(
+                "parses_empty",
+                7,
+                "is(My::App::discount(1), 0, 'first row')",
+                OracleStrength::Strong,
+                RelatedTestMiss::ObservationUnconfirmed,
+            ),
+            row_for(
+                "parses_empty",
+                7,
+                "is(My::App::discount(2), 0, 'second row')",
+                OracleStrength::Strong,
+                RelatedTestMiss::ObservationUnconfirmed,
+            ),
+        ];
+
+        let rendered = full_explain_render(&finding);
+
+        assert_eq!(
+            rendered.matches(HEDGE).count(),
+            1,
+            "one miss sentence per test across the whole explain render: {rendered}"
+        );
+        assert_eq!(
+            rendered
+                .matches("is(My::App::discount(1), 0, 'first row')")
+                .count(),
+            1,
+            "each assertion still renders exactly once: {rendered}"
+        );
+        assert_eq!(
+            rendered
+                .matches("is(My::App::discount(2), 0, 'second row')")
+                .count(),
+            1,
+            "each assertion still renders exactly once: {rendered}"
         );
     }
 }

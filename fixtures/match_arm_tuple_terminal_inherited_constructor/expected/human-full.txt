@@ -38,9 +38,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches match arm result: (true, false) => (line 30)
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.0, "head_passed"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.2, vec!["request-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.3, vec!["receipt-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.2, vec!["request-1".to_string()]); unconfirmed
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.3, vec!["receipt-1".to_string()]); unconfirmed
   - source function argument value plan_status = "planned" at line 8
   - source function argument value task_id = "different-task" at line 8
   - source assertion argument value "head_passed" at line 9
@@ -87,9 +87,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches match arm result: "request_identity_v1" (line 30)
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.0, "head_passed"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.2, vec!["request-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.3, vec!["receipt-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.2, vec!["request-1".to_string()]); unconfirmed
+  - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.3, vec!["receipt-1".to_string()]); unconfirmed
   - source function argument value plan_status = "planned" at line 8
   - source function argument value task_id = "different-task" at line 8
   - source assertion argument value "head_passed" at line 9
