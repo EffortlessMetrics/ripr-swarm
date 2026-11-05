@@ -338,7 +338,9 @@ fn native_muse_completion_cannot_override_refuted_observations() -> Result<(), S
         }
         to_input(&failed)?;
         failed["verdicts"]["combined_claim"] = json!("completed_repair");
-        let err = to_input(&failed).err().ok_or("failed completion accepted")?;
+        let err = to_input(&failed)
+            .err()
+            .ok_or("failed completion accepted")?;
         assert!(err.contains("completed_repair"), "{name}: {err}");
     }
     for class in ["weakly_exposed", "reachable_unrevealed", "no_static_path"] {
