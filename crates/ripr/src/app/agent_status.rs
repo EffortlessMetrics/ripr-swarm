@@ -37,6 +37,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) const AGENT_STATUS_SCHEMA_VERSION: &str = "0.1";
 
+/// Unresolved seam placeholder a status command embeds when no seam id is
+/// known (#13244). A command carrying this token verbatim is a template, not a
+/// runnable command: executing it fails closed with `seam_id_unknown`.
+pub(crate) const UNRESOLVED_SEAM_ID_PLACEHOLDER: &str = "<seam-id>";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct AgentStatusArtifactDef {
     name: &'static str,
@@ -301,6 +306,16 @@ impl AgentStatusCommand {
     /// Whether this step only makes sense after the focused test edit.
     pub(crate) fn runs_after_test_edit(&self) -> bool {
         AFTER_TEST_EDIT_STEPS.contains(&self.step.as_str())
+    }
+
+    /// #13244: whether the rendered command still embeds the unresolved
+    /// `<seam-id>` placeholder because status recovered no seam id. Such a
+    /// command is a template requiring substitution, not a runnable command;
+    /// the JSON surfaces mark it `requires_substitution: true` so a machine
+    /// consumer never executes the placeholder verbatim. Commands without the
+    /// token are ready to run as-is.
+    pub(crate) fn requires_substitution(&self) -> bool {
+        self.command.contains(UNRESOLVED_SEAM_ID_PLACEHOLDER)
     }
 }
 
@@ -2707,12 +2722,19 @@ fn test_not_run_json(reading: &AgentReceiptReading) -> Value {
 }
 
 fn agent_status_command_json(command: &AgentStatusCommand) -> Value {
-    serde_json::json!({
+    let mut value = serde_json::json!({
         "step": command.step,
         "artifact": command.artifact,
         "reason": command.reason,
         "command": command.command
-    })
+    });
+    // #13244: mark template commands so a machine consumer can filter them
+    // out mechanically instead of parsing angle brackets out of the command
+    // string. Absent means the command is ready to run as-is.
+    if command.requires_substitution() {
+        value["requires_substitution"] = serde_json::json!(true);
+    }
+    value
 }
 
 fn agent_status_warning_json(warning: &AgentStatusWarning) -> Value {
@@ -3889,7 +3911,7 @@ fn command_for_missing_artifact(
     let root = bound_root(&root_path_display(root_argument));
     let seam_id = seam
         .map(|seam| seam.seam_id.as_str())
-        .unwrap_or("<seam-id>");
+        .unwrap_or(UNRESOLVED_SEAM_ID_PLACEHOLDER);
     match artifact.name.as_str() {
         "before_snapshot" => {
             check_repo_exposure_command(&root, "draft", WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT)
@@ -4132,6 +4154,94 @@ mod tests {
 
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
+    }
+
+    /// #13244: `missing_commands[]` entries whose command embeds the
+    /// unresolved `<seam-id>` placeholder (no seam could be recovered) carry
+    /// `requires_substitution: true` in the JSON surface, so a blind-executing
+    /// agent can filter template commands mechanically instead of parsing
+    /// angle brackets out of the command string. Ready-to-run entries carry
+    /// no marker, and the fresh-workspace `next_command` routes to pilot
+    /// (`select_seam`), never a template.
+    #[test]
+    fn agent_status_marks_unresolved_seam_command_templates() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("template-marker");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
+
+        let report = build_agent_status_report(&root, Path::new("."));
+        let rendered = render_agent_status_json(&report)?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse status JSON: {err}"))?;
+
+        let commands = value["missing_commands"]
+            .as_array()
+            .ok_or_else(|| "status JSON must carry a missing_commands array".to_string())?;
+        assert_eq!(commands.len(), 7);
+        let mut marked = 0;
+        for entry in commands {
+            let command = entry["command"]
+                .as_str()
+                .ok_or_else(|| "missing_commands entry must carry a command string".to_string())?;
+            if command.contains(UNRESOLVED_SEAM_ID_PLACEHOLDER) {
+                assert_eq!(
+                    entry["requires_substitution"], true,
+                    "placeholder command must be marked non-executable: {command}"
+                );
+                marked += 1;
+            } else {
+                assert!(
+                    entry.get("requires_substitution").is_none(),
+                    "ready-to-run command must not carry the marker: {command}"
+                );
+            }
+        }
+        // Only the seam-bound steps (packet, brief, receipt) embed the
+        // placeholder when no seam is known.
+        assert_eq!(marked, 3, "unexpected marked set:\n{rendered}");
+        // The mechanical consumer filter: entries without the marker are
+        // exactly the executable ones.
+        let executable = commands
+            .iter()
+            .filter(|entry| entry.get("requires_substitution") != Some(&serde_json::json!(true)))
+            .count();
+        assert_eq!(executable, 4, "unexpected executable set:\n{rendered}");
+        assert!(
+            value["next_command"].get("requires_substitution").is_none(),
+            "the pilot select route must stay unmarked:\n{rendered}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #13244: the marker tracks the unresolved `<seam-id>` placeholder on the
+    /// DTO itself, and the JSON renderer emits it only for template commands,
+    /// so every surface rendering `AgentStatusCommand` agrees.
+    #[test]
+    fn agent_status_command_json_marks_templates_only() {
+        let template = AgentStatusCommand {
+            step: "agent_packet".to_string(),
+            artifact: WORKFLOW_AGENT_PACKET_ARTIFACT.to_string(),
+            reason: "agent packet artifact is missing".to_string(),
+            command: "ripr agent packet --root . --seam-id \"<seam-id>\" --json > out".to_string(),
+        };
+        assert!(template.requires_substitution());
+        assert_eq!(
+            agent_status_command_json(&template)["requires_substitution"],
+            true
+        );
+        let ready = AgentStatusCommand {
+            command: "ripr agent packet --root . --seam-id 67fc764ba37d77bd --json > out"
+                .to_string(),
+            ..template
+        };
+        assert!(!ready.requires_substitution());
+        assert!(
+            agent_status_command_json(&ready)
+                .get("requires_substitution")
+                .is_none()
+        );
     }
 
     /// The artifact `required` flags must claim no more than the active loop
