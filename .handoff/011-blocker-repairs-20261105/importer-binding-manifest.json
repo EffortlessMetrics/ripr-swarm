@@ -5,7 +5,7 @@
   "patch_sha256": "4ba8c0555aa59ee7d7548ca027c2dc146e128606dd1bb41cb954d3abb3de617e",
   "patch_bytes": 22314,
   "base": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
-  "status": "Frozen e133: driver/schema11/cache3/compatibility44+6+70/portable1/production11+native4 passed; full library running",
+  "status": "Frozen e133 full library18174/0/2 and focused/native consumers pass; xtask corpus then aggregate policy/goldens/honesty pending",
   "reproduced": "Single-package own-name dependency alias and alloc alias falsely credit external trait first/last. Correct and wrong native Cargo tests each pass; old producer reports exposed. Multi-member collision was not discriminating and is not claimed reproduced.",
   "before_producer": "0.11.0+147d1968ab4ff0d9739c0c328a1a50a274073f76+languages:rust=1,typescript=1,python=1,perl=0",
   "repair": "Reuse importer-aware MemberCrates.import_names for indexed library roots; remove unconditional alloc root; advance cache generation to full1.163 / compact+sharded0.165 and reject predecessor.",
@@ -34,8 +34,7 @@
   "fixture_refresh": "3d82-importer-portable-fixture-regeneration-receipt.json",
   "running": {
     "session": 83479,
-    "phase": "final-full-lib",
-    "pid": 897176
+    "phase": "xtask-corpus-projection"
   },
   "frozen_passes": {
     "driver": 0,
@@ -48,7 +47,14 @@
     ],
     "portable_chain": 1,
     "production": 11,
-    "native_paths": 4
+    "native_paths": 4,
+    "full_library": {
+      "passed": 18174,
+      "failed": 0,
+      "ignored": 2
+    },
+    "retained_cli_rerun": 17,
+    "lsp_corpus_currentness": 21
   },
   "review_scope": {
     "candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
@@ -66,5 +72,7 @@
       "Linux proof does not establish native Windows readiness",
       "No release selection or publication claim"
     ]
-  }
+  },
+  "independent_importer_review": "Parent reviewer verified22314-byte4ba8c055 patch reconstructs exact tree945114e; importing-file resolution/fail-closed/alloc precedence and paired controls clean. Native portable-chain test separately passed1, supplying artifact validation.",
+  "main_composition_review_packet": "current-main-source-composition-review.json"
 }

@@ -1,0 +1,63 @@
+{
+  "stage": "lsp-corpus-currentness",
+  "candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+  "tree": "945114e13bdd8c02bf5b8ac429837b838465cbfd",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "lsp_lifecycle",
+    "gap_corpus_currentness",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 20.01,
+  "counts": {
+    "passed": 21,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 44
+  },
+  "log_sha256": "fbd6ddcea87b7f7cd623d99d870993bf05534b2d2c49d00ca0e6a4a7d1250a32",
+  "peak_cgroup_memory_bytes": 3104944128,
+  "samples": [
+    {
+      "utc": "2026-11-05T17:44:43.607873+00:00",
+      "stage": "lsp-corpus-currentness",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 1028822,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3026558976,
+      "workspace_free_bytes": 21529030656,
+      "temp_free_bytes": 9428467712
+    },
+    {
+      "utc": "2026-11-05T17:44:53.609622+00:00",
+      "stage": "lsp-corpus-currentness",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 1028822,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3104944128,
+      "workspace_free_bytes": 21529022464,
+      "temp_free_bytes": 9428074496
+    }
+  ]
+}

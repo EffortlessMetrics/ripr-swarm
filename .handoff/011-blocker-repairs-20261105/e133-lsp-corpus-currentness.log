@@ -1,0 +1,29 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-current-main/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 3.40s
+     Running tests/lsp_lifecycle.rs (/workspace/12010-proof/target/debug/deps/lsp_lifecycle-a758bb1061cbb145)
+
+running 21 tests
+test gap_corpus_currentness::active_absolute_legacy_gap_selector_remains_useful_after_corpus_edits ... ok
+test gap_corpus_currentness::analysis_and_ledger_share_the_real_rust_corpus_content_authority ... ok
+test gap_corpus_currentness::delayed_ledger_derivation_copies_the_analysis_corpus_before_workspace_edit ... ok
+test gap_corpus_currentness::foreign_root_ledger_derivation_cannot_rebase_captured_named_subjects_or_mint_corpus ... ok
+test gap_corpus_currentness::gap_commands_admit_the_real_canonical_ledger_from_a_same_physical_alias_after_refresh ... ok
+test gap_corpus_currentness::gap_commands_recheck_rust_corpus_without_a_refresh_or_document_notification ... ok
+test gap_corpus_currentness::gap_commands_refuse_a_copied_foreign_ledger_after_a_healthy_byte_identical_workspace_refresh ... ok
+test gap_corpus_currentness::genuine_python_quoted_comparison_ledger_reaches_passive_and_live_action_admission ... ok
+test gap_corpus_currentness::genuine_python_unavailable_repair_card_remains_admitted_advisory_without_actions ... ok
+test gap_corpus_currentness::ledger_derivation_requires_an_absolute_captured_producer_frame_for_corpus_transfer ... ok
+test gap_corpus_currentness::native_python_and_copied_mixed_records_cannot_claim_a_current_rust_corpus ... ok
+test gap_corpus_currentness::passive_corpus_accepts_empty_commit_and_identical_input_branch ... ok
+test gap_corpus_currentness::passive_corpus_accepts_same_head_dirty_non_corpus_input ... ok
+test gap_corpus_currentness::passive_corpus_cannot_bypass_rust_currentness_with_missing_or_unknown_language ... ok
+test gap_corpus_currentness::passive_corpus_rejects_added_test_at_same_head_and_recovers ... ok
+test gap_corpus_currentness::passive_corpus_rejects_changed_unclaimed_test_at_same_head_and_recovers ... ok
+test gap_corpus_currentness::passive_corpus_rejects_deleted_unclaimed_test_at_same_head_and_recovers ... ok
+test gap_corpus_currentness::passive_legacy_corpus_requires_regeneration_without_artifact_actions ... ok
+test gap_corpus_currentness::passive_nonempty_no_action_rust_ledger_still_requires_current_corpus ... ok
+test gap_corpus_currentness::passive_rust_ledger_discloses_actual_corpus_currentness_scope ... ok
+test gap_corpus_currentness::unknown_corpus_language_precedes_known_preview_in_both_record_orders ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 44 filtered out; finished in 16.30s
+

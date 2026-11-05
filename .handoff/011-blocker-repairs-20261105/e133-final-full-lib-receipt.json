@@ -1,0 +1,671 @@
+{
+  "stage": "final-full-lib",
+  "candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+  "tree": "945114e13bdd8c02bf5b8ac429837b838465cbfd",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 630.69,
+  "counts": {
+    "passed": 18174,
+    "failed": 0,
+    "ignored": 2,
+    "measured": 0,
+    "filtered": 0
+  },
+  "log_sha256": "9809b2650c690025eb9f2ea4078c2c51434962d8552c539ef5d5324d389d377d",
+  "peak_cgroup_memory_bytes": 3771604992,
+  "samples": [
+    {
+      "utc": "2026-11-05T17:33:42.863667+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 3383762944,
+      "workspace_free_bytes": 21531496448,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:33:52.865595+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3523457024,
+      "workspace_free_bytes": 21531340800,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:34:02.868028+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 20.01,
+      "cgroup_memory_bytes": 3486425088,
+      "workspace_free_bytes": 21531320320,
+      "temp_free_bytes": 9441300480
+    },
+    {
+      "utc": "2026-11-05T17:34:12.869058+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 30.01,
+      "cgroup_memory_bytes": 3531960320,
+      "workspace_free_bytes": 21531308032,
+      "temp_free_bytes": 9441300480
+    },
+    {
+      "utc": "2026-11-05T17:34:22.870552+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 40.01,
+      "cgroup_memory_bytes": 3544633344,
+      "workspace_free_bytes": 21531238400,
+      "temp_free_bytes": 9440870400
+    },
+    {
+      "utc": "2026-11-05T17:34:32.872963+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 50.01,
+      "cgroup_memory_bytes": 3466588160,
+      "workspace_free_bytes": 21531201536,
+      "temp_free_bytes": 9440870400
+    },
+    {
+      "utc": "2026-11-05T17:34:42.875125+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 60.01,
+      "cgroup_memory_bytes": 3473432576,
+      "workspace_free_bytes": 21531140096,
+      "temp_free_bytes": 9439318016
+    },
+    {
+      "utc": "2026-11-05T17:34:52.887012+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 70.03,
+      "cgroup_memory_bytes": 3481808896,
+      "workspace_free_bytes": 21531095040,
+      "temp_free_bytes": 9438347264
+    },
+    {
+      "utc": "2026-11-05T17:35:02.892604+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 80.03,
+      "cgroup_memory_bytes": 3415474176,
+      "workspace_free_bytes": 21530972160,
+      "temp_free_bytes": 9438334976
+    },
+    {
+      "utc": "2026-11-05T17:35:12.894659+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 90.03,
+      "cgroup_memory_bytes": 3428069376,
+      "workspace_free_bytes": 21530906624,
+      "temp_free_bytes": 9438347264
+    },
+    {
+      "utc": "2026-11-05T17:35:22.896737+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 100.04,
+      "cgroup_memory_bytes": 3492843520,
+      "workspace_free_bytes": 21530865664,
+      "temp_free_bytes": 9438347264
+    },
+    {
+      "utc": "2026-11-05T17:35:32.914455+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 110.05,
+      "cgroup_memory_bytes": 3646017536,
+      "workspace_free_bytes": 21530853376,
+      "temp_free_bytes": 9438347264
+    },
+    {
+      "utc": "2026-11-05T17:35:42.932345+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 120.07,
+      "cgroup_memory_bytes": 3677732864,
+      "workspace_free_bytes": 21530836992,
+      "temp_free_bytes": 9438347264
+    },
+    {
+      "utc": "2026-11-05T17:35:52.936700+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 130.08,
+      "cgroup_memory_bytes": 3690086400,
+      "workspace_free_bytes": 21530828800,
+      "temp_free_bytes": 9438347264
+    },
+    {
+      "utc": "2026-11-05T17:36:02.940068+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 140.08,
+      "cgroup_memory_bytes": 3648634880,
+      "workspace_free_bytes": 21530791936,
+      "temp_free_bytes": 9438347264
+    },
+    {
+      "utc": "2026-11-05T17:36:12.941904+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 150.08,
+      "cgroup_memory_bytes": 3658055680,
+      "workspace_free_bytes": 21530722304,
+      "temp_free_bytes": 9436024832
+    },
+    {
+      "utc": "2026-11-05T17:36:22.945546+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 160.08,
+      "cgroup_memory_bytes": 3665522688,
+      "workspace_free_bytes": 21530701824,
+      "temp_free_bytes": 9433112576
+    },
+    {
+      "utc": "2026-11-05T17:36:32.948138+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 170.09,
+      "cgroup_memory_bytes": 3624136704,
+      "workspace_free_bytes": 21530644480,
+      "temp_free_bytes": 9431965696
+    },
+    {
+      "utc": "2026-11-05T17:36:43.217403+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 180.36,
+      "cgroup_memory_bytes": 3624374272,
+      "workspace_free_bytes": 21530611712,
+      "temp_free_bytes": 9431842816
+    },
+    {
+      "utc": "2026-11-05T17:36:53.313701+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 190.45,
+      "cgroup_memory_bytes": 3642789888,
+      "workspace_free_bytes": 21530574848,
+      "temp_free_bytes": 9431519232
+    },
+    {
+      "utc": "2026-11-05T17:37:03.317767+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 200.46,
+      "cgroup_memory_bytes": 3556945920,
+      "workspace_free_bytes": 21530521600,
+      "temp_free_bytes": 9431408640
+    },
+    {
+      "utc": "2026-11-05T17:37:13.320967+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 210.46,
+      "cgroup_memory_bytes": 3558842368,
+      "workspace_free_bytes": 21530460160,
+      "temp_free_bytes": 9430843392
+    },
+    {
+      "utc": "2026-11-05T17:37:23.322462+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 220.46,
+      "cgroup_memory_bytes": 3567013888,
+      "workspace_free_bytes": 21530374144,
+      "temp_free_bytes": 9429815296
+    },
+    {
+      "utc": "2026-11-05T17:37:33.326699+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 230.47,
+      "cgroup_memory_bytes": 3489439744,
+      "workspace_free_bytes": 21530337280,
+      "temp_free_bytes": 9429725184
+    },
+    {
+      "utc": "2026-11-05T17:37:43.337668+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 240.48,
+      "cgroup_memory_bytes": 3512496128,
+      "workspace_free_bytes": 21530324992,
+      "temp_free_bytes": 9406717952
+    },
+    {
+      "utc": "2026-11-05T17:37:53.338803+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 250.48,
+      "cgroup_memory_bytes": 3600257024,
+      "workspace_free_bytes": 21530324992,
+      "temp_free_bytes": 9429721088
+    },
+    {
+      "utc": "2026-11-05T17:38:03.347612+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 260.49,
+      "cgroup_memory_bytes": 3643195392,
+      "workspace_free_bytes": 21530324992,
+      "temp_free_bytes": 9287114752
+    },
+    {
+      "utc": "2026-11-05T17:38:13.362398+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 270.5,
+      "cgroup_memory_bytes": 3771604992,
+      "workspace_free_bytes": 21530324992,
+      "temp_free_bytes": 9278607360
+    },
+    {
+      "utc": "2026-11-05T17:38:23.375157+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 280.51,
+      "cgroup_memory_bytes": 3440488448,
+      "workspace_free_bytes": 21530316800,
+      "temp_free_bytes": 9429700608
+    },
+    {
+      "utc": "2026-11-05T17:38:33.378916+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 290.52,
+      "cgroup_memory_bytes": 3385581568,
+      "workspace_free_bytes": 21530300416,
+      "temp_free_bytes": 9424953344
+    },
+    {
+      "utc": "2026-11-05T17:38:43.382567+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 300.52,
+      "cgroup_memory_bytes": 3384381440,
+      "workspace_free_bytes": 21530271744,
+      "temp_free_bytes": 9429704704
+    },
+    {
+      "utc": "2026-11-05T17:38:53.384783+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 310.52,
+      "cgroup_memory_bytes": 3439112192,
+      "workspace_free_bytes": 21530193920,
+      "temp_free_bytes": 9429647360
+    },
+    {
+      "utc": "2026-11-05T17:39:03.385650+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 320.52,
+      "cgroup_memory_bytes": 3160186880,
+      "workspace_free_bytes": 21530107904,
+      "temp_free_bytes": 9429438464
+    },
+    {
+      "utc": "2026-11-05T17:39:13.386185+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 330.52,
+      "cgroup_memory_bytes": 3477368832,
+      "workspace_free_bytes": 21529968640,
+      "temp_free_bytes": 9429241856
+    },
+    {
+      "utc": "2026-11-05T17:39:23.390519+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 340.53,
+      "cgroup_memory_bytes": 3245522944,
+      "workspace_free_bytes": 21529952256,
+      "temp_free_bytes": 9428848640
+    },
+    {
+      "utc": "2026-11-05T17:39:33.393007+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 350.53,
+      "cgroup_memory_bytes": 3245264896,
+      "workspace_free_bytes": 21529948160,
+      "temp_free_bytes": 9428877312
+    },
+    {
+      "utc": "2026-11-05T17:39:43.407215+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 360.55,
+      "cgroup_memory_bytes": 3183005696,
+      "workspace_free_bytes": 21529931776,
+      "temp_free_bytes": 9418547200
+    },
+    {
+      "utc": "2026-11-05T17:39:53.413489+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 370.55,
+      "cgroup_memory_bytes": 3214983168,
+      "workspace_free_bytes": 21529931776,
+      "temp_free_bytes": 9398562816
+    },
+    {
+      "utc": "2026-11-05T17:40:03.417209+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 380.56,
+      "cgroup_memory_bytes": 3225251840,
+      "workspace_free_bytes": 21529931776,
+      "temp_free_bytes": 9388797952
+    },
+    {
+      "utc": "2026-11-05T17:40:13.420395+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 390.56,
+      "cgroup_memory_bytes": 3235282944,
+      "workspace_free_bytes": 21529931776,
+      "temp_free_bytes": 9378385920
+    },
+    {
+      "utc": "2026-11-05T17:40:23.424104+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 400.56,
+      "cgroup_memory_bytes": 3207229440,
+      "workspace_free_bytes": 21529931776,
+      "temp_free_bytes": 9376636928
+    },
+    {
+      "utc": "2026-11-05T17:40:33.426312+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 410.56,
+      "cgroup_memory_bytes": 3262013440,
+      "workspace_free_bytes": 21529931776,
+      "temp_free_bytes": 9348255744
+    },
+    {
+      "utc": "2026-11-05T17:40:43.427187+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 420.57,
+      "cgroup_memory_bytes": 3235508224,
+      "workspace_free_bytes": 21529931776,
+      "temp_free_bytes": 9337344000
+    },
+    {
+      "utc": "2026-11-05T17:40:53.428062+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 430.57,
+      "cgroup_memory_bytes": 3134795776,
+      "workspace_free_bytes": 21529890816,
+      "temp_free_bytes": 9428905984
+    },
+    {
+      "utc": "2026-11-05T17:41:03.431414+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 440.57,
+      "cgroup_memory_bytes": 3139723264,
+      "workspace_free_bytes": 21529776128,
+      "temp_free_bytes": 9428791296
+    },
+    {
+      "utc": "2026-11-05T17:41:13.433144+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 450.57,
+      "cgroup_memory_bytes": 3089244160,
+      "workspace_free_bytes": 21529726976,
+      "temp_free_bytes": 9428811776
+    },
+    {
+      "utc": "2026-11-05T17:41:23.438080+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 460.58,
+      "cgroup_memory_bytes": 3081633792,
+      "workspace_free_bytes": 21529686016,
+      "temp_free_bytes": 9428738048
+    },
+    {
+      "utc": "2026-11-05T17:41:33.445416+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 470.58,
+      "cgroup_memory_bytes": 3082510336,
+      "workspace_free_bytes": 21529677824,
+      "temp_free_bytes": 9428738048
+    },
+    {
+      "utc": "2026-11-05T17:41:43.452597+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 480.59,
+      "cgroup_memory_bytes": 3099508736,
+      "workspace_free_bytes": 21529661440,
+      "temp_free_bytes": 9428750336
+    },
+    {
+      "utc": "2026-11-05T17:41:53.455558+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 490.59,
+      "cgroup_memory_bytes": 3099189248,
+      "workspace_free_bytes": 21529612288,
+      "temp_free_bytes": 9428746240
+    },
+    {
+      "utc": "2026-11-05T17:42:03.459187+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 500.6,
+      "cgroup_memory_bytes": 3099201536,
+      "workspace_free_bytes": 21529604096,
+      "temp_free_bytes": 9428746240
+    },
+    {
+      "utc": "2026-11-05T17:42:13.460934+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 510.6,
+      "cgroup_memory_bytes": 3022503936,
+      "workspace_free_bytes": 21529595904,
+      "temp_free_bytes": 9428746240
+    },
+    {
+      "utc": "2026-11-05T17:42:23.462524+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 520.6,
+      "cgroup_memory_bytes": 3019853824,
+      "workspace_free_bytes": 21529563136,
+      "temp_free_bytes": 9428738048
+    },
+    {
+      "utc": "2026-11-05T17:42:33.464014+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 530.6,
+      "cgroup_memory_bytes": 3023945728,
+      "workspace_free_bytes": 21529497600,
+      "temp_free_bytes": 9428738048
+    },
+    {
+      "utc": "2026-11-05T17:42:43.466378+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 540.6,
+      "cgroup_memory_bytes": 2943692800,
+      "workspace_free_bytes": 21529489408,
+      "temp_free_bytes": 9428742144
+    },
+    {
+      "utc": "2026-11-05T17:42:53.469000+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 550.61,
+      "cgroup_memory_bytes": 2943881216,
+      "workspace_free_bytes": 21529485312,
+      "temp_free_bytes": 9428746240
+    },
+    {
+      "utc": "2026-11-05T17:43:03.471660+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 560.61,
+      "cgroup_memory_bytes": 2944262144,
+      "workspace_free_bytes": 21529477120,
+      "temp_free_bytes": 9428746240
+    },
+    {
+      "utc": "2026-11-05T17:43:13.478008+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 570.62,
+      "cgroup_memory_bytes": 2913169408,
+      "workspace_free_bytes": 21529473024,
+      "temp_free_bytes": 9428738048
+    },
+    {
+      "utc": "2026-11-05T17:43:23.482522+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 580.62,
+      "cgroup_memory_bytes": 2919247872,
+      "workspace_free_bytes": 21529436160,
+      "temp_free_bytes": 9428500480
+    },
+    {
+      "utc": "2026-11-05T17:43:33.483180+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 590.62,
+      "cgroup_memory_bytes": 2919813120,
+      "workspace_free_bytes": 21529432064,
+      "temp_free_bytes": 9428606976
+    },
+    {
+      "utc": "2026-11-05T17:43:43.484140+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 600.62,
+      "cgroup_memory_bytes": 2888232960,
+      "workspace_free_bytes": 21529419776,
+      "temp_free_bytes": 9428746240
+    },
+    {
+      "utc": "2026-11-05T17:43:53.489848+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 610.63,
+      "cgroup_memory_bytes": 2895233024,
+      "workspace_free_bytes": 21529341952,
+      "temp_free_bytes": 9428627456
+    },
+    {
+      "utc": "2026-11-05T17:44:03.493953+00:00",
+      "stage": "final-full-lib",
+      "head": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+      "pid": 897176,
+      "elapsed": 620.63,
+      "cgroup_memory_bytes": 2949984256,
+      "workspace_free_bytes": 21529108480,
+      "temp_free_bytes": 9428467712
+    }
+  ]
+}
