@@ -68,4 +68,19 @@ STUB
 chmod +x "$root/failing-ripr"
 run_expect 2 bash "$bench/build-contexts.sh" "$crate" "$root/failing-ripr" "$root/failed-check" inserted-guard test-r01
 grep -q 'ripr check failed' "$root/output.log"
+# Simulate a root Cargo.toml without writing to the host filesystem root.
+# The real scripts still walk their actual paths; only the root file test is
+# injected. Windows drive-root behavior needs a native Git Bash control.
+cat > "$root/mock-root-test.sh" <<'MOCK'
+[() {
+  if [[ "${1:-}" == -f && "${2:-}" == //Cargo.toml ]]; then return 0; fi
+  builtin [ "$@"
+}
+MOCK
+run_expect 2 env BASH_ENV="$root/mock-root-test.sh" bash "$bench/make-scenario-crates.sh" "$root/root-generator"
+grep -q '//Cargo.toml' "$root/output.log"
+run_expect 2 env BASH_ENV="$root/mock-root-test.sh" bash "$bench/eval.sh" "$crate" same_name
+grep -q '//Cargo.toml' "$root/output.log"
+run_expect 2 env BASH_ENV="$root/mock-root-test.sh" bash "$bench/build-contexts.sh" "$crate" "$ripr" "$root/root-context" inserted-guard test-r01
+grep -q '//Cargo.toml' "$root/output.log"
 echo "Harness controls passed; artifacts retained at $root"
