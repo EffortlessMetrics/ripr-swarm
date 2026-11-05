@@ -121,6 +121,162 @@ fn rendered(output: &CheckOutput) -> String {
     )
 }
 
+fn agent_dispatch(output: &CheckOutput, config: &RiprConfig) -> Result<String, String> {
+    crate::output::render::render_check_with_config(
+        output,
+        &crate::app::OutputFormat::Agent,
+        config,
+    )
+}
+
+fn outcome_output(
+    kind: crate::analysis_outcome::AnalysisOutcomeKind,
+    findings: Vec<Finding>,
+) -> Result<CheckOutput, String> {
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+    };
+    let count = u64::try_from(findings.len()).map_err(|err| err.to_string())?;
+    let mut output = output(findings);
+    let limitations = if kind.is_complete() {
+        Vec::new()
+    } else {
+        vec![AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "retry the selected input")?,
+        )]
+    };
+    output.analysis_outcome = Some(AnalysisOutcome::new(
+        kind,
+        AnalysisIdentity::default(),
+        AnalysisOutcomeCounts {
+            changed_file_count: 1,
+            changed_line_count: 1,
+            candidate_line_count: 1,
+            probe_count: count,
+            finding_count: count,
+        },
+        limitations,
+    )?);
+    Ok(output)
+}
+
+#[test]
+fn agent_dispatch_never_completes_incomplete_empty_or_exposed_reports() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{
+        AnalysisFailed, PartialWithLimitations, UnsupportedInput,
+    };
+    for (kind, token) in [
+        (PartialWithLimitations, "partial_with_limitations"),
+        (UnsupportedInput, "unsupported_input"),
+        (AnalysisFailed, "analysis_failed"),
+    ] {
+        for findings in [
+            Vec::new(),
+            vec![finding("probe:ok", ExposureClass::Exposed, 4)],
+        ] {
+            let output = outcome_output(kind, findings)?;
+            let text = agent_dispatch(&output, &RiprConfig::default())?;
+            assert!(
+                text.contains(&format!("analysis=incomplete|outcome={token}\n")),
+                "{text}"
+            );
+            assert!(text.contains("\nstop=analysis incomplete;"), "{text}");
+            assert!(
+                text.contains("|recovery=retry the selected input\n"),
+                "{text}"
+            );
+            assert!(!text.contains("\ndone="), "{text}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn agent_dispatch_keeps_partial_gaps_and_complete_controls() -> Result<(), String> {
+    use crate::analysis_outcome::AnalysisOutcomeKind::{
+        CompleteNoFindings, CompleteWithFindings, PartialWithLimitations,
+    };
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let config = RiprConfig::default();
+    let partial = outcome_output(PartialWithLimitations, vec![weak_gap("probe:gap", 2)])?;
+    let text = agent_dispatch(&partial, &config)?;
+    assert!(
+        text.contains("analysis=incomplete|outcome=partial_with_limitations\n"),
+        "{text}"
+    );
+    assert!(text.contains("|id=probe:gap\n"), "{text}");
+    assert!(text.contains("next=ripr explain probe:gap\n"), "{text}");
+    assert!(
+        !text.contains("\ndone=") && !text.contains("\nstop="),
+        "{text}"
+    );
+
+    for (kind, findings) in [
+        (CompleteNoFindings, Vec::new()),
+        (
+            CompleteWithFindings,
+            vec![finding("probe:ok", ExposureClass::Exposed, 4)],
+        ),
+    ] {
+        let text = agent_dispatch(&outcome_output(kind, findings)?, &config)?;
+        assert!(text.contains("\ndone="), "{text}");
+        assert!(
+            !text.contains("analysis=incomplete") && !text.contains("\nstop="),
+            "{text}"
+        );
+    }
+    let text = agent_dispatch(
+        &outcome_output(CompleteWithFindings, vec![weak_gap("probe:gap", 2)])?,
+        &config,
+    )?;
+    assert!(text.contains("next=ripr explain probe:gap\n"), "{text}");
+    assert!(
+        !text.contains("analysis=incomplete") && !text.contains("\ndone="),
+        "{text}"
+    );
+    // A producer-declared advisory limitation does not make a complete run
+    // incomplete. Testing limitations.len() instead of the closed kind is wrong.
+    let advisory_limit = AnalysisLimitation::new(
+        AnalysisLimitationKind::EolOnlyChurn,
+        AnalysisStage::DiffParse,
+        AnalysisRecovery::new(AnalysisRecoveryKind::Retry, "review the line-ending change")?,
+    );
+    let mut advisory = outcome_output(CompleteNoFindings, Vec::new())?;
+    advisory
+        .analysis_outcome
+        .as_mut()
+        .ok_or("missing complete control outcome")?
+        .limitations
+        .push(advisory_limit.clone());
+    let text = agent_dispatch(&advisory, &config)?;
+    assert!(text.contains("\ndone="), "{text}");
+    assert!(!text.contains("analysis=incomplete"), "{text}");
+    // An advisory row before the limiting cause must not displace the actual
+    // failure's recovery. The omission count includes all undisplayed rows.
+    let mut mixed = outcome_output(PartialWithLimitations, Vec::new())?;
+    mixed
+        .analysis_outcome
+        .as_mut()
+        .ok_or("missing partial control outcome")?
+        .limitations
+        .insert(0, advisory_limit);
+    let text = agent_dispatch(&mixed, &config)?;
+    assert!(text.contains("limitation=producer_failure|"), "{text}");
+    assert!(
+        text.contains("|recovery=retry the selected input\n"),
+        "{text}"
+    );
+    assert!(text.contains("+1 more analysis limitations;"), "{text}");
+    assert!(!text.contains("limitation=eol_only_churn|"), "{text}");
+    Ok(())
+}
+
 #[test]
 fn top_gap_carries_location_missing_value_test_id_and_next_command() {
     let text = rendered(&output(vec![
