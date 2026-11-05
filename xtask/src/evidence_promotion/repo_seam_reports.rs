@@ -891,11 +891,11 @@ mod tests {
             "owner": "src/lib.rs::check", "expression": "a > b",
             "category": "rust_framework_oracle_unresolved"
         });
-        assert!(super::super::evidence_promotion_parse_assertion("field", 0, &assertion).is_err());
+        super::super::evidence_promotion_parse_assertion("field", 0, &assertion).unwrap_err();
         assertion["present"] = json!("true");
-        assert!(super::super::evidence_promotion_parse_assertion("field", 0, &assertion).is_err());
+        super::super::evidence_promotion_parse_assertion("field", 0, &assertion).unwrap_err();
         assertion["present"] = json!(true);
-        assert!(super::super::evidence_promotion_parse_assertion("field", 0, &assertion).is_ok());
+        super::super::evidence_promotion_parse_assertion("field", 0, &assertion).unwrap();
         let mut case = json!({"id": "field", "assertions": [assertion]});
         let mut missing = Vec::new();
         assert!(repo_seam_cases(&[case.clone()], &mut missing).is_empty());
