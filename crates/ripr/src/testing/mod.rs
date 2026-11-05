@@ -7,6 +7,8 @@
 
 #[cfg(unix)]
 pub(crate) mod access_denial;
+#[cfg(feature = "lang-rust")]
+pub(crate) mod compiler_environment;
 pub(crate) mod cwd_lock;
 pub(crate) mod cwd_placeholder;
 pub(crate) mod fixture_git;

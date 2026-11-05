@@ -16,6 +16,12 @@ fn supported_profile_platform(platform: &str) -> bool {
 #[cfg(target_os = "linux")]
 mod linux;
 
+#[cfg(all(test, target_os = "linux"))]
+mod process;
+
+#[cfg(all(test, target_os = "linux"))]
+mod strip_tests;
+
 pub fn command() -> Result<()> {
     if !supported_profile_platform(std::env::consts::OS) {
         return Err("coverage diagnostic capture is a Linux workflow adapter".into());
