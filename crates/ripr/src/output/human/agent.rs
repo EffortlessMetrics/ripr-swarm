@@ -80,6 +80,16 @@ pub(super) fn render(
         if !open.is_empty() {
             return render_open_limited(out, output, &considered, &open, drill_in);
         }
+        // #13238: an all-limited run still has to say where the unconfirmed
+        // findings are; a bare `stop=` leaves only the large JSON report.
+        let leads = if incomplete
+            || triage::check_case_for_triage(&triage, output) != NextActionCheckCase::StaticLimited
+        {
+            Vec::new()
+        } else {
+            unconfirmed_limited_findings(&considered)
+        };
+        render_unconfirmed_leads(&mut out, output, &leads);
         if incomplete {
             out.push_str(
                 "stop=analysis incomplete; retained findings are advisory, not a complete result\n",
@@ -88,6 +98,14 @@ pub(super) fn render(
             out.push_str(&terminal_line(&triage, output));
         }
         push_limits(&mut out, &considered, &[]);
+        let next = next.or_else(|| {
+            leads.first().map(|first| match drill_in {
+                Some(FindingDrillIn::Commands(navigation)) => {
+                    format!("next={}", navigation.explain_command(&first.id))
+                }
+                None => format!("next=ripr explain {}", first.id),
+            })
+        });
         if let Some(next) = next {
             out.push_str(&next);
             out.push('\n');
@@ -118,6 +136,32 @@ pub(super) fn render(
         out.push('\n');
     }
     out
+}
+
+/// Current, non-exposed findings held by a static limit. They are leads, not
+/// test-side gaps: no missing value or test is offered for them.
+fn unconfirmed_limited_findings<'a>(considered: &[&'a Finding]) -> Vec<&'a Finding> {
+    considered
+        .iter()
+        .copied()
+        .filter(|finding| {
+            finding.class != ExposureClass::Exposed
+                && finding.source_currentness_disclosure().is_none()
+        })
+        .collect()
+}
+
+fn render_unconfirmed_leads(out: &mut String, output: &CheckOutput, leads: &[&Finding]) {
+    for finding in leads.iter().take(MIN_GAP_LINES) {
+        out.push_str(&gap_line(&output.root, finding, None, false));
+        out.push('\n');
+    }
+    if leads.len() > MIN_GAP_LINES {
+        out.push_str(&format!(
+            "+{} more unconfirmed findings not shown; `--format json` lists all\n",
+            leads.len() - MIN_GAP_LINES
+        ));
+    }
 }
 
 /// Project the producer's closed completeness decision, before any terminal
@@ -406,7 +450,7 @@ fn terminal_line(triage: &HumanTriage<'_>, output: &CheckOutput) -> String {
             "stop=all findings are suppressed by policy\n".to_string()
         }
         NextActionCheckCase::StaticLimited => {
-            "stop=ripr cannot tell from reading the code whether tests would notice; nothing more is fixable from the test side\n"
+            "stop=ripr cannot tell from reading the code whether tests would notice; no confirmed test-side gap is offered, and the findings listed are unconfirmed, not clean\n"
                 .to_string()
         }
         NextActionCheckCase::PreviewAdvisory => {

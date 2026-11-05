@@ -328,13 +328,63 @@ fn static_limited_run_stops_and_names_the_limit_instead_of_a_gap() {
         text.contains("\nstop=ripr cannot tell from reading the code"),
         "{text}"
     );
+    // #13238: the contradiction with the human surface is gone and the
+    // unconfirmed finding is located, without offering a value or test.
+    assert!(!text.contains("nothing more is fixable"), "{text}");
     assert!(
-        text.contains("nothing more is fixable from the test side"),
+        text.contains("the findings listed are unconfirmed, not clean"),
         "{text}"
     );
+    assert!(
+        text.contains("\nno_static_path|src/lib.rs:7|"),
+        "the limited finding must be located: {text}"
+    );
+    assert!(text.contains("|missing=-|test=-|id=probe:np\n"), "{text}");
     assert!(text.contains("\nlimits=no_static_path:1\n"), "{text}");
     assert!(text.contains(" gaps=0 "), "{text}");
-    assert!(!text.contains("|missing="), "{text}");
+    assert!(text.contains("\nnext=ripr explain probe:np\n"), "{text}");
+}
+
+#[test]
+fn all_limited_run_bounds_its_located_findings_and_counts_the_rest() {
+    let findings: Vec<Finding> = (0..8)
+        .map(|index| {
+            finding(
+                &format!("probe:n{index}"),
+                ExposureClass::NoStaticPath,
+                index + 1,
+            )
+        })
+        .collect();
+    let text = rendered(&output(findings));
+    assert_eq!(
+        text.matches("\nno_static_path|").count(),
+        MIN_GAP_LINES,
+        "{text}"
+    );
+    assert!(
+        text.contains("\n+3 more unconfirmed findings not shown;"),
+        "{text}"
+    );
+    assert!(text.contains(" gaps=0 "), "{text}");
+}
+
+#[test]
+fn leads_never_appear_beside_a_real_gap_or_a_clean_run() {
+    // A real gap keeps the gap record format and no stop line.
+    let text = rendered(&output(vec![
+        finding("probe:np", ExposureClass::NoStaticPath, 7),
+        weak_gap("probe:gap", 2),
+    ]));
+    assert!(!text.contains("\nno_static_path|"), "{text}");
+    assert!(!text.contains("\nstop="), "{text}");
+    // An exposed-only run has no leads.
+    let text = rendered(&output(vec![finding(
+        "probe:ok",
+        ExposureClass::Exposed,
+        4,
+    )]));
+    assert!(!text.contains("unconfirmed"), "{text}");
 }
 
 /// #11825: triage can select a static-limited finding (higher repair rank)
@@ -372,8 +422,15 @@ fn static_limited_weakly_exposed_alone_keeps_stop() {
     let text = rendered(&output(vec![limited_weak]));
     assert!(text.contains("\nstop="), "{text}");
     assert!(text.contains(" gaps=0 "), "{text}");
-    assert!(!text.contains("|id=probe:limited-weak"), "{text}");
-    assert!(!text.contains("\nnext="), "{text}");
+    // #13238: still a stop, but the unconfirmed finding is located.
+    assert!(
+        text.contains("|missing=-|test=-|id=probe:limited-weak\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains("\nnext=ripr explain probe:limited-weak\n"),
+        "{text}"
+    );
 }
 
 /// A weakly exposed finding behind the reach-only limit, shaped like the
@@ -454,7 +511,7 @@ fn reach_limit_without_weak_assertion_row_keeps_stop() {
     let text = rendered(&output(vec![fixed]));
     assert!(text.contains("\nstop="), "{text}");
     assert!(!text.contains("open="), "{text}");
-    assert!(!text.contains("\nnext="), "{text}");
+    assert!(text.contains("\nnext=ripr explain probe:fixed\n"), "{text}");
 
     let mut other_kind = weak_gap("probe:macro", 5);
     other_kind.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
@@ -480,7 +537,10 @@ fn reach_limit_with_a_proximity_only_weak_row_keeps_stop() {
         let text = rendered(&output(vec![limited]));
         assert!(text.contains("\nstop="), "{reason:?}: {text}");
         assert!(!text.contains("open="), "{reason:?}: {text}");
-        assert!(!text.contains("\nnext="), "{reason:?}: {text}");
+        assert!(
+            text.contains("\nnext=ripr explain probe:unrelated\n"),
+            "{reason:?}: {text}"
+        );
     }
     for reason in [
         RelationReason::DirectOwnerCall,
