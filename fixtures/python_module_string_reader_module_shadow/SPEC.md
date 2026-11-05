@@ -21,7 +21,7 @@ Neither the competing reader nor the test changes.
 ## Then
 
 Exactly one `static_unknown` finding retains unknown reach. The changed
-production module has no proven import identity, so the test supplies no
+production module has no established import identity, so the test supplies no
 strong credit, actionable weak observation, repair packet or receipt command.
 The ordinary app regression separately preserves the canonical configured
 `src` layout and checks removal of the competing package restores its route.
