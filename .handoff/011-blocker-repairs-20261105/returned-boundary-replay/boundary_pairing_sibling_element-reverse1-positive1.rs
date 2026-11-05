@@ -1,0 +1,17 @@
+mod a {
+    pub fn gate(xs: &[i32]) -> Vec<bool> {
+        xs.iter().map(|&x| x > 0).collect()
+    }
+}
+mod b {
+    pub fn gate(xs: &[i32]) -> Vec<bool> {
+        xs.iter().map(|&x| x > 0).collect()
+    }
+}
+#[test]
+fn same_test_separate_owners() {
+    use crate::b::gate;
+    assert_eq!(a::gate(&[0]), [false]);
+    assert_eq!(gate(&[0]), [false]);
+    assert_eq!(a::gate(&[5]), [true]);
+}

@@ -1,0 +1,453 @@
+diff --git a/changelog.d/12010-sink-identity.md b/changelog.d/12010-sink-identity.md
+index 8740c1d60..077027a51 100644
+--- a/changelog.d/12010-sink-identity.md
++++ b/changelog.d/12010-sink-identity.md
+@@ -1,2 +1,2 @@
+ <!-- section: Fixed -->
+-- Keep strong Rust discrimination tied to the assertion that observes the changed result or effect; reject proximity-only oracles, unchanged return tokens, stale results and intercepted collection reads (including unread external trait dispatch and rebound crate-name imports) while retaining validated wrapper, array, async and error observers (#12010).
++- Keep strong Rust discrimination tied to the assertion that observes the changed result or effect; keep returned comparisons paired to the same boundary call, reject proximity-only oracles, unchanged return tokens, stale results and intercepted collection reads (including unread external trait dispatch and rebound crate-name imports) while retaining validated wrapper, array, async and error observers (#12010).
+diff --git a/crates/ripr/src/analysis/classifier/evidence.rs b/crates/ripr/src/analysis/classifier/evidence.rs
+index e8b93091c..0c425d5c3 100644
+--- a/crates/ripr/src/analysis/classifier/evidence.rs
++++ b/crates/ripr/src/analysis/classifier/evidence.rs
+@@ -16,9 +16,10 @@ use crate::analysis::classify::{
+     observes_returned_array_value, observes_returned_element_field, operand_only_pin,
+     oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
+     parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
+-    pushed_literal_path, reach_evidence, returned_array_construction_plain, reveal_outcome,
+-    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+-    unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
++    pushed_literal_path, reach_evidence, returned_array_construction_plain,
++    returned_boundary_probe, reveal_outcome, same_test_pairing_missing_summary,
++    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
++    unexercised_mask_bits, wrapper_return_boundary_pinned,
+ };
+ use crate::analysis::extract::mask_comments_and_strings;
+ use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
+@@ -1089,21 +1090,33 @@ impl ClassifiedProbeEvidence {
+             context.index,
+             context.implicit_expansion.unwrap_or(&fallback_expansion),
+         );
+-        // #9849: only an established unconditional bool whole-return may
+-        // borrow the existing predicate boundary authority through a wrapper.
+-        // This view supplies activation facts, never a second classification.
++        // A returned comparison also keeps the predicate's same-call boundary
++        // obligation. Preserve the existing broader helper activation view:
++        // a non-comparison bool return does not gain a boundary requirement.
++        let returned_comparison = context.owner_fn.and_then(|owner| {
++            returned_boundary_probe(
++                context.probe,
++                owner,
++                context.index,
++                owner_return_pin
++                    .as_ref()
++                    .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail),
++            )
++        });
+         let wrapper_boundary_probe = if matches!(context.probe.family, ProbeFamily::Predicate) {
+             Some(context.probe.clone())
+         } else {
+-            (matches!(context.probe.family, ProbeFamily::ReturnValue)
+-                && helper_only_reach(&context.related_tests)
+-                && owner_return_pin
+-                    .as_ref()
+-                    .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail))
+-            .then(|| {
+-                let mut predicate = context.probe.clone();
+-                predicate.family = ProbeFamily::Predicate;
+-                predicate
++            returned_comparison.clone().or_else(|| {
++                (matches!(context.probe.family, ProbeFamily::ReturnValue)
++                    && helper_only_reach(&context.related_tests)
++                    && owner_return_pin
++                        .as_ref()
++                        .is_some_and(OwnerReturnPin::is_unconditional_boolean_tail))
++                .then(|| {
++                    let mut predicate = context.probe.clone();
++                    predicate.family = ProbeFamily::Predicate;
++                    predicate
++                })
+             })
+         };
+         // Reveal asks once per assertion. Compute the whole-test activation
+@@ -1569,7 +1582,7 @@ impl ClassifiedProbeEvidence {
+         // asserting test (#6780 review): a run-wide row names no test.
+         let one_test_activation = |test: &TestSummary| {
+             activation_and_boundary_input(
+-                context.probe,
++                returned_comparison.as_ref().unwrap_or(context.probe),
+                 context.owner_fn,
+                 &[test],
+                 &flow_sinks,
+@@ -1623,7 +1636,21 @@ impl ClassifiedProbeEvidence {
+                     )
+                 })
+         };
+-        let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
++        let returned_boundary_activation = returned_comparison.as_ref().map(|probe| {
++            activation_and_boundary_input(
++                probe,
++                context.owner_fn,
++                &test_summaries,
++                &flow_sinks,
++                context.helper_chain.as_ref(),
++                context.index,
++                context.workspace_complete,
++                context.test_value_facts,
++            )
++            .activation
++        });
++        let discriminate = if (matches!(context.probe.family, ProbeFamily::Predicate)
++            || returned_comparison.is_some())
+             && infect.state == StageState::Yes
+             && discriminate.state == StageState::Yes
+             && !guard_side_flip_paired
+@@ -1643,10 +1670,10 @@ impl ClassifiedProbeEvidence {
+                     })
+                 })
+             && !has_same_test_boundary_oracle_pairing(
+-                context.probe,
++                returned_comparison.as_ref().unwrap_or(context.probe),
+                 context.owner_fn,
+                 &test_summaries,
+-                &activation,
++                returned_boundary_activation.as_ref().unwrap_or(&activation),
+                 &assertion_admitted,
+                 // The same owner-pin decision and binding defeats reveal
+                 // applied, so pairing cannot credit a pin reveal refused.
+diff --git a/crates/ripr/src/analysis/classify/boundary_pairing.rs b/crates/ripr/src/analysis/classify/boundary_pairing.rs
+index a58d3c8b6..e25db18c7 100644
+--- a/crates/ripr/src/analysis/classify/boundary_pairing.rs
++++ b/crates/ripr/src/analysis/classify/boundary_pairing.rs
+@@ -32,6 +32,62 @@ mod bound_result;
+ /// read `exposed` without an admitted oracle on the boundary call.
+ pub(in crate::analysis) const SAME_TEST_PAIRING_MISSING: &str = "same_test_pairing_missing";
+ 
++/// A whole returned comparison has the same boundary-observation obligation
++/// as its predicate companion. This is an activation/pairing view only: it
++/// never emits a second finding or supplies an assertion's sink identity.
++pub(in crate::analysis) fn returned_boundary_probe(
++    probe: &Probe,
++    owner: &FunctionSummary,
++    index: &RustIndex,
++    unconditional_boolean: bool,
++) -> Option<Probe> {
++    if !matches!(probe.family, ProbeFamily::ReturnValue) {
++        return None;
++    }
++    let expression = if unconditional_boolean {
++        probe.expression.clone()
++    } else {
++        admitted_owner_adaptor_tail(owner, index)
++            .filter(|tail| tail.tail_is(&probe.expression))?
++            .closure_body
++    };
++    let source = format!("fn __returned_boundary() {{ {expression} }}");
++    let parsed = crate::analysis::syntax::parse_clean_source_file(&source)?;
++    let function = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
++    let statements = function.body()?.stmt_list()?;
++    let mut value = statements.tail_expr().or_else(|| {
++        let mut statements = statements.statements();
++        let ast::Stmt::ExprStmt(statement) = statements.next()? else {
++            return None;
++        };
++        statements
++            .next()
++            .is_none()
++            .then(|| statement.expr())
++            .flatten()
++    })?;
++    for _ in 0..16 {
++        value = match value {
++            ast::Expr::ParenExpr(paren) => paren.expr()?,
++            ast::Expr::ReturnExpr(returned) => returned.expr()?,
++            other => {
++                let ast::Expr::BinExpr(comparison) = other else {
++                    return None;
++                };
++                if !matches!(comparison.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
++                    return None;
++                }
++                let mut predicate = probe.clone();
++                predicate.family = ProbeFamily::Predicate;
++                predicate.delta = DeltaKind::Control;
++                predicate.expression = comparison.syntax().text().to_string();
++                return Some(predicate);
++            }
++        };
++    }
++    None
++}
++
+ pub(in crate::analysis) fn same_test_pairing_missing_summary() -> String {
+     format!(
+         "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call ({SAME_TEST_PAIRING_MISSING}); a boundary input and a separate exact oracle do not establish that discriminator"
+@@ -829,7 +885,7 @@ fn test_pairs_boundary_element(
+         ) {
+             return false;
+         }
+-        whole_owner_call_operands(test, &assertion.text, owner)
++        whole_owner_call_operands(test, &assertion.text, owner, true)
+             .iter()
+             .any(|arguments| {
+                 arguments_feed_boundary_element(test, None, arguments, &assertion.text, element)
+@@ -869,7 +925,7 @@ fn loan_pairs_boundary_element(
+     if loan.parameters.is_empty() || owner_call_count(&loan.helper, &owner.name) != 1 {
+         return false;
+     }
+-    whole_owner_call_operands(test, assertion_text, owner)
++    whole_owner_call_operands(test, assertion_text, owner, false)
+         .iter()
+         .any(|arguments| {
+             arguments_feed_boundary_element(test, Some(loan), arguments, assertion_text, element)
+@@ -887,6 +943,7 @@ fn whole_owner_call_operands(
+     test: &TestSummary,
+     assertion_text: &str,
+     owner: &FunctionSummary,
++    qualified_resolved: bool,
+ ) -> Vec<Vec<String>> {
+     let operands: Vec<String> = match assertion_comparison_operands(assertion_text) {
+         // An expected side that reaches the owner again compares the owner
+@@ -924,12 +981,30 @@ fn whole_owner_call_operands(
+         .filter_map(|operand| {
+             let operand = operand.trim();
+             let lists = owner_call_argument_lists(operand, &owner.name);
+-            let [(_, arguments)] = lists.as_slice() else {
++            let [(offset, arguments)] = lists.as_slice() else {
+                 return None;
+             };
+-            (operand.starts_with(&format!("{}(", owner.name))
+-                && delimited_contents_at(operand, owner.name.len())
+-                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
++            // The direct assertion path has already resolved every owner call
++            // against this test's imports and module. Preserve its qualified
++            // spelling; helper loans retain their existing bare-call limit.
++            let prefix = operand.get(..*offset)?;
++            let bare_or_resolved_path = prefix.is_empty()
++                || (qualified_resolved
++                    && prefix.strip_suffix("::").is_some_and(|path| {
++                        path.split("::").all(|segment| {
++                            let segment = segment.strip_prefix("r#").unwrap_or(segment);
++                            !segment.is_empty()
++                                && segment.chars().enumerate().all(|(position, character)| {
++                                    character == '_'
++                                        || character.is_ascii_alphabetic()
++                                        || (position > 0 && character.is_ascii_digit())
++                                })
++                        })
++                    }));
++            (bare_or_resolved_path
++                && delimited_contents_at(operand, offset + owner.name.len()).is_some_and(
++                    |contents| contents.len() + offset + owner.name.len() + 2 == operand.len(),
++                ))
+             .then(|| arguments.clone())
+         })
+         .collect()
+diff --git a/crates/ripr/src/analysis/classify/mod.rs b/crates/ripr/src/analysis/classify/mod.rs
+index 961c174b7..4a7e47610 100644
+--- a/crates/ripr/src/analysis/classify/mod.rs
++++ b/crates/ripr/src/analysis/classify/mod.rs
+@@ -75,7 +75,7 @@ pub(in crate::analysis) use binding_return_flow::{
+ pub(in crate::analysis) use boundary_pairing::{
+     WrapperEntryPairing, assertion_reads_bound_boundary_bool,
+     has_same_test_boundary_oracle_pairing, has_wrapper_boundary_oracle_pairing,
+-    same_test_pairing_missing_summary, wrapper_return_boundary_pinned,
++    returned_boundary_probe, same_test_pairing_missing_summary, wrapper_return_boundary_pinned,
+ };
+ pub(in crate::analysis) use builder_override::{
+     constructor_starts_empty, function_returns_value, getter_plainly_reads,
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index a16bb7ec1..6406ab362 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -697,7 +697,8 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// through full and compact evidence before recommendation admission (#13278).
+ /// Panic markers also use the producer-owned discrimination prefix (#13291).
+ /// `1.164`: compose importer identity with main field-snapshot and panic-marker semantics.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.164";
++/// `1.165`: returned comparisons retain same-owner/element boundary pairing.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.165";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -907,7 +908,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.164";
+ /// `0.165`: same importer-bound observer semantics as full 1.163.
+ /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+ /// `0.166`: same composed semantics as full `1.164`.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.166";
++/// `0.167`: same returned-boundary pairing as full `1.165`.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.167";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1119,7 +1121,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.166";
+ /// `0.165`: same importer-bound observer semantics as full 1.163.
+ /// `0.163`: same field-snapshot and panic marker authority as full `1.161`.
+ /// `0.166`: same composed semantics as full `1.164`.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.166";
++/// `0.167`: same returned-boundary pairing as full `1.165`.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.167";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5275,7 +5278,7 @@ mod tests {
+         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+         // Composed main and successor invalidate both predecessor branches.
+         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.164");
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.165");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5421,8 +5424,8 @@ mod tests {
+         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.166");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.166");
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.167");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.167");
+     }
+ 
+     #[test]
+@@ -5751,6 +5754,7 @@ mod tests {
+             ("pre-main-composition", "1.161", "0.163"),
+             ("crate-alias-interception", "1.162", "0.164"),
+             ("pre-field-snapshot-composition", "1.163", "0.165"),
++            ("pre-returned-boundary-pairing", "1.164", "0.166"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+@@ -5824,7 +5828,7 @@ mod tests {
+     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
+         for previous in [
+             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
+-            "0.161", "0.162", "0.163", "0.164", "0.165",
++            "0.161", "0.162", "0.163", "0.164", "0.165", "0.166",
+         ] {
+             for compact in [false, true] {
+                 let scratch = integrity_scratch("property-shard-generation")?;
+diff --git a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+index 944a9fcf8..ae61a0f48 100644
+--- a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
++++ b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.164";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.165";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index 8e1338c1f..cc445af5e 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -73,6 +73,71 @@ fn check_source(source: &str, test: &str) -> Result<String, String> {
+         .into())
+ }
+ 
++#[test]
++fn returned_comparisons_pair_the_boundary_oracle_with_its_owner_and_element() -> Result<(), String>
++{
++    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
++    for (name, discarded, observed, first, second) in [
++        (
++            "boundary_pairing_sibling_owner",
++            "let _ = a::gate(10);",
++            "assert_eq!(a::gate(10), true);",
++            "assert_eq!(a::gate(11), true);",
++            "assert_eq!(b::gate(10), true);",
++        ),
++        (
++            "boundary_pairing_sibling_element",
++            "let _ = a::gate(&[0]);",
++            "assert_eq!(a::gate(&[0]), [false]);",
++            "assert_eq!(a::gate(&[5]), [true]);",
++            "assert_eq!(gate(&[0]), [false]);",
++        ),
++    ] {
++        let fixture = fixtures.join(name);
++        let source = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
++            .map_err(|error| error.to_string())?;
++        let manifest = std::fs::read_to_string(fixture.join("input/Cargo.toml"))
++            .map_err(|error| error.to_string())?;
++        let diff = std::fs::read_to_string(fixture.join("diff.patch"))
++            .map_err(|error| error.to_string())?;
++        assert!(source.contains(discarded) && source.contains(first) && source.contains(second));
++        for reversed in [false, true] {
++            for positive in [false, true] {
++                let mut source = source.clone();
++                if reversed {
++                    source = source
++                        .replace(first, "__FIRST_ORACLE__")
++                        .replace(second, first)
++                        .replace("__FIRST_ORACLE__", second);
++                }
++                if positive {
++                    source = source.replace(discarded, observed);
++                }
++                let report = check_report(&source, "", &manifest, &diff)?;
++                let findings = report["findings"].as_array().ok_or("missing findings")?;
++                assert_eq!(findings.len(), 2, "{name}/{reversed}/{positive}: {report}");
++                for family in ["predicate", "return_value"] {
++                    let selected: Vec<_> = findings
++                        .iter()
++                        .filter(|finding| finding["probe"]["family"] == family)
++                        .collect();
++                    assert_eq!(selected.len(), 1, "{family}: {report}");
++                    assert_eq!(
++                        selected[0]["classification"],
++                        if positive {
++                            "exposed"
++                        } else {
++                            "weakly_exposed"
++                        },
++                        "{name}/{family}/reversed={reversed}/positive={positive}: {report}"
++                    );
++                }
++            }
++        }
++    }
++    Ok(())
++}
++
+ #[test]
+ fn direct_wording_observer_remains_exposed() -> Result<(), String> {
+     let test = format!(
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index 6206f4e77..db02474f0 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -19795,7 +19795,7 @@ top-level `source_subject`:
+ 
+ - `digest_algorithm`: always `"sha256"`.
+ - `corpus` (additive, full Rust inventory only): the analysis-owned
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.164",
++  `{ "scope": "rust_workspace", "cache_schema_version": "1.165",
+   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+   classified inventory cache key, including both production and test Rust
+   files after the existing generated-file exclusions. Repo-exposure producers
+@@ -20580,7 +20580,7 @@ targeted-rerun receipt shape:
+     "recomputation_reasons": ["selected_test_scope_recomputed"],
+     "invalidation_status": "not_available",
+     "input_fingerprint": {
+-      "schema_version": "1.164",
++      "schema_version": "1.165",
+       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+       "workspace_root_hash": "…",
+       "files_content_hash": "…",
+diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
+index 8fd63dafa..c53c687ef 100644
+--- a/xtask/src/tests/rust_corpus_projection.rs
++++ b/xtask/src/tests/rust_corpus_projection.rs
+@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.164";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.165";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";

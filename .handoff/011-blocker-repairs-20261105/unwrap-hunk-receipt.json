@@ -1,0 +1,34 @@
+[
+  {
+    "case": "original",
+    "exit": 0,
+    "findings": [
+      {
+        "family": "error_path",
+        "line": 8,
+        "classification": "weakly_exposed"
+      },
+      {
+        "family": "return_value",
+        "line": 8,
+        "classification": "weakly_exposed"
+      }
+    ]
+  },
+  {
+    "case": "real_git",
+    "exit": 0,
+    "findings": [
+      {
+        "family": "error_path",
+        "line": 9,
+        "classification": "weakly_exposed"
+      },
+      {
+        "family": "return_value",
+        "line": 9,
+        "classification": "weakly_exposed"
+      }
+    ]
+  }
+]

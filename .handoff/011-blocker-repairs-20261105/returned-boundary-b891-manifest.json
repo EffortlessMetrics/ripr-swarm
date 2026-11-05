@@ -1,0 +1,143 @@
+{
+  "base": "f64fb8edf0be5d5521b44473fe589b455a7197c9",
+  "candidate": "b8916f290fe4ce86ba4f2f0b5e5843af989b29d9",
+  "patch_bytes": 24299,
+  "patch_sha256": "1193cabbb1aeb5c18941c161a5b3e7bbab41f19e7fb7a3ed24ad9897530ecf3e",
+  "334d_replay": {
+    "candidate": "334d08179ea6adf6dd42542d5763e2f963139e45",
+    "binary_sha256": "f0abc8388eb0fd76f99918872b43d34924ed5c597e58e83d8afe936293b3cb29",
+    "rows": [
+      {
+        "case": "boundary_pairing_sibling_owner-reverse0-positive0",
+        "exit": 0,
+        "findings": [
+          {
+            "family": "predicate",
+            "classification": "weakly_exposed"
+          },
+          {
+            "family": "return_value",
+            "classification": "weakly_exposed"
+          }
+        ],
+        "expected": "weakly_exposed",
+        "passed": true
+      },
+      {
+        "case": "boundary_pairing_sibling_owner-reverse0-positive1",
+        "exit": 0,
+        "findings": [
+          {
+            "family": "predicate",
+            "classification": "exposed"
+          },
+          {
+            "family": "return_value",
+            "classification": "exposed"
+          }
+        ],
+        "expected": "exposed",
+        "passed": true
+      },
+      {
+        "case": "boundary_pairing_sibling_owner-reverse1-positive0",
+        "exit": 0,
+        "findings": [
+          {
+            "family": "predicate",
+            "classification": "weakly_exposed"
+          },
+          {
+            "family": "return_value",
+            "classification": "weakly_exposed"
+          }
+        ],
+        "expected": "weakly_exposed",
+        "passed": true
+      },
+      {
+        "case": "boundary_pairing_sibling_owner-reverse1-positive1",
+        "exit": 0,
+        "findings": [
+          {
+            "family": "predicate",
+            "classification": "exposed"
+          },
+          {
+            "family": "return_value",
+            "classification": "exposed"
+          }
+        ],
+        "expected": "exposed",
+        "passed": true
+      },
+      {
+        "case": "boundary_pairing_sibling_element-reverse0-positive0",
+        "exit": 0,
+        "findings": [
+          {
+            "family": "predicate",
+            "classification": "weakly_exposed"
+          },
+          {
+            "family": "return_value",
+            "classification": "weakly_exposed"
+          }
+        ],
+        "expected": "weakly_exposed",
+        "passed": true
+      },
+      {
+        "case": "boundary_pairing_sibling_element-reverse0-positive1",
+        "exit": 0,
+        "findings": [
+          {
+            "family": "predicate",
+            "classification": "weakly_exposed"
+          },
+          {
+            "family": "return_value",
+            "classification": "weakly_exposed"
+          }
+        ],
+        "expected": "exposed",
+        "passed": false
+      },
+      {
+        "case": "boundary_pairing_sibling_element-reverse1-positive0",
+        "exit": 0,
+        "findings": [
+          {
+            "family": "predicate",
+            "classification": "weakly_exposed"
+          },
+          {
+            "family": "return_value",
+            "classification": "weakly_exposed"
+          }
+        ],
+        "expected": "weakly_exposed",
+        "passed": true
+      },
+      {
+        "case": "boundary_pairing_sibling_element-reverse1-positive1",
+        "exit": 0,
+        "findings": [
+          {
+            "family": "predicate",
+            "classification": "weakly_exposed"
+          },
+          {
+            "family": "return_value",
+            "classification": "weakly_exposed"
+          }
+        ],
+        "expected": "exposed",
+        "passed": false
+      }
+    ],
+    "passed": false
+  },
+  "b891_status": "guarded producer build active; no runtime claim",
+  "remaining": "collection positives must pass; genuine observer golden regressions unresolved;25 artifacts provisional; no merge or release"
+}
