@@ -40,7 +40,10 @@ _ripr_activate_rust() {
             return 1
         fi
     done
-    repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P) || return 1
+    repo_root=$(dirname -- "${BASH_SOURCE[0]}") || return 1
+    # An explicit relative path bypasses CDPATH without assigning to it.
+    [[ $repo_root == /* ]] || repo_root=./$repo_root
+    repo_root=$(builtin cd -- "$repo_root/.." && builtin pwd -P) || return 1
     selector=$1
     if [[ $selector == --pinned ]]; then
         selector=

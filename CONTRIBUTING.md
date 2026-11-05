@@ -131,10 +131,11 @@ using a custom build environment.
 
 Every tool probe finishes before activation changes the parent environment.
 Repeated activation does not grow `PATH` or change shell options or the current
-directory. Running `bash tools/activate-rust.sh` is rejected because a child
-process cannot activate its caller. The existing policy executable's compiler
-identity guard remains in force: rebuild through `cargo policy` after changing
-compilers.
+directory. Relative sourcing preserves an exported or readonly `CDPATH` and
+does not use it to find the repository. Running `bash tools/activate-rust.sh` is
+rejected because a child process cannot activate its caller. The existing policy
+executable's compiler identity guard remains in force: rebuild through
+`cargo policy` after changing compilers.
 
 To select the installed current stable compiler for later qualification, source
 with `stable` **during image preparation**:

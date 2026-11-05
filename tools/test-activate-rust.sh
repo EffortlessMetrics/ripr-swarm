@@ -2,9 +2,12 @@
 # Behavioral proof for the sourced Bash boundary; never installs or runs real Rust.
 set -euo pipefail
 
-repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+repo_root=$(dirname -- "${BASH_SOURCE[0]}")
+[[ $repo_root == /* ]] || repo_root=./$repo_root
+repo_root=$(builtin cd -- "$repo_root/.." && builtin pwd -P)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/ripr-activate.XXXXXXXX")
-test_root=$(cd -- "$test_root" && pwd -P)
+[[ $test_root == /* ]] || test_root=./$test_root
+test_root=$(builtin cd -- "$test_root" && builtin pwd -P)
 trap 'rm -rf -- "$test_root"' EXIT
 bash_bin=$(type -P bash)
 system_path=$PATH
@@ -133,6 +136,22 @@ source "$source_file" --pinned
 [[ $(cargo) == "fixture inherited exact compiler and homes" ]]
 ! declare -F _ripr_activate_rust
 '
+relative_source_check='
+cd "$TEST_REPO"
+set -- unrelated-caller-argument "second caller argument"
+cdpath_before=$(declare -p CDPATH)
+options_before=$SHELLOPTS; flags_before=$-; directory_before=$PWD
+source tools/activate-rust.sh --pinned
+[[ $(declare -p CDPATH) == "$cdpath_before" ]]
+[[ $options_before == "$SHELLOPTS" && $flags_before == "$-" && $directory_before == "$PWD" ]]
+[[ $# == 2 && $1 == unrelated-caller-argument && $2 == "second caller argument" ]]
+[[ $RUSTUP_TOOLCHAIN == 1.95.0-x86_64-unknown-linux-gnu && $(command -v rustc) == "$RUSTC" ]]
+! declare -F _ripr_activate_rust
+cd "$TEST_REPO/fixtures/nested"
+[[ $(cargo) == "fixture inherited exact compiler and homes" ]]
+'
+run_case 'relative source preserves exported CDPATH and caller state' 'export CDPATH=.; '"$relative_source_check"
+run_case 'relative source preserves readonly CDPATH and caller state' 'export CDPATH=.; readonly CDPATH; '"$relative_source_check"
 run_case 'stable freezes exact release and stays idempotent' '
 options_before=$SHELLOPTS; flags_before=$-; directory_before=$PWD
 source "$source_file" stable
