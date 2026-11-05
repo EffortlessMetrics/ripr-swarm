@@ -4,6 +4,7 @@ use super::*;
 fn qualifying_partial_measurement_is_visible_without_changing_the_gate() -> Result<(), String> {
     let config = parse_config(MINIMAL)?;
     let boards = vec!["speed".to_string()];
+    let ctx = pinned_context("same-runner", &["serde", "beta"]);
     let baseline_samples = vec![
         sample(
             "speed.warm_check_ms",
@@ -16,14 +17,7 @@ fn qualifying_partial_measurement_is_visible_without_changing_the_gate() -> Resu
             SampleOutcome::Value(1500.0),
         ),
     ];
-    let baseline = build_report(
-        &config,
-        &boards,
-        &baseline_samples,
-        &context("same-runner"),
-        None,
-        false,
-    );
+    let baseline = build_report(&config, &boards, &baseline_samples, &ctx, None, false);
     let complete = metric(&baseline, "speed.warm_check_ms")?;
     assert_eq!(complete["value"], json!(1500.0));
     assert_eq!(complete["status"], "meets_target");
@@ -45,14 +39,7 @@ fn qualifying_partial_measurement_is_visible_without_changing_the_gate() -> Resu
             SampleOutcome::NotMeasured,
         ),
     ];
-    let report = build_report(
-        &config,
-        &boards,
-        &samples,
-        &context("same-runner"),
-        Some(&baseline),
-        true,
-    );
+    let report = build_report(&config, &boards, &samples, &ctx, Some(&baseline), true);
     let row = metric(&report, "speed.warm_check_ms")?;
     assert_eq!(row["value"], json!(1000.0));
     assert_eq!(
@@ -122,7 +109,7 @@ fn qualifying_partial_measurement_is_visible_without_changing_the_gate() -> Resu
         &config,
         &boards,
         &regressing_samples,
-        &context("same-runner"),
+        &ctx,
         Some(&baseline),
         true,
     );
