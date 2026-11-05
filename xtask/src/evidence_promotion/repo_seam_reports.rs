@@ -461,14 +461,21 @@ pub(super) fn check_report_digests(violations: &mut Vec<String>) -> Result<(), S
     let reports = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS)
         .parent()
         .map_or_else(|| PathBuf::from("reports"), |dir| dir.join("reports"));
-    let Ok(entries) = std::fs::read_dir(&reports) else {
-        return Ok(());
-    };
-    let mut files: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
-        .collect();
+    let mut files: Vec<PathBuf> = Vec::new();
+    match std::fs::read_dir(&reports) {
+        Ok(entries) => {
+            for entry in entries {
+                let path = entry
+                    .map_err(|error| format!("failed to list {}: {error}", reports.display()))?
+                    .path();
+                if path.extension().is_some_and(|ext| ext == "json") {
+                    files.push(path);
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("failed to list {}: {error}", reports.display())),
+    }
     files.sort();
     let mut parsed = Vec::new();
     for path in files {
@@ -484,6 +491,7 @@ pub(super) fn check_report_digests(violations: &mut Vec<String>) -> Result<(), S
     let exemptions = read_digest_exemptions(&corpus, violations);
     stamp_problems(&parsed, &exemptions, violations);
     required_digest_problems(&corpus, &parsed, violations);
+    super::digest_delta::check(&corpus, violations)?;
     let mut ignored = Vec::new();
     let regenerable: Vec<String> = corpus
         .get("cases")
