@@ -200,7 +200,7 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
 /// sink to flag.
 fn refuse_selector_miss(sink: Option<&dyn AnalysisProgressSink>, message: String) -> String {
     if let Some(sink) = sink {
-        AnalysisProgressSink::user_fixable_failure(sink);
+        sink.user_fixable_failure();
     }
     message
 }
