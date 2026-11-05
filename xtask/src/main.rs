@@ -23807,6 +23807,18 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
         );
     }
 
+    if path.starts_with("benchmarks/muse-plugin/fixtures/")
+        && (path.ends_with(".ts")
+            || path.ends_with(".tsx")
+            || path.ends_with(".js")
+            || path.ends_with(".jsx")
+            || path.ends_with(".py"))
+    {
+        return Some(
+            "Muse plugin evaluation fixtures are analyzed inputs for the plugin scenarios (#13106); the TypeScript weak-assertion fixture must stay TypeScript to exercise the analyzer honestly.",
+        );
+    }
+
     None
 }
 
