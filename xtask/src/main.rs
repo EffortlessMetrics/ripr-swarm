@@ -6213,6 +6213,18 @@ fn collect_rust_conversion_candidates() -> Result<Vec<RustConversionCandidate>, 
 }
 
 fn non_rust_source_conversion_candidate(path: &str) -> Option<RustConversionCandidate> {
+    if path == "editors/vscode/test/developerSetup.cjs" {
+        return Some(RustConversionCandidate {
+            path: path.to_string(),
+            line: None,
+            kind: "retained_external_runtime".to_string(),
+            priority: "retained".to_string(),
+            current_surface: "dependency-free Node editor setup entrypoint".to_string(),
+            recommendation: "Keep the pre-install checkout report in this Node entrypoint; delegate explicit validation to existing Rust and editor owners.".to_string(),
+            reason: "Setup diagnostics must run before a Rust build or npm dependency installation is available (#13201, #13212).".to_string(),
+        });
+    }
+
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(RustConversionCandidate {
             path: path.to_string(),
@@ -23839,6 +23851,11 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     ) || (path.starts_with("packaging/npm/launcher/test/") && path.ends_with(".test.cjs"))
     {
         return Some("npm launcher runtime and focused launcher contract tests");
+    }
+    if path == "editors/vscode/test/developerSetup.cjs" {
+        return Some(
+            "Dependency-free Node setup entrypoint must inspect the editor checkout before Rust or npm dependencies are available; explicit verification delegates to existing validation owners (#13201, #13212).",
+        );
     }
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(
