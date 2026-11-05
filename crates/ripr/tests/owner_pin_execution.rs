@@ -4120,3 +4120,46 @@ fn default_trait_ufcs_result_pins_do_not_lend_identity_to_other_oracles() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn primitive_inherent_method_does_not_pin_same_named_trait_owner() -> Result<(), String> {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/rust_f64_trait_impl_import");
+    let source =
+        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
+    let input = source.replace("render", "abs").replace(
+        r#"assert_eq!((-0.0f64).abs(), String::from(""));"#,
+        "assert_eq!((-1.0f64).abs(), 1.0);",
+    );
+    assert!(input.contains("assert_eq!((-1.0f64).abs(), 1.0);"));
+    let scratch = Scratch::create()?;
+    std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
+    std::fs::copy(
+        fixture.join("input/Cargo.toml"),
+        scratch.0.join("Cargo.toml"),
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(scratch.0.join("src/lib.rs"), &input).map_err(|e| e.to_string())?;
+    let diff = std::fs::read_to_string(fixture.join("diff.patch"))
+        .map_err(|e| e.to_string())?
+        .replace("render", "abs");
+    let diff_path = scratch.0.join("change.patch");
+    std::fs::write(&diff_path, diff).map_err(|e| e.to_string())?;
+    let report = check_workspace(CheckInput {
+        root: scratch.0.clone(),
+        diff_file: Some(diff_path),
+        mode: Mode::Fast,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    assert_eq!(report.findings.len(), 1);
+    assert_ne!(report.findings[0].class, ExposureClass::Exposed);
+    source_runtime_control(&input, "primitive inherent abs/correct", 1, false)?;
+    source_runtime_control(
+        &input.replace("String::from(\"\")", "String::from(\"changed\")"),
+        "primitive inherent abs/wrong trait",
+        1,
+        false,
+    )?;
+    Ok(())
+}

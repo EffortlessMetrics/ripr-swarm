@@ -9345,6 +9345,7 @@ name = "evidence-promotion honesty meta-gate"
 spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
 tests = [
   "crates/ripr/tests/owner_pin_execution.rs::default_trait_ufcs_result_pins_do_not_lend_identity_to_other_oracles",
+  "crates/ripr/tests/owner_pin_execution.rs::primitive_inherent_method_does_not_pin_same_named_trait_owner",
   "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::projected_effect_payload_requires_fresh_state_and_a_preserving_map",
   "crates/ripr/tests/owner_pin_execution.rs::awaited_predicate_identity_does_not_credit_discarded_or_overwritten_results",
   "crates/ripr/tests/owner_pin_execution.rs::exact_error_kind_projection_keeps_its_own_result_identity",

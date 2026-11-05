@@ -4229,6 +4229,8 @@ enum ReceiverType {
     Named(String),
     /// `&[u8]`, read from `&[..][..]` or `&b".."[..]`.
     ByteSlice,
+    /// An explicitly suffixed primitive floating-point literal.
+    Float64,
 }
 
 enum ReturnPathGate {
@@ -5462,11 +5464,24 @@ impl OwnerReturnPin {
                     .then(|| owner_call_shape(future, name))
                     .flatten()
             }
-            (false, _) => owner_call_shape(operand, name).or_else(|| {
-                matches!(self.path, ReturnPathGate::FixtureReceiver(_))
-                    .then(|| fixture_receiver::FixtureReceiver::inline_call(operand, name))
-                    .flatten()
-            }),
+            (false, _) => owner_call_shape(operand, name)
+                .or_else(|| {
+                    if let PinCall::Method { receivers, .. } = &self.call
+                        && receivers.contains(&ReceiverType::Float64)
+                        && let Some((receiver, arguments)) =
+                            operand.rsplit_once(&format!(".{name}("))
+                        && arguments.trim() == ")"
+                        && explicit_f64_literal(receiver)
+                    {
+                        return Some(CallShape::Constructed(receiver));
+                    }
+                    None
+                })
+                .or_else(|| {
+                    matches!(self.path, ReturnPathGate::FixtureReceiver(_))
+                        .then(|| fixture_receiver::FixtureReceiver::inline_call(operand, name))
+                        .flatten()
+                }),
         }
     }
 
@@ -6574,6 +6589,10 @@ impl OwnerReturnPin {
                 }
                 let shadowed_by_std = match &receiver_type {
                     ReceiverType::ByteSlice => BYTE_SLICE_METHODS.contains(&self.name.as_str()),
+                    ReceiverType::Float64 => {
+                        F64_METHODS.contains(&self.name.as_str())
+                            || method_may_dispatch_through_prelude(&self.name)
+                    }
                     ReceiverType::Named(_) => method_may_dispatch_through_prelude(&self.name),
                 };
                 !shadowed_by_std
@@ -13404,7 +13423,127 @@ fn body_rebinds_type(masked: &str, type_name: &str) -> bool {
 
 /// The receiver type an `impl` block's self type names, when it is one this
 /// module can match a test binding against.
+// Conservative inherent-method collision set from the pinned Rust 1.95 sources:
+// https://github.com/rust-lang/rust/blob/1.95.0/library/core/src/num/f64.rs
+// https://github.com/rust-lang/rust/blob/1.95.0/library/std/src/num/f64.rs
+const F64_METHODS: &[&str] = &[
+    "abs",
+    "abs_sub",
+    "acos",
+    "acosh",
+    "algebraic_add",
+    "algebraic_div",
+    "algebraic_mul",
+    "algebraic_rem",
+    "algebraic_sub",
+    "asin",
+    "asinh",
+    "atan",
+    "atan2",
+    "atanh",
+    "cbrt",
+    "ceil",
+    "clamp_magnitude",
+    "classify",
+    "copysign",
+    "cos",
+    "cosh",
+    "div_euclid",
+    "erf",
+    "erfc",
+    "exp",
+    "exp2",
+    "exp_m1",
+    "floor",
+    "fract",
+    "gamma",
+    "hypot",
+    "is_finite",
+    "is_infinite",
+    "is_nan",
+    "is_negative",
+    "is_normal",
+    "is_positive",
+    "is_sign_negative",
+    "is_sign_positive",
+    "is_subnormal",
+    "ln",
+    "ln_1p",
+    "ln_gamma",
+    "log",
+    "log10",
+    "log2",
+    "max",
+    "maximum",
+    "midpoint",
+    "min",
+    "minimum",
+    "mul_add",
+    "next_down",
+    "next_up",
+    "powf",
+    "powi",
+    "recip",
+    "rem_euclid",
+    "round",
+    "round_ties_even",
+    "signum",
+    "sin",
+    "sin_cos",
+    "sinh",
+    "sqrt",
+    "tan",
+    "tanh",
+    "to_be_bytes",
+    "to_bits",
+    "to_degrees",
+    "to_int_unchecked",
+    "to_le_bytes",
+    "to_ne_bytes",
+    "to_radians",
+    "total_cmp",
+    "trunc",
+];
+
+fn explicit_f64_literal(text: &str) -> bool {
+    let Some(file) = parse_clean_source_file(&format!("fn __pin() {{ {text} }}")) else {
+        return false;
+    };
+    let Some(function) = file.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let Some(mut expression) = function
+        .body()
+        .and_then(|b| b.stmt_list())
+        .and_then(|s| s.tail_expr())
+    else {
+        return false;
+    };
+    loop {
+        expression = match expression {
+            ast::Expr::ParenExpr(paren) => match paren.expr() {
+                Some(e) => e,
+                None => return false,
+            },
+            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Neg) => {
+                match prefix.expr() {
+                    Some(e) => e,
+                    None => return false,
+                }
+            }
+            ast::Expr::Literal(literal) => {
+                return matches!(literal.kind(), ast::LiteralKind::FloatNumber(_))
+                    && literal.syntax().text().to_string().ends_with("f64");
+            }
+            _ => return false,
+        };
+    }
+}
+
 fn declared_receiver(self_ty: &str, index: &RustIndex) -> Option<ReceiverType> {
+    if self_ty == "f64" && builtin_type_unshadowed("f64", index, &OwnerPinSyntax::default()) {
+        return Some(ReceiverType::Float64);
+    }
     if is_byte_slice_type(self_ty) {
         return Some(ReceiverType::ByteSlice);
     }
@@ -16424,6 +16563,9 @@ fn binding_type(
     if let Some(annotation) = annotation {
         return named_or_slice(annotation, test, test_source, index, imports_foreign, owner);
     }
+    if explicit_f64_literal(initializer) && builtin_type_unshadowed("f64", index, syntax) {
+        return Some(ReceiverType::Float64);
+    }
     if is_byte_slice_expression(initializer) {
         return Some(ReceiverType::ByteSlice);
     }
@@ -17303,7 +17445,7 @@ pub(in crate::analysis) fn test_receiver_named_type(
         // the name ambiguous (`alt::Pool` imported over the real `Pool`), so
         // identity is not established.
         ReceiverType::Named(name) if workspace_type_name_count(&name, index) == 1 => Some(name),
-        ReceiverType::Named(_) | ReceiverType::ByteSlice => None,
+        ReceiverType::Named(_) | ReceiverType::ByteSlice | ReceiverType::Float64 => None,
     }
 }
 
