@@ -315,8 +315,8 @@ use policy::{
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
     check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
     check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_user_text, check_workflows, parse_workspace_lints_section,
-    qualify_python_wheelhouse,
+    check_text_encoding, check_user_text, check_workflows, parse_clippy_lints_ledger,
+    parse_workspace_lints_section, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -18047,123 +18047,6 @@ fn is_deletion_only(change: &ChangedPath) -> bool {
             .all(|status| status.chars().all(|character| character == 'D'))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct LedgerLintEntry {
-    name: String,
-    level: String,
-    activate_when_msrv: Option<String>,
-    reason: Option<String>,
-    blocked_by: Option<String>,
-    block_line: usize,
-    is_planned: bool,
-}
-
-/// Parse `[[active.<group>]]` and `[[planned]]` blocks out of
-/// `policy/clippy-lints.toml`. Returns the entries in source order.
-fn parse_clippy_lints_ledger(text: &str) -> (Vec<LedgerLintEntry>, Vec<String>) {
-    let mut entries = Vec::new();
-    let mut violations = Vec::new();
-    let mut current: Option<LedgerLintEntry> = None;
-
-    fn flush(
-        current: &mut Option<LedgerLintEntry>,
-        entries: &mut Vec<LedgerLintEntry>,
-        violations: &mut Vec<String>,
-    ) {
-        if let Some(entry) = current.take() {
-            if entry.name.is_empty() {
-                violations.push(format!(
-                    "policy/clippy-lints.toml:{} entry missing required `name`",
-                    entry.block_line
-                ));
-                return;
-            }
-            if entry.level.is_empty() {
-                violations.push(format!(
-                    "policy/clippy-lints.toml:{} entry `{}` missing required `level`",
-                    entry.block_line, entry.name
-                ));
-                return;
-            }
-            entries.push(entry);
-        }
-    }
-
-    for (index, raw) in text.lines().enumerate() {
-        let line_number = index + 1;
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("[[") {
-            let header = rest.trim_end_matches(']').trim_end_matches('[').trim();
-            // Only reset when we cross into a new array-of-tables that
-            // matters to the lint policy. Other top-level tables (like
-            // `[policy]`) are flushed too so the next array-of-tables starts
-            // clean.
-            flush(&mut current, &mut entries, &mut violations);
-            let is_active = header.starts_with("active.");
-            let is_planned = header == "planned";
-            if is_active || is_planned {
-                current = Some(LedgerLintEntry {
-                    name: String::new(),
-                    level: String::new(),
-                    activate_when_msrv: None,
-                    reason: None,
-                    blocked_by: None,
-                    block_line: line_number,
-                    is_planned,
-                });
-            }
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            // Plain table header (e.g. `[policy]`); not a lint entry.
-            flush(&mut current, &mut entries, &mut violations);
-            continue;
-        }
-        let Some(entry) = current.as_mut() else {
-            continue;
-        };
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        let value = raw_value.trim();
-        let unquoted = unquote_toml_basic_string(value);
-        match key {
-            "name" => {
-                if let Some(name) = unquoted {
-                    entry.name = name;
-                }
-            }
-            "level" => {
-                if let Some(level) = unquoted {
-                    entry.level = level;
-                }
-            }
-            "activate_when_msrv" => {
-                if let Some(msrv) = unquoted {
-                    entry.activate_when_msrv = Some(msrv);
-                }
-            }
-            "reason" => {
-                if let Some(reason) = unquoted {
-                    entry.reason = Some(reason);
-                }
-            }
-            "blocked_by" => {
-                if let Some(blocked_by) = unquoted {
-                    entry.blocked_by = Some(blocked_by);
-                }
-            }
-            _ => {}
-        }
-    }
-    flush(&mut current, &mut entries, &mut violations);
-    (entries, violations)
-}
-
 /// Strip the `clippy::` prefix from a ledger-style lint name so it can be
 /// looked up in the `[workspace.lints.clippy]` map. Rust lints have no
 /// prefix and remain unchanged.
@@ -18339,7 +18222,11 @@ fn collect_clippy_debt_violations(
             return violations;
         }
     };
-    let (lints, _) = parse_clippy_lints_ledger(lints_text);
+    let (lints, ledger_violations) = parse_clippy_lints_ledger(lints_text);
+    if !ledger_violations.is_empty() {
+        violations.extend(ledger_violations);
+        return violations;
+    }
 
     let mut seen_ids = BTreeSet::new();
     let mut seen_lints = BTreeSet::new();
@@ -18588,6 +18475,9 @@ fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<St
         Err(err) => return vec![err],
     };
     let (entries, mut violations) = parse_clippy_lints_ledger(ledger_text);
+    if !violations.is_empty() {
+        return violations;
+    }
     let workspace_msrv = parse_workspace_package_rust_version(cargo_text);
     let workspace_triple = workspace_msrv.as_deref().and_then(parse_msrv_triple);
 
@@ -18658,16 +18548,13 @@ fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<St
         })
         .collect();
 
-    for (name, level) in cargo_clippy.iter().chain(cargo_rust.iter()) {
-        let group = if cargo_clippy.contains_key(name) {
-            "clippy"
-        } else {
-            "rust"
-        };
-        if !active_lookup.contains(&(group.to_string(), name.clone())) {
-            violations.push(format!(
-                "Cargo.toml `[workspace.lints.{group}]` configures `{name}` at level `{level}` but policy/clippy-lints.toml has no matching `[[active.<group>]]` entry. Add the lint to the ledger or remove it from Cargo.toml."
-            ));
+    for (group, cargo_lints) in [("clippy", &cargo_clippy), ("rust", &cargo_rust)] {
+        for (name, level) in cargo_lints {
+            if !active_lookup.contains(&(group.to_string(), name.clone())) {
+                violations.push(format!(
+                    "Cargo.toml `[workspace.lints.{group}]` configures `{name}` at level `{level}` but policy/clippy-lints.toml has no matching `[[active.<group>]]` entry. Add the lint to the ledger or remove it from Cargo.toml."
+                ));
+            }
         }
     }
 

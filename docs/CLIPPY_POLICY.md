@@ -206,6 +206,17 @@ A `blocked_by` that only names an MSRV or Rust version is treated as missing.
 verified available-since (`clippy::manual_pop_if` records `1.95` while
 `blocked_by` says pinned 1.95.0 Clippy does not recognize the lint).
 
+The lint ledger is decoded as TOML, so comments after table headers and
+multiline strings retain their meaning (#13217). Known fields (`name`,
+`level`, `activate_when_msrv`, `reason`, and `blocked_by`) must be strings;
+the last three remain optional. Invalid TOML, duplicate keys, unsupported
+levels, invalid lint identities, and duplicate identities across active or
+planned rows fail both the lint-policy and debt-policy consumers.
+Each identity is either a bare Rust lint name or a `clippy::<name>`;
+equal bare names in those namespaces still require separate ledger entries.
+Levels are `allow`, `warn`, `deny`, or `forbid`. Unknown documentary fields,
+including `note`, remain supported as established in #3990.
+
 When promoting a planned lint, move the entry from `[[planned]]` to
 `[[active.<group>]]`, add the matching `Cargo.toml` line, and update
 this doc — the gate makes Cargo.toml drift visible immediately. An
