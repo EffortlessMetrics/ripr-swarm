@@ -1311,7 +1311,7 @@ fn run_agent_review_summary(options: AgentReviewSummaryOptions) -> Result<(), St
 /// recorded on that attempt through the attempt authority, so `ripr agent
 /// status` reports it instead of repeating the refused command unannotated.
 fn run_agent_repair(options: AgentRepairOptions) -> Result<(), CommandError> {
-    run_agent_repair_with_identity(options, None)
+    run_agent_repair_with_identity(options, None).result
 }
 
 /// Selection has not established that the attempt can resume. Offer only
@@ -1353,41 +1353,60 @@ pub(in crate::cli) fn run_before_repair_with_identity(
         )
         .into());
     }
-    let (result, start_refused) = run_agent_repair_with_identity_ctx(options, Some(identity));
-    match result {
-        Err(error) if start_refused => Err(crate::cli::BeforePhaseError::Refused(
+    let outcome = run_agent_repair_with_identity_ctx(options, Some(identity));
+    match outcome.result {
+        Err(error) if outcome.start_refused => Err(crate::cli::BeforePhaseError::Refused(
             error.message().to_string(),
         )),
         other => other.map_err(Into::into),
     }
 }
 
+/// The phase's result and the output it actually delivered, after resolving
+/// pending workflow output. Entering a JSON phase alone does not emit a document.
+pub(in crate::cli) struct AgentRepairOutcome {
+    pub(in crate::cli) result: Result<(), CommandError>,
+    pub(in crate::cli) json_document_printed: bool,
+    start_refused: bool,
+}
+
 /// Shared with the task-first `ripr continue` façade (#6305): both
 /// spellings run the same after-phase service with the same refusal
-/// recording and artifact resolution.
+/// recording and artifact resolution. The façade uses the delivered-document
+/// state to supply its fallback only when the phase emitted no JSON.
 pub(in crate::cli) fn run_agent_repair_with_identity(
     options: AgentRepairOptions,
     identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
-) -> Result<(), CommandError> {
-    run_agent_repair_with_identity_ctx(options, identity).0
+) -> AgentRepairOutcome {
+    run_agent_repair_with_identity_ctx(options, identity)
 }
 
-/// [`run_agent_repair_with_identity`] plus whether a before phase refused to
-/// start with nothing written (#9033), so the façade can map that refusal to
-/// the decision exit code while the advanced spelling keeps its failure code.
+/// Also retain whether a before phase refused to start with nothing written
+/// (#9033), so the façade can map that refusal to the decision exit code while
+/// the advanced spelling keeps its failure code.
 fn run_agent_repair_with_identity_ctx(
     options: AgentRepairOptions,
     identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
-) -> (Result<(), CommandError>, bool) {
+) -> AgentRepairOutcome {
     // Keep the repository-wide lock until after the shared projections have
     // been resolved, not merely until the attempt manifest is committed.
     let _workflow_lock = if options.phase == AgentRepairPhase::After {
         if let Err(error) = ensure_command_root(&options.root, "agent repair --phase after") {
-            return (Err(CommandError::Failure(error)), false);
+            return AgentRepairOutcome {
+                result: Err(CommandError::Failure(error)),
+                json_document_printed: false,
+                start_refused: false,
+            };
         }
         match crate::cli::lock_repair_workflow(&options.root) {
             Ok(lock) => Some(lock),
-            Err(error) => return (Err(CommandError::Failure(error)), false),
+            Err(error) => {
+                return AgentRepairOutcome {
+                    result: Err(CommandError::Failure(error)),
+                    json_document_printed: false,
+                    start_refused: false,
+                };
+            }
         }
     } else {
         None
@@ -1423,7 +1442,6 @@ fn run_agent_repair_with_identity_ctx(
             } else {
                 None
             };
-            refusal.stdout_document_printed = refusal.pending_stdout.is_some();
         }
     }
     if let (Err(error), Some((root, store, attempt_id))) = (&result, &refusal.selected_attempt)
@@ -1444,6 +1462,7 @@ fn run_agent_repair_with_identity_ctx(
     }
     if let Some(document) = refusal.pending_stdout.take() {
         print!("{document}");
+        refusal.json_document_printed = json;
     }
     if result.is_ok() {
         for line in &refusal.pending_success_lines {
@@ -1463,7 +1482,7 @@ fn run_agent_repair_with_identity_ctx(
     // the same decision mapping with nothing recorded.
     if json
         && refusal.typed
-        && !refusal.stdout_document_printed
+        && !refusal.json_document_printed
         && let (Err(error), Some((_, _, attempt_id))) = (&result, &refusal.selected_attempt)
     {
         // Exit 3 means "read the stdout JSON document for the answer"
@@ -1471,7 +1490,10 @@ fn run_agent_repair_with_identity_ctx(
         // exists still prints exactly one document, naming the cause and the
         // recovery the narration gave on stderr.
         match render_repair_after_refusal_json(attempt_id.as_str(), error, &refusal.narration) {
-            Ok(rendered) => print!("{rendered}"),
+            Ok(rendered) => {
+                print!("{rendered}");
+                refusal.json_document_printed = true;
+            }
             Err(render_error) => eprintln!("ripr: {render_error}"),
         }
     }
@@ -1487,7 +1509,11 @@ fn run_agent_repair_with_identity_ctx(
     } else {
         result.map_err(CommandError::Failure)
     };
-    (result, start_refused)
+    AgentRepairOutcome {
+        result,
+        json_document_printed: refusal.json_document_printed,
+        start_refused,
+    }
 }
 
 /// Records a refused after phase on its attempt, choosing the authority by the
@@ -1581,7 +1607,7 @@ struct AfterPhaseRefusalContext {
     /// Set once the phase printed its one stdout document (the bare verify
     /// document on a post-verify refusal), so a refusal never prints a
     /// second document.
-    stdout_document_printed: bool,
+    json_document_printed: bool,
     /// Hold after-phase output until shared artifact resolution succeeds.
     pending_stdout: Option<String>,
     pending_success_lines: Vec<String>,
@@ -3102,7 +3128,6 @@ fn run_agent_repair_phase(
                             None => rendered_verify.clone(),
                         };
                         refusal.pending_stdout = Some(rendered);
-                        refusal.stdout_document_printed = true;
                     }
                     return Err(error);
                 }
@@ -3182,6 +3207,7 @@ fn run_agent_repair_phase(
             })?;
             if json {
                 print!("{rendered}");
+                refusal.json_document_printed = true;
             } else {
                 println!(
                     "Verification receipt: {} (add --json to print it here)",

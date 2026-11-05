@@ -5674,8 +5674,8 @@ fn repair_json_prints_the_packet_with_the_started_attempt_id() -> Result<(), Str
 }
 
 /// #11584: `continue --json` prints the after-phase document for the exact
-/// attempt it advanced, and a declined second continue answers with the
-/// shared refusal document.
+/// attempt it advanced, and a repeated continue answers with the retained
+/// already-complete attempt status without rewriting its evidence.
 #[test]
 fn continue_json_prints_one_document_for_the_advanced_attempt() -> Result<(), String> {
     let fixture = Fixture::boundary("facade-continue-json")?;
@@ -5709,19 +5709,156 @@ fn continue_json_prints_one_document_for_the_advanced_attempt() -> Result<(), St
         "ready_to_finish"
     );
 
-    // The attempt is ready to finish but has no receipt yet, so a second
-    // continue is a declined decision: exit 3 with the shared refusal
-    // document, never a success-shaped one.
-    let declined = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    // The after phase retains its issued receipt. A repeated continue uses
+    // the canonical AlreadyComplete route and prints one read-only status.
+    let sealed = manifest_bytes(root, &attempt_id)?;
+    let repeated = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(&repeated, 0, "continue --json on a completed attempt");
+    let status: serde_json::Value = serde_json::from_slice(&repeated.stdout)
+        .map_err(|error| format!("repeated continue must write one status document: {error}"))?;
+    assert_eq!(status["kind"], "agent_attempt_status");
+    assert_eq!(status["attempt"]["attempt_id"], attempt_id.as_str());
+    assert_eq!(status["attempt"]["receipt"]["issued_for_attempt"], true);
+    assert_eq!(manifest_bytes(root, &attempt_id)?, sealed);
+    assert_eq!(attempt_ids(root), vec![attempt_id]);
+    Ok(())
+}
+
+/// #11584: a selected awaiting attempt can fail before the advanced phase
+/// emits output. Holding the real workflow lock must still produce exactly
+/// one facade refusal under --json, and leave prose-only stdout empty.
+#[test]
+fn continue_json_reports_a_held_workflow_lock_without_duplicate_documents() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-json-held-lock")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let repair = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
     assert_exit(
-        &declined,
-        3,
-        "continue --json on an attempt awaiting its receipt",
+        &repair,
+        0,
+        "prepare an awaiting attempt before holding the lock",
     );
-    let refusal: serde_json::Value = serde_json::from_slice(&declined.stdout)
-        .map_err(|error| format!("a declined continue must write the refusal document: {error}"))?;
-    assert_eq!(refusal["status"], "refused");
-    assert_eq!(refusal["error"]["code"], "continue_declined");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1);
+    let attempt_id = &ids[0];
+    let before = read_manifest(root, attempt_id)?;
+    assert_eq!(before["state"], "awaiting_edit");
+    let git_dir = run_git(root, &["rev-parse", "--absolute-git-dir"])?;
+    let lock_path = Path::new(git_dir.trim()).join("ripr-repair-workflow.lock");
+    let lock = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| format!("open workflow lock: {error}"))?;
+    lock.try_lock()
+        .map_err(|error| format!("hold workflow lock: {error}"))?;
+    for json in [false, true] {
+        let mut args = vec!["continue", "--root", &root_arg, "--attempt", attempt_id];
+        if json {
+            args.push("--json");
+        }
+        let refused = run_ripr(root, &args)?;
+        assert_exit(&refused, 2, "continue while the workflow lock is held");
+        assert!(stderr_text(&refused).contains("another repair phase"));
+        if json {
+            let document: serde_json::Value = serde_json::from_slice(&refused.stdout)
+                .map_err(|error| format!("lock refusal must be one JSON document: {error}"))?;
+            let message = document["error"]["message"]
+                .as_str()
+                .ok_or("lock refusal must carry a string message")?;
+            assert!(message.contains("another repair phase"));
+            // Pin the standalone schema's closed shape as well as the
+            // operational exit/code; success and phase envelopes cannot pass.
+            assert_eq!(
+                document,
+                serde_json::json!({
+                    "schema_version": "0.1",
+                    "kind": "cli_refusal",
+                    "tool": "ripr",
+                    "status": "refused",
+                    "command": "continue",
+                    "exit_code": 2,
+                    "error": {
+                        "code": "continue_failed",
+                        "message": message,
+                        "next": null,
+                    },
+                })
+            );
+        } else {
+            assert!(
+                refused.stdout.is_empty(),
+                "prose refusal must keep stdout empty"
+            );
+        }
+        assert_eq!(read_manifest(root, attempt_id)?, before);
+    }
+    drop(lock);
+
+    // A typed refusal printed by the phase owns its document, so the facade
+    // must not append a cli_refusal after it.
+    let no_edit = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(&no_edit, 3, "continue without the focused edit");
+    let phase_refusal: serde_json::Value = serde_json::from_slice(&no_edit.stdout)
+        .map_err(|error| format!("phase refusal must be one JSON document: {error}"))?;
+    assert_eq!(phase_refusal["kind"], "repair_after_refusal");
+    assert_eq!(phase_refusal["attempt_id"], attempt_id.as_str());
+
+    // Once unlocked and edited, the same attempt still emits just its normal
+    // successful after-phase result, including output held pending resolution.
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let continued = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(&continued, 0, "continue after releasing the workflow lock");
+    let document: serde_json::Value = serde_json::from_slice(&continued.stdout)
+        .map_err(|error| format!("successful continue must be one JSON document: {error}"))?;
+    assert_eq!(document["kind"], "repair_after_result");
+    assert!(document.to_string().contains(attempt_id));
+    Ok(())
+}
+
+/// A post-verify failure already has a pending phase document. Emitting it
+/// must suppress the facade fallback just like a directly rendered refusal.
+#[test]
+fn continue_json_preserves_one_pending_phase_failure_document() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-json-pending-failure")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let repair = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&repair, 0, "prepare pending-failure attempt");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1);
+    let attempt_id = &ids[0];
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        format!("{FIXTURE_LIB}// out-of-cage edit\n"),
+    )
+    .map_err(|error| format!("write out-of-cage edit: {error}"))?;
+    let continued = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(
+        &continued,
+        2,
+        "continue with an out-of-cage production edit",
+    );
+    let document: serde_json::Value = serde_json::from_slice(&continued.stdout)
+        .map_err(|error| format!("pending failure must be one JSON document: {error}"))?;
+    assert_eq!(document["kind"], "repair_after_failure");
+    assert_eq!(document["attempt_id"], attempt_id.as_str());
+    assert_eq!(document["attempt_state"], "failed");
+    assert_eq!(document["edit_cage_verdict"], "violated");
     Ok(())
 }
 

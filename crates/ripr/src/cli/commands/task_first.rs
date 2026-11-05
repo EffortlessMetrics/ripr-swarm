@@ -426,11 +426,11 @@ pub(in crate::cli) fn continue_repair(args: &[String]) -> Result<(), CommandErro
         ContinueFacadeCommand::Continue(options) => {
             let json = options.json;
             let next = facade_next_command("ripr status", &options.root, options.root_explicit);
-            // The after phase writes its own typed documents under `--json`;
-            // only refusals the facade itself decides get the shared one.
-            let own_document = std::cell::Cell::new(false);
-            run_facade_continue(options, &own_document).map_err(|error| {
-                if own_document.get() {
+            // The after phase reports whether it emitted JSON. Early failures
+            // with no phase document still need the shared refusal fallback.
+            let json_document_printed = std::cell::Cell::new(false);
+            run_facade_continue(options, &json_document_printed).map_err(|error| {
+                if json_document_printed.get() {
                     error
                 } else {
                     facade_refusal("continue", json, next.as_deref(), error)
@@ -671,7 +671,7 @@ fn facade_before_options(
 
 fn run_facade_continue(
     mut options: ContinueFacadeOptions,
-    own_document: &std::cell::Cell<bool>,
+    json_document_printed: &std::cell::Cell<bool>,
 ) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
     super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
@@ -687,8 +687,7 @@ fn run_facade_continue(
         },
     )? {
         ContinueSelection::Proceed { attempt_id } => {
-            own_document.set(options.json);
-            super::agent::run_agent_repair_with_identity(
+            let outcome = super::agent::run_agent_repair_with_identity(
                 AgentRepairOptions {
                     root: options.root,
                     root_explicit: true,
@@ -713,7 +712,9 @@ fn run_facade_continue(
                     quiet: options.quiet,
                 },
                 None,
-            )
+            );
+            json_document_printed.set(outcome.json_document_printed);
+            outcome.result
         }
         ContinueSelection::AlreadyComplete { report } => {
             if options.json {
