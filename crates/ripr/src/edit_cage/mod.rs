@@ -330,10 +330,14 @@ pub(crate) fn capture_attempt_baseline(
     };
     let mut baseline =
         capture_repository_state(root.clone(), policy.clone(), CaptureTraceLabel::Baseline)?;
+    let external_target_absent = policy.external_test_file_target
+        && !baseline.ambiguous
+        && external_target_is_absent(&baseline, &policy.selected_target.path)?;
     let external_test_file_region = if policy.external_test_file_target && !baseline.ambiguous {
         Some(external_test_file_region::capture_attempt_external_region(
             &root,
             &policy.selected_target.path,
+            external_target_absent,
         )?)
     } else {
         None
@@ -347,6 +351,7 @@ pub(crate) fn capture_attempt_baseline(
         baseline.ambiguous = true;
     }
     if let Some(region) = &external_test_file_region
+        && !external_target_absent
         && baseline.worktree_digest(&region.path)
             != Some(inline_test_region::digest_bytes(region.source.as_bytes()).as_str())
     {
@@ -355,7 +360,9 @@ pub(crate) fn capture_attempt_baseline(
     if let Some(region) = &inline_test_region {
         require_inline_target_at_head(&baseline, &region.path)?;
     }
-    if let Some(region) = &external_test_file_region {
+    if let Some(region) = &external_test_file_region
+        && !external_target_absent
+    {
         require_inline_target_at_head(&baseline, &region.path)?;
     }
     baseline.inline_test_region = inline_test_region;
@@ -683,6 +690,37 @@ fn require_inline_target_at_head(baseline: &AttemptBaseline, path: &str) -> Resu
     }
 }
 
+/// A new external test has no protected before text only when the trusted
+/// repository snapshot, recorded commit and current safe filesystem path all
+/// establish absence. A deleted tracked file or failed Git read is not absence.
+fn external_target_is_absent(baseline: &AttemptBaseline, path: &str) -> Result<bool, String> {
+    if !baseline.paths.get(path).is_some_and(|state| {
+        state.index_entry.is_none() && matches!(state.worktree_identity, WorktreeIdentity::Missing)
+    }) {
+        return Ok(false);
+    }
+    let committed = git_text(
+        &baseline.root,
+        &["--literal-pathspecs", "ls-tree", &baseline.head, "--", path],
+    )?;
+    if !committed.is_empty() || !writable_path_components_are_safe(&baseline.root, path)? {
+        return Ok(false);
+    }
+    let mut remaining_file_bytes = MAX_CAPTURE_FILE_BYTES;
+    let mut remaining_work_bytes = MAX_CAPTURE_FILE_BYTES;
+    Ok(matches!(
+        worktree_identity(
+            &baseline.root,
+            path,
+            &mut remaining_file_bytes,
+            &mut remaining_work_bytes,
+            false,
+            true,
+        )?,
+        WorktreeIdentity::Missing
+    ))
+}
+
 /// The one law for "the inline target is at HEAD": a committed object exists
 /// and both the worktree and index copies equal it.
 fn inline_target_copies_at_head(
@@ -981,7 +1019,7 @@ fn capture_repository_state(
     let ignored = ignored_inventory(&root, &policy)?;
 
     let python_tool_caches = policy.expects_python_tool_caches();
-    let (inventory, mut ambiguous) =
+    let (mut inventory, mut ambiguous) =
         inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS, |path| {
             python_tool_caches && is_python_tool_cache(path)
         })?;
@@ -990,6 +1028,22 @@ fn capture_repository_state(
             &format!("{span_prefix}_git_inventory"),
             inventory_started.elapsed(),
         );
+    }
+
+    // Git inventories omit a genuinely new target. Retain its Missing identity
+    // through the same bounded capture and stability check as existing paths.
+    if policy.external_test_file_target && !inventory.contains_key(&policy.selected_target.path) {
+        let selected = &policy.selected_target.path;
+        let key = crate::output::path::path_identity_key_on(Path::new(selected), false, true);
+        if inventory.len() >= MAX_CAPTURE_PATHS
+            || inventory.keys().any(|path| {
+                crate::output::path::path_identity_key_on(Path::new(path), false, true) == key
+            })
+        {
+            ambiguous = true;
+        } else {
+            inventory.insert(selected.clone(), false);
+        }
     }
 
     let mut paths = BTreeMap::new();

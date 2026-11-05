@@ -37,6 +37,7 @@ pub(crate) struct ExternalTargetCopies<'a> {
 pub(crate) fn capture_attempt_external_region(
     root: &Path,
     relative_file: &str,
+    absent_from_baseline: bool,
 ) -> Result<ExternalTestFileBaseline, String> {
     if !crate::analysis::is_test_surface_path(relative_file) {
         return Err(refusal(relative_file, "it is not a test-surface path"));
@@ -47,8 +48,14 @@ pub(crate) fn capture_attempt_external_region(
             "pure-insertion confinement applies only to Rust test files",
         ));
     }
-    let source = read_attempt_inline_target(root, relative_file)
-        .map_err(|error| refusal(relative_file, &format!("it could not be read ({error})")))?;
+    let source = if absent_from_baseline {
+        // The repository snapshot owner established clean absence in the
+        // worktree, index and recorded HEAD, including safe path components.
+        String::new()
+    } else {
+        read_attempt_inline_target(root, relative_file)
+            .map_err(|error| refusal(relative_file, &format!("it could not be read ({error})")))?
+    };
     let generated_file_patterns = crate::config::load_for_root(root)
         .map_err(|error| {
             refusal(

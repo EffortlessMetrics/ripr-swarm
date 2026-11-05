@@ -141,3 +141,125 @@ fn observe_attempt_external_region_matches_inline_copy_checks() -> Result<(), St
     assert!(observation.admitted, "{observation:?}");
     Ok(())
 }
+
+#[test]
+fn new_external_test_file_survives_baseline_roundtrip_and_publication() -> Result<(), String> {
+    for publication in ["worktree", "index", "commit"] {
+        let fixture = fixture(publication)?;
+        git_ok(&fixture.root, &["rm", "tests/pricing.rs"])?;
+        git_ok(
+            &fixture.root,
+            &["commit", "-qm", "target does not exist yet"],
+        )?;
+        // Exercise the supported case where even the tests directory is new.
+        let _ = fs::remove_dir(fixture.root.join("tests"));
+        let baseline = capture_attempt_baseline(&fixture.root, &external_policy()?)?;
+        let serialized = serde_json::to_vec(&baseline).map_err(|e| e.to_string())?;
+        let baseline = serde_json::from_slice(&serialized).map_err(|e| e.to_string())?;
+        fs::create_dir_all(fixture.root.join("tests")).map_err(|e| e.to_string())?;
+        fs::write(fixture.root.join("tests/pricing.rs"), BASELINE).map_err(|e| e.to_string())?;
+        if publication != "worktree" {
+            git_ok(&fixture.root, &["add", "tests/pricing.rs"])?;
+        }
+        if publication == "commit" {
+            git_ok(&fixture.root, &["commit", "-qm", "new focused test"])?;
+        }
+        let (delta, verdict) = evaluate_repository_edit_cage_with_head_movement(
+            &baseline,
+            HeadMovement::AdmitDescendantCommits,
+        )?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{publication}: {verdict:?}"
+        );
+        assert!(
+            delta
+                .external_test_file_region
+                .is_some_and(|region| region.admitted)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn deleted_or_uncommitted_external_test_cannot_become_an_empty_baseline() -> Result<(), String> {
+    for state in [
+        "deleted",
+        "staged-deletion",
+        "untracked",
+        "staged-new",
+        "directory",
+    ] {
+        let fixture = fixture(state)?;
+        if matches!(state, "untracked" | "staged-new" | "directory") {
+            git_ok(&fixture.root, &["rm", "tests/pricing.rs"])?;
+            git_ok(&fixture.root, &["commit", "-qm", "remove old target"])?;
+        } else {
+            fs::remove_file(fixture.root.join("tests/pricing.rs")).map_err(|e| e.to_string())?;
+        }
+        match state {
+            "staged-deletion" => git_ok(&fixture.root, &["add", "-u"])?,
+            "untracked" | "staged-new" => {
+                fs::write(fixture.root.join("tests/pricing.rs"), BASELINE)
+                    .map_err(|e| e.to_string())?;
+                if state == "staged-new" {
+                    git_ok(&fixture.root, &["add", "tests/pricing.rs"])?;
+                }
+            }
+            "directory" => fs::create_dir_all(fixture.root.join("tests/pricing.rs"))
+                .map_err(|e| e.to_string())?,
+            _ => {}
+        }
+        assert!(
+            capture_attempt_baseline(&fixture.root, &external_policy()?).is_err(),
+            "{state}"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn absent_external_target_below_a_symlink_is_not_a_new_file() -> Result<(), String> {
+    use std::os::unix::fs::symlink;
+    let fixture = fixture("symlink-parent")?;
+    git_ok(&fixture.root, &["rm", "tests/pricing.rs"])?;
+    git_ok(&fixture.root, &["commit", "-qm", "remove old target"])?;
+    let _ = fs::remove_dir(fixture.root.join("tests"));
+    fs::create_dir_all(fixture.root.join("elsewhere")).map_err(|e| e.to_string())?;
+    symlink(fixture.root.join("elsewhere"), fixture.root.join("tests"))
+        .map_err(|e| e.to_string())?;
+    let result = capture_attempt_baseline(&fixture.root, &external_policy()?);
+    assert!(result.is_err() || result.is_ok_and(|baseline| baseline.ambiguous));
+    Ok(())
+}
+
+#[test]
+fn a_new_external_target_still_requires_test_insertion_and_validated_copies() -> Result<(), String>
+{
+    for violation in ["non-test-item", "staged-other-bytes"] {
+        let fixture = fixture(violation)?;
+        git_ok(&fixture.root, &["rm", "tests/pricing.rs"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "target absent"])?;
+        let baseline = capture_attempt_baseline(&fixture.root, &external_policy()?)?;
+        fs::create_dir_all(fixture.root.join("tests")).map_err(|e| e.to_string())?;
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn helper() {}\n")
+            .map_err(|e| e.to_string())?;
+        if violation == "staged-other-bytes" {
+            git_ok(&fixture.root, &["add", "tests/pricing.rs"])?;
+            fs::write(fixture.root.join("tests/pricing.rs"), BASELINE)
+                .map_err(|e| e.to_string())?;
+        }
+        let (_, verdict) = evaluate_repository_edit_cage_with_head_movement(
+            &baseline,
+            HeadMovement::RequireBaselineHead,
+        )?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Violated,
+            "{violation}: {verdict:?}"
+        );
+    }
+    Ok(())
+}
