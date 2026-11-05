@@ -1,0 +1,1 @@
+crates/ripr/tests/typescript_read_budget.rs|Command::new|1|typescript-preview|#11985: integration tests run the worktree-built ripr binary against isolated temporary TypeScript workspaces with child-local read caps, checking withheld no_static_path and retained observed findings; no shell, network, or user-repository mutation.

@@ -50,7 +50,7 @@ owner under [the release transaction](RELEASE_TRANSACTION.md) and
 | | | Zero contradictory refusals for one item across CLI, LSP, MCP and agent output. | The manual consistency matrix, until an automated check exists ([#10712](https://github.com/EffortlessMetrics/ripr-swarm/issues/10712)). |
 | | | The classification and fail-closed core is proved on every pull request (target; the lane is advisory today). | Kani lane (`cargo xtask kani`), required ([#12904](https://github.com/EffortlessMetrics/ripr-swarm/issues/12904)). |
 | | | Flake rate under 1% on required lanes. | Test-analytics flake ledger. |
-| R2 useful | People and agents finish the loop: gap, repair, verified. | Repair starts on at least 80% of gaps `check` reports. | Not-ready harness and the nightly outcome page ([#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903)). |
+| R2 useful | People and agents finish the loop: gap, repair, verified. | Repair starts on at least 80% of gaps `check` reports. | `cargo xtask repair-start-page --ripr <binary>` (nightly `Outcome Page` lane; dated receipts `repair-start-<date>.json`; per language on the pinned small-diff set, [#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903)). Real-repository repair start (click, the TypeScript set) has no checked-in instrument yet. |
 | | | Precision of "discriminator" claims at least 97% against real mutants, published by language and operator. | `cargo xtask mutation-spot-check`; receipt `metrics/public-proof/mutation-spot-check.json` ([#12900](https://github.com/EffortlessMetrics/ripr-swarm/issues/12900)). |
 | | | Recall of runtime survivors flagged as a gap or an honest unknown at least 80%, published by language. | `cargo xtask mutation-spot-check`, same receipt (`recall_of_missed`; [#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901)). |
 | | | Every verdict class has locked-in goldens per language. | Lock-in matrix ([#12922](https://github.com/EffortlessMetrics/ripr-swarm/issues/12922)). |
@@ -97,7 +97,7 @@ reproduced by a checked-in instrument. Refresh with each new baseline.
 | Cross-surface contradictions | Manual matrix only; [#10712](https://github.com/EffortlessMetrics/ripr-swarm/issues/10712), #10718, #10720 open | 0 | no |
 | Kani on the core | 65 harnesses; classify and next_action proved; 5 refusal paths not; lane advisory | required | no |
 | Flakes on required lanes | about 1.5% | under 1% | no |
-| Repair start | Rust 6 of 22, Python 8, TypeScript 6; click 0 of 10; TypeScript 0 of 178 | 80% | no |
+| Repair start | On the pinned small-diff set, observed with `cargo xtask repair-start-page` on main `689225b2` (a local run; the first nightly receipt becomes the checked trend): Rust 7 of 24 (29%), Python 8 of 22 (36%), TypeScript 6 of 22 (27%); Python and TypeScript start through `ripr agent repair --gap-id` because `ripr repair` refuses them. Real repositories (click 0 of 10, TypeScript 0 of 178) are owner-reported and not reproduced by a checked-in instrument | 80% | no |
 | Precision | 96.8% (61 of 63) | 97% | no |
 | Recall, strict (flagged ungripped) | 10.6% (34 of 322 runtime-missed); Rust only | 80% | no |
 | Recall, flagged or honest unknown (ungripped, weakly_gripped, activation_unknown, opaque) | 58.7% (189 of 322: 34 + 0 + 151 + 4); Rust only, Python and TypeScript not established | 80% | no |

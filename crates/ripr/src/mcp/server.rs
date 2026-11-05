@@ -1433,7 +1433,7 @@ impl ServerHandler for McpServer {
         }
         if let Some(snapshot_id) = gaps::snapshot_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.snapshot_document(snapshot_id) {
+            return match session.snapshot_document(snapshot_id.as_ref()) {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,
