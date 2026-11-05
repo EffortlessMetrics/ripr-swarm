@@ -97,7 +97,9 @@ fn named_panic_limit_with_concrete_stages_withholds_pilot_and_brief() -> Result<
             assert_eq!(limits[0].state, "no");
             assert_eq!(limits[0].reason, entry.evidence.discriminate.summary);
         } else {
-            assert!(limits.is_empty());
+            // Missing repair-target provenance is independent of this marker.
+            let category = StaticLimitKind::RustPanicOutcomeUnresolved.as_str();
+            assert!(limits.iter().all(|limit| limit.category != category));
         }
         let entries = [entry];
         assert_eq!(
