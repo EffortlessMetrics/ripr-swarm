@@ -251,6 +251,19 @@ fn render_findings_sarif_compact_with_budget(
     compact_sarif_document(&render_findings_sarif(output, config, suppressions), budget)
 }
 
+/// Render the refusal document minified for `sarif-compact` (#13195), so a
+/// refused run stays uploadable to code scanning like `--format sarif`.
+pub(crate) fn render_refusal_sarif_compact(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+) -> Result<String, String> {
+    Ok(compact_sarif_document(
+        &render_refusal_sarif(notice, root, base),
+        sarif_byte_budget()?,
+    ))
+}
+
 /// Render repo-scoped classified seams as minified, byte-bounded SARIF
 /// (#13195).
 pub(crate) fn render_repo_seams_sarif_compact(
@@ -1778,6 +1791,27 @@ mod tests {
                 return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
             }
         }
+        Ok(())
+    }
+
+    /// #13195: the compact refusal document carries the same typed
+    /// notification as the pretty one, minified.
+    #[test]
+    fn refusal_sarif_compact_keeps_the_typed_notification() -> Result<(), String> {
+        let notice = crate::core_error::CoreError::base_unresolvable(
+            "the base `deadbeef` does not resolve to a commit",
+        )
+        .refusal_notice(&crate::config::config_error_summary);
+        let pretty = render_refusal_sarif(&notice, std::path::Path::new("."), Some("deadbeef"));
+        let compact =
+            render_refusal_sarif_compact(&notice, std::path::Path::new("."), Some("deadbeef"))?;
+        assert_eq!(parse_json(&compact)?, parse_json(&pretty)?);
+        assert!(compact.len() < pretty.len(), "compact {compact}");
+        assert!(!compact.contains("\n  "), "compact {compact}");
+        assert_eq!(
+            parse_json(&compact)?["runs"][0]["properties"]["run_status"],
+            "refused"
+        );
         Ok(())
     }
 
