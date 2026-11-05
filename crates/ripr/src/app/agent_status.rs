@@ -4166,8 +4166,8 @@ mod tests {
     #[test]
     fn agent_status_marks_unresolved_seam_command_templates() -> Result<(), String> {
         let root = unique_agent_status_test_dir("template-marker");
-        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
 
         let report = build_agent_status_report(&root, Path::new("."));
         let rendered = render_agent_status_json(&report)?;
