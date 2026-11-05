@@ -98,12 +98,63 @@ fn read_msrv(root: &Path) -> Result<String, String> {
     })
 }
 
+/// `OWNER/REPO` for a GitHub remote URL in the https, scp-like ssh or ssh://
+/// spellings; `None` for anything else (never a guess).
+fn github_slug(url: &str) -> Option<String> {
+    let url = url.trim();
+    let path = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| url.strip_prefix("git@github.com:"))?;
+    let path = path.trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, repo) = path.split_once('/')?;
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    (valid(owner) && valid(repo)).then(|| format!("{owner}/{repo}"))
+}
+
+/// The repository this checkout is, from its configured `origin` (read from the
+/// local config only, so an `insteadOf` rewrite cannot change it). The inventory
+/// describes the repository it runs in; a constant would go stale in the source
+/// repository after the step-2 sync (#13049).
+fn read_repository(root: &Path) -> Result<String, String> {
+    let args: Vec<String> = [
+        "config",
+        "--local",
+        "--no-includes",
+        "--get-all",
+        "remote.origin.url",
+    ]
+    .iter()
+    .map(|arg| (*arg).to_string())
+    .collect();
+    let output = crate::run::capture_process_output_in("git", &args, Some(root), &[], &[], &[])
+        .map_err(|error| format!("read remote.origin.url: {}", error.message))?;
+    let text = String::from_utf8_lossy(&output);
+    if text.lines().count() != 1 {
+        return Err(
+            "remote.origin.url must have exactly one value to name the repository".to_string(),
+        );
+    }
+    github_slug(&text).ok_or_else(|| {
+        format!(
+            "remote.origin.url `{}` is not a recognized GitHub remote",
+            text.trim()
+        )
+    })
+}
+
 pub(crate) fn produce_current_state(root: &Path) -> Result<CurrentStateInventoryV1, String> {
     let current_section = read_roadmap_current_section(root)?;
     let catalog_count = crate::command::command_catalog().len() as u64;
     Ok(CurrentStateInventoryV1 {
         schema_version: CURRENT_STATE_SCHEMA_VERSION.to_string(),
-        repository: "EffortlessMetrics/ripr-swarm".to_string(),
+        repository: read_repository(root)?,
         default_branch: "main".to_string(),
         crate_version: read_crate_version(root)?,
         rust_msrv: read_msrv(root)?,
@@ -223,5 +274,73 @@ mod tests {
     fn workspace_package_value_is_none_without_the_table() {
         let body = "[package]\nversion = \"1.0.0\"\n";
         assert_eq!(workspace_package_value(body, "version"), None);
+    }
+
+    #[test]
+    fn github_slug_reads_each_remote_spelling() {
+        for url in [
+            "https://github.com/EffortlessMetrics/ripr-swarm",
+            "https://github.com/EffortlessMetrics/ripr-swarm.git",
+            "https://github.com/EffortlessMetrics/ripr-swarm/",
+            "git@github.com:EffortlessMetrics/ripr-swarm.git",
+            "ssh://git@github.com/EffortlessMetrics/ripr-swarm.git",
+        ] {
+            assert_eq!(
+                github_slug(url).as_deref(),
+                Some("EffortlessMetrics/ripr-swarm"),
+                "{url}"
+            );
+        }
+        assert_eq!(
+            github_slug("https://github.com/EffortlessMetrics/ripr").as_deref(),
+            Some("EffortlessMetrics/ripr")
+        );
+    }
+
+    #[test]
+    fn github_slug_rejects_foreign_and_malformed_remotes() {
+        for url in [
+            "https://example.com/EffortlessMetrics/ripr",
+            "https://github.com/EffortlessMetrics",
+            "https://github.com//ripr",
+            "https://github.com/a/b/c",
+            "/local/path/ripr",
+            "",
+        ] {
+            assert_eq!(github_slug(url), None, "{url}");
+        }
+    }
+
+    #[test]
+    fn repository_follows_the_checkout_origin() -> Result<(), String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-current-state-origin-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).map_err(|error| format!("create {}: {error}", dir.display()))?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+            crate::run::capture_process_output_in("git", &owned, Some(&dir), &[], &[], &[])
+                .map(|_| ())
+                .map_err(|error| error.message)
+        };
+        git(&["init", "-q"])?;
+        git(&[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/EffortlessMetrics/ripr.git",
+        ])?;
+        let source = read_repository(&dir);
+        git(&[
+            "remote",
+            "set-url",
+            "origin",
+            "git@github.com:Other/Fork.git",
+        ])?;
+        let fork = read_repository(&dir);
+        fs::remove_dir_all(&dir).map_err(|error| format!("remove {}: {error}", dir.display()))?;
+        assert_eq!(source?, "EffortlessMetrics/ripr");
+        assert_eq!(fork?, "Other/Fork");
+        Ok(())
     }
 }
