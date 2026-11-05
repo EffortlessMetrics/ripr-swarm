@@ -296,6 +296,22 @@ npm ci
 npm run test:e2e
 ```
 
+`npm test` runs the same full end-to-end entry point as `npm run test:e2e`.
+Choose one command per validation pass. The package scripts can build the Rust
+server and compile the extension, so prepare the repository's pinned Rust
+toolchain and Node dependencies first. Those compilation steps precede the Node
+launcher and its host acquisition; the ordering below saves the additional
+genuine queue-producer build when host acquisition fails.
+
+The host download needs access to the VS Code update/download endpoints and
+their redirects through the environment's configured proxy and CA trust.
+Headless Linux also needs Xvfb and the native libraries required by VS Code;
+provide those before invoking the `xvfb-run` command below. The editor runner
+acquires its host before invoking the genuine actionable-queue producer. If
+host acquisition fails, the runner retains the failure diagnostics without
+starting that producer. Extension compilation or a completed host download
+alone does not establish a completed extension test run.
+
 The test suite:
 
 - opens a fixture Rust workspace (`test-fixtures/workspace/Cargo.toml`)
@@ -346,6 +362,20 @@ test-host failure copies a size-capped, redacted log subset into
 `target/ripr/vscode-test-host-diagnostics/`; CI uploads that folder only when
 the vscode job fails. Success runs do not retain the diagnostics copy, and
 collection cannot change the original test exit status.
+
+After the normal extension compile step, the setup-ordering controls can run
+without a VS Code download or a Rust producer build:
+
+```bash
+# From editors/vscode, after npm run compile:
+node node_modules/mocha/bin/mocha.js --ui tdd out/test/suite/host_setup.test.js
+```
+
+These controls invoke the retained runner with isolated host and producer
+boundaries, including rejected acquisition, asynchronous success, producer
+failure, untrusted, multi-root-only, and supplied-queue paths. They also run as
+part of the full suite; they do not replace genuine producer or editor-host
+qualification.
 
 ## Flaky tests
 

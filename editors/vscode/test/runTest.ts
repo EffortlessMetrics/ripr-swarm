@@ -196,7 +196,25 @@ async function runUntrustedTests(
   });
 }
 
-async function main() {
+export interface TestHostRuntime {
+  downloadVSCode: typeof downloadVSCodeWithRetry;
+  stageGenuineActionableQueue: typeof stageGenuineActionableQueue;
+  runTests: typeof runTests;
+  runUntrustedTests: typeof runUntrustedTests;
+  exit: (code: number) => void;
+}
+
+const defaultTestHostRuntime: TestHostRuntime = {
+  downloadVSCode: downloadVSCodeWithRetry,
+  stageGenuineActionableQueue,
+  runTests,
+  runUntrustedTests,
+  exit: (code) => process.exit(code),
+};
+
+// Keep the real entry point testable without downloading a host or compiling
+// the producer. Ordinary invocation always uses the genuine runtime above.
+export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
   const artifactRoot = path.resolve(
     process.env.RIPR_TEST_ARTIFACT_ROOT ??
       path.resolve(__dirname, '../../../../target/ripr')
@@ -227,9 +245,13 @@ async function main() {
     const clipboardCapturePath = path.join(userDataPath, 'ripr-test-clipboard.txt');
     fs.rmSync(clipboardCapturePath, { force: true });
     process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = clipboardCapturePath;
+
+    // Host acquisition can fail before a test can run. Resolve it before the
+    // genuine producer, which may compile the separate xtask test harness.
+    const vscodeExecutablePath = await runtime.downloadVSCode(cachePath, extensionDevelopmentPath);
     if (workspaceTrustMode === 'trusted' && process.env.RIPR_TEST_MULTIROOT_ONLY !== '1'
       && !process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT) {
-      process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = stageGenuineActionableQueue(
+      process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = runtime.stageGenuineActionableQueue(
         path.resolve(__dirname, '../../../../'), path.join(artifactRoot, `actionable-queue-${runId}`)
       );
     }
@@ -264,7 +286,6 @@ async function main() {
       );
     }
 
-    const vscodeExecutablePath = await downloadVSCodeWithRetry(cachePath, extensionDevelopmentPath);
     if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
       process.env.RIPR_TEST_REQUIRE_RAN = requiredJourneyTitles(
         workspaceTrustMode,
@@ -275,9 +296,9 @@ async function main() {
       );
     }
     if (workspaceTrustMode === 'untrusted') {
-      await runUntrustedTests(vscodeExecutablePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
+      await runtime.runUntrustedTests(vscodeExecutablePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
     } else if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
-      await runTests({
+      await runtime.runTests({
         vscodeExecutablePath,
         extensionDevelopmentPath,
         extensionTestsPath,
@@ -324,7 +345,7 @@ async function main() {
       process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = path.join(matrixUserData, 'clipboard.txt');
       matrixDiagnostics = { userDataDir: matrixUserData,
         receiptPath: matrixReceiptPath };
-      await runTests({
+      await runtime.runTests({
         vscodeExecutablePath,
         extensionDevelopmentPath,
         extensionTestsPath,
@@ -345,7 +366,7 @@ async function main() {
     error,
   });
   if (exitCode !== 0) {
-    process.exit(exitCode);
+    runtime.exit(exitCode);
   }
 }
 
