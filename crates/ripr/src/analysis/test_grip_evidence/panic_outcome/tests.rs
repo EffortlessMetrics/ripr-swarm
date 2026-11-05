@@ -64,7 +64,7 @@ fn an_unrevealed_seam_names_the_typed_limit_once_without_reclassifying() {
     );
     assert!(withhold(&seam, &mut gap, &labels()));
     assert!(gap.names_static_limit(LIMIT));
-    // Classification inputs are untouched: the seam still ranks as before.
+    // Classification inputs stay intact; consumers also honor the named limit.
     assert_eq!(gap.discriminate.state, StageState::No);
     assert_eq!(gap.missing_discriminators.len(), 1);
     assert_eq!(

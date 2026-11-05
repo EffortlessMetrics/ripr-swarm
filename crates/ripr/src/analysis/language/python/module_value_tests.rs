@@ -249,6 +249,172 @@ fn the_edit_must_be_the_files_only_changed_line() -> Check {
     Ok(())
 }
 
+fn classify_fstring_reader(body: &str, test: &str) -> Result<Finding, String> {
+    let source = format!("GREETING = 'hi'\n\n\ndef greet(name):\n{body}\n");
+    classify_edit(
+        &source,
+        1,
+        "GREETING = 'hi'",
+        "GREETING = 'hello'",
+        &[("tests/test_settings.py", test)],
+        true,
+    )
+}
+
+fn fstring_test(assertion: &str) -> String {
+    format!("from hostile.settings import greet\n\n\ndef test_it():\n    {assertion}\n")
+}
+
+fn assert_no_module_value_credit(finding: &Finding) {
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        !finding.evidence.iter().any(|line| {
+            line.starts_with("related_test_relation: module_value_call")
+                || line.starts_with("module_value_read:")
+        }),
+        "{finding:?}"
+    );
+}
+
+#[test]
+fn fstring_constant_reader_credits_an_exact_old_value_pin() -> Check {
+    for (body, assertion) in [
+        (
+            "    return f'{GREETING}, {name}'",
+            "assert greet('bob') == 'hello, bob'",
+        ),
+        (
+            "    return f'{{{GREETING}}} / {name} / {GREETING} ☃'",
+            "assert greet('bob') == '{hello} / bob / hello ☃'",
+        ),
+    ] {
+        assert_credited(&classify_fstring_reader(body, &fstring_test(assertion))?);
+    }
+    Ok(())
+}
+
+#[test]
+fn fstring_constant_reader_requires_old_true_new_false() -> Check {
+    for assertion in [
+        "assert 'bob' in greet('bob')",
+        "assert greet('bob') == 'hi, bob'",
+        "assert greet('bob') == 'unrelated'",
+        "greet('bob')\n    assert 'bob' == 'bob'",
+    ] {
+        assert_no_module_value_credit(&classify_fstring_reader(
+            "    return f'{GREETING}, {name}'",
+            &fstring_test(assertion),
+        )?);
+    }
+    Ok(())
+}
+
+#[test]
+fn fstring_constant_reader_bounds_the_interpolated_utf8_bytes() -> Check {
+    // The old greeting contributes five bytes. A three-byte character makes
+    // this a byte bound rather than a character-count approximation.
+    for (argument, credited) in [
+        (format!("{}xx", "☃".repeat(21_843)), true),
+        (format!("{}xxx", "☃".repeat(21_843)), false),
+    ] {
+        let assertion = format!("assert greet('{argument}') == 'hello{argument}'");
+        let finding =
+            classify_fstring_reader("    return f'{GREETING}{name}'", &fstring_test(&assertion))?;
+        if credited {
+            assert_credited(&finding);
+        } else {
+            assert_no_module_value_credit(&finding);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn fstring_constant_reader_declines_conversions_specs_and_non_strings() -> Check {
+    for (body, assertion) in [
+        (
+            "    return f'{GREETING!s}, {name}'",
+            "assert greet('bob') == 'hello, bob'",
+        ),
+        (
+            "    return f'{GREETING!r}, {name}'",
+            "assert greet('bob') == \"'hello', bob\"",
+        ),
+        (
+            "    return f'{GREETING!a}, {name}'",
+            "assert greet('bob') == \"'hello', bob\"",
+        ),
+        (
+            "    return f'{GREETING:}, {name}'",
+            "assert greet('bob') == 'hello, bob'",
+        ),
+        (
+            "    return f'{GREETING:>8}, {name}'",
+            "assert greet('bob') == '   hello, bob'",
+        ),
+        (
+            "    return f'{GREETING}, {name}'",
+            "assert greet(3) == 'hello, 3'",
+        ),
+        (
+            "    return f'{GREETING}, {name}'",
+            "assert greet(True) == 'hello, True'",
+        ),
+        (
+            "    return f'{GREETING}, {name}'",
+            "assert greet(object()) == 'hello, custom'",
+        ),
+    ] {
+        assert_no_module_value_credit(&classify_fstring_reader(body, &fstring_test(assertion))?);
+    }
+    Ok(())
+}
+
+#[test]
+fn fstring_constant_reader_preserves_binding_and_activation_guards() -> Check {
+    for test in [
+        "from sibling.settings import greet\n\ndef test_it():\n    assert greet('bob') == 'hello, bob'\n",
+        "from hostile.settings import greet\n\ndef test_it():\n    greet = lambda name: 'hello, bob'\n    assert greet('bob') == 'hello, bob'\n",
+        "from hostile.settings import greet\nimport pytest\n\n@pytest.mark.skip\ndef test_it():\n    assert greet('bob') == 'hello, bob'\n",
+    ] {
+        assert_no_module_value_credit(&classify_fstring_reader(
+            "    return f'{GREETING}, {name}'",
+            test,
+        )?);
+    }
+    for body in [
+        "    return f'{GREETING}, {name}'\n\ngreet = lambda name: 'hello, bob'",
+        "    return f'{GREETING}, {name}'\n\nGREETING = 'hello'",
+    ] {
+        assert_no_module_value_credit(&classify_fstring_reader(
+            body,
+            &fstring_test("assert greet('bob') == 'hello, bob'"),
+        )?);
+    }
+    Ok(())
+}
+
+#[test]
+fn fstring_constant_spelling_in_literal_text_does_not_create_a_read() -> Check {
+    assert_no_module_value_credit(&classify_fstring_reader(
+        "    return f'GREETING, {name}'",
+        &fstring_test("assert greet('bob') == 'GREETING, bob'"),
+    )?);
+    let source = "GREETING = 'hi'\n\ndef greet(GREETING):\n    return f'{GREETING}, bob'\n";
+    assert_no_module_value_credit(&classify_edit(
+        source,
+        1,
+        "GREETING = 'hi'",
+        "GREETING = 'hello'",
+        &[(
+            "tests/test_settings.py",
+            &fstring_test("assert greet('hello') == 'hello, bob'"),
+        )],
+        true,
+    )?);
+    Ok(())
+}
+
 #[test]
 fn a_test_that_rebinds_the_function_or_constant_is_not_credited() -> Check {
     for test in [

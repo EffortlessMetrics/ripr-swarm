@@ -16,6 +16,7 @@ test = "analysis::language::typescript::tests::analyze_diff_collapses_test_extra
 lane = "rust-coverage (cargo test: tests are threads of one process)"
 class = "shared-state"
 status = "fixed"
+issue = 11702
 first_seen = "2026-10-31"
 evidence = ["run 41195638303 (main 3371ea49)", "run 41190928102 (main 049bd0a6)", "run 41188789260 (main 404a80d0)"]
 symptom = "parse_worker_failed limitation appears in an unrelated TypeScript test; the main coverage lane was red on 3 of 4 completed runs."
@@ -69,3 +70,212 @@ first_seen = "2026-11-02"
 evidence = ["run 41311936942 (fc68d7f, failed 2 of 2)", "run 41394117143 (c6a7e5a, passed 3 of 3)", "run 41583153155 (dfa023b8, failed in the nofeatures pass with export_preserves_relative_analysis_root_identity)"]
 symptom = "Cache export refuses mid-test with \"workspace inputs changed during export\"; since the #12442 diagnostic the refusal names the moved input, which was `seam limit` in run 41583153155."
 root_cause = "Not established: the export input-witness check observes an input (the seam limit) move during the test's own export. #12421 owns the investigation."
+
+[[flake]]
+id = "managed-sigint-exporter-failure-misclassified"
+test = "ripr::chaos_interrupted_runs managed_producer::interruption::managed_sigint_reaps_partial_and_repeats"
+lane = "Test Analytics (cargo nextest run --workspace --all-features)"
+class = "ordering-race"
+status = "fixed"
+first_seen = "2026-11-03"
+evidence = ["run 41655332710", "run 41700144757", "run 41733219808", "run 41755758372 (managed_sigint_names_retained_directory)", "run 41769026807"]
+symptom = "An interrupted check reports `Perl facts exporter exited with status signal: 2 (SIGINT) (non-zero)` and `other languages continue` instead of a cancellation; 5 of 9 main runs failed (#12935)."
+root_cause = "A group-delivered SIGINT reaps the managed exporter before the CLI has run its own handler, so the exit was classified before the CLI interrupt flag was set. The exit is now decided from the flag, awaited for a bounded grace when the producer died by SIGINT under a flag-owning token."
+guard = "producer_sigint_death_is_cancellation_once_the_cli_flag_arrives"
+
+[[flake]]
+id = "workflow-publish-interruption-terminal-retention"
+test = "ripr::workflow_publish_interruption after_terminated_at_terminal_retention_stays_unknown"
+lane = "Ripr Rust Small tests on GitHub Hosted (shard 3 of 4)"
+class = "baseline-race"
+status = "open"
+issue = 12791
+first_seen = "2026-11-03"
+evidence = ["run 41623401829 (PR #12768 head 5db78cd8, passed on re-request)"]
+symptom = "ripr agent repair --phase after refused with attempt_incomparable because the before-phase baseline was recorded ambiguous, on a change that cannot reach the test."
+root_cause = "Not established: a before-phase baseline race versus a real intermittent defect. #12842 (merged, titled for #12791) accepts the destination-plus-staging-name pair an interrupted writer leaves, which is a candidate cause of the ambiguous baseline; no post-fix recurrence check is recorded, so the issue is still open and this row stays open until one is."
+
+[[flake]]
+id = "vscode-seam-hover-timeout"
+test = "vscode Extension Smoke: real server surfaces seam diagnostic, hover provider, and agent actions"
+lane = "vscode job"
+class = "timeout"
+status = "open"
+issue = 11299
+first_seen = "2026-10-31"
+evidence = ["run 41146565119"]
+symptom = "Two Extension Smoke tests timed out waiting for the ripr seam hover (480 passed); the last hover text read 'Analysis snapshot: generated 14 seconds ago'."
+root_cause = "Not established: the hover content may update slower than the wait. #11299 owns the investigation."
+
+[[flake]]
+id = "managed-sigint-second-sigint-chaos"
+test = "ripr::chaos_interrupted_runs managed_producer::interruption::second_sigint_escapes_blocked_interruption_diagnostics"
+lane = "rust-tests-junit"
+class = "timing"
+status = "open"
+issue = 11299
+first_seen = "2026-10-31"
+evidence = ["run 41146565100 (job 124372933546)"]
+symptom = "Failed at 5.0 s on a test-only PR while 16770 other tests passed."
+root_cause = "Not established. #11299 owns the investigation."
+
+[[flake]]
+id = "ts-partial-summary-collapse-recurrence"
+test = "analysis::language::typescript::tests::analyze_diff_collapses_test_extraction_partial_into_one_summary"
+lane = "rust-coverage (cargo test)"
+class = "shared-state"
+status = "open"
+issue = 11299
+first_seen = "2026-10-31"
+evidence = ["run 41146565122 (job 124372933286)"]
+symptom = "Failed in ripr --lib on a test-only PR; 16226 others passed. Same test as the fixed ts-parse-worker-armed-panic-leak row."
+root_cause = "Not established whether this occurrence predates the #11338 fix; #11299 owns the check."
+
+[[flake]]
+id = "twin-check-deep-chain-growth"
+test = "analysis::probes::error_return_boundary_tests::twin_check_stays_fast_on_deep_chains_that_share_a_start"
+lane = "Rust-only feature lane"
+class = "wall-clock-growth"
+status = "open"
+issue = 11238
+timing_dependent = true
+first_seen = "2026-10-30"
+evidence = ["run 41107186754 (PR #11130)"]
+symptom = "deep shared-start chains: growth exceeded 3x plus 10ms: 123 ms -> 421 ms, on a PR that does not touch the probe code."
+root_cause = "Wall-clock growth bound on a loaded shared runner; linearity of the algorithm is not yet confirmed. Migrate to an injected clock (assert_growth_with_clock) or operation counts."
+
+[[flake]]
+id = "added-run-start-growth"
+test = "analysis::diff::model::tests::added_run_start_on_a_long_run_is_bounded"
+lane = "Ripr Rust Small tests (shard 2 of 4)"
+class = "wall-clock-growth"
+status = "open"
+issue = 11623
+timing_dependent = true
+first_seen = "2026-10-31"
+evidence = ["run 41196820723 (job 124530816935)", "run 41202084504 (job 124545969623)"]
+symptom = "Growth guard missed 3x plus 10ms by 8-23 ms at a stable ratio of about 3.1-3.2x on a PR that does not touch the code under test."
+root_cause = "The added_run_starts work is O(n log n) and shard membership changes contention; a real-time 3x bound is not deterministic. Migrate to an injected clock or operation counts."
+
+[[flake]]
+id = "ts-binding-names-wall-clock-bound"
+test = "analysis::language::typescript::loop_count_guard::tests::binding_names_skip_defaults_and_keys"
+lane = "Required nextest lane"
+class = "wall-clock-bound"
+status = "open"
+issue = 10483
+timing_dependent = true
+first_seen = "2026-10-25"
+evidence = ["run 40236320956 (job 121298726158, PR #10478)"]
+symptom = "A 2 s wall-clock bound on 20,000-deep reductions failed under a loaded runner (about 0.2 s per unit locally)."
+root_cause = "A wall-clock bound cannot tell a slow runner from a quadratic reduction. Bound the work (steps or rescans, depth N versus 2N) instead."
+
+[[flake]]
+id = "rust-only-routing-timeout-windows"
+test = "repo-policy rust_only_routing::timeout_terminates_shell_descendants"
+lane = "repo-policy tests"
+class = "wall-clock-bound"
+status = "open"
+issue = 10593
+timing_dependent = true
+first_seen = "2026-10-26"
+evidence = ["#10593 repro description (no run id recorded)"]
+symptom = "Elapsed-window gates (3 s, 5 s) can fail on a slow runner with no code change."
+root_cause = "The witness expires on its own after 8 s, so elapsed time is the oracle. Redesign so witness liveness is the oracle with an independent containment cap."
+
+[[flake]]
+id = "windows-policy-checker-facade-margin"
+test = "xtask::bin/xtask tests::policy_checker_facade_runs_current_repo_checks"
+lane = "Windows shard lane (RIPR_TOOL_BUILD_TIMEOUT_SECS=300)"
+class = "wall-clock-bound"
+status = "open"
+issue = 12245
+timing_dependent = true
+first_seen = "2026-11-01"
+evidence = ["run 41336523066 (188.9 s)", "run 41332439022 (139.9 s)"]
+symptom = "Passes in 140-190 s against a 300 s child cap; a slower runner can approach the cap."
+root_cause = "Warm check-file-policy cost is dominated by per-selector cargo spawns. Batch --list calls or give the test its own budget."
+
+[[flake]]
+id = "cli-interrupt-sigint-raise-kills-binary"
+test = "cli::interrupt::tests::first_sigint_requests_cancellation_then_arms_native_termination"
+lane = "Rust-only feature lane (cargo test, tests are threads of one process)"
+class = "shared-state"
+status = "open"
+issue = 10318
+first_seen = "2026-10-25"
+evidence = ["run 40183426980 (job 121139094492, PR #9934)"]
+symptom = "The ripr lib test binary died with signal 2 and every remaining lib test was lost."
+root_cause = "Read from source, not reproduced: raise(SIGINT) on the shared test process can reach a disposition that terminates it when another test arms native termination."
+
+[[flake]]
+id = "windows-help-workspace-rejects-changed-contents"
+test = "ripr::help_workspace_cleanup help_workspace_still_rejects_changed_contents"
+lane = "Windows Advisory nightly"
+class = "platform-difference"
+status = "open"
+issue = 10865
+first_seen = "2026-10-27"
+evidence = ["run 40448214304 (60b2009f, workspace run 1)"]
+symptom = "Returned Error: \"help callback did not run\"."
+root_cause = "Not established: a Windows path or process difference versus an unmet precondition."
+
+[[flake]]
+id = "windows-policy-all-leaf-error"
+test = "xtask::policy_all policy_all_reports_two_independent_violations_and_runs_later_leaves"
+lane = "Windows Advisory Shards"
+class = "transient-git"
+status = "open"
+issue = 12045
+first_seen = "2026-11-01"
+evidence = ["run 41269607301 (#11961, head 798cfb154)"]
+symptom = "Panicked at xtask/tests/policy_all.rs:129 with 'leaf error changed: check-executable-files'; passed on the same code in runs 41258971406 and 41269154308."
+root_cause = "Not established: a transient git failure under runner load is a hypothesis. #11999 prints the stderr so the next occurrence names the cause."
+
+[[flake]]
+id = "windows-capture-output-pipe-descendants"
+test = "xtask::run::tests::capture_output_with_timeout_terminates_pipe_inheriting_descendants"
+lane = "Windows (isolated and suite runs)"
+class = "process-tree"
+status = "open"
+issue = 3096
+first_seen = "2026-08-09"
+evidence = ["main 0713dfd6, two isolated failing runs (68.6 s, 73.0 s)"]
+symptom = "Failed with 'timed-out process tree should not run its continuation'; an earlier isolated run passed."
+root_cause = "Not established. #3096 records that the failure is on main and not caused by the #3057 repair."
+
+[[flake]]
+id = "parallel-build-test-family"
+test = "family: repair_attempt run_git, cli_smoke run_git, git deadline, doctor, edit_cage, output::gate fixture matrix"
+lane = "Windows under parallel cargo builds"
+class = "wall-clock-and-fixed-paths"
+status = "open"
+issue = 3742
+first_seen = "2026-09-10"
+evidence = ["#3742 investigation of 2026-09-13 (PRs #3731-#3738)"]
+symptom = "A rotating family of failures under parallel cargo builds on Windows that pass on Linux CI."
+root_cause = "Dominant class is unhardened fixture git plus wall-clock assertions, second class fixed-path collisions (see #3742 for file:line evidence). One row for the family because #3742 owns it as one."
+
+[[flake]]
+id = "cache-export-relative-root-enoent"
+test = "cli::commands::cache_command::tests::export_preserves_relative_analysis_root_identity"
+lane = "Rust-only feature lane"
+class = "shared-state"
+status = "open"
+issue = 12989
+first_seen = "2026-11-04"
+evidence = ["run 41820189616 (job 126541132053, PR #12962 head ce72f78b)"]
+symptom = "Error: \"inspect export root: No such file or directory (os error 2)\" on a PR unrelated to the change."
+root_cause = "Suspected, unverified: the test uses a relative analysis root, so it may depend on the process-wide current directory or shared temp state and race with parallel tests. Not the Windows input-witness refusal tracked by #12421."
+
+[[flake]]
+id = "lsp-did-save-retries-windows-load"
+test = "lsp::tests::did_save_retries_unchanged_content_after_a_failed_refresh_over_the_wire"
+lane = "Windows full-suite run (cargo test -p ripr --lib lsp::)"
+class = "wall-clock-load"
+status = "open"
+issue = 9804
+first_seen = "2026-10-22"
+evidence = ["#9804 report: two failing full-suite runs while validating #9803 (no run id recorded)"]
+symptom = "Error: \"expected the first refresh to fail\" with only queued and started refresh notices observed; passes standalone and fails identically on a clean base."
+root_cause = "Not established: the test is #[serial] but its over-the-wire refresh-failure window is wall-clock sensitive under CPU contention with about 128 non-serial tests."

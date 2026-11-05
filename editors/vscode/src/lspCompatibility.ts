@@ -175,7 +175,9 @@ public static class RiprProbeJob {
                 start.Arguments = arguments;
             }
             string exitNonce = Environment.GetEnvironmentVariable("RIPR_PROBE_EXIT_NONCE") ?? "";
+            bool drainOutput = Environment.GetEnvironmentVariable("RIPR_PROBE_DRAIN_OUTPUT") == "1";
             start.EnvironmentVariables.Remove("RIPR_PROBE_EXIT_NONCE");
+            start.EnvironmentVariables.Remove("RIPR_PROBE_DRAIN_OUTPUT");
             Process process = null;
             try {
                 process = new Process { StartInfo = start };
@@ -198,6 +200,13 @@ public static class RiprProbeJob {
                 var error = StartPump(process.StandardError.BaseStream, Console.OpenStandardError(), false);
                 process.WaitForExit();
                 int exitCode = process.ExitCode;
+                if (drainOutput) {
+                    // Closing this Job Object also terminates its wrapper.
+                    // The caller's deadline stays armed until wrapper close,
+                    // including descendants that keep either pipe open.
+                    output.Join();
+                    error.Join();
+                }
                 Console.Error.WriteLine("__RIPR_PROBE_EXIT_CODE__" + exitNonce + "=" + exitCode);
                 Console.Error.Flush();
                 Close(job);
@@ -630,7 +639,11 @@ export function terminateProbeProcessTree(child: cp.ChildProcess): void {
 export function spawnProbeProcess(
   command: string,
   args: readonly string[],
-  useShell: boolean
+  useShell: boolean,
+  context: Pick<cp.SpawnOptionsWithoutStdio, 'cwd' | 'env'> & {
+    // A caller requesting full output must retain its deadline until close.
+    drainOutput?: boolean;
+  } = {}
 ): cp.ChildProcessWithoutNullStreams {
   if (process.platform === 'win32') {
     const encodedWrapper = Buffer.from(WINDOWS_PROBE_JOB_WRAPPER, 'utf16le').toString('base64');
@@ -650,14 +663,16 @@ export function spawnProbeProcess(
         encodedWrapper
       ],
       {
+        cwd: context.cwd,
         shell: false,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
-          ...process.env,
+          ...(context.env ?? process.env),
           RIPR_PROBE_COMMAND: command,
           RIPR_PROBE_ARGUMENTS: args.join(' '),
           RIPR_PROBE_EXIT_NONCE: exitNonce,
+          RIPR_PROBE_DRAIN_OUTPUT: context.drainOutput ? '1' : '0',
           RIPR_PROBE_USE_SHELL: useShell ? '1' : '0'
         }
       }
@@ -680,6 +695,8 @@ export function spawnProbeProcess(
     return child;
   }
   return cp.spawn(command, args, {
+    cwd: context.cwd,
+    env: context.env,
     shell: useShell,
     detached: true,
     stdio: ['pipe', 'pipe', 'pipe']

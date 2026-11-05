@@ -4665,6 +4665,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: Default::default(),
             source: "fn discounted_total_helper() {}".into(),
             item_scopes: None,
@@ -22599,4 +22600,273 @@ fn inherent_receiver_name_only_residual_gaps_issue_8917() -> Result<(), String> 
         );
     }
     Ok(())
+}
+
+/// #13080: tests and doctests that only call the same-named associated
+/// function `ByteSize::kb(..)` are no path to the free helper `kb`, so the
+/// helper reads `reach: no` (ungripped), not the weak reach a bare-name scan
+/// gave. A bare call of the helper keeps reach undecided.
+#[test]
+fn given_free_helper_when_only_the_same_named_associated_fn_is_called_then_reach_is_no()
+-> Result<(), String> {
+    let prod = |extra: &str| {
+        format!(
+            "pub fn kb(size: u64) -> u64 {{ size * 1000 }}\n\
+             pub struct ByteSize(pub u64);\n\
+             impl ByteSize {{ pub fn kb(size: u64) -> ByteSize {{ ByteSize(size * 1000) }} }}\n\
+             // assert_eq!(\"4.1 kb\", \"x\");\n{extra}"
+        )
+    };
+    let test = "#[test] fn kb_scales() {{ assert_eq!(ByteSize::kb(4).0, 4000); }}\n";
+    let reach_of = |production: &str, test_src: &str| -> Result<StageState, String> {
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/lib.rs"), production),
+            (PathBuf::from("tests/kb.rs"), test_src),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|s| s.owner().ends_with("::kb") && !s.owner().contains("impl"))
+            .ok_or_else(|| "free helper seam present".to_string())?;
+        Ok(evidence_for_seam(seam, &index).reach.state)
+    };
+    let negative = reach_of(&prod(""), test)?;
+    assert_eq!(negative, StageState::No);
+    // Controls: one spelling that can name the free helper keeps reach undecided.
+    let bare_call = "#[test] fn kb_bare() { assert_eq!(kb(4), 4000); }\n";
+    assert_ne!(reach_of(&prod(""), bare_call)?, StageState::No);
+    assert_ne!(
+        reach_of(&prod("fn caller() -> u64 { crate::kb(4) }\n"), test)?,
+        StageState::No
+    );
+    Ok(())
+}
+
+/// #11870: the missing-discriminator facts of the `self.count = 2` write seam
+/// in `bump`, given the owner signature and the test body.
+fn field_write_facts(signature: &str, test_body: &str) -> Result<Vec<String>, String> {
+    field_write_facts_with_attr(signature, test_body, "")
+}
+
+/// #11870: a weak relational read of the written field, from the binding the
+/// test ran the owner on, makes the exact field value the missing check.
+/// Every other shape (a strong read, a sibling or other binding, a later
+/// write, a by-value owner, an equality, a bare boolean, a skipped test)
+/// emits nothing.
+#[test]
+fn a_weak_read_of_a_written_field_is_the_missing_discriminator_only_when_placed()
+-> Result<(), String> {
+    let by_ref = "pub fn bump(&mut self)";
+    let run = "    let mut c = Counter::new();\n    c.bump();\n";
+    let weak = |read: &str| format!("{run}    {read}");
+    for read in [
+        "assert!(c.count > 0);",
+        "assert!(0 < c.count);",
+        "assert!(c.count != 0);",
+        "assert_ne!(c.count, 0);",
+    ] {
+        assert_eq!(
+            field_write_facts(by_ref, &weak(read))?,
+            vec!["count".to_string()],
+            "{read}"
+        );
+    }
+    for (label, signature, body) in [
+        ("a strong read", by_ref, weak("assert_eq!(c.count, 2);")),
+        ("a sibling field", by_ref, weak("assert!(c.other > 0);")),
+        (
+            "a read before the call",
+            by_ref,
+            "    let mut c = Counter::new();\n    assert!(c.count < 5);\n    c.bump();".to_string(),
+        ),
+        (
+            "another binding",
+            by_ref,
+            "    let mut c = Counter::new();\n    let d = Counter::new();\n    c.bump();\n    assert!(d.count > 0);"
+                .to_string(),
+        ),
+        (
+            "a later write",
+            by_ref,
+            format!("{run}    c.count = 9;\n    assert!(c.count > 0);"),
+        ),
+        (
+            "an equality spelled as a bare assert",
+            by_ref,
+            weak("assert!(c.count == 2);"),
+        ),
+        (
+            "a default-like equality",
+            by_ref,
+            weak("assert_eq!(c.count, 0);"),
+        ),
+        (
+            "a compared side naming the binding",
+            by_ref,
+            weak("assert!(c.count > c.other);"),
+        ),
+        (
+            "a strong read beside the weak one",
+            by_ref,
+            weak("assert!(c.count > 0);\n    assert_eq!(c.count, 2);"),
+        ),
+        (
+            "another check on the binding beside the weak one",
+            by_ref,
+            weak("assert!(c.count > 0);\n    assert_eq!(c.snapshot(), 2);"),
+        ),
+        (
+            "a by-value owner",
+            "pub fn bump(mut self) -> Self",
+            weak("assert!(c.count > 0);"),
+        ),
+    ] {
+        let facts = field_write_facts(signature, &body)?;
+        assert!(facts.is_empty(), "{label} must start nothing: {facts:?}");
+    }
+    // A check that reaches the field without being an assertion fact.
+    for (label, body, tail) in [
+        (
+            "a let alias of the field then an exact check",
+            weak("assert!(c.count > 0);\n    let n = c.count;\n    assert_eq!(n, 2);"),
+            "",
+        ),
+        (
+            "a helper that checks the binding",
+            weak("assert!(c.count > 0);\n    verify(&c);"),
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        ),
+        (
+            "a helper on the same line as the weak assertion",
+            weak("assert!(c.count > 0); verify(&c);"),
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        ),
+        (
+            "a destructure of the binding",
+            weak(
+                "assert!(c.count > 0);\n    let Counter { count, .. } = c;\n    assert_eq!(count, 2);",
+            ),
+            "",
+        ),
+        (
+            "a reference alias of the field",
+            weak("assert!(c.count > 0);\n    let r = &c.count;\n    assert_eq!(*r, 2);"),
+            "",
+        ),
+        (
+            "an if-panic check of the field",
+            weak("assert!(c.count > 0);\n    if c.count != 2 {\n        panic!(\"bad\");\n    }"),
+            "",
+        ),
+        (
+            "an inline format capture {c}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c}\"), \"2\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c:?}",
+            weak(
+                "assert!(c.count > 0);\n    assert_eq!(format!(\"{c:?}\"), \"Counter { count: 2, other: 0 }\");",
+            ),
+            "",
+        ),
+        (
+            "an inline format capture {c:#?}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c:#?}\"), \"x\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c :?}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c :?}\"), \"x\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c }",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c }\"), \"x\");"),
+            "",
+        ),
+        (
+            "an inline format capture {c:>10}",
+            weak("assert!(c.count > 0);\n    assert_eq!(format!(\"{c:>10}\"), \"x\");"),
+            "",
+        ),
+        (
+            "a capture in a let then an exact check of the string",
+            weak(
+                "assert!(c.count > 0);\n    let s = format!(\"{c:?}\");\n    assert_eq!(s, \"Counter { count: 2, other: 0 }\");",
+            ),
+            "",
+        ),
+        (
+            "a reference alias of the binding",
+            weak("assert!(c.count > 0);\n    let r = &c;\n    assert_eq!(r.count, 2);"),
+            "",
+        ),
+        (
+            "a spaced field access",
+            weak("assert!(c.count > 0);\n    let n = c\n        . count;\n    assert_eq!(n, 2);"),
+            "",
+        ),
+        (
+            "a move of the binding",
+            weak("assert!(c.count > 0);\n    let moved = c;\n    drop(moved);"),
+            "",
+        ),
+    ] {
+        let facts = field_write_facts_with_tail(by_ref, &body, "", tail)?;
+        assert!(facts.is_empty(), "{label} must start nothing: {facts:?}");
+    }
+    // The same shapes without the extra statement still start, so the
+    // negatives above are the statement's doing and not the harness'.
+    assert_eq!(
+        field_write_facts_with_tail(
+            by_ref,
+            &weak("assert!(c.count > 0);"),
+            "",
+            "fn verify(c: &Counter) {\n    assert_eq!(c.count, 2);\n}\n",
+        )?,
+        vec!["count".to_string()],
+        "an unrelated helper item does not withhold"
+    );
+    for attr in ["#[ignore]", "#[should_panic]"] {
+        let facts = field_write_facts_with_attr(by_ref, &weak("assert!(c.count > 0);"), attr)?;
+        assert!(facts.is_empty(), "{attr} must start nothing: {facts:?}");
+    }
+    Ok(())
+}
+
+fn field_write_facts_with_attr(
+    signature: &str,
+    test_body: &str,
+    attr: &str,
+) -> Result<Vec<String>, String> {
+    field_write_facts_with_tail(signature, test_body, attr, "")
+}
+
+/// As [`field_write_facts`], with `tail` (helper items) after the test fn.
+fn field_write_facts_with_tail(
+    signature: &str,
+    test_body: &str,
+    attr: &str,
+    tail: &str,
+) -> Result<Vec<String>, String> {
+    let prod = PathBuf::from("src/counter.rs");
+    let prod_src = format!(
+        "pub struct Counter {{\n    pub count: u32,\n    pub other: u32,\n}}\n\nimpl Counter {{\n    pub fn new() -> Self {{\n        Counter {{ count: 0, other: 0 }}\n    }}\n\n    {signature} {{\n        self.count = 2;\n    }}\n}}\n"
+    );
+    let tests = PathBuf::from("tests/counter_tests.rs");
+    let tests_src =
+        format!("use crate::Counter;\n\n#[test]\n{attr}\nfn t() {{\n{test_body}\n}}\n{tail}\n");
+    let index = index_from_files(&[(prod, prod_src.as_str()), (tests, tests_src.as_str())])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/counter.rs")], &index);
+    let seam = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::FieldConstruction && s.expression().contains("self.count"))
+        .ok_or_else(|| "expected the self.count write seam".to_string())?;
+    Ok(evidence_for_seam(seam, &index)
+        .missing_discriminators
+        .iter()
+        .map(|fact| fact.value.clone())
+        .collect())
 }

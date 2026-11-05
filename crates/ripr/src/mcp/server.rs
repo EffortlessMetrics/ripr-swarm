@@ -1138,6 +1138,9 @@ fn resource_id_document<T>(
     }
 }
 
+/// Diagnostic-only bound: validation always compares the complete key.
+const MAX_ARGUMENT_NAME_PREVIEW_CHARS: usize = 128;
+
 /// The declared input schemas set `additionalProperties: false`; the adapter
 /// enforces the same bound at the dispatch edge instead of trusting the SDK
 /// or the client to reject unknown argument names.
@@ -1150,10 +1153,26 @@ fn reject_unknown_arguments(
     };
     for name in arguments.keys() {
         if !allowed.contains(&name.as_str()) {
-            return Err(ErrorData::invalid_params(
-                format!("unknown argument {name:?}; allowed: {allowed:?}"),
-                Some(serde_json::json!({ "argument": name, "allowed": allowed })),
-            ));
+            // Validate the full key, but never copy an input-sized key into
+            // failure data: the response cap is smaller than the input cap.
+            // Bound on Unicode scalar boundaries before Debug/JSON escaping.
+            let mut chars = name.chars();
+            let preview: String = chars
+                .by_ref()
+                .take(MAX_ARGUMENT_NAME_PREVIEW_CHARS)
+                .collect();
+            let truncated = chars.next().is_some();
+            let mut data = serde_json::json!({ "argument": preview, "allowed": allowed });
+            let detail = if truncated {
+                data["argument_truncated"] = serde_json::json!(true);
+                data["argument_bytes"] = serde_json::json!(name.len());
+                // Put the remedy before the preview so escaped characters
+                // cannot displace it from the bounded human detail.
+                format!("unknown argument (name truncated; allowed: {allowed:?}): {preview:?}")
+            } else {
+                format!("unknown argument {preview:?}; allowed: {allowed:?}")
+            };
+            return Err(ErrorData::invalid_params(detail, Some(data)));
         }
     }
     Ok(())

@@ -118,7 +118,9 @@ pub enum ExposureClass {
 
 impl ExposureClass {
     /// Every class in vocabulary order, for adapters that validate a class
-    /// wire token instead of re-spelling the vocabulary.
+    /// wire token instead of re-spelling the vocabulary. Public so external
+    /// oracles (the fuzz lane, #12924) read the owner's list; the
+    /// `all_lists_every_variant` test keeps it complete.
     pub const ALL: [ExposureClass; 7] = [
         ExposureClass::Exposed,
         ExposureClass::WeaklyExposed,
@@ -288,6 +290,44 @@ mod tests {
 
         for (class, expected) in cases {
             assert_eq!(class.as_str(), expected);
+        }
+    }
+
+    /// Declaration index of each variant. The exhaustive match makes a new
+    /// variant a compile error here; the new arm takes the next index. The
+    /// compiler does not check `LAST_DECLARED` or the count it implies.
+    fn declaration_index(class: &ExposureClass) -> usize {
+        match class {
+            ExposureClass::Exposed => 0,
+            ExposureClass::WeaklyExposed => 1,
+            ExposureClass::ReachableUnrevealed => 2,
+            ExposureClass::NoStaticPath => 3,
+            ExposureClass::InfectionUnknown => 4,
+            ExposureClass::PropagationUnknown => 5,
+            ExposureClass::StaticUnknown => 6,
+        }
+    }
+
+    /// The last declared variant. The compiler does NOT check this: whoever
+    /// adds a variant must move it to the new variant by hand, together with
+    /// the new `declaration_index` arm, which grows the expected count and
+    /// fails this test until `ALL` lists the new entry.
+    const LAST_DECLARED: ExposureClass = ExposureClass::StaticUnknown;
+
+    #[test]
+    fn all_lists_every_variant() {
+        let expected = declaration_index(&LAST_DECLARED) + 1;
+        assert_eq!(
+            ExposureClass::ALL.len(),
+            expected,
+            "ALL must list every declared variant"
+        );
+        let seen: HashSet<usize> = ExposureClass::ALL.iter().map(declaration_index).collect();
+        for index in 0..expected {
+            assert!(
+                seen.contains(&index),
+                "ALL is missing variant index {index}"
+            );
         }
     }
 
