@@ -345,8 +345,8 @@ fn established_effect_carrier_binds_the_called_instance_only() -> Result<(), Str
             .as_array()
             .ok_or("missing findings")?
             .iter()
-            .find(|finding| finding["probe"]["family"] == "side_effect")
-            .ok_or("side-effect row missing")?;
+            .find(|finding| finding["probe"]["family"] == "call_deletion")
+            .ok_or("call-deletion row missing")?;
         assert_eq!(finding["classification"], expected, "{report}");
     }
     Ok(())
