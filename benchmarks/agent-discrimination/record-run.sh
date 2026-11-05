@@ -106,6 +106,9 @@ CSV_HEADER="run_id,scenario,variant,context_bytes,rounds,discriminates"
 { printf '%s\n' "$CSV_HEADER"
   for f in "$RESULTS_DIR"/*.md; do
     [ -f "$f" ] || continue
+    # Only run records carry the run_id field; skip other markdown in the
+    # directory (e.g. README.md) so a record write never fails on them.
+    head -n 5 "$f" | grep -q '^run_id: ' || continue
     id="$(sed -n 's/^run_id: //p' "$f")"
     sc="$(sed -n 's/^scenario: //p' "$f")"
     va="$(sed -n 's/^variant: //p' "$f")"
