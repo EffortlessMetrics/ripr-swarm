@@ -1,0 +1,393 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index ebfd049e6..18b0d760a 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -9346,6 +9346,7 @@ spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
+ tests = [
+   "crates/ripr/tests/owner_pin_execution.rs::default_trait_ufcs_result_pins_do_not_lend_identity_to_other_oracles",
+   "crates/ripr/tests/owner_pin_execution.rs::primitive_inherent_method_does_not_pin_same_named_trait_owner",
++  "crates/ripr/tests/owner_pin_execution.rs::external_collection_trait_cannot_supply_payload_identity",
+   "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::projected_effect_payload_requires_fresh_state_and_a_preserving_map",
+   "crates/ripr/tests/owner_pin_execution.rs::awaited_predicate_identity_does_not_credit_discarded_or_overwritten_results",
+   "crates/ripr/tests/owner_pin_execution.rs::exact_error_kind_projection_keeps_its_own_result_identity",
+diff --git a/changelog.d/12010-sink-identity.md b/changelog.d/12010-sink-identity.md
+index 6a3e002cd..b9c4bb001 100644
+--- a/changelog.d/12010-sink-identity.md
++++ b/changelog.d/12010-sink-identity.md
+@@ -1,2 +1,2 @@
+ <!-- section: Fixed -->
+-- Keep strong Rust discrimination tied to the assertion that observes the changed result or effect; reject proximity-only oracles, unchanged return tokens, stale results and intercepted collection reads while retaining validated wrapper, array, async and error observers (#12010).
++- Keep strong Rust discrimination tied to the assertion that observes the changed result or effect; reject proximity-only oracles, unchanged return tokens, stale results and intercepted collection reads (including unread external trait dispatch) while retaining validated wrapper, array, async and error observers (#12010).
+diff --git a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+index e28570620..501bf5754 100644
+--- a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
++++ b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+@@ -18,6 +18,7 @@ pub(in crate::analysis) struct ArgumentReceiver {
+     parameter: usize,
+     fields: BTreeSet<String>,
+     receiver_type: String,
++    projection_imports_closed: bool,
+ }
+ fn compact(text: &str) -> String {
+     text.chars().filter(|c| !c.is_whitespace()).collect()
+@@ -55,7 +56,54 @@ fn mentions(node: &ra_ap_syntax::SyntaxNode, binding: &str) -> bool {
+             })
+     })
+ }
+-fn field_root(mut expression: ast::Expr, index: &RustIndex) -> Option<(String, String, bool)> {
++// A trait on Ref<Vec<_>> can intercept first/last before dereferencing to
++// the slice, even when its method declaration is outside the index. The
++// workspace import closure is deliberately conservative: an unread external
++// import (including a re-export in another indexed file) withholds this
++// projection witness. Ordinary field identity and closed standard imports
++// keep their existing admission.
++fn projection_imports_closed(index: &RustIndex) -> bool {
++    let known = |root: &str| {
++        matches!(root, "std" | "core" | "alloc" | "crate" | "self" | "super")
++            || index
++                .package_names
++                .iter()
++                .any(|name| name.replace('-', "_") == root)
++    };
++    index.files().values().all(|facts| {
++        if crate::analysis::classify::reveal::flattened_use_paths(&facts.source)
++            .iter()
++            .any(|import| {
++                !known(
++                    import
++                        .path
++                        .trim_start_matches("::")
++                        .split("::")
++                        .next()
++                        .unwrap_or_default(),
++                )
++            })
++        {
++            return false;
++        }
++        if !facts.source.contains("extern") {
++            return true;
++        }
++        let Some(file) = parse_clean_source_file(&facts.source) else {
++            return false;
++        };
++        file.tree()
++            .syntax()
++            .descendants()
++            .filter_map(ast::ExternCrate::cast)
++            .all(|item| item.name_ref().is_some_and(|name| known(name.text())))
++    })
++}
++fn field_root(
++    mut expression: ast::Expr,
++    index: &RustIndex,
++    closed_imports: bool,
++) -> Option<(String, String, bool)> {
+     let mut projected = false;
+     for _ in 0..super::MAX_DEPTH {
+         expression = match expression {
+@@ -78,7 +126,8 @@ fn field_root(mut expression: ast::Expr, index: &RustIndex) -> Option<(String, S
+                 call.receiver()?
+             }
+             ast::Expr::MethodCallExpr(call)
+-                if matches!(call.name_ref()?.text(), "first" | "last")
++                if closed_imports
++                    && matches!(call.name_ref()?.text(), "first" | "last")
+                     && call.arg_list()?.args().next().is_none()
+                     && !crate::analysis::classify::owner_pin::wrapper_may_be_rebound(
+                         call.name_ref()?.text(),
+@@ -388,6 +437,7 @@ impl ArgumentReceiver {
+             parameter,
+             fields,
+             receiver_type: receiver_ty,
++            projection_imports_closed: projection_imports_closed(index),
+         })
+     }
+     pub(in crate::analysis) fn admits(
+@@ -515,7 +565,11 @@ impl ArgumentReceiver {
+             let [statement] = statements.as_slice() else {
+                 return None;
+             };
+-            let (root, field, projected) = field_root(expression(statement)?, index)?;
++            let (root, field, projected) = field_root(
++                expression(statement)?,
++                index,
++                self.projection_imports_closed,
++            )?;
+             self.fields
+                 .contains(&field)
+                 .then_some((root, field, projected))
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index 3e47937f7..8fe12568d 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -685,7 +685,8 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// `1.159`: proximity-only and unchanged-return-token oracles cannot discriminate (#12010).
+ /// `1.160`: compose #7490 boundary pairing with #12010 assertion-local sink identity
+ /// and return-delta confirmation; neither independent `1.159` is reusable.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.160";
++/// `1.161`: external imported observers cannot inherit collection sink identity.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.161";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -888,7 +889,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.160";
+ /// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+ /// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
+ /// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
++/// `0.163`: same external-observer refusal as full `1.161`.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1093,7 +1095,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
+ /// `0.161`: same boundary-oracle pairing as full `1.159` (#7490).
+ /// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
+ /// `0.162`: same combined #7490/#12010 semantics as full `1.160`.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.162";
++/// `0.163`: same external-observer refusal as full `1.161`.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.163";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5211,7 +5214,8 @@ mod tests {
+         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
+         // 1.158 -> 1.159: boundary and oracle must be paired in the same test (#7490).
+         // 1.159 -> 1.160: both independent predecessor semantics must be invalidated.
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.160");
++        // 1.160 -> 1.161: unread external collection-observer interception.
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.161");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5353,8 +5357,9 @@ mod tests {
+         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
+         // 0.160 -> 0.161: same boundary-oracle pairing as full 1.159 (#7490).
+         // 0.161 -> 0.162: compose both independent semantic generations.
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.162");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.162");
++        // 0.162 -> 0.163: same external-observer refusal as full 1.161.
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.163");
+     }
+ 
+     #[test]
+@@ -5679,6 +5684,7 @@ mod tests {
+             // Independent successors shared version numbers but not semantics.
+             ("7490-boundary-pairing", "1.159", "0.161"),
+             ("12010-sink-identity", "1.159", "0.161"),
++            ("external-observer-interception", "1.160", "0.162"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+@@ -5752,7 +5758,7 @@ mod tests {
+     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
+         for previous in [
+             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
+-            "0.161",
++            "0.161", "0.162",
+         ] {
+             for compact in [false, true] {
+                 let scratch = integrity_scratch("property-shard-generation")?;
+diff --git a/crates/ripr/tests/owner_pin_execution.rs b/crates/ripr/tests/owner_pin_execution.rs
+index f6038932a..3ea47820c 100644
+--- a/crates/ripr/tests/owner_pin_execution.rs
++++ b/crates/ripr/tests/owner_pin_execution.rs
+@@ -4163,3 +4163,118 @@ fn primitive_inherent_method_does_not_pin_same_named_trait_owner() -> Result<(),
+     )?;
+     Ok(())
+ }
++
++#[test]
++fn external_collection_trait_cannot_supply_payload_identity() -> Result<(), String> {
++    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
++        .join("../../fixtures/rust_effect_receiver_intercepted_first");
++    let original =
++        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
++    let start = original
++        .find("trait First")
++        .ok_or("missing local trait control")?;
++    let end = original[start..]
++        .find("\n\n#[test]")
++        .ok_or("missing test boundary")?
++        + start;
++    let scratch = Scratch::create()?;
++    let subject = scratch.0.join("subject");
++    let external = scratch.0.join("external");
++    std::fs::create_dir_all(subject.join("src")).map_err(|e| e.to_string())?;
++    std::fs::create_dir_all(external.join("src")).map_err(|e| e.to_string())?;
++    std::fs::write(subject.join("Cargo.toml"), "[package]\nname=\"subject\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n[dependencies]\nexternal_first={path=\"../external\"}\n").map_err(|e| e.to_string())?;
++    std::fs::write(
++        external.join("Cargo.toml"),
++        "[package]\nname=\"external_first\"\nversion=\"0.0.0\"\nedition=\"2024\"\n[workspace]\n",
++    )
++    .map_err(|e| e.to_string())?;
++    let external_source = external.join("src/lib.rs");
++    std::fs::write(&external_source, "pub trait First { fn first(&self)->Option<&String>; fn last(&self)->Option<&String>; }\nimpl First for std::cell::Ref<'_,Vec<String>> { fn first(&self)->Option<&String> { static FIXED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| \"order-42\".to_string()); Some(&FIXED) } fn last(&self)->Option<&String> { self.first() } }\n").map_err(|e| e.to_string())?;
++    let library = external.join("libexternal_first.rlib");
++    compiles(
++        run(
++            Path::new("rustc"),
++            &[
++                "--edition=2024".as_ref(),
++                "--crate-name=external_first".as_ref(),
++                "--crate-type=rlib".as_ref(),
++                external_source.as_os_str(),
++                "-o".as_ref(),
++                library.as_os_str(),
++            ],
++        )?,
++        "external observer library",
++    )?;
++    for method in ["first", "last"] {
++        for (import, exposed) in [
++            ("", true),
++            ("use std::fmt::Debug as _;", true),
++            ("use external_first::First;", false),
++            ("use external_first::First as _;", false),
++            ("use external_first::*;", false),
++        ] {
++            let input = format!("{}{}{}", &original[..start], import, &original[end..])
++                .replace(".first()", &format!(".{method}()"));
++            std::fs::write(subject.join("src/lib.rs"), &input).map_err(|e| e.to_string())?;
++            let report = check_workspace(CheckInput {
++                root: subject.clone(),
++                diff_file: Some(fixture.join("diff.patch")),
++                mode: Mode::Fast,
++                include_unchanged_tests: true,
++                ..CheckInput::default()
++            })?;
++            assert_eq!(
++                report.findings.len(),
++                2,
++                "nonempty payload and call subjects"
++            );
++            assert!(
++                report
++                    .findings
++                    .iter()
++                    .all(|f| (f.class == ExposureClass::Exposed) == exposed),
++                "{method}/{import}: {:?}",
++                report.findings
++            );
++            for wrong in [false, true] {
++                let source = scratch.0.join("runtime.rs");
++                let text = if wrong {
++                    input.replace("notifier.send(order_id);", "notifier.send(\"static_msg\");")
++                } else {
++                    input.clone()
++                };
++                std::fs::write(&source, text).map_err(|e| e.to_string())?;
++                let executable = subject.join(format!("control{}", std::env::consts::EXE_SUFFIX));
++                let binding = format!("external_first={}", library.display());
++                compiles(
++                    run(
++                        Path::new("rustc"),
++                        &[
++                            "--edition=2024".as_ref(),
++                            "--test".as_ref(),
++                            source.as_os_str(),
++                            "--extern".as_ref(),
++                            binding.as_ref(),
++                            "-o".as_ref(),
++                            executable.as_os_str(),
++                        ],
++                    )?,
++                    "external observer subject",
++                )?;
++                let result = run(&executable, &["--test-threads=1".as_ref()])?;
++                let failed = usize::from(wrong && exposed);
++                assert!(
++                    String::from_utf8_lossy(&result.stdout)
++                        .contains(&format!("{} passed; {failed} failed;", 1 - failed)),
++                    "{method}/{import}/wrong={wrong}: {}",
++                    String::from_utf8_lossy(&result.stdout)
++                );
++                assert_eq!(
++                    result.status.code(),
++                    Some(if failed == 1 { 101 } else { 0 })
++                );
++            }
++        }
++    }
++    Ok(())
++}
+diff --git a/fixtures/rust_effect_receiver_intercepted_first/expected/human-full.txt b/fixtures/rust_effect_receiver_intercepted_first/expected/human-full.txt
+new file mode 100644
+index 000000000..62307e824
+--- /dev/null
++++ b/fixtures/rust_effect_receiver_intercepted_first/expected/human-full.txt
+@@ -0,0 +1,72 @@
++ripr static RIPR exposure analysis
++mode: fast
++root: fixtures/rust_effect_receiver_intercepted_first/input
++
++Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
++Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
++  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
++  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
++  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
++  unsuppressed = not hidden by your suppression policy
++
++Analysis outcome: findings below (analysis complete; complete_with_findings)
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
++
++Shared evidence and guidance
++  E1 [findings 1, 2]: reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id
++  E2 [findings 1, 2]: infection yes: Reachable tests can plausibly activate this changed behavior
++  E3 [findings 1, 2]: propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)
++  E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
++  E5 [findings 1, 2]: discriminator weak: Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)
++  E6 [findings 1, 2]: local flow reaches event or outbound call: notifier.send(order_id) (line 18)
++  E7 [findings 1, 2]: related test src/lib.rs:29 process_order_sends_exact_order_id uses strong exact value oracle: assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some("order-42")));
++  E8 [findings 1, 2]: source function argument value order_id = "order-42" at line 31
++  E9 [findings 1, 2]: source assertion argument value "order-42" at line 32
++
++Finding 1: WARNING ./src/lib.rs:18
++  id: probe:src_lib.rs:call_deletion:934aa430
++Changed
++  before: notifier.send("static_msg")
++  after:  notifier.send(order_id)
++Change type
++  a call was removed
++  family: call_deletion
++  delta:  effect (changes a side effect)
++  owner:  src/lib.rs::process_order
++  gap id (for scripts): gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id
++Static exposure
++  weakly_exposed (warning, confidence 0.92)
++Evidence
++  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
++Weakness
++  - No strong discriminator was detected
++Next step
++  - Strengthen the related assertion so it discriminates the changed behavior
++Drill in:
++  (finding id, for explain/context)
++  ripr explain --root <cwd>/fixtures/rust_effect_receiver_intercepted_first/input --diff <cwd>/fixtures/rust_effect_receiver_intercepted_first/diff.patch --mode fast probe:src_lib.rs:call_deletion:934aa430
++  ripr context --root <cwd>/fixtures/rust_effect_receiver_intercepted_first/input --diff <cwd>/fixtures/rust_effect_receiver_intercepted_first/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:934aa430
++
++Finding 2: WARNING ./src/lib.rs:18
++  id: probe:src_lib.rs:side_effect:95da2a37
++Changed
++  before: notifier.send("static_msg")
++  after:  notifier.send(order_id)
++Change type
++  a side effect changed
++  family: side_effect
++  delta:  effect (changes a side effect)
++  owner:  src/lib.rs::process_order
++  gap id (for scripts): gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id
++Static exposure
++  weakly_exposed (warning, confidence 0.92)
++Evidence
++  shared evidence: E1, E2, E3, E4, E5, E6, E7, E8, E9
++Weakness
++  - No strong discriminator was detected
++Next step
++  - Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
++Drill in:
++  (finding id, for explain/context)
++  ripr explain --root <cwd>/fixtures/rust_effect_receiver_intercepted_first/input --diff <cwd>/fixtures/rust_effect_receiver_intercepted_first/diff.patch --mode fast probe:src_lib.rs:side_effect:95da2a37
++  ripr context --root <cwd>/fixtures/rust_effect_receiver_intercepted_first/input --diff <cwd>/fixtures/rust_effect_receiver_intercepted_first/diff.patch --mode fast --at probe:src_lib.rs:side_effect:95da2a37

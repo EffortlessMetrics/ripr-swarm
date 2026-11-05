@@ -1,0 +1,73 @@
+{
+  "stage": "retained-cli-rerun",
+  "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+  "tree": "8cfd711dfb13246f4e09508d57d2d7bc9a718397",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "cli_smoke",
+    "rerun",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 30.06,
+  "counts": {
+    "passed": 17,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 699
+  },
+  "log_sha256": "2f3c33fdc714caee17414d5038279178e6736a38f268decb56f6eba896e117c9",
+  "peak_cgroup_memory_bytes": 3839561728,
+  "samples": [
+    {
+      "utc": "2026-11-05T13:40:14.685774+00:00",
+      "stage": "retained-cli-rerun",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 628833,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 2795233280,
+      "workspace_free_bytes": 22457544704,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:40:24.690594+00:00",
+      "stage": "retained-cli-rerun",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 628833,
+      "elapsed": 10.01,
+      "cgroup_memory_bytes": 3381329920,
+      "workspace_free_bytes": 22457544704,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:40:34.716015+00:00",
+      "stage": "retained-cli-rerun",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 628833,
+      "elapsed": 20.03,
+      "cgroup_memory_bytes": 3839561728,
+      "workspace_free_bytes": 22433402880,
+      "temp_free_bytes": 9428471808
+    }
+  ]
+}

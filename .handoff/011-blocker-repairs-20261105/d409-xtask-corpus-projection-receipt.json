@@ -1,0 +1,483 @@
+{
+  "stage": "xtask-corpus-projection",
+  "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+  "tree": "8cfd711dfb13246f4e09508d57d2d7bc9a718397",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "xtask",
+    "--bin",
+    "xtask",
+    "rust_corpus_projection",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 440.18,
+  "counts": {
+    "passed": 5,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 5354
+  },
+  "log_sha256": "6eee83b3e14b8c438bfc28a19c26754ad54b2dfe3d1aa6c084d842cf51ec366e",
+  "peak_cgroup_memory_bytes": 8841990144,
+  "samples": [
+    {
+      "utc": "2026-11-05T13:41:04.784474+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 2898567168,
+      "workspace_free_bytes": 22454394880,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:41:14.785474+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 4106579968,
+      "workspace_free_bytes": 22920531968,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:41:24.786957+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 20.0,
+      "cgroup_memory_bytes": 4538785792,
+      "workspace_free_bytes": 22920531968,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:41:34.791031+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 30.01,
+      "cgroup_memory_bytes": 4496920576,
+      "workspace_free_bytes": 22920531968,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:41:44.791985+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 40.01,
+      "cgroup_memory_bytes": 4748902400,
+      "workspace_free_bytes": 22920531968,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:41:54.793313+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 50.01,
+      "cgroup_memory_bytes": 5054132224,
+      "workspace_free_bytes": 22920531968,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:42:04.794226+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 60.01,
+      "cgroup_memory_bytes": 5421580288,
+      "workspace_free_bytes": 22920531968,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:42:14.795291+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 70.01,
+      "cgroup_memory_bytes": 5820485632,
+      "workspace_free_bytes": 22920531968,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:42:24.796043+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 80.01,
+      "cgroup_memory_bytes": 6160154624,
+      "workspace_free_bytes": 22920531968,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:42:34.796838+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 90.01,
+      "cgroup_memory_bytes": 6588596224,
+      "workspace_free_bytes": 22920531968,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:42:44.797357+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 100.01,
+      "cgroup_memory_bytes": 6941143040,
+      "workspace_free_bytes": 22904868864,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:42:54.797992+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 110.01,
+      "cgroup_memory_bytes": 7485554688,
+      "workspace_free_bytes": 22851993600,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:43:04.798526+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 120.02,
+      "cgroup_memory_bytes": 7753134080,
+      "workspace_free_bytes": 22851993600,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:43:14.799335+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 130.02,
+      "cgroup_memory_bytes": 8175058944,
+      "workspace_free_bytes": 22851993600,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:43:24.801432+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 140.02,
+      "cgroup_memory_bytes": 8169201664,
+      "workspace_free_bytes": 22898978816,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:43:34.807268+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 150.02,
+      "cgroup_memory_bytes": 8264093696,
+      "workspace_free_bytes": 22869397504,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:43:44.810612+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 160.03,
+      "cgroup_memory_bytes": 8256876544,
+      "workspace_free_bytes": 22828101632,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:43:54.818007+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 170.03,
+      "cgroup_memory_bytes": 8362827776,
+      "workspace_free_bytes": 22792830976,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:44:04.823219+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 180.04,
+      "cgroup_memory_bytes": 8294793216,
+      "workspace_free_bytes": 22737907712,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:44:14.824040+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 190.04,
+      "cgroup_memory_bytes": 8337457152,
+      "workspace_free_bytes": 22695964672,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:44:24.828591+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 200.05,
+      "cgroup_memory_bytes": 8374190080,
+      "workspace_free_bytes": 22669516800,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:44:34.836379+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 210.05,
+      "cgroup_memory_bytes": 8475181056,
+      "workspace_free_bytes": 22624817152,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:44:44.840683+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 220.06,
+      "cgroup_memory_bytes": 3367940096,
+      "workspace_free_bytes": 22454267904,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:44:54.843680+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 230.06,
+      "cgroup_memory_bytes": 4535767040,
+      "workspace_free_bytes": 22454267904,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:45:04.861062+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 240.08,
+      "cgroup_memory_bytes": 5216784384,
+      "workspace_free_bytes": 22454267904,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:45:14.871409+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 250.09,
+      "cgroup_memory_bytes": 5013876736,
+      "workspace_free_bytes": 22454263808,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:45:24.873318+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 260.09,
+      "cgroup_memory_bytes": 5202173952,
+      "workspace_free_bytes": 22454263808,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:45:34.875546+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 270.09,
+      "cgroup_memory_bytes": 5401595904,
+      "workspace_free_bytes": 22454263808,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:45:44.877449+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 280.09,
+      "cgroup_memory_bytes": 5576294400,
+      "workspace_free_bytes": 22454263808,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:45:54.878251+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 290.09,
+      "cgroup_memory_bytes": 5997494272,
+      "workspace_free_bytes": 22454263808,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:46:04.879128+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 300.1,
+      "cgroup_memory_bytes": 6368346112,
+      "workspace_free_bytes": 22454263808,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:46:14.880471+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 310.1,
+      "cgroup_memory_bytes": 6842331136,
+      "workspace_free_bytes": 22454263808,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:46:24.883290+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 320.1,
+      "cgroup_memory_bytes": 7275540480,
+      "workspace_free_bytes": 22454263808,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:46:34.885231+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 330.1,
+      "cgroup_memory_bytes": 7679098880,
+      "workspace_free_bytes": 22454263808,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:46:44.887526+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 340.1,
+      "cgroup_memory_bytes": 7911186432,
+      "workspace_free_bytes": 22454263808,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:46:54.889936+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 350.11,
+      "cgroup_memory_bytes": 8346730496,
+      "workspace_free_bytes": 22454263808,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:47:04.890487+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 360.11,
+      "cgroup_memory_bytes": 8497872896,
+      "workspace_free_bytes": 22417465344,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:47:14.895256+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 370.11,
+      "cgroup_memory_bytes": 8559017984,
+      "workspace_free_bytes": 22375882752,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:47:24.896232+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 380.11,
+      "cgroup_memory_bytes": 8539320320,
+      "workspace_free_bytes": 22328832000,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:47:34.906874+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 390.12,
+      "cgroup_memory_bytes": 8676048896,
+      "workspace_free_bytes": 22298959872,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:47:44.912902+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 400.13,
+      "cgroup_memory_bytes": 8643502080,
+      "workspace_free_bytes": 22259789824,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:47:54.915391+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 410.13,
+      "cgroup_memory_bytes": 8683941888,
+      "workspace_free_bytes": 22218514432,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:48:04.921471+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 420.14,
+      "cgroup_memory_bytes": 8841990144,
+      "workspace_free_bytes": 22201561088,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T13:48:14.931195+00:00",
+      "stage": "xtask-corpus-projection",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634172,
+      "elapsed": 430.15,
+      "cgroup_memory_bytes": 7447998464,
+      "workspace_free_bytes": 22489075712,
+      "temp_free_bytes": 9428471808
+    }
+  ]
+}

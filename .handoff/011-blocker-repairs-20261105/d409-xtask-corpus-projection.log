@@ -1,0 +1,14 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-integration/crates/ripr)
+   Compiling xtask v0.1.0 (/workspace/ripr-011-integration/xtask)
+    Finished `test` profile [unoptimized] target(s) in 7m 10s
+     Running unittests src/main.rs (/workspace/12010-proof/target/debug/deps/xtask-9a55c08b61a434c8)
+
+running 5 tests
+test tests::rust_corpus_projection::genuine_bare_root_producer_preserves_raw_language_corpus_and_unbounded_verify_exclusion ... ok
+test tests::rust_corpus_projection::genuine_completed_no_action_corpus_produces_an_empty_queue_without_invented_language ... ok
+test tests::rust_corpus_projection::genuine_workspace_corpus_cannot_be_rebased_into_a_member_corpus_with_legal_named_subjects ... ok
+test tests::rust_corpus_projection::genuine_workspace_producer_preserves_current_corpus_and_native_bounded_projection ... ok
+test tests::rust_corpus_projection::genuine_workspace_projection_regeneration_retains_nonempty_fallback_and_corpus_authority ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 5354 filtered out; finished in 1.35s
+

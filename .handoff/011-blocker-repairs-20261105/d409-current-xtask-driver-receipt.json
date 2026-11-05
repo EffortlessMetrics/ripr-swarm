@@ -1,0 +1,514 @@
+{
+  "stage": "current-xtask-driver",
+  "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+  "tree": "8cfd711dfb13246f4e09508d57d2d7bc9a718397",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "build",
+    "--locked",
+    "-p",
+    "xtask",
+    "--bin",
+    "xtask"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 480.8,
+  "counts": null,
+  "log_sha256": "bbce442aa4efae59370cfa832e4561262d492dabadb352d2d4e53017cd9c1d4b",
+  "peak_cgroup_memory_bytes": 9017860096,
+  "samples": [
+    {
+      "utc": "2026-11-05T13:50:02.471620+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 7433924608,
+      "workspace_free_bytes": 22454013952,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:50:12.476756+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 10.01,
+      "cgroup_memory_bytes": 6774919168,
+      "workspace_free_bytes": 22454009856,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:50:22.617984+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 20.15,
+      "cgroup_memory_bytes": 6792216576,
+      "workspace_free_bytes": 22454009856,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:50:32.720438+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 30.25,
+      "cgroup_memory_bytes": 6802636800,
+      "workspace_free_bytes": 22454009856,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:50:42.757255+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 40.29,
+      "cgroup_memory_bytes": 6722899968,
+      "workspace_free_bytes": 22454009856,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:50:52.790444+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 50.32,
+      "cgroup_memory_bytes": 6730067968,
+      "workspace_free_bytes": 22454009856,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:51:02.795645+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 60.32,
+      "cgroup_memory_bytes": 3817545728,
+      "workspace_free_bytes": 22454018048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:51:12.798963+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 70.33,
+      "cgroup_memory_bytes": 4610641920,
+      "workspace_free_bytes": 22454018048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:51:22.800165+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 80.33,
+      "cgroup_memory_bytes": 5098270720,
+      "workspace_free_bytes": 22454018048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:51:32.802583+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 90.33,
+      "cgroup_memory_bytes": 4966821888,
+      "workspace_free_bytes": 22454018048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:51:42.807433+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 100.34,
+      "cgroup_memory_bytes": 5234102272,
+      "workspace_free_bytes": 22454018048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:51:52.809522+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 110.34,
+      "cgroup_memory_bytes": 5431369728,
+      "workspace_free_bytes": 22454018048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:52:02.811015+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 120.34,
+      "cgroup_memory_bytes": 5796102144,
+      "workspace_free_bytes": 22454018048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:52:12.811567+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 130.34,
+      "cgroup_memory_bytes": 6218133504,
+      "workspace_free_bytes": 22454018048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:52:22.812086+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 140.34,
+      "cgroup_memory_bytes": 6652391424,
+      "workspace_free_bytes": 22454018048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:52:32.812705+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 150.34,
+      "cgroup_memory_bytes": 7104090112,
+      "workspace_free_bytes": 22454018048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:52:42.813292+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 160.34,
+      "cgroup_memory_bytes": 7551741952,
+      "workspace_free_bytes": 22424264704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:52:52.814614+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 170.34,
+      "cgroup_memory_bytes": 7985364992,
+      "workspace_free_bytes": 22385479680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:53:02.815992+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 180.35,
+      "cgroup_memory_bytes": 8402636800,
+      "workspace_free_bytes": 22385479680,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:53:12.816488+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 190.35,
+      "cgroup_memory_bytes": 8829464576,
+      "workspace_free_bytes": 22454018048,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:53:22.817007+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 200.35,
+      "cgroup_memory_bytes": 8753942528,
+      "workspace_free_bytes": 22402371584,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:53:32.820192+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 210.35,
+      "cgroup_memory_bytes": 8938819584,
+      "workspace_free_bytes": 22375727104,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:53:42.822069+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 220.35,
+      "cgroup_memory_bytes": 8948768768,
+      "workspace_free_bytes": 22336516096,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:53:52.823968+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 230.35,
+      "cgroup_memory_bytes": 8849723392,
+      "workspace_free_bytes": 22290632704,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:54:02.827478+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 240.36,
+      "cgroup_memory_bytes": 9017860096,
+      "workspace_free_bytes": 22274891776,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:54:12.830875+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 250.36,
+      "cgroup_memory_bytes": 8961638400,
+      "workspace_free_bytes": 22229078016,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:54:22.833468+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 260.36,
+      "cgroup_memory_bytes": 8874401792,
+      "workspace_free_bytes": 22188863488,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:54:32.838482+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 270.37,
+      "cgroup_memory_bytes": 8973164544,
+      "workspace_free_bytes": 22143246336,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:54:42.840673+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 280.37,
+      "cgroup_memory_bytes": 3861753856,
+      "workspace_free_bytes": 22251474944,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:54:52.841726+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 290.37,
+      "cgroup_memory_bytes": 4445466624,
+      "workspace_free_bytes": 22251474944,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:55:02.843731+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 300.37,
+      "cgroup_memory_bytes": 4671414272,
+      "workspace_free_bytes": 22251474944,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:55:12.851058+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 310.38,
+      "cgroup_memory_bytes": 4834906112,
+      "workspace_free_bytes": 22251474944,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:55:22.855784+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 320.39,
+      "cgroup_memory_bytes": 5113749504,
+      "workspace_free_bytes": 22251474944,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:55:32.859665+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 330.39,
+      "cgroup_memory_bytes": 5467267072,
+      "workspace_free_bytes": 22251474944,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:55:42.861739+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 340.39,
+      "cgroup_memory_bytes": 5955100672,
+      "workspace_free_bytes": 22251474944,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:55:52.862479+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 350.39,
+      "cgroup_memory_bytes": 6314205184,
+      "workspace_free_bytes": 22251470848,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:56:02.863507+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 360.39,
+      "cgroup_memory_bytes": 6610583552,
+      "workspace_free_bytes": 22251470848,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:56:12.867162+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 370.4,
+      "cgroup_memory_bytes": 6793641984,
+      "workspace_free_bytes": 22231437312,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:56:22.869612+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 380.4,
+      "cgroup_memory_bytes": 6650916864,
+      "workspace_free_bytes": 22214709248,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:56:32.879701+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 390.41,
+      "cgroup_memory_bytes": 6715420672,
+      "workspace_free_bytes": 22192275456,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:56:42.884991+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 400.41,
+      "cgroup_memory_bytes": 6819401728,
+      "workspace_free_bytes": 22164901888,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:56:52.983823+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 410.51,
+      "cgroup_memory_bytes": 6783336448,
+      "workspace_free_bytes": 22164901888,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:57:03.006265+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 420.54,
+      "cgroup_memory_bytes": 6714654720,
+      "workspace_free_bytes": 22150762496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:57:13.130014+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 430.66,
+      "cgroup_memory_bytes": 6745264128,
+      "workspace_free_bytes": 22150762496,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:57:23.180394+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 440.71,
+      "cgroup_memory_bytes": 6699298816,
+      "workspace_free_bytes": 22143533056,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:57:33.211402+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 450.74,
+      "cgroup_memory_bytes": 6650077184,
+      "workspace_free_bytes": 22131097600,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:57:43.219468+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 460.75,
+      "cgroup_memory_bytes": 6685564928,
+      "workspace_free_bytes": 22115319808,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T13:57:53.222034+00:00",
+      "stage": "current-xtask-driver",
+      "head": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+      "pid": 634755,
+      "elapsed": 470.75,
+      "cgroup_memory_bytes": 6827810816,
+      "workspace_free_bytes": 22091759616,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

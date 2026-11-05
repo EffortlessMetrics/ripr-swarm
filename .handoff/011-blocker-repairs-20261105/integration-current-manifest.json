@@ -1,6 +1,6 @@
 {
-  "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
-  "tree": "8cfd711dfb13246f4e09508d57d2d7bc9a718397",
+  "candidate": "caf5114c3c0693e61030fcd087a1f9babac80e60",
+  "tree": "44c0464ee15e09e80e04ffa0a06ec13f016ea098",
   "branch": "successor/011-integration-20261105",
   "product_source_review": {
     "candidate": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
@@ -17,9 +17,9 @@
   },
   "current_delta": {
     "base": "cdbb57010ef17af7d6c0d79a2fd2bc7029622ad9",
-    "path": "d409-observer-complete.patch",
-    "bytes": 97792,
-    "sha256": "47a0a06a5eb58c0699a2e12cbe1df9ea3e5f539d5f5e4d2f5367c9f7801423e0"
+    "path": "caf5114-observer-complete.patch",
+    "bytes": 114407,
+    "sha256": "2271c703655b8ce8ddbed08e32d4c7e155023578eba750d193e61993ceca6795"
   },
   "retained_policy_leaves": {
     "allow_attributes": 0,
@@ -28,7 +28,7 @@
     "full_policy": "FD045 aggregate ci-policy exit 0; exact current refresh pending"
   },
   "qualification": {
-    "status": "exact full-library passed; remaining consumer/native checks running",
+    "status": "bounded external-trait repair compiling; prior d409 passes are not current qualification",
     "prior_exact_candidate": "2ed9a70d5dcfe9e396d126c5a5e27cacac969dc1",
     "prior_full_library": {
       "passed": 18087,
@@ -52,17 +52,6 @@
       "goldens",
       "promotion honesty"
     ],
-    "current_compatibility": {
-      "candidate": "89996734794fe94d19d50a7fa6014d9fc36b7532",
-      "qualified_entry_passed": 44,
-      "glob_identity_passed": 6,
-      "owner_execution_passed": 69,
-      "failed": 0,
-      "native_exit": 0,
-      "receipt": "8999673-owner-call-compatibility-receipt.json",
-      "log_sha256": "73fe9a10de2da6b7114e63a91558cb520f80882179618ba72afcb458cea2a369",
-      "limits": "includes native positive/negative dispatch controls and intercepted first refusal; no full-current qualification claim"
-    },
     "current_phase": "owner-call compatibility compile; current producer/goldens and full/native qualification pending",
     "previous_consumer_results": {
       "lsp": [
@@ -96,8 +85,8 @@
       "receipt": "2ed9-owner-call-compatibility-receipt.json",
       "remaining": "mixed same-line boundary pairing in new control; same-file module and block-tail bool identity; out-of-line parent trait/unit imports"
     },
-    "tool_session": 86286,
-    "current_focused_and_full": {
+    "tool_session": 72617,
+    "prior_d409_focused_and_full": {
       "array-return-controls": {
         "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
         "native_exit": 0,
@@ -235,6 +224,24 @@
         "receipt": "d409-intercepted-first-golden-receipt.json",
         "log_sha256": "f9d025aabf4eca1e6e3b0ff31087500a5711719e29a09c3cf3040fc11bfbeb7f"
       }
+    },
+    "prior_8999673_compatibility": {
+      "candidate": "89996734794fe94d19d50a7fa6014d9fc36b7532",
+      "qualified_entry_passed": 44,
+      "glob_identity_passed": 6,
+      "owner_execution_passed": 69,
+      "failed": 0,
+      "native_exit": 0,
+      "receipt": "8999673-owner-call-compatibility-receipt.json",
+      "log_sha256": "73fe9a10de2da6b7114e63a91558cb520f80882179618ba72afcb458cea2a369",
+      "limits": "includes native positive/negative dispatch controls and intercepted first refusal; no full-current qualification claim"
+    },
+    "prior_d409_native_check_fast": {
+      "exit": 1,
+      "reason": "new honesty fixture missing expected/human-full.txt; generated file retained in caf repair",
+      "clippy": "workspace all-targets -D warnings pass on d409",
+      "receipt": "d409-fresh-check-fast-receipt.json",
+      "old_driver_attempt": "stopped incomplete; current driver rebuilt before this terminal run"
     }
   },
   "history": {
@@ -271,5 +278,21 @@
   "limitations": [
     "standalone same-line scalar binding is supported; mixed same-line oracle/boundary pairing remains conservative and assertion-order controls use separate statements/lines",
     "new fixture goldens must come from the corrected production producer; not generated from the red candidate"
-  ]
+  ],
+  "current_affected_delta": {
+    "base": "d409ff2e408b4252f78b5bde91474d40c905ed38",
+    "path": "caf5114-external-observer.patch",
+    "bytes": 20808,
+    "sha256": "b2c8ff9d7974431761c67df8d74bfed88fc44b18fe6b72bd1cbd98d4dc1fe790"
+  },
+  "external_observer_repair": {
+    "red": "external-ref-first/disposition.json",
+    "scope": "first/last projection identity withheld with unread nonstandard imports in the indexed workspace; conservative across files to cover re-exports; direct field identity unaffected",
+    "controls": "first/last; external named/anonymous/glob traits; standard dispatch and unused external dependency; native correct/wrong pairs",
+    "cache_generations": {
+      "full": "1.161",
+      "sharded_compact": "0.163"
+    },
+    "qualification": "running; no current pass inferred"
+  }
 }
