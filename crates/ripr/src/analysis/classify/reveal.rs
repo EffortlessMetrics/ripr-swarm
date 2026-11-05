@@ -12214,6 +12214,8 @@ impl RetryBuilder { pub fn new()->Self { Self { attempts: 4, delay_ms: 100 } } p
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     effect_state_carried: &carried,
+                    effect_observer_identity: &|_, _| false,
+                    value_observer_identity: &|_, _| false,
                     setter_writes_field: &|_, _, _| true,
                     collection_argument_observed: &|_, _| false,
                     pushed_literal_observed: &|_, _| false,
