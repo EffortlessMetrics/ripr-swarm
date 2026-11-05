@@ -1,0 +1,2147 @@
+//! Repository configuration loader for `ripr.toml`.
+//!
+//! The loader is intentionally small and repository-scoped. It walks from the
+//! selected root toward the repository boundary for `ripr.toml`; it does not
+//! read user-global config, environment variables, or hidden alternate config
+//! paths. Command adapters decide precedence by applying explicit flags or LSP
+//! initialization options after this file is loaded.
+
+use crate::app::{CheckInput, Mode};
+use crate::domain::language_availability::{
+    ConfiguredIntent, LanguageAvailabilityInput, resolve_language_availability,
+    unavailable_recovery,
+};
+use crate::domain::{LanguageId, OracleStrength};
+use serde::{Deserialize, Serialize};
+use std::path::{Component, Path, PathBuf};
+
+mod diagnostic;
+pub(crate) mod language_detection;
+mod model;
+#[cfg(test)]
+mod override_tests;
+mod overrides;
+#[cfg(test)]
+mod perl_executable_tests;
+mod preview_excluded;
+mod python;
+mod toolchain_file;
+pub(crate) mod verification_contract;
+// The exclusion path authorities are pure predicates, needed by the
+// diff-scope guard's admission counting in every feature lane (mirroring the
+// always-compiled Python authorities), so the module compiles unconditionally.
+// Only the detection surface below stays feature-gated: without
+// `lang-typescript` no-config detection must never select the adapter.
+mod typescript;
+
+pub(crate) use diagnostic::ConfigDiagnostic;
+#[cfg(test)]
+use diagnostic::ConfigLocationStatus;
+pub(crate) use diagnostic::ConfigValidationMachine;
+/// `LanguagesConfig` is crate-visible beyond tests since #7386: the analysis
+/// pipeline and check entry points thread the per-language config (including
+/// `handwritten_files`) into diff-mode discovery, so production paths name the
+/// type, not only output-layer unit tests.
+pub(crate) use model::LanguagesConfig;
+use model::{BunUbProfileConfig, FindingSeverityConfig, ProfilesConfig, SeamSeverityConfig};
+pub use model::{
+    CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION, CheckInputExplicit, ConfigIdentityRole, ConfigSeverity,
+    LspDiagnosticProfile, OraclePolicy, PerlConfig, RiprConfig, SeverityConfig, TestHarnessAdapter,
+    TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
+};
+pub(crate) use model::{
+    HumanLegend, PERL_EXECUTABLE_OPT_IN_ENV, PythonLanguageConfig, RustLanguageConfig,
+    TypescriptLanguageConfig, canonical_test_harnesses_identity, perl_executable_opt_in,
+    test_harness_registration_canonical_identity,
+};
+use overrides::discover_workspace_crates;
+
+pub(crate) use preview_excluded::{
+    is_probable_fixture_or_data_path, path_matches_preview_excluded_patterns,
+};
+#[cfg(test)]
+pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
+pub(crate) use python::{
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, declared_python_handwritten_under,
+    detect_python_project, is_declared_handwritten_python_path, is_detectable_excluded_python_path,
+    is_detectable_generated_python_path, is_detectable_python_source_name,
+    is_python_dir_pruned_from_repo_discovery, is_python_excluded_dir_everywhere,
+    python_project_marker_name, python_source_dir_marker_name,
+    source_dir_contains_detectable_python,
+};
+pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pin_refusal};
+#[cfg(feature = "lang-typescript")]
+pub(crate) use typescript::{
+    JAVASCRIPT_LED_MANIFESTS, JAVASCRIPT_LED_SOURCE_DIRS, TYPESCRIPT_PROJECT_MARKERS,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, declared_typescript_handwritten_under,
+    detect_javascript_led_root, detect_typescript_project, is_detectable_package_source_name,
+    is_detectable_typescript_source_name, is_typescript_dir_pruned_from_discovery,
+    javascript_led_manifest_name, javascript_led_source_dir_marker_name,
+    source_dir_contains_detectable_typescript, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
+};
+// Admission/exclusion predicates for the diff-scope guard and the adapters:
+// real in every lane, like the Python authorities above, so an adapter's
+// generated-name and excluded-directory refusals measure the same diff in a
+// rust-only build as in a full build (#10730).
+pub(crate) use typescript::{
+    is_declared_handwritten_typescript_path, is_detectable_excluded_typescript_path,
+    is_detectable_generated_typescript_path, is_typescript_excluded_dir_everywhere,
+};
+
+/// Without `lang-typescript` no-config detection never selects the adapter,
+/// so these inert forms keep the shared call sites unconditional. Exclusion
+/// predicates are NOT mirrored here: they are real in every lane (see above).
+#[cfg(not(feature = "lang-typescript"))]
+mod typescript_absent {
+    use std::path::Path;
+
+    pub(crate) const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &[];
+    pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &[];
+    pub(crate) const JAVASCRIPT_LED_MANIFESTS: &[&str] = &[];
+    pub(crate) const JAVASCRIPT_LED_SOURCE_DIRS: &[&str] = &[];
+
+    pub(crate) fn detect_typescript_project(_root: &Path) -> bool {
+        false
+    }
+
+    pub(crate) fn detect_javascript_led_root(_root: &Path) -> bool {
+        false
+    }
+
+    pub(crate) fn javascript_led_manifest_name(_name: &str) -> Option<&'static str> {
+        None
+    }
+
+    pub(crate) fn javascript_led_source_dir_marker_name(_name: &str) -> Option<&'static str> {
+        None
+    }
+
+    pub(crate) fn is_detectable_package_source_name(_name: &str) -> bool {
+        false
+    }
+
+    pub(crate) fn typescript_project_marker_name(_name: &str) -> Option<&'static str> {
+        None
+    }
+
+    pub(crate) fn typescript_source_dir_marker_name(_name: &str) -> Option<&'static str> {
+        None
+    }
+
+    pub(crate) fn is_detectable_typescript_source_name(_name: &str) -> bool {
+        false
+    }
+
+    pub(crate) fn source_dir_contains_detectable_typescript(_root: &Path, _marker: &str) -> bool {
+        false
+    }
+}
+#[cfg(not(feature = "lang-typescript"))]
+pub(crate) use typescript_absent::{
+    JAVASCRIPT_LED_MANIFESTS, JAVASCRIPT_LED_SOURCE_DIRS, TYPESCRIPT_PROJECT_MARKERS,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root, detect_typescript_project,
+    is_detectable_package_source_name, is_detectable_typescript_source_name,
+    javascript_led_manifest_name, javascript_led_source_dir_marker_name,
+    source_dir_contains_detectable_typescript, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
+};
+
+pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
+
+pub(crate) const DEFAULT_CONTEXT_RELATED_TESTS: usize = 5;
+pub(crate) const DEFAULT_LSP_SEAM_DIAGNOSTICS: bool = true;
+const DEFAULT_SUPPRESSIONS_PATH: &str = ".ripr/suppressions.toml";
+const INIT_CONFIG_TEXT: &str = r#"# ripr.toml — generated by `ripr init`; every value below is a built-in
+# default except [languages], which starts at ["rust"] plus any Python or
+# TypeScript project `ripr init` detected. With no
+# ripr.toml, ripr enables languages it detects from project markers (for
+# example Python or TypeScript), so deleting this file is not identical in
+# those projects. For Rust-only analysis, set `enabled = ["rust"]` below;
+# edit only the settings you actually want to change. Validate edits
+# with `ripr config validate`; `ripr doctor` reports the state.
+
+[analysis]
+# Default analysis mode when CLI flags or LSP initialization options do not
+# set one explicitly. Valid: instant, draft, fast, deep, ready.
+mode = "draft"
+include_unchanged_tests = true
+
+[oracles]
+# Probe-relative defaults for oracle shapes that are repo-policy-sensitive.
+# Valid strengths: strong, medium, weak, smoke, none, unknown.
+snapshot_strength = "medium"
+mock_expectation_strength = "medium"
+broad_error_strength = "weak"
+
+[severity.findings]
+# Valid severities: info, warning, note.
+exposed = "info"
+weakly_exposed = "warning"
+reachable_unrevealed = "warning"
+no_static_path = "warning"
+infection_unknown = "warning"
+propagation_unknown = "note"
+static_unknown = "note"
+
+[severity.seams]
+# Valid severities: off, info, warning, note.
+strongly_gripped = "off"
+weakly_gripped = "warning"
+ungripped = "warning"
+reachable_unrevealed = "warning"
+activation_unknown = "info"
+propagation_unknown = "info"
+observation_unknown = "info"
+discrimination_unknown = "info"
+opaque = "info"
+intentional = "off"
+suppressed = "off"
+
+[lsp]
+# Built-in defaults enable bounded saved-workspace seam diagnostics. LSP
+# initializationOptions.seamDiagnostics still wins explicitly, and repo policy
+# may disable this with seam_diagnostics = false.
+seam_diagnostics = true
+
+[reports]
+# Default for context packets and editor collect-context commands when no
+# explicit --max-related-tests argument is supplied.
+max_related_tests = 5
+
+[suppressions]
+# Repo-relative, slash-separated path. Badge renderers load this path.
+path = ".ripr/suppressions.toml"
+
+[languages]
+# Per RIPR-SPEC-0026, only `rust` is enabled by default; `ripr init` also adds
+# a detected Python or TypeScript project. Add `typescript` or
+# `python` to opt into preview adapters when the ripr binary was built with
+# the matching Cargo feature (`lang-typescript` or `lang-python`). When this
+# file is absent, Python project markers can enable Python preview analysis
+# automatically for the detected repository root; this explicit list remains
+# authoritative when present.
+# Valid values: rust, typescript, javascript (alias for typescript), python, perl.
+# (`perl` consumes externally-produced `ripr-perl-facts-v1` packets and does
+# not parse Perl source directly. Pass --perl-facts <path> for an explicit
+# packet, or configure a managed [perl].producer and make its exporter
+# available. Without a packet or available exporter, Perl analysis is
+# unavailable. See Campaign 31 #1379 + Support Tiers.)
+enabled = ["rust"]
+# Optional additive Rust generated-source globs. Built-in generated names and
+# directories remain excluded unless declared in handwritten_files. A pattern without `/` matches any filename;
+# patterns with `/` match the repository-relative path.
+#
+# [languages.rust]
+# generated_file_patterns = ["*.gen.rs", "src/generated/**/*.rs"]
+# handwritten_files = ["tests/generated_workflow.rs"]
+# Exact paths exempt naming conventions only; patterns, headers and vendor markers win.
+
+# Optional Bun stable-byte UB advisory profile. Leave this commented unless the
+# repository wants TypeScript-family preview evidence for Bun Rust/FFI seams.
+# JavaScript test files are covered by the `typescript` adapter.
+#
+# [profiles.bun_ub]
+# test_roots = [
+#   "test/js/**/*.test.ts",
+#   "test/js/**/*.test.js",
+# ]
+# bridge_hints = "ripr.bun.bridge.toml"
+
+# Optional TypeScript adapter settings (preview). Requires
+# enabled = ["typescript"] in [languages] and the `lang-typescript` Cargo feature.
+#
+# [typescript]
+# resolve_tsconfig_paths = true  # default; set false to leave tsconfig `paths` aliases unresolved
+
+# Optional Perl adapter settings (fact-packet consumer, preview — see Campaign 31 #1379).
+#
+# [perl]
+# producer = "perl-ripr-facts"  # canonical managed exporter; "perllsp"/"perl-lsp" are compatibility wrappers
+# executable = "perl-ripr-facts"  # Exporter path; honored only when RIPR_ALLOW_REPO_PERL_EXECUTABLE=1
+# timeout_ms = 30000       # Per-invocation timeout
+# cache_dir = "target/ripr/perl-facts"  # Fact cache location
+"#;
+
+/// Whether a `ripr.toml` entry exists at `path`, without following links.
+/// `Path::exists` and `Path::is_file` follow them, so a dangling or
+/// self-referencing symlink read as "no config" and consumers silently used
+/// built-in defaults. The entry is present; reading it reports the real failure.
+pub(crate) fn config_entry_present(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+/// Whether the analyzed root has a `ripr.toml` directory entry. Presence uses
+/// [`config_entry_present`]: a dangling link is present, not absent.
+pub(crate) fn config_present_at_root(root: &Path) -> bool {
+    config_entry_present(&root.join(CONFIG_FILE_NAME))
+}
+
+fn discover_config_path(root: &Path) -> Option<PathBuf> {
+    let direct = root.join(CONFIG_FILE_NAME);
+    if config_entry_present(&direct) {
+        // A link that cannot be resolved keeps its own path so the read below
+        // names it instead of the search moving on to an ancestor.
+        return Some(std::fs::canonicalize(&direct).unwrap_or(direct));
+    }
+
+    let search_root = std::fs::canonicalize(root).ok()?;
+    for ancestor in search_root.ancestors() {
+        let path = ancestor.join(CONFIG_FILE_NAME);
+        if config_entry_present(&path) {
+            return Some(path);
+        }
+        if is_repository_boundary(ancestor) {
+            break;
+        }
+    }
+    None
+}
+
+/// Structural package workspace marker shared by CLI roots and TypeScript
+/// package discovery. Arrays and objects (including Yarn's object form) mark
+/// workspaces; scalars do not. This does not validate members, globs, or schemas.
+pub(crate) fn package_json_declares_workspace(manifest: &serde_json::Value) -> bool {
+    manifest
+        .get("workspaces")
+        .is_some_and(|workspaces| workspaces.is_array() || workspaces.is_object())
+}
+
+fn is_repository_boundary(directory: &Path) -> bool {
+    // The directory entry bounds repository policy even when its target is
+    // missing or cyclic. Following it would admit an enclosing repo's config.
+    if std::fs::symlink_metadata(directory.join(".git")).is_ok() {
+        return true;
+    }
+
+    let manifest = directory.join("Cargo.toml");
+    let Ok(contents) = crate::bounded_input::read_metadata_toml(manifest) else {
+        return false;
+    };
+    if !contents.contains("workspace") {
+        return false;
+    }
+    let Ok(document) = toml::from_str::<toml::Value>(&contents) else {
+        return false;
+    };
+    document.get("workspace").is_some_and(toml::Value::is_table)
+}
+
+pub fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
+    load_for_root_failure(root).map_err(|failure| failure.human_display(root, cfg!(windows)))
+}
+
+/// Load configuration for a root, retaining semantic validation diagnostics
+/// when parse/validation fails (#2624).
+pub(crate) fn load_for_root_failure(root: &Path) -> Result<RiprConfig, ConfigLoadFailure> {
+    let Some(path) = discover_config_path(root) else {
+        return default_config_for_root(root).map_err(ConfigLoadFailure::Read);
+    };
+    let text = crate::bounded_input::read_metadata_toml(&path).map_err(|err| {
+        ConfigLoadFailure::Read(config_load_read_error_for_host(&path, &err, cfg!(windows)))
+    })?;
+    let mut config =
+        parse_config_diagnostic(&text).map_err(|diagnostic| ConfigLoadFailure::Parse {
+            path: path.clone(),
+            diagnostic,
+        })?;
+    // Identity stays the discovered canonical path: symlink equality and
+    // `source_path` consumers compare filesystem identity, not the display
+    // spelling (#7652).
+    config.source_path = Some(path.clone());
+    config.source_text = Some(text);
+    // Crate names belong to the workspace that owns ripr.toml, not the
+    // selected member root that discovered it by walking ancestors.
+    let crate_root = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(root);
+    config
+        .bind_workspace_crates(discover_workspace_crates(crate_root))
+        .map_err(|err| {
+            ConfigLoadFailure::Read(config_load_parse_error_for_host(&path, &err, cfg!(windows)))
+        })?;
+    config.verification_contract_decision = Some(
+        verification_contract::compile_repository_verification_contract(
+            verification_contract::VerificationContractCompileInput {
+                repository_root: root,
+                ripr_toml_path: config.source_path.as_deref(),
+                ripr_toml_content_digest: loaded_config_identity(&config),
+                config: &config,
+            },
+        ),
+    );
+    Ok(config)
+}
+
+/// Why [`load_for_root_failure`] refused a configuration.
+pub(crate) enum ConfigLoadFailure {
+    Read(String),
+    Parse {
+        path: PathBuf,
+        diagnostic: Box<ConfigDiagnostic>,
+    },
+}
+
+impl ConfigLoadFailure {
+    pub(crate) fn human_display(&self, _root: &Path, windows: bool) -> String {
+        match self {
+            Self::Read(message) => message.clone(),
+            Self::Parse { path, diagnostic } => {
+                let path_display = config_load_error_path_for_host(path, windows);
+                format!(
+                    "{}\n{CONFIG_LOAD_PARSE_HINT}",
+                    diagnostic.human_first_line(&path_display),
+                )
+            }
+        }
+    }
+
+    pub(crate) fn semantic_validation(&self) -> Option<ConfigValidationMachine> {
+        match self {
+            Self::Read(_) => None,
+            Self::Parse { diagnostic, .. } => diagnostic.machine_validation(),
+        }
+    }
+
+    pub(crate) fn human_summary_for_machine(&self) -> String {
+        match self {
+            Self::Read(message) => config_error_summary(message),
+            Self::Parse { path, diagnostic } => {
+                let path_display = config_load_error_path_for_host(path, cfg!(windows));
+                config_error_summary(&diagnostic.human_first_line(&path_display))
+            }
+        }
+    }
+}
+
+/// User-facing config path for load errors (#7652). Discovery and
+/// `source_path` keep the canonical form; only the diagnostic interpolates
+/// through the shared renderer so a Windows drive-letter verbatim prefix
+/// does not leak into stderr or the JSON refusal `message`.
+fn config_load_error_path_for_host(path: &Path, windows: bool) -> String {
+    crate::output::path::human_path_text(&path.to_string_lossy(), windows)
+}
+
+/// What a reader can do about a `ripr.toml` that failed to load (#9033). The
+/// error alone names the problem but not the way out; these trailing lines stay
+/// after the first line, which JSON refusals and `doctor` evidence keep. Removal
+/// is worded for discovery: another `ripr.toml` in a parent directory takes over
+/// before the built-in defaults do.
+macro_rules! config_removal_advice {
+    () => {
+        "removing it makes ripr use the next ripr.toml it finds in a parent directory, or the built-in defaults if there is none."
+    };
+}
+const CONFIG_LOAD_PARSE_HINT: &str = concat!(
+    "Fix the error above in ripr.toml and rerun; ",
+    config_removal_advice!()
+);
+const CONFIG_LOAD_READ_HINT: &str = concat!(
+    "Make that ripr.toml readable and rerun; ",
+    config_removal_advice!()
+);
+
+fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
+    format!(
+        "{}: {}\n{CONFIG_LOAD_PARSE_HINT}",
+        config_load_error_path_for_host(path, windows),
+        err.trim_end()
+    )
+}
+
+fn config_load_read_error_for_host(
+    path: &Path,
+    err: &impl std::fmt::Display,
+    windows: bool,
+) -> String {
+    format!(
+        "read {} failed: {err}\n{CONFIG_LOAD_READ_HINT}",
+        config_load_error_path_for_host(path, windows)
+    )
+}
+
+/// Whether config discovery would find a `ripr.toml` entry for this root
+/// (directly, or in an ancestor up to the repository boundary). Consumers
+/// that report the configuration posture need this when [`load_for_root`]
+/// fails: a present-but-unloadable entry is detected-not-loaded, while a
+/// failure with no config entry anywhere (for example the marker-based
+/// language auto-enable refusing an unavailable language) leaves the file
+/// posture at built-in defaults (#6825).
+pub(crate) fn config_discovered_for_root(root: &Path) -> bool {
+    discover_config_path(root).is_some()
+}
+
+/// When implicit `check` rebinds the analysis root, config discovery walks
+/// only ancestors of *that* root. A `ripr.toml` that `doctor`/`pilot` would
+/// load from the invocation directory is then skipped (#7468). Return the
+/// closer *directory entry* and the file the rebound root actually loads
+/// (`None` means built-in defaults). Same canonical file — including a
+/// symlink to the loaded path — is not a skip. A member symlink to a
+/// *different* file still names the member entry, not the target.
+pub(crate) fn closer_config_skipped_by_analysis_root(
+    invocation_root: &Path,
+    analysis_root: &Path,
+) -> Option<(PathBuf, Option<PathBuf>)> {
+    let closer = discover_config_path(invocation_root)?;
+    let loaded = discover_config_path(analysis_root);
+    if loaded
+        .as_deref()
+        .is_some_and(|loaded| same_config_file(&closer, loaded))
+    {
+        return None;
+    }
+    Some((closer_entry_for_warning(invocation_root, closer), loaded))
+}
+
+/// Direct `ripr.toml` at the invocation directory is the skipped entry even
+/// when [`discover_config_path`] canonicalized a resolvable symlink.
+fn closer_entry_for_warning(invocation_root: &Path, discovered: PathBuf) -> PathBuf {
+    let direct = invocation_root.join(CONFIG_FILE_NAME);
+    if config_entry_present(&direct) {
+        direct
+    } else {
+        discovered
+    }
+}
+
+fn same_config_file(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn default_config_for_root(root: &Path) -> Result<RiprConfig, String> {
+    let mut config = RiprConfig::default();
+    if detect_python_project(root) {
+        if !LanguageId::Python.is_available() {
+            return Err(
+                "Python project markers were detected, but this ripr binary was built without Cargo feature `lang-python`; use a Python-enabled ripr binary or add `ripr.toml` with `[languages] enabled = [\"rust\"]` to keep Python preview disabled"
+                    .to_string(),
+            );
+        }
+        if !config.languages.enabled.contains(&LanguageId::Python) {
+            config.languages.enabled.push(LanguageId::Python);
+        }
+    }
+    // Unlike Python, a binary built without `lang-typescript` stays silent:
+    // `detect_typescript_project` is inert there, and a root `tsconfig.json`
+    // alone is common in Rust repositories with a web frontend.
+    if detect_typescript_project(root)
+        && !config.languages.enabled.contains(&LanguageId::TypeScript)
+    {
+        config.languages.enabled.push(LanguageId::TypeScript);
+    }
+    Ok(config)
+}
+
+#[cfg(test)]
+pub(crate) fn generated_init_config() -> &'static str {
+    INIT_CONFIG_TEXT
+}
+
+/// Preview languages that `ripr init` enables next to Rust for `root`: the
+/// ones marker-based no-config detection would have enabled, so writing the
+/// file does not switch off analysis the user already had. Python is listed
+/// only in builds that can run it.
+pub(crate) fn init_detected_preview_languages(root: &Path) -> Vec<LanguageId> {
+    let mut detected = Vec::new();
+    if detect_python_project(root) && LanguageId::Python.is_available() {
+        detected.push(LanguageId::Python);
+    }
+    if detect_typescript_project(root) {
+        detected.push(LanguageId::TypeScript);
+    }
+    detected
+}
+
+/// [`generated_init_config`] with `[languages] enabled` extended by
+/// [`init_detected_preview_languages`]. Every other value stays the built-in
+/// default.
+pub(crate) fn generated_init_config_for_root(root: &Path) -> String {
+    let detected = init_detected_preview_languages(root);
+    if detected.is_empty() {
+        return INIT_CONFIG_TEXT.to_string();
+    }
+    let mut enabled = vec!["\"rust\"".to_string()];
+    for language in detected {
+        enabled.push(format!("\"{}\"", language.as_str()));
+    }
+    // Anchored to the line start so a mention of the setting in a comment is
+    // never the occurrence that gets replaced.
+    INIT_CONFIG_TEXT.replacen(
+        "\nenabled = [\"rust\"]\n",
+        &format!("\nenabled = [{}]\n", enabled.join(", ")),
+        1,
+    )
+}
+
+pub(crate) fn config_fingerprint(source_text: &str) -> String {
+    bytes_fingerprint(source_text.as_bytes())
+}
+
+/// [`config_fingerprint`] over raw bytes, for inputs that need not be UTF-8.
+pub(crate) fn bytes_fingerprint(bytes: &[u8]) -> String {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    format!("fnv1a64:{hash:016x}")
+}
+
+/// Canonical analysis-config identity for the check-artifact identity gate
+/// (RIPR-SPEC-0140): the finding-affecting allowlist fields, canonically
+/// serialized (field name, normalized value, defaults materialized), sorted,
+/// and hashed. Render-only knobs are excluded by the allowlist and are
+/// honored fresh at render time by the consuming command.
+pub(crate) fn check_artifact_config_identity_hash(config: &RiprConfig) -> String {
+    let mut pairs = config
+        .check_artifact_identity_fields()
+        .into_iter()
+        .filter(|field| field.role == ConfigIdentityRole::FindingAffecting)
+        // A config without oracle overlays keeps its pre-override identity so
+        // adding the override model does not invalidate existing artifacts.
+        .filter(|field| {
+            !(field.name == "overrides.oracles" && field.value.as_deref() == Some("0\u{0}"))
+        })
+        .map(|field| format!("{}={}", field.name, field.value.clone().unwrap_or_default()))
+        .collect::<Vec<_>>();
+    pairs.sort();
+    config_fingerprint(&pairs.join("\n"))
+}
+
+/// The config identity published in the diff-check outcome identity block
+/// (#5988): the fingerprint of the exact `ripr.toml` text loaded for the run,
+/// so any change to the loaded config — finding-affecting allowlist fields,
+/// but also the mode / unchanged-test / enabled-language settings the
+/// check-artifact identity records in separate fields — moves the identity
+/// block agents compare (#6777 review: the finding-affecting allowlist alone
+/// let finding-changing settings share one block). `Some` exactly when a
+/// `ripr.toml` was actually loaded ([`RiprConfig::source_text`] is present);
+/// a defaults-only run — no config file, or a bound Git-candidate subject
+/// that must ignore the worktree config — keeps `null`.
+pub(crate) fn loaded_config_identity(config: &RiprConfig) -> Option<String> {
+    config.source_text().map(config_fingerprint)
+}
+
+/// The exact `ripr.toml` fields the repo-exposure producer (the seam
+/// inventory in `crates/ripr/src/analysis/seam_inventory.rs`) consumes
+/// semantically. Verified against the producer: the seam walker is Rust-only
+/// and reads the oracle-strength policy (via `rust_index::apply_oracle_policy`),
+/// production-like / harness opt-ins, and `[languages.rust]
+/// generated_file_patterns` (#4788). It does not read `languages.enabled`
+/// or any typescript/perl field, so those SPEC-0140 finding-affecting
+/// fields must NOT move the repo-exposure input identity (#2823 — two runs
+/// differing only in an unconsumed setting stay comparable). Closed set:
+/// when the producer starts consuming another config field, add it here in
+/// the same PR; do not widen the filter to whole sections.
+pub(crate) const REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS: [&str; 8] = [
+    "oracles.broad_error_strength",
+    "oracles.mock_expectation_strength",
+    "oracles.snapshot_strength",
+    // Per-crate/path oracle overlays change classification evidence (#2671).
+    "overrides.oracles",
+    // The production-like opt-in changes which files are production
+    // subjects in the repo seam inventory (#3283).
+    "analysis.production_like_targets",
+    // Harness registrations change which files are evidence subjects and
+    // which functions are executable tests in the repo seam inventory
+    // (#3532).
+    "analysis.test_harnesses",
+    // Generated-file patterns change which Rust files become seams and
+    // which paths appear in `generated_rust_source_skipped` (#4788).
+    "languages.rust.generated_file_patterns",
+    "languages.rust.handwritten_files",
+];
+
+/// Canonical config identity for the repo-exposure artifact input identity
+/// (#2823): exactly the producer-consumed fields
+/// ([`REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS`]), canonically serialized through
+/// the same SPEC-0140 field enumerator (field name, normalized value,
+/// defaults materialized), sorted, and hashed. This is deliberately narrower
+/// than [`check_artifact_config_identity_hash`], which serves the diff-check
+/// pipeline and legitimately includes typescript/perl inputs the seam
+/// inventory never reads.
+pub fn repo_exposure_config_identity_hash(config: &RiprConfig) -> String {
+    // This producer is Rust-only regardless of the diff adapter selection.
+    // Reuse the canonical field authority with its actual consumed language.
+    let mut consumed = config.clone();
+    consumed.languages.enabled = vec![LanguageId::Rust];
+    let mut pairs = consumed
+        .check_artifact_identity_fields()
+        .into_iter()
+        .filter(|field| {
+            field.role == ConfigIdentityRole::FindingAffecting
+                && REPO_EXPOSURE_CONSUMED_CONFIG_FIELDS.contains(&field.name)
+                // Same rule as the diff-check hash: no oracle overlay, no pair.
+                && !(field.name == "overrides.oracles"
+                    && field.value.as_deref() == Some("0\u{0}"))
+        })
+        .map(|field| format!("{}={}", field.name, field.value.clone().unwrap_or_default()))
+        .collect::<Vec<_>>();
+    pairs.sort();
+    config_fingerprint(&pairs.join("\n"))
+}
+
+pub(crate) fn apply_to_check_input(
+    input: &mut CheckInput,
+    config: &RiprConfig,
+    explicit: CheckInputExplicit,
+) {
+    if !explicit.mode
+        && let Some(mode) = config.analysis.mode()
+    {
+        input.mode = mode.clone();
+    }
+    if !explicit.include_unchanged_tests
+        && let Some(include) = config.analysis.include_unchanged_tests()
+    {
+        input.include_unchanged_tests = include;
+    }
+}
+
+fn parse_config(text: &str) -> Result<RiprConfig, String> {
+    parse_config_diagnostic(text).map_err(|diagnostic| diagnostic.message)
+}
+
+/// Preserve semantic source locations without changing the typed configuration
+/// authority. Consumers can project this diagnostic into their own transports.
+/// The diagnostic is boxed: it is deliberately rich (spans, expected values),
+/// which would otherwise trip `clippy::result_large_err` on every parser hop.
+pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<ConfigDiagnostic>> {
+    // Every caller (worktree load, candidate-tree blob, editor transports) goes
+    // through here, so the cap holds even when the text did not come from the
+    // bounded file read (#11563).
+    if text.len() as u64 > crate::bounded_input::MAX_METADATA_TOML_BYTES {
+        return Err(Box::new(ConfigDiagnostic::structural(format!(
+            "invalid ripr.toml: {} bytes exceeds the {} byte metadata limit ({} MiB); ripr parses repository metadata fully into memory, so trim the file",
+            text.len(),
+            crate::bounded_input::MAX_METADATA_TOML_BYTES,
+            crate::bounded_input::MAX_METADATA_TOML_BYTES / (1024 * 1024)
+        ))));
+    }
+    let raw: RawConfig = toml::from_str(text).map_err(|err| {
+        // A valid key in the wrong table names its table (#4534). The hint is
+        // built from the fixed KEY_HOME_TABLES allowlist, never from file text.
+        // Display includes the source excerpt, whose comments or values can
+        // themselves contain `unknown field ...`. Only inspect the reason.
+        let hint = misplaced_key_hint(err.message())
+            .or_else(|| retired_key_hint(err.message()))
+            .unwrap_or_default();
+        Box::new(ConfigDiagnostic::structural(format!(
+            "invalid ripr.toml: {err}{hint}"
+        )))
+    })?;
+    RiprConfig::from_raw(raw, text)
+}
+
+/// Keys that belong to exactly one table, so a key found anywhere else was
+/// put in the wrong table rather than misspelled (#4534). Keys shared by two
+/// tables (the `[severity.findings]`/`[severity.seams]` classes) stay out:
+/// naming one table would be a guess.
+const KEY_HOME_TABLES: &[(&str, &str)] = &[
+    ("mode", "analysis"),
+    ("include_unchanged_tests", "analysis"),
+    ("production_like_targets", "analysis"),
+    ("test_harnesses", "analysis"),
+    ("snapshot_strength", "oracles"),
+    ("mock_expectation_strength", "oracles"),
+    ("broad_error_strength", "oracles"),
+    ("seam_diagnostics", "lsp"),
+    ("diagnostic_profile", "lsp"),
+    ("max_related_tests", "reports"),
+    ("enabled", "languages"),
+    ("generated_file_patterns", "languages.rust"),
+    ("resolve_tsconfig_paths", "typescript"),
+    ("bun_ub", "profiles"),
+    ("findings", "severity"),
+    ("seams", "severity"),
+];
+
+/// The table an unknown-field key belongs in, when serde rejected a real key
+/// that sits in the wrong table (for example a top-level `mode`).
+fn misplaced_key_hint(error: &str) -> Option<String> {
+    let key = unknown_field_key(error)?;
+    let (key, table) = KEY_HOME_TABLES.iter().find(|(known, _)| *known == key)?;
+    Some(format!("\n{}", misplaced_key_hint_line(key, table)))
+}
+
+/// Read a complete unknown-field reason, not a substring of a type error or
+/// a prefix of a quoted key containing backticks. Serde's expected-field list
+/// contains only the fixed raw-config field names, so the final delimiter
+/// separates it from the full rejected key.
+fn unknown_field_key(error: &str) -> Option<&str> {
+    let rest = error.strip_prefix("unknown field `")?;
+    let (key, _) = rest.rsplit_once("`, expected ")?;
+    Some(key)
+}
+
+fn misplaced_key_hint_line(key: &str, table: &str) -> String {
+    format!("`{key}` is a valid key, but it belongs under [{table}]")
+}
+
+/// A `ripr.toml` key an earlier release accepted and a later release removed
+/// or renamed (#7453). Every raw table denies unknown fields, so without a
+/// record a retired key reads as a typo; with one, the load error names the
+/// release that retired it and what replaces it.
+///
+/// Retiring a key is a three-step change under `docs/CHANGELOG_POLICY.md`:
+/// keep the old spelling working with a named warning for at least one minor
+/// release, then add the key here when it stops parsing, then list it under
+/// `Removed`.
+struct RetiredKey {
+    /// The key as the earlier release spelled it.
+    key: &'static str,
+    /// The release that stopped accepting it, such as `0.12.0`.
+    retired_in: &'static str,
+    /// The key that replaces it, or `None` when it was removed outright.
+    replacement: Option<&'static str>,
+}
+
+/// Retired keys. Empty until the first key is retired: no released key has
+/// been renamed or removed yet, so nothing is claimed here.
+const RETIRED_KEYS: &[RetiredKey] = &[];
+
+fn retired_key_hint(error: &str) -> Option<String> {
+    retired_key_hint_in(RETIRED_KEYS, error)
+}
+
+/// The retirement note for the key serde rejected, when it is a recorded
+/// retirement. Only a recorded key produces text; every other unknown key
+/// keeps the plain serde error.
+///
+/// The lookup matches the bare key only: serde's unknown-field message names
+/// no table, so a typo that equals a key retired from a different table could
+/// be labelled with that retirement.
+fn retired_key_hint_in(retired: &[RetiredKey], error: &str) -> Option<String> {
+    let key = unknown_field_key(error)?;
+    let entry = retired.iter().find(|entry| entry.key == key)?;
+    Some(format!("\n{}", retired_key_hint_line(entry)))
+}
+
+fn retired_key_hint_line(entry: &RetiredKey) -> String {
+    match entry.replacement {
+        Some(replacement) => format!(
+            "`{}` was retired in ripr {}; use `{replacement}` instead",
+            entry.key, entry.retired_in
+        ),
+        None => format!(
+            "`{}` was retired in ripr {}; remove it from ripr.toml",
+            entry.key, entry.retired_in
+        ),
+    }
+}
+
+/// A source-free summary of a config load error for surfaces that must not
+/// carry the TOML parser's source excerpt (doctor JSON, editor
+/// notifications; RIPR-SPEC-0007): the first line (path, parse location),
+/// plus the misplaced-key hint (#4534) when present. A hint line is kept
+/// only when it equals one built from the fixed key/table allowlist, so no
+/// file content passes through.
+pub(crate) fn config_error_summary(error: &str) -> String {
+    config_error_summary_with(RETIRED_KEYS, error)
+}
+
+fn config_error_summary_with(retired: &[RetiredKey], error: &str) -> String {
+    let first = error.lines().next().unwrap_or(error).trim();
+    let hint = error.lines().skip(1).map(str::trim).find(|line| {
+        KEY_HOME_TABLES
+            .iter()
+            .any(|(key, table)| *line == misplaced_key_hint_line(key, table))
+            || retired
+                .iter()
+                .any(|entry| *line == retired_key_hint_line(entry))
+    });
+    match hint {
+        Some(hint) => format!("{first}; {hint}"),
+        None => first.to_string(),
+    }
+}
+
+/// Human doctor lines for a config load error. Compact is the source-free
+/// summary. Verbose adds remaining parser-reason lines (unknown field,
+/// unclosed table, allowlisted misplaced-key hint) and never the TOML
+/// source excerpt.
+pub(crate) fn config_error_display_lines(error: &str, verbose: bool) -> Vec<String> {
+    let summary = config_error_summary(error);
+    let mut lines = vec![summary.clone()];
+    if !verbose {
+        return lines;
+    }
+    for line in error.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        // doctor prints its own `Fix:` line, so the loader's recovery line
+        // would only repeat it (#9033).
+        if is_toml_source_excerpt_line(line)
+            || line == CONFIG_LOAD_PARSE_HINT
+            || line == CONFIG_LOAD_READ_HINT
+        {
+            continue;
+        }
+        if summary.contains(line) || lines.iter().any(|existing| existing.contains(line)) {
+            continue;
+        }
+        lines.push(line.to_string());
+    }
+    lines
+}
+
+fn is_toml_source_excerpt_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed == "|" || trimmed.starts_with('|') || line.contains(" | ")
+}
+
+#[cfg(test)]
+pub(crate) fn tests_only_parse(text: &str) -> Result<RiprConfig, String> {
+    parse_config(text)
+}
+
+impl RiprConfig {
+    fn from_raw(raw: RawConfig, text: &str) -> Result<Self, Box<ConfigDiagnostic>> {
+        let mut config = RiprConfig::default();
+        if let Some(analysis) = raw.analysis {
+            if let Some(mode) = analysis.mode {
+                config.analysis.mode =
+                    Some(parse_mode_value(mode.get_ref()).map_err(|message| {
+                        ConfigDiagnostic::at_value(message, "analysis.mode", mode.span(), text)
+                    })?);
+            }
+            config.analysis.include_unchanged_tests = analysis.include_unchanged_tests;
+            if let Some(targets) = analysis.production_like_targets {
+                let mut parsed = std::collections::BTreeSet::new();
+                for target in targets {
+                    parsed.insert(parse_relative_path(
+                        "analysis.production_like_targets",
+                        &target,
+                    )?);
+                }
+                config.analysis.production_like_targets = parsed;
+            }
+            if let Some(registrations) = analysis.test_harnesses {
+                config.analysis.test_harnesses = parse_test_harness_registrations(registrations)?;
+            }
+        }
+        if let Some(oracles) = raw.oracles {
+            if let Some(strength) = oracles.snapshot_strength {
+                // The key-named message (#4534) rides in `message`; the
+                // diagnostic additionally carries the span and expected values.
+                config.oracles.snapshot_strength =
+                    parse_oracle_strength("oracles.snapshot_strength", strength.get_ref())
+                        .map_err(|message| {
+                            ConfigDiagnostic::at_value(
+                                message,
+                                "oracles.snapshot_strength",
+                                strength.span(),
+                                text,
+                            )
+                        })?;
+            }
+            if let Some(strength) = oracles.mock_expectation_strength {
+                config.oracles.mock_expectation_strength =
+                    parse_oracle_strength("oracles.mock_expectation_strength", strength.get_ref())
+                        .map_err(|message| {
+                            ConfigDiagnostic::at_value(
+                                message,
+                                "oracles.mock_expectation_strength",
+                                strength.span(),
+                                text,
+                            )
+                        })?;
+            }
+            if let Some(strength) = oracles.broad_error_strength {
+                config.oracles.broad_error_strength =
+                    parse_oracle_strength("oracles.broad_error_strength", strength.get_ref())
+                        .map_err(|message| {
+                            ConfigDiagnostic::at_value(
+                                message,
+                                "oracles.broad_error_strength",
+                                strength.span(),
+                                text,
+                            )
+                        })?;
+            }
+        }
+        if let Some(severity) = raw.severity {
+            config.severity = merge_severity(config.severity, severity, text)?;
+        }
+        if let Some(lsp) = raw.lsp {
+            if let Some(seam_diagnostics) = lsp.seam_diagnostics {
+                config.lsp.seam_diagnostics = Some(seam_diagnostics);
+            }
+            if let Some(profile) = lsp.diagnostic_profile {
+                config.lsp.diagnostic_profile = Some(
+                    LspDiagnosticProfile::parse(profile.get_ref()).map_err(|err| {
+                        ConfigDiagnostic::at_value(
+                            format!("{err} in [lsp]"),
+                            "lsp.diagnostic_profile",
+                            profile.span(),
+                            text,
+                        )
+                    })?,
+                );
+            }
+        }
+        if let Some(reports) = raw.reports
+            && let Some(max) = reports.max_related_tests
+        {
+            // #7353: zero silently empties `related_tests` in every context
+            // packet; fail closed like the neighboring keys instead of
+            // accepting a value whose only effect is invisible evidence
+            // loss. The explicit `--max-related-tests 0` render cap keeps
+            // its own deliberate per-invocation contract (#4318).
+            if max == 0 {
+                return Err("reports.max_related_tests must be at least 1; remove the key for the default (5)".to_string().into());
+            }
+            config.reports.max_related_tests = max;
+        }
+        if let Some(suppressions) = raw.suppressions
+            && let Some(path) = suppressions.path
+        {
+            config.suppressions.path = parse_relative_path("suppressions.path", &path)?;
+        }
+        if let Some(languages) = raw.languages {
+            if let Some(enabled) = languages.enabled {
+                config.languages.enabled = parse_languages_enabled(&enabled)?;
+            }
+            if let Some(rust) = languages.rust {
+                if let Some(patterns) = rust.generated_file_patterns {
+                    config.languages.rust.generated_file_patterns =
+                        parse_generated_file_patterns(&patterns)?;
+                }
+                if let Some(paths) = rust.handwritten_files {
+                    config.languages.rust.handwritten_files = parse_handwritten_files(
+                        &paths,
+                        "languages.rust.handwritten_files",
+                        "a Rust `.rs` file",
+                        |extension| extension == "rs",
+                    )?;
+                }
+            }
+            if let Some(python) = languages.python {
+                if let Some(paths) = python.handwritten_files {
+                    config.languages.python.handwritten_files = parse_handwritten_files(
+                        &paths,
+                        "languages.python.handwritten_files",
+                        "a Python `.py` file",
+                        |extension| extension == "py",
+                    )?;
+                }
+                if let Some(patterns) = python.excluded_file_patterns {
+                    config.languages.python.excluded_file_patterns = parse_path_glob_patterns(
+                        "languages.python.excluded_file_patterns",
+                        &patterns,
+                    )?;
+                }
+            }
+            if let Some(typescript) = languages.typescript {
+                if let Some(paths) = typescript.handwritten_files {
+                    config.languages.typescript.handwritten_files = parse_handwritten_files(
+                        &paths,
+                        "languages.typescript.handwritten_files",
+                        "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
+                        crate::analysis::is_ts_js_source_extension,
+                    )?;
+                }
+                if let Some(patterns) = typescript.excluded_file_patterns {
+                    config.languages.typescript.excluded_file_patterns = parse_path_glob_patterns(
+                        "languages.typescript.excluded_file_patterns",
+                        &patterns,
+                    )?;
+                }
+            }
+        }
+        if let Some(profiles) = raw.profiles {
+            config.profiles = parse_profiles(profiles)?;
+        }
+        if let Some(ts) = raw.typescript {
+            config.typescript = TypescriptConfig {
+                resolve_tsconfig_paths: ts.resolve_tsconfig_paths.unwrap_or(true),
+            };
+        }
+        if let Some(perl) = raw.perl {
+            // #7353: zero used to be silently coerced back to the default
+            // by the accessor, so a user meaning "no timeout" got an
+            // undocumented 30 s limit; fail closed at parse like the other
+            // keys.
+            if perl.timeout_ms == Some(0) {
+                return Err("perl.timeout_ms must be at least 1 millisecond; remove the key for the default (30000)".to_string().into());
+            }
+            // #7669: `[perl].producer` is a closed managed-mode selector.
+            // Reuse `is_managed_perl_producer` so a typo cannot pass
+            // `ripr config validate` and then silently skip managed mode.
+            let producer = match perl.producer {
+                Some(value) => {
+                    let name = value.get_ref();
+                    if !crate::app::is_managed_perl_producer(name) {
+                        return Err(Box::new(ConfigDiagnostic::at_value(
+                            format!(
+                                "perl.producer `{name}` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp"
+                            ),
+                            "perl.producer",
+                            value.span(),
+                            text,
+                        )));
+                    }
+                    Some(name.clone())
+                }
+                None => None,
+            };
+            if let Some(executable) = &perl.executable {
+                if executable.contains('\0') {
+                    return Err("perl.executable must not contain NUL characters"
+                        .to_string()
+                        .into());
+                }
+                if executable.is_empty() {
+                    return Err("perl.executable must not be empty; remove the key to use the default exporter".to_string().into());
+                }
+            }
+            config.perl = PerlConfig {
+                producer,
+                executable: perl.executable.map(PathBuf::from),
+                timeout_ms: perl.timeout_ms.unwrap_or(30_000),
+                // Repository config: ripr creates, writes and renames files
+                // here, so it must not name a directory outside the checkout.
+                cache_dir: perl
+                    .cache_dir
+                    .map(|path| parse_relative_path("perl.cache_dir", &path))
+                    .transpose()?,
+            };
+        }
+        if let Some(overrides) = raw.overrides {
+            config.overrides = parse_overrides(overrides, text)?;
+            overrides::sync_compiled_overlays(&mut config);
+        }
+        Ok(config)
+    }
+}
+
+fn parse_languages_enabled(values: &[String]) -> Result<Vec<LanguageId>, String> {
+    if values.iter().any(|value| value == "javascript")
+        && values.iter().any(|value| value == "typescript")
+    {
+        return Err(
+            "languages.enabled lists `javascript` together with `typescript`; `javascript` is an alias for `typescript`, so list only one of them"
+                .to_string(),
+        );
+    }
+    let mut parsed = Vec::with_capacity(values.len());
+    for value in values {
+        let language = match value.as_str() {
+            "rust" => LanguageId::Rust,
+            "typescript" => LanguageId::TypeScript,
+            // JavaScript is analyzed by the TypeScript adapter and is
+            // emitted as its own language label in output, so naming it
+            // here enables that same adapter instead of failing.
+            "javascript" => LanguageId::TypeScript,
+            "python" => LanguageId::Python,
+            "perl" => LanguageId::Perl,
+            other => {
+                return Err(format!(
+                    "languages.enabled lists unknown language `{other}`; valid values are rust, typescript, javascript (alias for typescript), python, perl (Perl consumes externally-produced fact packets; use --perl-facts <path> or a configured managed [perl].producer)"
+                ));
+            }
+        };
+        if parsed.contains(&language) {
+            return Err(format!(
+                "languages.enabled lists `{value}` more than once; remove the duplicate"
+            ));
+        }
+        let report = resolve_language_availability(&LanguageAvailabilityInput {
+            configured: ConfiguredIntent::Enabled,
+            ..LanguageAvailabilityInput::for_language(language)
+        });
+        if let Some(recovery) = unavailable_recovery(&report) {
+            return Err(format!(
+                "languages.enabled lists `{value}`, but this ripr binary was built without Cargo feature `{}`; {recovery}",
+                report.compile_feature,
+            ));
+        }
+        parsed.push(language);
+    }
+    Ok(parsed)
+}
+
+fn parse_generated_file_patterns(values: &[String]) -> Result<Vec<String>, String> {
+    parse_path_glob_patterns("languages.rust.generated_file_patterns", values)
+}
+
+fn parse_path_glob_patterns(field: &str, values: &[String]) -> Result<Vec<String>, String> {
+    let mut parsed = Vec::with_capacity(values.len());
+    // Set membership keeps duplicate detection linear: a hostile `ripr.toml`
+    // may list tens of thousands of entries (#11560).
+    let mut seen = std::collections::HashSet::with_capacity(values.len());
+    for value in values {
+        if value.chars().any(char::is_control) {
+            return Err(format!("{field} must not contain control characters"));
+        }
+        let trimmed = value.trim();
+        parse_relative_path(field, trimmed)?;
+        if trimmed == "." {
+            return Err(format!("{field} must identify a file pattern, not `.`"));
+        }
+        if !seen.insert(trimmed) {
+            return Err(format!(
+                "{field} lists `{trimmed}` more than once; remove the duplicate"
+            ));
+        }
+        parsed.push(trimmed.to_string());
+    }
+    Ok(parsed)
+}
+
+fn parse_handwritten_files(
+    values: &[String],
+    field: &str,
+    extension_desc: &str,
+    extension_ok: impl Fn(&str) -> bool,
+) -> Result<Vec<String>, String> {
+    let mut parsed = Vec::with_capacity(values.len());
+    let mut seen = std::collections::HashSet::with_capacity(values.len());
+    for value in values {
+        if value.chars().any(char::is_control) {
+            return Err(format!("{field} must not contain control characters"));
+        }
+        if value.contains(['*', '?', '[', ']']) {
+            return Err(format!(
+                "{field} must contain exact file paths, not glob patterns"
+            ));
+        }
+        let path = parse_relative_path(field, value)?;
+        if path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_none_or(|extension| !extension_ok(extension))
+        {
+            return Err(format!("{field} must identify {extension_desc}"));
+        }
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        if !seen.insert(normalized.clone()) {
+            return Err(format!(
+                "{field} lists `{normalized}` more than once; remove the duplicate"
+            ));
+        }
+        parsed.push(normalized);
+    }
+    parsed.sort_unstable();
+    Ok(parsed)
+}
+
+fn parse_overrides(
+    raw: Vec<RawOverride>,
+    text: &str,
+) -> Result<Vec<overrides::ConfigOverride>, Box<ConfigDiagnostic>> {
+    let mut parsed = Vec::with_capacity(raw.len());
+    for (index, row) in raw.into_iter().enumerate() {
+        let selector = match (row.crate_name, row.path) {
+            (Some(name), None) => {
+                overrides::OverrideSelector::Crate(overrides::parse_crate_selector(&name)?)
+            }
+            (None, Some(path)) => {
+                overrides::OverrideSelector::Path(overrides::parse_path_selector(&path)?)
+            }
+            (Some(_), Some(_)) => {
+                return Err(format!(
+                    "[[overrides]] entry {} must set exactly one of crate or path, not both",
+                    index + 1
+                )
+                .into());
+            }
+            (None, None) => {
+                return Err(format!(
+                    "[[overrides]] entry {} must set crate (Cargo package name) or path (repository-relative glob)",
+                    index + 1
+                )
+                .into());
+            }
+        };
+        let severity = row
+            .severity
+            .map(|raw_severity| parse_partial_severity(raw_severity, text, index))
+            .transpose()?;
+        let oracles = row
+            .oracles
+            .map(|raw_oracles| parse_partial_oracles(raw_oracles, text, index))
+            .transpose()?;
+        if severity
+            .as_ref()
+            .is_none_or(overrides::PartialSeverityConfig::is_empty)
+            && oracles
+                .as_ref()
+                .is_none_or(overrides::PartialOraclePolicy::is_empty)
+        {
+            return Err(format!(
+                "[[overrides]] entry {} must override severity or oracles",
+                index + 1
+            )
+            .into());
+        }
+        parsed.push(overrides::ConfigOverride {
+            selector,
+            severity,
+            oracles,
+            resolved_path_glob: None,
+            nested_package_dirs: Vec::new(),
+        });
+    }
+    Ok(parsed)
+}
+
+fn parse_partial_severity(
+    raw: RawSeverityConfig,
+    text: &str,
+    index: usize,
+) -> Result<overrides::PartialSeverityConfig, Box<ConfigDiagnostic>> {
+    let prefix = format!("overrides[{index}].severity");
+    let mut partial = overrides::PartialSeverityConfig::default();
+    if let Some(findings) = raw.findings {
+        partial.findings.exposed = optional_severity(
+            findings.exposed,
+            &format!("{prefix}.findings.exposed"),
+            false,
+            text,
+        )?;
+        partial.findings.weakly_exposed = optional_severity(
+            findings.weakly_exposed,
+            &format!("{prefix}.findings.weakly_exposed"),
+            false,
+            text,
+        )?;
+        partial.findings.reachable_unrevealed = optional_severity(
+            findings.reachable_unrevealed,
+            &format!("{prefix}.findings.reachable_unrevealed"),
+            false,
+            text,
+        )?;
+        partial.findings.no_static_path = optional_severity(
+            findings.no_static_path,
+            &format!("{prefix}.findings.no_static_path"),
+            false,
+            text,
+        )?;
+        partial.findings.infection_unknown = optional_severity(
+            findings.infection_unknown,
+            &format!("{prefix}.findings.infection_unknown"),
+            false,
+            text,
+        )?;
+        partial.findings.propagation_unknown = optional_severity(
+            findings.propagation_unknown,
+            &format!("{prefix}.findings.propagation_unknown"),
+            false,
+            text,
+        )?;
+        partial.findings.static_unknown = optional_severity(
+            findings.static_unknown,
+            &format!("{prefix}.findings.static_unknown"),
+            false,
+            text,
+        )?;
+    }
+    if let Some(seams) = raw.seams {
+        partial.seams.strongly_gripped = optional_severity(
+            seams.strongly_gripped,
+            &format!("{prefix}.seams.strongly_gripped"),
+            true,
+            text,
+        )?;
+        partial.seams.weakly_gripped = optional_severity(
+            seams.weakly_gripped,
+            &format!("{prefix}.seams.weakly_gripped"),
+            true,
+            text,
+        )?;
+        partial.seams.ungripped = optional_severity(
+            seams.ungripped,
+            &format!("{prefix}.seams.ungripped"),
+            true,
+            text,
+        )?;
+        partial.seams.reachable_unrevealed = optional_severity(
+            seams.reachable_unrevealed,
+            &format!("{prefix}.seams.reachable_unrevealed"),
+            true,
+            text,
+        )?;
+        partial.seams.activation_unknown = optional_severity(
+            seams.activation_unknown,
+            &format!("{prefix}.seams.activation_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.propagation_unknown = optional_severity(
+            seams.propagation_unknown,
+            &format!("{prefix}.seams.propagation_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.observation_unknown = optional_severity(
+            seams.observation_unknown,
+            &format!("{prefix}.seams.observation_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.discrimination_unknown = optional_severity(
+            seams.discrimination_unknown,
+            &format!("{prefix}.seams.discrimination_unknown"),
+            true,
+            text,
+        )?;
+        partial.seams.opaque =
+            optional_severity(seams.opaque, &format!("{prefix}.seams.opaque"), true, text)?;
+        partial.seams.intentional = optional_severity(
+            seams.intentional,
+            &format!("{prefix}.seams.intentional"),
+            true,
+            text,
+        )?;
+        partial.seams.suppressed = optional_severity(
+            seams.suppressed,
+            &format!("{prefix}.seams.suppressed"),
+            true,
+            text,
+        )?;
+    }
+    Ok(partial)
+}
+
+fn parse_partial_oracles(
+    raw: RawOraclePolicy,
+    text: &str,
+    index: usize,
+) -> Result<overrides::PartialOraclePolicy, Box<ConfigDiagnostic>> {
+    let prefix = format!("overrides[{index}].oracles");
+    Ok(overrides::PartialOraclePolicy {
+        snapshot_strength: optional_oracle_strength(
+            raw.snapshot_strength,
+            &format!("{prefix}.snapshot_strength"),
+            text,
+        )?,
+        mock_expectation_strength: optional_oracle_strength(
+            raw.mock_expectation_strength,
+            &format!("{prefix}.mock_expectation_strength"),
+            text,
+        )?,
+        broad_error_strength: optional_oracle_strength(
+            raw.broad_error_strength,
+            &format!("{prefix}.broad_error_strength"),
+            text,
+        )?,
+    })
+}
+
+fn optional_severity(
+    raw: Option<toml::Spanned<String>>,
+    field: &str,
+    allow_off: bool,
+    text: &str,
+) -> Result<Option<ConfigSeverity>, Box<ConfigDiagnostic>> {
+    raw.map(|value| {
+        parse_severity(field, value.get_ref(), allow_off).map_err(|message| {
+            Box::new(ConfigDiagnostic::at_value(
+                message,
+                field,
+                value.span(),
+                text,
+            ))
+        })
+    })
+    .transpose()
+}
+
+fn optional_oracle_strength(
+    raw: Option<toml::Spanned<String>>,
+    field: &str,
+    text: &str,
+) -> Result<Option<OracleStrength>, Box<ConfigDiagnostic>> {
+    raw.map(|value| {
+        parse_oracle_strength(field, value.get_ref()).map_err(|message| {
+            Box::new(ConfigDiagnostic::at_value(
+                message,
+                field,
+                value.span(),
+                text,
+            ))
+        })
+    })
+    .transpose()
+}
+
+fn parse_profiles(raw: RawProfilesConfig) -> Result<ProfilesConfig, String> {
+    Ok(ProfilesConfig {
+        bun_ub: raw.bun_ub.map(parse_bun_ub_profile).transpose()?,
+    })
+}
+
+fn parse_bun_ub_profile(raw: RawBunUbProfileConfig) -> Result<BunUbProfileConfig, String> {
+    let test_roots = raw
+        .test_roots
+        .ok_or_else(|| "profiles.bun_ub.test_roots is required".to_string())?;
+    if test_roots.is_empty() {
+        return Err("profiles.bun_ub.test_roots must list at least one test root".to_string());
+    }
+    let mut parsed_roots = Vec::with_capacity(test_roots.len());
+    let mut seen = std::collections::HashSet::with_capacity(test_roots.len());
+    for root in test_roots {
+        let trimmed = root.trim();
+        parse_relative_path("profiles.bun_ub.test_roots", trimmed)?;
+        if !seen.insert(trimmed.to_string()) {
+            return Err(format!(
+                "profiles.bun_ub.test_roots lists `{trimmed}` more than once; remove the duplicate"
+            ));
+        }
+        parsed_roots.push(trimmed.to_string());
+    }
+    let bridge_hints = raw
+        .bridge_hints
+        .ok_or_else(|| "profiles.bun_ub.bridge_hints is required".to_string())
+        .and_then(|path| parse_relative_path("profiles.bun_ub.bridge_hints", &path))?;
+    Ok(BunUbProfileConfig {
+        test_roots: parsed_roots,
+        bridge_hints,
+    })
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawConfig {
+    analysis: Option<RawAnalysisConfig>,
+    oracles: Option<RawOraclePolicy>,
+    severity: Option<RawSeverityConfig>,
+    lsp: Option<RawLspConfig>,
+    reports: Option<RawReportsConfig>,
+    suppressions: Option<RawSuppressionsConfig>,
+    languages: Option<RawLanguagesConfig>,
+    profiles: Option<RawProfilesConfig>,
+    typescript: Option<RawTypescriptConfig>,
+    perl: Option<RawPerlConfig>,
+    overrides: Option<Vec<RawOverride>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawOverride {
+    #[serde(rename = "crate")]
+    crate_name: Option<String>,
+    path: Option<String>,
+    severity: Option<RawSeverityConfig>,
+    oracles: Option<RawOraclePolicy>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawTypescriptConfig {
+    resolve_tsconfig_paths: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawLanguagesConfig {
+    enabled: Option<Vec<String>>,
+    rust: Option<RawRustLanguageConfig>,
+    python: Option<RawPythonLanguageConfig>,
+    typescript: Option<RawTypescriptLanguageConfig>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawRustLanguageConfig {
+    generated_file_patterns: Option<Vec<String>>,
+    handwritten_files: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawPythonLanguageConfig {
+    handwritten_files: Option<Vec<String>>,
+    excluded_file_patterns: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawTypescriptLanguageConfig {
+    handwritten_files: Option<Vec<String>>,
+    excluded_file_patterns: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawPerlConfig {
+    producer: Option<toml::Spanned<String>>,
+    executable: Option<String>,
+    timeout_ms: Option<u64>,
+    cache_dir: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawProfilesConfig {
+    bun_ub: Option<RawBunUbProfileConfig>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawBunUbProfileConfig {
+    test_roots: Option<Vec<String>>,
+    bridge_hints: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawAnalysisConfig {
+    mode: Option<toml::Spanned<String>>,
+    include_unchanged_tests: Option<bool>,
+    production_like_targets: Option<Vec<String>>,
+    test_harnesses: Option<Vec<RawTestHarnessRegistration>>,
+}
+
+/// Raw `[analysis.test_harnesses]` entry (#3532). Every field is exact:
+/// unknown values, root escapes, and kind/adapter mismatches fail closed
+/// at parse time with named errors.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawTestHarnessRegistration {
+    registration_id: Option<String>,
+    target: Option<String>,
+    kind: Option<String>,
+    adapter: Option<String>,
+    marker: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawOraclePolicy {
+    snapshot_strength: Option<toml::Spanned<String>>,
+    mock_expectation_strength: Option<toml::Spanned<String>>,
+    broad_error_strength: Option<toml::Spanned<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawLspConfig {
+    seam_diagnostics: Option<bool>,
+    diagnostic_profile: Option<toml::Spanned<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawReportsConfig {
+    max_related_tests: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawSuppressionsConfig {
+    path: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawSeverityConfig {
+    findings: Option<RawFindingSeverityConfig>,
+    seams: Option<RawSeamSeverityConfig>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawFindingSeverityConfig {
+    exposed: Option<toml::Spanned<String>>,
+    weakly_exposed: Option<toml::Spanned<String>>,
+    reachable_unrevealed: Option<toml::Spanned<String>>,
+    no_static_path: Option<toml::Spanned<String>>,
+    infection_unknown: Option<toml::Spanned<String>>,
+    propagation_unknown: Option<toml::Spanned<String>>,
+    static_unknown: Option<toml::Spanned<String>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawSeamSeverityConfig {
+    strongly_gripped: Option<toml::Spanned<String>>,
+    weakly_gripped: Option<toml::Spanned<String>>,
+    ungripped: Option<toml::Spanned<String>>,
+    reachable_unrevealed: Option<toml::Spanned<String>>,
+    activation_unknown: Option<toml::Spanned<String>>,
+    propagation_unknown: Option<toml::Spanned<String>>,
+    observation_unknown: Option<toml::Spanned<String>>,
+    discrimination_unknown: Option<toml::Spanned<String>>,
+    opaque: Option<toml::Spanned<String>>,
+    intentional: Option<toml::Spanned<String>>,
+    suppressed: Option<toml::Spanned<String>>,
+}
+
+fn merge_severity(
+    mut current: SeverityConfig,
+    raw: RawSeverityConfig,
+    text: &str,
+) -> Result<SeverityConfig, Box<ConfigDiagnostic>> {
+    if let Some(findings) = raw.findings {
+        merge_finding_severity(&mut current.findings, findings, text)?;
+    }
+    if let Some(seams) = raw.seams {
+        merge_seam_severity(&mut current.seams, seams, text)?;
+    }
+    Ok(current)
+}
+
+fn merge_finding_severity(
+    current: &mut FindingSeverityConfig,
+    raw: RawFindingSeverityConfig,
+    text: &str,
+) -> Result<(), Box<ConfigDiagnostic>> {
+    assign_severity(
+        &mut current.exposed,
+        raw.exposed,
+        "severity.findings.exposed",
+        false,
+        text,
+    )?;
+    assign_severity(
+        &mut current.weakly_exposed,
+        raw.weakly_exposed,
+        "severity.findings.weakly_exposed",
+        false,
+        text,
+    )?;
+    assign_severity(
+        &mut current.reachable_unrevealed,
+        raw.reachable_unrevealed,
+        "severity.findings.reachable_unrevealed",
+        false,
+        text,
+    )?;
+    assign_severity(
+        &mut current.no_static_path,
+        raw.no_static_path,
+        "severity.findings.no_static_path",
+        false,
+        text,
+    )?;
+    assign_severity(
+        &mut current.infection_unknown,
+        raw.infection_unknown,
+        "severity.findings.infection_unknown",
+        false,
+        text,
+    )?;
+    assign_severity(
+        &mut current.propagation_unknown,
+        raw.propagation_unknown,
+        "severity.findings.propagation_unknown",
+        false,
+        text,
+    )?;
+    assign_severity(
+        &mut current.static_unknown,
+        raw.static_unknown,
+        "severity.findings.static_unknown",
+        false,
+        text,
+    )?;
+    Ok(())
+}
+
+fn merge_seam_severity(
+    current: &mut SeamSeverityConfig,
+    raw: RawSeamSeverityConfig,
+    text: &str,
+) -> Result<(), Box<ConfigDiagnostic>> {
+    assign_severity(
+        &mut current.strongly_gripped,
+        raw.strongly_gripped,
+        "severity.seams.strongly_gripped",
+        true,
+        text,
+    )?;
+    assign_severity(
+        &mut current.weakly_gripped,
+        raw.weakly_gripped,
+        "severity.seams.weakly_gripped",
+        true,
+        text,
+    )?;
+    assign_severity(
+        &mut current.ungripped,
+        raw.ungripped,
+        "severity.seams.ungripped",
+        true,
+        text,
+    )?;
+    assign_severity(
+        &mut current.reachable_unrevealed,
+        raw.reachable_unrevealed,
+        "severity.seams.reachable_unrevealed",
+        true,
+        text,
+    )?;
+    assign_severity(
+        &mut current.activation_unknown,
+        raw.activation_unknown,
+        "severity.seams.activation_unknown",
+        true,
+        text,
+    )?;
+    assign_severity(
+        &mut current.propagation_unknown,
+        raw.propagation_unknown,
+        "severity.seams.propagation_unknown",
+        true,
+        text,
+    )?;
+    assign_severity(
+        &mut current.observation_unknown,
+        raw.observation_unknown,
+        "severity.seams.observation_unknown",
+        true,
+        text,
+    )?;
+    assign_severity(
+        &mut current.discrimination_unknown,
+        raw.discrimination_unknown,
+        "severity.seams.discrimination_unknown",
+        true,
+        text,
+    )?;
+    assign_severity(
+        &mut current.opaque,
+        raw.opaque,
+        "severity.seams.opaque",
+        true,
+        text,
+    )?;
+    assign_severity(
+        &mut current.intentional,
+        raw.intentional,
+        "severity.seams.intentional",
+        true,
+        text,
+    )?;
+    assign_severity(
+        &mut current.suppressed,
+        raw.suppressed,
+        "severity.seams.suppressed",
+        true,
+        text,
+    )?;
+    Ok(())
+}
+
+fn assign_severity(
+    target: &mut ConfigSeverity,
+    raw: Option<toml::Spanned<String>>,
+    field: &str,
+    allow_off: bool,
+    text: &str,
+) -> Result<(), Box<ConfigDiagnostic>> {
+    if let Some(value) = raw {
+        *target = parse_severity(field, value.get_ref(), allow_off)
+            .map_err(|message| ConfigDiagnostic::at_value(message, field, value.span(), text))?;
+    }
+    Ok(())
+}
+
+fn parse_mode_value(value: &str) -> Result<Mode, String> {
+    match value {
+        "instant" => Ok(Mode::Instant),
+        "draft" => Ok(Mode::Draft),
+        "fast" => Ok(Mode::Fast),
+        "deep" => Ok(Mode::Deep),
+        "ready" => Ok(Mode::Ready),
+        _ => Err(format!(
+            "analysis.mode `{value}` is not supported; expected instant, draft, fast, deep, or ready"
+        )),
+    }
+}
+
+fn parse_oracle_strength(field: &str, value: &str) -> Result<OracleStrength, String> {
+    match value {
+        "strong" => Ok(OracleStrength::Strong),
+        "medium" => Ok(OracleStrength::Medium),
+        "weak" => Ok(OracleStrength::Weak),
+        "smoke" => Ok(OracleStrength::Smoke),
+        "none" => Ok(OracleStrength::None),
+        "unknown" => Ok(OracleStrength::Unknown),
+        _ => Err(format!(
+            "{field} `{value}` is not supported; expected strong, medium, weak, smoke, none, or unknown"
+        )),
+    }
+}
+
+fn parse_severity(field: &str, value: &str, allow_off: bool) -> Result<ConfigSeverity, String> {
+    match value {
+        "info" => Ok(ConfigSeverity::Info),
+        "warning" => Ok(ConfigSeverity::Warning),
+        "note" => Ok(ConfigSeverity::Note),
+        "off" if allow_off => Ok(ConfigSeverity::Off),
+        "off" => Err(format!(
+            "{field} cannot be `off`; use suppressions for accepted debt"
+        )),
+        _ => Err(format!(
+            "{field} `{value}` is not supported; expected info, warning, or note{}",
+            if allow_off { ", or off" } else { "" }
+        )),
+    }
+}
+
+fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
+    // TOML permits escaped NULs, but filesystem paths cannot contain them.
+    // Reject them here instead of validating a path that later looks absent
+    // (Path::exists) or fails to open. Do not echo the control byte.
+    if value.contains('\0') {
+        return Err(format!("{field} must not contain NUL characters"));
+    }
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{field} must not be empty"));
+    }
+    if trimmed.contains('\\') {
+        return Err(format!(
+            "{field} `{value}` uses backslashes; use `/` separators"
+        ));
+    }
+    if trimmed.contains(':') {
+        return Err(format!(
+            "{field} `{value}` uses a drive or scheme prefix; use a repository-relative path"
+        ));
+    }
+    // `.` segments are normalized away rather than rejected: shared path
+    // settings legitimately carry `./` prefixes, and canonical target
+    // identity needs `./tests/a.rs` and `tests/a.rs` to be one path.
+    // Normalization stays on the `/`-separated string form so the stored
+    // path keeps its workspace-relative display on every host.
+    if trimmed.starts_with('/') {
+        return Err(format!(
+            "{field} `{value}` uses a leading `/`; use a repository-relative path"
+        ));
+    }
+    let normalized = trimmed
+        .split('/')
+        .filter(|segment| !segment.is_empty() && *segment != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+    if normalized.is_empty() {
+        return Err(format!("{field} `{value}` must name a path"));
+    }
+    let path = PathBuf::from(&normalized);
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err(format!("{field} `{value}` must stay within the repository"));
+    }
+    Ok(path)
+}
+
+/// Parse and validate `[analysis.test_harnesses]` entries (#3532).
+///
+/// Fail-closed rules, each with a named error:
+/// - every field is required (missing fields fail, not default);
+/// - `target` must be a repository-relative path ([`parse_relative_path`]);
+/// - `kind` and `adapter` must be known values (unknown versions fail
+///   closed) and must match each other;
+/// - `marker` must be an exact identifier path — no wildcards, globs,
+///   prefixes, or attribute arguments;
+/// - duplicate `registration_id`s or two registrations claiming the same
+///   `target` are non-clean and named.
+fn parse_test_harness_registrations(
+    registrations: Vec<RawTestHarnessRegistration>,
+) -> Result<Vec<TestHarnessRegistration>, String> {
+    let mut parsed = Vec::with_capacity(registrations.len());
+    let mut seen_ids = std::collections::BTreeSet::new();
+    let mut seen_targets = std::collections::BTreeSet::new();
+    for (index, raw) in registrations.into_iter().enumerate() {
+        let position = format!("analysis.test_harnesses[{index}]");
+        let registration_id = required_text(&position, "registration_id", raw.registration_id)?;
+        if !seen_ids.insert(registration_id.clone()) {
+            return Err(format!(
+                "{position}: registration_id `{registration_id}` is registered twice; conflicting registrations fail closed"
+            ));
+        }
+        let target = parse_relative_path(
+            &format!("{position}.target"),
+            &required_text(&position, "target", raw.target)?,
+        )?;
+        if !seen_targets.insert(normalize_identity_path(&target)) {
+            return Err(format!(
+                "{position}: target `{}` is claimed by two registrations; conflicting registrations fail closed",
+                target.to_string_lossy().replace('\\', "/")
+            ));
+        }
+        let kind = TestHarnessKind::parse(&required_text(&position, "kind", raw.kind)?)?;
+        let adapter =
+            TestHarnessAdapter::parse(&required_text(&position, "adapter", raw.adapter)?)?;
+        if !adapter.supports_kind(kind) {
+            return Err(format!(
+                "{position}: adapter `{}` does not support kind `{}`; the mismatch fails closed",
+                adapter.as_str(),
+                kind.as_str()
+            ));
+        }
+        let marker = required_text(&position, "marker", raw.marker)?;
+        if !marker_path_is_exact(&marker) {
+            return Err(format!(
+                "{position}: marker `{marker}` must be an exact identifier path (e.g. `libtest_mimic`, `myco::contract_test`) without wildcards, prefixes, or arguments"
+            ));
+        }
+        parsed.push(TestHarnessRegistration {
+            registration_id,
+            target,
+            kind,
+            adapter,
+            marker,
+        });
+    }
+    Ok(parsed)
+}
+
+fn required_text(position: &str, field: &str, value: Option<String>) -> Result<String, String> {
+    match value {
+        Some(text) if !text.trim().is_empty() => Ok(text.trim().to_string()),
+        Some(_) => Err(format!("{position}.{field} must not be empty")),
+        None => Err(format!("{position}.{field} is required")),
+    }
+}
+
+fn normalize_identity_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// Exact marker paths only: `::`-separated Rust identifiers, no
+/// wildcards, globs, whitespace, or attribute arguments. A lookalike
+/// marker (`myco::contract_test*`, `myco::contract_test(`) never parses.
+fn marker_path_is_exact(marker: &str) -> bool {
+    !marker.is_empty()
+        && marker.split("::").all(|segment| {
+            let mut characters = segment.chars();
+            matches!(characters.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+                && characters.all(|rest| rest.is_ascii_alphanumeric() || rest == '_')
+        })
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "Tests assert an expected config diagnostic via `.expect_err(\"why\")`; the closure-style helper makes the expected failure mode part of the assertion message."
+)]
+mod tests;
+
+/// Typed `config_for_candidate` failure (#6956): a stalled
+/// candidate-tree config read stays a timeout so the refusal names
+/// `git_invocation_timeout`, never `config_invalid`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CandidateConfigError {
+    Timeout {
+        operation: String,
+        timeout_ms: u128,
+        spawned: bool,
+    },
+    Other(String),
+}
+
+impl std::fmt::Display for CandidateConfigError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Timeout {
+                operation,
+                timeout_ms,
+                spawned,
+            } => crate::core_error::CoreError::git_invocation_timeout(
+                operation.clone(),
+                *timeout_ms,
+                *spawned,
+            )
+            .fmt(formatter),
+            Self::Other(message) => formatter.write_str(message),
+        }
+    }
+}
+
+const CANDIDATE_CONFIG_PARSE_HINT: &str = concat!(
+    "Fix the error above in the candidate's ripr.toml, or remove that file ",
+    "to use the built-in defaults; create a new candidate tree and rerun ",
+    "with its --candidate-tree value. Editing only the working-tree file ",
+    "does not change this candidate."
+);
+
+/// The config a bound immutable-subject run uses (#3279 R4): the
+/// candidate tree's own `ripr.toml` when the tree carries one, else the
+/// default config. The worktree file (already loaded as `worktree`)
+/// contributes nothing — `source_path`/`source_text` are cleared so the
+/// recorded identity cannot claim the worktree file as its source.
+///
+/// The config read honors the run's effective git deadline (#6956), so
+/// `--git-timeout`/`RIPR_GIT_TIMEOUT` (and `0` for no deadline) reach it
+/// like every other git wait, and the timeout repair guidance stays
+/// effective.
+pub(crate) fn config_for_candidate(
+    subject: &crate::domain::GitCandidateSubject,
+    worktree: &RiprConfig,
+    git_timeout: Option<std::time::Duration>,
+) -> Result<RiprConfig, CandidateConfigError> {
+    use crate::domain::GitCandidateSubjectError;
+    let bytes =
+        crate::analysis::git_candidate_execution::candidate_config_bytes(subject, git_timeout)
+            .map_err(|error| match error {
+                GitCandidateSubjectError::ExecutionTimedOut {
+                    operation,
+                    timeout_ms,
+                    spawned,
+                } => CandidateConfigError::Timeout {
+                    operation,
+                    timeout_ms,
+                    spawned,
+                },
+                other => CandidateConfigError::Other(other.to_string()),
+            })?;
+    let Some(text) = bytes else {
+        // Pure default: no worktree fact may enter a subject run
+        // (#3279 review B1 — the worktree's enabled-languages list is
+        // mutable state, and toggling it flipped subject completeness).
+        // Binary capability is already inside the default config.
+        let _ = worktree;
+        return Ok(RiprConfig::default());
+    };
+    let mut config = parse_config(&text).map_err(|err| {
+        CandidateConfigError::Other(format!(
+            "candidate tree ripr.toml: {}\n{CANDIDATE_CONFIG_PARSE_HINT}",
+            err.trim_end()
+        ))
+    })?;
+    config.source_path = None;
+    config.source_text = Some(text);
+    if config.has_crate_override_selectors() {
+        let manifests = crate::analysis::git_candidate_execution::candidate_cargo_toml_manifests(
+            subject,
+            git_timeout,
+        )
+        .map_err(|error| match error {
+            GitCandidateSubjectError::ExecutionTimedOut {
+                operation,
+                timeout_ms,
+                spawned,
+            } => CandidateConfigError::Timeout {
+                operation,
+                timeout_ms,
+                spawned,
+            },
+            other => CandidateConfigError::Other(other.to_string()),
+        })?;
+        config
+            .bind_workspace_crates(overrides::crates_from_listed_manifests(&manifests))
+            .map_err(|err| {
+                CandidateConfigError::Other(format!(
+                    "candidate tree ripr.toml: {}\n{CANDIDATE_CONFIG_PARSE_HINT}",
+                    err.trim_end()
+                ))
+            })?;
+    }
+    Ok(config)
+}

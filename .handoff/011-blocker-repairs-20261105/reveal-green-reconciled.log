@@ -1,0 +1,475 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-12010-successor/crates/ripr)
+warning: unused import: `sort_value_facts`
+  --> crates/ripr/src/analysis/classify/mod.rs:65:48
+   |
+65 |     pushed_literal_path, signature_parameters, sort_value_facts,
+   |                                                ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `withhold_truncated_discovery_gap`
+   --> crates/ripr/src/analysis/classify/mod.rs:117:32
+    |
+117 |     withhold_should_panic_gap, withhold_truncated_discovery_gap, withhold_unsupported_gap,
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `model::lines_look_alike`
+  --> crates/ripr/src/analysis/diff/mod.rs:30:16
+   |
+30 | pub(crate) use model::lines_look_alike;
+   |                ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `LanguageAdapter`
+ --> crates/ripr/src/analysis/pipeline.rs:8:5
+  |
+8 |     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused imports: `expected_sinks` and `required_oracles`
+  --> crates/ripr/src/analysis/probes/mod.rs:32:31
+   |
+32 | pub(crate) use expectations::{expected_sinks, required_oracles};
+   |                               ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+
+warning: unused imports: `collision_ordinals` and `collision_rank_key`
+  --> crates/ripr/src/analysis/probes/mod.rs:34:5
+   |
+34 |     collision_ordinals, collision_rank_key, fingerprint_probe_id, legacy_whole_line_diff_probe_id,
+   |     ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `normalize_expression`
+   --> crates/ripr/src/analysis/mod.rs:134:60
+    |
+134 |     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+    |                                                            ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `HashMap`
+   --> crates/ripr/src/analysis/mod.rs:569:34
+    |
+569 | use std::collections::{BTreeSet, HashMap};
+    |                                  ^^^^^^^
+
+warning: unused import: `is_probable_fixture_or_data_path`
+  --> crates/ripr/src/config.rs:60:5
+   |
+60 |     is_probable_fixture_or_data_path, path_matches_preview_excluded_patterns,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `declared_python_handwritten_under` and `is_python_dir_pruned_from_repo_discovery`
+  --> crates/ripr/src/config.rs:65:56
+   |
+65 |     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, declared_python_handwritten_under,
+   |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+68 |     is_python_dir_pruned_from_repo_discovery, is_python_excluded_dir_everywhere,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ripr_contract::domain::ConfidenceBasisInputs`
+  --> crates/ripr/src/domain.rs:46:16
+   |
+46 | pub(crate) use ripr_contract::domain::ConfidenceBasisInputs;
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ripr_contract::domain::row_exact_discriminator_fact`
+   --> crates/ripr/src/domain.rs:177:16
+    |
+177 | pub(crate) use ripr_contract::domain::row_exact_discriminator_fact;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ts_oracle_kind_matches_seam`
+   --> crates/ripr/src/domain.rs:183:46
+    |
+183 |     SourceUnitFactV1, TestEnvironmentFactV1, ts_oracle_kind_matches_seam,
+    |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `disable_retained_analysis_actions`
+ --> crates/ripr/src/lsp/tests.rs:2:53
+  |
+2 |     SERVER_EXECUTED_COMMANDS, code_action_response, disable_retained_analysis_actions,
+  |                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> crates/ripr/src/app/repair_attempt/mod.rs:5230:13
+     |
+5230 |         let mut targets = vec!["test/pricing.test.ts"];
+     |             ----^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> crates/ripr/src/app/repair_attempt/mod.rs:5487:13
+     |
+5487 |         let mut targets = vec!["tests/pricing.rs", "tests/helpers/mod.rs", "test/smoke.py"];
+     |             ----^^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: function `withhold_truncated_discovery_gap` is never used
+  --> crates/ripr/src/analysis/classify/gap_admission.rs:78:28
+   |
+78 | pub(in crate::analysis) fn withhold_truncated_discovery_gap(
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `zero_work` is never used
+  --> crates/ripr/src/analysis/language/adapter.rs:41:19
+   |
+37 | impl PreviewFactCacheStats {
+   | -------------------------- associated function in this implementation
+...
+41 |     pub(crate) fn zero_work() -> Self {
+   |                   ^^^^^^^^^
+
+warning: variant `Discovery` is never constructed
+   --> crates/ripr/src/analysis/language/adapter.rs:135:5
+    |
+133 | pub(crate) enum RepoLimitingStage {
+    |                 ----------------- variant in this enum
+134 |     /// The discovery walk stopped at its entry cap.
+135 |     Discovery,
+    |     ^^^^^^^^^
+    |
+    = note: `RepoLimitingStage` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `summed` is never used
+    --> crates/ripr/src/analysis/pipeline.rs:6874:8
+     |
+6874 |     fn summed(aggregate: &DiffLanguageAggregate) -> usize {
+     |        ^^^^^^
+
+warning: function `cache_layer_versioned_dir` is never used
+   --> crates/ripr/src/analysis/seam_cache.rs:141:15
+    |
+141 | pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `encode_integrity_body_compact` is never used
+    --> crates/ripr/src/analysis/seam_cache.rs:4220:15
+     |
+4220 | pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `preview_entry` is never used
+ --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:5:4
+  |
+5 | fn preview_entry(rendered: &str, context: &str) -> Result<Value, String> {
+  |    ^^^^^^^^^^^^^
+
+warning: function `write` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:16:4
+   |
+16 | fn write(path: &Path, contents: &str) -> Result<(), String> {
+   |    ^^^^^
+
+warning: function `temp_root` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:20:4
+   |
+20 | fn temp_root(name: &str) -> Result<std::path::PathBuf, String> {
+   |    ^^^^^^^^^
+
+warning: function `assert_renderer_agreement` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:30:4
+   |
+30 | fn assert_renderer_agreement(
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `language_runtime_probes` is never used
+    --> crates/ripr/src/cli/commands/doctor.rs:1458:4
+     |
+1458 | fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'static str)> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `posix_words` is never used
+    --> crates/ripr/src/cli/commands.rs:5026:8
+     |
+5026 |     fn posix_words(command: &str) -> Result<Vec<String>, String> {
+     |        ^^^^^^^^^^^
+
+warning: function `javascript_led_manifest_name` is never used
+   --> crates/ripr/src/config/typescript.rs:240:15
+    |
+240 | pub(crate) fn javascript_led_manifest_name(name: &str) -> Option<&'static str> {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `typescript_project_marker_name` is never used
+   --> crates/ripr/src/config/typescript.rs:381:15
+    |
+381 | pub(crate) fn typescript_project_marker_name(name: &str) -> Option<&'static str> {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `typescript_source_dir_marker_name` is never used
+   --> crates/ripr/src/config/typescript.rs:387:15
+    |
+387 | pub(crate) fn typescript_source_dir_marker_name(name: &str) -> Option<&'static str> {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `source_dir_contains_detectable_typescript` is never used
+   --> crates/ripr/src/config/typescript.rs:446:15
+    |
+446 | pub(crate) fn source_dir_contains_detectable_typescript(root: &Path, marker: &str) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_action_specs_omitted` is never used
+    --> crates/ripr/src/lsp/tests.rs:4708:4
+     |
+4708 | fn assert_gap_action_specs_omitted(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_actions_refresh_only` is never used
+    --> crates/ripr/src/lsp/tests.rs:4728:4
+     |
+4728 | fn assert_gap_actions_refresh_only(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `gap_action_commands_for_artifact` is never used
+    --> crates/ripr/src/lsp/tests.rs:4744:4
+     |
+4744 | fn gap_action_commands_for_artifact(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `gap_action_diagnostic_repair_ready` is never used
+    --> crates/ripr/src/lsp/tests.rs:6634:4
+     |
+6634 | fn gap_action_diagnostic_repair_ready() -> tower_lsp_server::ls_types::Diagnostic {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `PushPullParityProfile` is never used
+    --> crates/ripr/src/lsp/tests.rs:7914:6
+     |
+7914 | enum PushPullParityProfile {
+     |      ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `label` is never used
+    --> crates/ripr/src/lsp/tests.rs:7926:8
+     |
+7925 | impl PushPullParityProfile {
+     | -------------------------- method in this implementation
+7926 |     fn label(self) -> &'static str {
+     |        ^^^^^
+
+warning: function `push_pull_parity_initialize_params` is never used
+    --> crates/ripr/src/lsp/tests.rs:7939:4
+     |
+7939 | fn push_pull_parity_initialize_params(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `commit_push_pull_parity_fixture` is never used
+    --> crates/ripr/src/lsp/tests.rs:7994:4
+     |
+7994 | fn commit_push_pull_parity_fixture(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `action_availability_signature` is never used
+    --> crates/ripr/src/lsp/tests.rs:8055:4
+     |
+8055 | fn action_availability_signature(actions: &[CodeActionOrCommand]) -> Result<Vec<String>, String> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_parity_snapshot_admitted` is never used
+    --> crates/ripr/src/lsp/tests.rs:8094:4
+     |
+8094 | fn assert_parity_snapshot_admitted(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_actions_present` is never used
+    --> crates/ripr/src/lsp/tests.rs:8129:4
+     |
+8129 | fn assert_gap_actions_present(actions: &[CodeActionOrCommand], leg: &str) -> Result<(), String> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `run_push_pull_parity_leg` is never used
+    --> crates/ripr/src/lsp/tests.rs:8154:10
+     |
+8154 | async fn run_push_pull_parity_leg(profile: PushPullParityProfile) -> Result<(), String> {
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_rust_toolchain_skipped` is never used
+    --> crates/ripr/src/output/doctor.rs:3860:8
+     |
+3860 |     fn assert_rust_toolchain_skipped(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `ripr` (lib test) generated 45 warnings (run `cargo fix --lib -p ripr --tests` to apply 16 suggestions)
+    Finished `test` profile [unoptimized] target(s) in 5m 49s
+     Running unittests src/lib.rs (/workspace/12010-proof/target/debug/deps/ripr-6631af7d05411de1)
+
+running 158 tests
+test analysis::classify::reveal::tests::a_clone_field_owner_pin_is_credited_only_through_reveals_gates ... ok
+test analysis::classify::reveal::tests::a_matched_test_ranks_ahead_of_an_examined_miss_and_keeps_its_window_slot ... ok
+test analysis::classify::reveal::tests::a_payload_change_needs_the_whole_value_owner_pin ... ok
+test analysis::classify::reveal::tests::a_receiver_call_of_a_free_owners_name_is_not_a_call_of_the_owner ... ok
+test analysis::classify::reveal::tests::a_refused_effect_carrier_withholds_only_the_whole_object_observer ... ok
+test analysis::classify::reveal::tests::a_sibling_exclusion_does_not_confirm_a_payload_only_change ... ok
+test analysis::classify::reveal::tests::a_type_qualified_expected_call_reaches_only_through_its_own_type ... ok
+test analysis::classify::reveal::tests::aliased_foreign_import_does_not_defeat_owner_confirmation ... ok
+test analysis::classify::reveal::tests::aligned_variant_assertion_confirms_field_construction_error_construction ... ok
+test analysis::classify::reveal::tests::aligned_variant_assertion_confirms_return_value_error_construction ... ok
+test analysis::classify::reveal::tests::asserting_affected_collection_retains_confirmation_in_either_order ... ok
+test analysis::classify::reveal::tests::assertion_matching_accepts_token_family_and_single_assertion_fallbacks ... ok
+test analysis::classify::reveal::tests::binding_untouched_after_owner_call_refuses_writes_between_call_and_read ... ok
+test analysis::classify::reveal::tests::call_deletion_family_match_only_without_token_downgrades_to_weak ... ok
+test analysis::classify::reveal::tests::call_deletion_whole_object_observer_without_token_clears_observation_unverified ... ok
+test analysis::classify::reveal::tests::call_deletion_with_token_match_does_not_emit_observation_unverified ... ok
+test analysis::classify::reveal::tests::called_paths_reads_non_ascii_identifiers_on_char_boundaries ... ok
+test analysis::classify::reveal::tests::complete_proximity_scope_rejects_a_hidden_direct_or_refused_oracle ... ok
+test analysis::classify::reveal::tests::cross_package_same_name_defeat_blocks_owner_confirmation ... ok
+test analysis::classify::reveal::tests::diagnostic_literal_does_not_confirm_changed_arm ... ok
+test analysis::classify::reveal::tests::direct_collection_count_read_confirms_only_call_deletion ... ok
+test analysis::classify::reveal::tests::discriminate_evidence_names_strength_and_oracle_kind ... ok
+test analysis::classify::reveal::tests::effect_target_rooted_at_an_owner_local_needs_more_than_the_local_name ... ok
+test analysis::classify::reveal::tests::empty_collection_expectations_cap_effect_families_only_after_an_early_exit ... ok
+test analysis::classify::reveal::tests::equally_strong_confirmed_oracle_preserves_discrimination_in_either_order ... ok
+test analysis::classify::reveal::tests::error_path_broad_oracle_only_downgrades_discriminate_to_weak ... ok
+test analysis::classify::reveal::tests::error_path_diagnostic_tokens_cannot_pin_the_changed_error ... ok
+test analysis::classify::reveal::tests::error_path_diagnostics_do_not_confirm_observation ... ok
+test analysis::classify::reveal::tests::error_path_exact_variant_oracle_keeps_discriminate_yes ... ok
+test analysis::classify::reveal::tests::error_path_is_confirmed_only_by_an_error_observing_assertion ... ok
+test analysis::classify::reveal::tests::error_path_is_not_effect_family ... ok
+test analysis::classify::reveal::tests::error_path_matches_variant_oracle_keeps_discriminate_yes ... ok
+test analysis::classify::reveal::tests::error_path_operand_error_lexeme_does_not_confirm_observation ... ok
+test analysis::classify::reveal::tests::error_path_parser_context_cannot_replace_emitted_probe_variant ... ok
+test analysis::classify::reveal::tests::error_path_probe_is_independent_of_ok_arm_observation ... ok
+test analysis::classify::reveal::tests::error_path_sibling_exact_value_oracle_downgrades_discriminate_to_weak ... ok
+test analysis::classify::reveal::tests::error_variant_proximity_test_cannot_confirm_beside_reaching_test ... FAILED
+test analysis::classify::reveal::tests::exact_variant_assertion_matches_matching_probe ... ok
+test analysis::classify::reveal::tests::examined_misses_never_push_a_second_oracle_row_out_of_the_window ... ok
+test analysis::classify::reveal::tests::expected_computed_through_owner_reads_either_side_and_masks_strings ... ok
+test analysis::classify::reveal::tests::expected_operand_holding_an_owner_value_is_weak_and_unconfirmed ... ok
+test analysis::classify::reveal::tests::field_collection_count_read_refuses_a_preexisting_key ... ok
+test analysis::classify::reveal::tests::field_collection_read_refuses_rewrites_and_should_panic ... ok
+test analysis::classify::reveal::tests::field_construction_family_match_only_without_token_downgrades_to_weak ... ok
+test analysis::classify::reveal::tests::field_construction_with_token_match_keeps_discriminate_yes ... ok
+test analysis::classify::reveal::tests::finalized_related_tests_lead_with_diff_touched_tests_within_a_tier ... ok
+test analysis::classify::reveal::tests::finalized_related_tests_lead_with_the_strongest_relation ... ok
+test analysis::classify::reveal::tests::foreign_callee_import_scan_covers_nested_and_local_use_declarations ... ok
+test analysis::classify::reveal::tests::foreign_glob_defeats_bare_callee_without_own_import ... ok
+test analysis::classify::reveal::tests::foreign_same_name_import_defeats_owner_confirmation ... ok
+test analysis::classify::reveal::tests::guarded_result_match_does_not_credit_effect_families ... ok
+test analysis::classify::reveal::tests::guarded_result_match_exact_variant_on_owner_confirms ... ok
+test analysis::classify::reveal::tests::guarded_result_match_on_owner_confirms_observation_without_token_overlap ... ok
+test analysis::classify::reveal::tests::guarded_result_match_on_qualified_scrutinee_stays_unverified ... ok
+test analysis::classify::reveal::tests::guarded_result_match_on_wrong_owner_stays_unverified ... ok
+test analysis::classify::reveal::tests::guarded_result_match_sibling_variant_does_not_confirm ... ok
+test analysis::classify::reveal::tests::guarded_result_match_type_pin_keeps_discriminate_weak ... ok
+test analysis::classify::reveal::tests::keyed_field_read_refuses_should_panic_tests ... ok
+test analysis::classify::reveal::tests::literal_assertion_confirms_literal_match_arm ... ok
+test analysis::classify::reveal::tests::local_assertion_macro_credit_never_reads_as_a_discriminator ... ok
+test analysis::classify::reveal::tests::macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller ... ok
+test analysis::classify::reveal::tests::match_arm_guard_detection_masks_literals_and_comments ... ok
+test analysis::classify::reveal::tests::match_arm_literal_confirmation_respects_owner_ambiguity_and_guards ... ok
+test analysis::classify::reveal::tests::match_arm_pattern_literals_ignore_comment_text ... ok
+test analysis::classify::reveal::tests::match_arm_probe_with_token_match_keeps_discriminate_yes ... ok
+test analysis::classify::reveal::tests::match_arm_probe_without_token_match_downgrades_discriminate_to_weak ... ok
+test analysis::classify::reveal::tests::match_arm_proximity_test_cannot_confirm_beside_reaching_test ... ok
+test analysis::classify::reveal::tests::match_arm_proximity_test_pinning_another_function_cannot_confirm ... ok
+test analysis::classify::reveal::tests::match_arm_sibling_qualifier_does_not_clear_observation_unverified ... ok
+test analysis::classify::reveal::tests::match_arm_variant_token_match_keeps_discriminate_yes ... ok
+test analysis::classify::reveal::tests::multiline_builder_chain_setup_row_is_dropped_beside_the_assertion ... ok
+test analysis::classify::reveal::tests::multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion ... ok
+test analysis::classify::reveal::tests::mutating_collection_a_while_asserting_b_stays_unverified ... ok
+test analysis::classify::reveal::tests::name_only_relations_stop_crediting_beside_a_reach_bearing_one ... ok
+test analysis::classify::reveal::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test ... ok
+test analysis::classify::reveal::tests::name_token_proximity_error_variant_assertion_names_no_kind_or_location ... ok
+test analysis::classify::reveal::tests::names_only_sibling_variants_requires_a_sibling_path_and_no_changed_path ... ok
+test analysis::classify::reveal::tests::nested_module_foreign_import_defeats_owner_confirmation ... ok
+test analysis::classify::reveal::tests::no_import_or_own_crate_import_keeps_owner_confirmation ... ok
+test analysis::classify::reveal::tests::numeric_literal_token_confirms_only_in_an_assertion_calling_the_owner ... ok
+test analysis::classify::reveal::tests::ok_or_question_mark_line_carries_its_variant_into_the_sibling_gate ... ok
+test analysis::classify::reveal::tests::oracle_family_matching_covers_family_specific_shapes ... ok
+test analysis::classify::reveal::tests::own_lib_target_and_hyphen_normalized_names_do_not_defeat ... ok
+test analysis::classify::reveal::tests::owner_call_literal_scope_rejects_call_text_inside_message ... ok
+test analysis::classify::reveal::tests::owner_call_literal_scope_rejects_longer_callee_names ... ok
+test analysis::classify::reveal::tests::owner_call_literal_scope_rejects_variable_bound_inputs ... ok
+test analysis::classify::reveal::tests::owner_call_passes_key_matches_the_key_argument_position ... ok
+test analysis::classify::reveal::tests::owner_call_precedes_read_needs_an_earlier_call_on_the_same_binding ... ok
+test analysis::classify::reveal::tests::owner_call_signal_admits_one_row_per_absent_test ... ok
+test analysis::classify::reveal::tests::owner_call_signal_displaces_nothing_without_file_location_rows ... ok
+test analysis::classify::reveal::tests::owner_call_signal_does_not_lift_a_sibling_sharing_a_start_line ... ok
+test analysis::classify::reveal::tests::owner_call_signal_keeps_other_relations_in_place ... ok
+test analysis::classify::reveal::tests::owner_call_signal_needs_a_captured_owner_call_on_a_demoted_relation ... ok
+test analysis::classify::reveal::tests::owner_call_signal_never_retains_an_unmatched_row ... ok
+test analysis::classify::reveal::tests::owner_call_signal_repositions_a_test_already_in_the_window_without_extra_rows ... ok
+test analysis::classify::reveal::tests::owner_call_signal_repositions_non_adjacent_windowed_tests ... ok
+test analysis::classify::reveal::tests::owner_call_signal_repositions_several_windowed_tests_in_order ... ok
+test analysis::classify::reveal::tests::owner_call_signal_retains_distinct_tied_tests ... ok
+test analysis::classify::reveal::tests::owner_call_signal_shifts_a_tail_medium_row_up_one_place ... ok
+test analysis::classify::reveal::tests::owner_called_on_other_receiver_sees_every_other_owner_call ... ok
+test analysis::classify::reveal::tests::owner_calling_demoted_row_is_retained_over_file_location_rows_but_never_first ... ok
+test analysis::classify::reveal::tests::owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner ... ok
+test analysis::classify::reveal::tests::pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin ... ok
+test analysis::classify::reveal::tests::predicate_probe_family_match_only_keeps_discriminate_yes ... ok
+test analysis::classify::reveal::tests::probe_relative_oracle_strength_never_promotes_an_inequality ... ok
+test analysis::classify::reveal::tests::probe_relative_oracle_strength_preserves_family_overrides ... ok
+test analysis::classify::reveal::tests::proximity_only_error_variant_assertion_is_not_named_for_a_predicate ... ok
+test analysis::classify::reveal::tests::proximity_only_strong_oracle_names_no_kind ... ok
+test analysis::classify::reveal::tests::refused_implicit_kind_preserves_independent_token_confirmation ... ok
+test analysis::classify::reveal::tests::related_test_total_retains_six_eight_nine_matches_without_changing_packed_prefix ... ok
+test analysis::classify::reveal::tests::related_test_total_uses_existing_post_dedup_oracle_row_unit ... ok
+test analysis::classify::reveal::tests::related_tests_cap_keeps_a_second_test_when_one_test_has_many_oracles ... ok
+test analysis::classify::reveal::tests::return_lexical_confirmation_uses_operands_not_diagnostics ... ok
+test analysis::classify::reveal::tests::return_value_family_match_only_without_token_downgrades_discriminate_to_weak ... ok
+test analysis::classify::reveal::tests::return_value_probe_observing_ok_arm_confirms ... ok
+test analysis::classify::reveal::tests::return_value_probe_on_err_construction_is_independent_of_ok_arm_observation ... ok
+test analysis::classify::reveal::tests::return_value_probe_payload_ignoring_ok_arm_stays_unconfirmed ... ok
+test analysis::classify::reveal::tests::return_value_probe_routing_form_without_ok_arm_stays_unconfirmed ... ok
+test analysis::classify::reveal::tests::return_value_whole_object_without_token_still_emits_observation_unverified ... ok
+test analysis::classify::reveal::tests::return_value_with_token_match_keeps_discriminate_yes ... ok
+test analysis::classify::reveal::tests::reveal_evidence_keeps_assertionless_related_test_without_observe_signal ... ok
+test analysis::classify::reveal::tests::reveal_evidence_lists_a_test_whose_assertions_do_not_match_as_a_miss ... ok
+test analysis::classify::reveal::tests::reveal_evidence_records_matching_assertions_and_sorts_related_tests ... ok
+test analysis::classify::reveal::tests::seeded_collection_expectations_cap_effect_families_only_after_an_early_exit ... ok
+test analysis::classify::reveal::tests::self_computed_expected_value_is_weak_and_unconfirmed ... ok
+test analysis::classify::reveal::tests::setup_unwrap_row_is_dropped_beside_the_same_tests_assertion ... ok
+test analysis::classify::reveal::tests::setup_unwrap_row_stays_when_it_is_the_tests_only_oracle ... ok
+test analysis::classify::reveal::tests::shared_file_use_statements_match_a_fresh_scan_for_every_callee ... ok
+test analysis::classify::reveal::tests::shared_result_literal_does_not_confirm_sibling_arm ... ok
+test analysis::classify::reveal::tests::sibling_effect_kind_cannot_confirm_beside_owner_caller ... ok
+test analysis::classify::reveal::tests::sibling_effect_whole_object_without_collection_identity_still_confirms ... ok
+test analysis::classify::reveal::tests::sibling_literal_assertion_does_not_confirm_changed_arm ... ok
+test analysis::classify::reveal::tests::sibling_variant_assertion_does_not_confirm_field_construction_error_construction ... ok
+test analysis::classify::reveal::tests::sibling_variant_assertion_does_not_confirm_return_value_error_construction ... ok
+test analysis::classify::reveal::tests::sibling_variant_assertion_does_not_match_too_large_probe ... ok
+test analysis::classify::reveal::tests::sibling_variant_exact_value_pin_cannot_confirm_a_changed_error_variant ... ok
+test analysis::classify::reveal::tests::sibling_variant_oracle_leaves_return_value_discrimination_unconfirmed ... ok
+test analysis::classify::reveal::tests::side_effect_mock_observer_without_token_clears_observation_unverified ... ok
+test analysis::classify::reveal::tests::side_effect_plain_assertion_without_token_or_observer_emits_observation_unverified ... ok
+test analysis::classify::reveal::tests::side_effect_with_token_match_keeps_discriminate_not_unverified ... ok
+test analysis::classify::reveal::tests::sink_identity_tests::sink_identity_equal_strength_bound_oracle_wins_in_either_order ... ok
+test analysis::classify::reveal::tests::sink_identity_tests::sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can ... ok
+test analysis::classify::reveal::tests::sink_identity_tests::sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token ... ok
+test analysis::classify::reveal::tests::sink_identity_tests::sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_before_controls ... ok
+test analysis::classify::reveal::tests::strongest_oracle_cannot_borrow_weaker_assertion_confirmation ... ok
+test analysis::classify::reveal::tests::struct_literal_default_field_read_stays_exposed ... ok
+test analysis::classify::reveal::tests::struct_literal_field_overridden_by_test_is_unverified ... ok
+test analysis::classify::reveal::tests::typed_variant_site_loses_credit_when_witness_pin_removed ... ok
+test analysis::classify::reveal::tests::unconditional_owner_insert_field_only_at_the_top_level ... ok
+test analysis::classify::reveal::tests::unrelated_proximity_test_supplies_no_oracle_beside_a_reaching_test ... ok
+test analysis::classify::reveal::tests::untouched_field_assertion_does_not_confirm_a_partly_changed_literal ... ok
+test analysis::classify::reveal::tests::whole_word_match_accepts_long_token ... ok
+test analysis::classify::reveal::tests::whole_word_match_accepts_short_token_in_equality ... ok
+test analysis::classify::reveal::tests::whole_word_match_accepts_short_token_in_field_access ... ok
+test analysis::classify::reveal::tests::whole_word_match_rejects_empty_token ... ok
+test analysis::classify::reveal::tests::whole_word_match_rejects_short_token_as_substring ... ok
+test analysis::classify::reveal::tests::whole_word_match_steps_past_non_ascii_token_without_panicking ... ok
+test analysis::classify::reveal::tests::wrapper_seam_never_confirms_and_stays_weak_under_strongest_witnesses ... ok
+
+failures:
+
+---- analysis::classify::reveal::tests::error_variant_proximity_test_cannot_confirm_beside_reaching_test stdout ----
+
+thread 'analysis::classify::reveal::tests::error_variant_proximity_test_cannot_confirm_beside_reaching_test' (8737) panicked at crates/ripr/src/analysis/classify/reveal.rs:12623:9:
+assertion `left == right` failed: Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without sink-level evidence (identity_unresolved)
+  left: Weak
+ right: Yes
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    analysis::classify::reveal::tests::error_variant_proximity_test_cannot_confirm_beside_reaching_test
+
+test result: FAILED. 157 passed; 1 failed; 0 ignored; 0 measured; 13381 filtered out; finished in 0.10s
+
+error: test failed, to rerun pass `-p ripr --lib`

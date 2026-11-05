@@ -1,0 +1,487 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling libc v0.2.191
+   Compiling cfg-if v1.0.5
+   Compiling serde_core v1.0.229
+   Compiling pin-project-lite v0.2.17
+   Compiling memchr v2.8.3
+   Compiling syn v3.0.6
+   Compiling syn v2.0.119
+   Compiling once_cell v1.21.4
+   Compiling autocfg v1.5.1
+   Compiling crossbeam-utils v0.8.23
+   Compiling futures-core v0.3.34
+   Compiling futures-sink v0.3.34
+   Compiling rand_core v0.10.1
+   Compiling bitflags v2.13.2
+   Compiling version_check v0.9.5
+   Compiling getrandom v0.4.3
+   Compiling serde v1.0.229
+   Compiling generic-array v0.14.7
+   Compiling futures-channel v0.3.34
+   Compiling errno v0.3.14
+   Compiling slab v0.4.12
+   Compiling futures-io v0.3.34
+   Compiling zmij v1.0.23
+   Compiling futures-task v0.3.34
+   Compiling ref-cast v1.0.27
+   Compiling signal-hook-registry v1.4.8
+   Compiling num-traits v0.2.19
+   Compiling tracing-core v0.1.36
+   Compiling typenum v1.20.1
+   Compiling serde_json v1.0.154
+   Compiling smallvec v1.16.1
+   Compiling parking_lot_core v0.9.12
+   Compiling bytes v1.12.1
+   Compiling serde_derive v1.0.229
+   Compiling futures-macro v0.3.34
+   Compiling tracing-attributes v0.1.31
+   Compiling ref-cast-impl v1.0.27
+   Compiling futures-util v0.3.34
+   Compiling tokio-macros v2.7.2
+   Compiling tracing v0.1.44
+   Compiling mio v1.2.3
+   Compiling scopeguard v1.2.0
+   Compiling crossbeam-epoch v0.9.21
+   Compiling rustix v1.1.5
+   Compiling itoa v1.0.18
+   Compiling tokio v1.54.1
+   Compiling futures-executor v0.3.34
+   Compiling lock_api v0.4.14
+   Compiling memoffset v0.9.1
+   Compiling crossbeam-deque v0.8.8
+   Compiling either v1.18.0
+   Compiling anyhow v1.0.104
+   Compiling linux-raw-sys v0.12.1
+   Compiling hashbrown v0.14.5
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling serde_derive_internals v0.29.1
+   Compiling httparse v1.10.1
+   Compiling cfg_aliases v0.2.2
+   Compiling thiserror v2.0.20
+   Compiling unicode-properties v0.1.4
+   Compiling borrow-or-share v0.2.4
+   Compiling rayon-core v1.13.0
+   Compiling fastrand v2.5.0
+   Compiling itertools v0.11.0
+   Compiling fluent-uri v0.4.1
+   Compiling tempfile v3.27.0
+   Compiling ra-ap-rustc_lexer v0.166.0
+   Compiling nix v0.31.3
+   Compiling schemars_derive v1.2.1
+   Compiling tokio-util v0.7.20
+   Compiling digest v0.10.7
+   Compiling itertools v0.15.0
+   Compiling chrono v0.4.45
+   Compiling futures v0.3.34
+   Compiling thiserror-impl v2.0.20
+   Compiling crossbeam-channel v0.5.17
+   Compiling wait-timeout v0.2.1
+   Compiling cpufeatures v0.2.17
+   Compiling equivalent v1.0.2
+   Compiling dyn-clone v1.0.20
+   Compiling rmcp v3.7.0
+   Compiling signal-hook v0.3.18
+   Compiling fnv v1.0.7
+   Compiling ra_ap_edition v0.0.349
+   Compiling winnow v1.0.4
+   Compiling rustc-literal-escaper v0.0.7
+   Compiling hashbrown v0.17.1
+   Compiling tower-layer v0.3.3
+   Compiling cpufeatures v0.3.1
+   Compiling quick-error v1.2.3
+   Compiling jod-thread v1.0.0
+   Compiling sync_wrapper v1.0.2
+   Compiling countme v3.0.1
+   Compiling rustc-hash v1.1.0
+   Compiling pulldown-cmark v0.13.6
+   Compiling tower-service v0.3.3
+   Compiling bit-vec v0.10.1
+   Compiling percent-encoding v2.3.2
+   Compiling text-size v1.1.1
+   Compiling winnow v0.7.15
+   Compiling drop_bomb v0.1.5
+   Compiling bit-set v0.11.1
+   Compiling ls-types v0.0.6
+   Compiling rowan v0.17.0
+   Compiling indexmap v2.14.2
+   Compiling ra_ap_parser v0.0.349
+   Compiling tower v0.5.3
+   Compiling ra_ap_stdx v0.0.349
+   Compiling toml_parser v1.1.5+spec-1.1.0
+   Compiling rusty-fork v0.3.1
+   Compiling chacha20 v0.10.2
+   Compiling schemars v1.2.1
+   Compiling sha2 v0.10.9
+   Compiling prost-derive v0.13.5
+   Compiling tokio-stream v0.1.19
+   Compiling dashmap v6.2.1
+   Compiling parking_lot v0.12.5
+   Compiling serial_test_derive v4.0.1
+   Compiling rand v0.10.3
+   Compiling uuid v1.26.0
+   Compiling rand_xorshift v0.5.0
+   Compiling toml_datetime v1.1.2+spec-1.1.0
+   Compiling serde_spanned v1.1.2
+   Compiling rustc-hash v2.1.3
+   Compiling log v0.4.34
+   Compiling triomphe v0.1.16
+   Compiling smol_str v0.3.6
+   Compiling toml_writer v1.1.3+spec-1.1.0
+   Compiling regex-syntax v0.8.11
+   Compiling unicase v2.10.0
+   Compiling pastey v0.2.3
+   Compiling core_detect v1.0.0
+   Compiling ripr v0.11.0 (/workspace/ripr-12010-successor/crates/ripr)
+   Compiling unarray v0.1.4
+   Compiling proptest v1.12.0
+   Compiling toml v1.1.8+spec-1.1.0
+   Compiling ra_ap_syntax v0.0.349
+   Compiling serial_test v4.0.1
+   Compiling tower-lsp-server v0.23.0
+   Compiling rayon v1.12.0
+   Compiling prost v0.13.5
+   Compiling ripr-contract v0.11.0 (/workspace/ripr-12010-successor/crates/ripr-contract)
+   Compiling fs2 v0.4.3
+   Compiling unicode-width v0.2.2
+   Compiling unicode-segmentation v1.13.3
+   Compiling home v0.5.12
+warning: unused import: `sort_value_facts`
+  --> crates/ripr/src/analysis/classify/mod.rs:65:48
+   |
+65 |     pushed_literal_path, signature_parameters, sort_value_facts,
+   |                                                ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `withhold_truncated_discovery_gap`
+   --> crates/ripr/src/analysis/classify/mod.rs:117:32
+    |
+117 |     withhold_should_panic_gap, withhold_truncated_discovery_gap, withhold_unsupported_gap,
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `model::lines_look_alike`
+  --> crates/ripr/src/analysis/diff/mod.rs:30:16
+   |
+30 | pub(crate) use model::lines_look_alike;
+   |                ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `LanguageAdapter`
+ --> crates/ripr/src/analysis/pipeline.rs:8:5
+  |
+8 |     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused imports: `expected_sinks` and `required_oracles`
+  --> crates/ripr/src/analysis/probes/mod.rs:32:31
+   |
+32 | pub(crate) use expectations::{expected_sinks, required_oracles};
+   |                               ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+
+warning: unused imports: `collision_ordinals` and `collision_rank_key`
+  --> crates/ripr/src/analysis/probes/mod.rs:34:5
+   |
+34 |     collision_ordinals, collision_rank_key, fingerprint_probe_id, legacy_whole_line_diff_probe_id,
+   |     ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `normalize_expression`
+   --> crates/ripr/src/analysis/mod.rs:134:60
+    |
+134 |     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+    |                                                            ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `HashMap`
+   --> crates/ripr/src/analysis/mod.rs:569:34
+    |
+569 | use std::collections::{BTreeSet, HashMap};
+    |                                  ^^^^^^^
+
+warning: unused import: `is_probable_fixture_or_data_path`
+  --> crates/ripr/src/config.rs:60:5
+   |
+60 |     is_probable_fixture_or_data_path, path_matches_preview_excluded_patterns,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `declared_python_handwritten_under` and `is_python_dir_pruned_from_repo_discovery`
+  --> crates/ripr/src/config.rs:65:56
+   |
+65 |     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, declared_python_handwritten_under,
+   |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+68 |     is_python_dir_pruned_from_repo_discovery, is_python_excluded_dir_everywhere,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ripr_contract::domain::ConfidenceBasisInputs`
+  --> crates/ripr/src/domain.rs:46:16
+   |
+46 | pub(crate) use ripr_contract::domain::ConfidenceBasisInputs;
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ripr_contract::domain::row_exact_discriminator_fact`
+   --> crates/ripr/src/domain.rs:177:16
+    |
+177 | pub(crate) use ripr_contract::domain::row_exact_discriminator_fact;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `ts_oracle_kind_matches_seam`
+   --> crates/ripr/src/domain.rs:183:46
+    |
+183 |     SourceUnitFactV1, TestEnvironmentFactV1, ts_oracle_kind_matches_seam,
+    |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `disable_retained_analysis_actions`
+ --> crates/ripr/src/lsp/tests.rs:2:53
+  |
+2 |     SERVER_EXECUTED_COMMANDS, code_action_response, disable_retained_analysis_actions,
+  |                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> crates/ripr/src/app/repair_attempt/mod.rs:5230:13
+     |
+5230 |         let mut targets = vec!["test/pricing.test.ts"];
+     |             ----^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> crates/ripr/src/app/repair_attempt/mod.rs:5487:13
+     |
+5487 |         let mut targets = vec!["tests/pricing.rs", "tests/helpers/mod.rs", "test/smoke.py"];
+     |             ----^^^^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: function `withhold_truncated_discovery_gap` is never used
+  --> crates/ripr/src/analysis/classify/gap_admission.rs:78:28
+   |
+78 | pub(in crate::analysis) fn withhold_truncated_discovery_gap(
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `zero_work` is never used
+  --> crates/ripr/src/analysis/language/adapter.rs:41:19
+   |
+37 | impl PreviewFactCacheStats {
+   | -------------------------- associated function in this implementation
+...
+41 |     pub(crate) fn zero_work() -> Self {
+   |                   ^^^^^^^^^
+
+warning: variant `Discovery` is never constructed
+   --> crates/ripr/src/analysis/language/adapter.rs:135:5
+    |
+133 | pub(crate) enum RepoLimitingStage {
+    |                 ----------------- variant in this enum
+134 |     /// The discovery walk stopped at its entry cap.
+135 |     Discovery,
+    |     ^^^^^^^^^
+    |
+    = note: `RepoLimitingStage` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `summed` is never used
+    --> crates/ripr/src/analysis/pipeline.rs:6874:8
+     |
+6874 |     fn summed(aggregate: &DiffLanguageAggregate) -> usize {
+     |        ^^^^^^
+
+warning: function `cache_layer_versioned_dir` is never used
+   --> crates/ripr/src/analysis/seam_cache.rs:141:15
+    |
+141 | pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `encode_integrity_body_compact` is never used
+    --> crates/ripr/src/analysis/seam_cache.rs:4217:15
+     |
+4217 | pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `preview_entry` is never used
+ --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:5:4
+  |
+5 | fn preview_entry(rendered: &str, context: &str) -> Result<Value, String> {
+  |    ^^^^^^^^^^^^^
+
+warning: function `write` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:16:4
+   |
+16 | fn write(path: &Path, contents: &str) -> Result<(), String> {
+   |    ^^^^^
+
+warning: function `temp_root` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:20:4
+   |
+20 | fn temp_root(name: &str) -> Result<std::path::PathBuf, String> {
+   |    ^^^^^^^^^
+
+warning: function `assert_renderer_agreement` is never used
+  --> crates/ripr/src/app/tests/preview_analyzed_outcome.rs:30:4
+   |
+30 | fn assert_renderer_agreement(
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `language_runtime_probes` is never used
+    --> crates/ripr/src/cli/commands/doctor.rs:1458:4
+     |
+1458 | fn language_runtime_probes(root: &Path) -> Vec<(&'static str, &'static str, &'static str)> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `posix_words` is never used
+    --> crates/ripr/src/cli/commands.rs:5026:8
+     |
+5026 |     fn posix_words(command: &str) -> Result<Vec<String>, String> {
+     |        ^^^^^^^^^^^
+
+warning: function `javascript_led_manifest_name` is never used
+   --> crates/ripr/src/config/typescript.rs:240:15
+    |
+240 | pub(crate) fn javascript_led_manifest_name(name: &str) -> Option<&'static str> {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `typescript_project_marker_name` is never used
+   --> crates/ripr/src/config/typescript.rs:381:15
+    |
+381 | pub(crate) fn typescript_project_marker_name(name: &str) -> Option<&'static str> {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `typescript_source_dir_marker_name` is never used
+   --> crates/ripr/src/config/typescript.rs:387:15
+    |
+387 | pub(crate) fn typescript_source_dir_marker_name(name: &str) -> Option<&'static str> {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `source_dir_contains_detectable_typescript` is never used
+   --> crates/ripr/src/config/typescript.rs:446:15
+    |
+446 | pub(crate) fn source_dir_contains_detectable_typescript(root: &Path, marker: &str) -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_action_specs_omitted` is never used
+    --> crates/ripr/src/lsp/tests.rs:4708:4
+     |
+4708 | fn assert_gap_action_specs_omitted(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_actions_refresh_only` is never used
+    --> crates/ripr/src/lsp/tests.rs:4728:4
+     |
+4728 | fn assert_gap_actions_refresh_only(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `gap_action_commands_for_artifact` is never used
+    --> crates/ripr/src/lsp/tests.rs:4744:4
+     |
+4744 | fn gap_action_commands_for_artifact(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `gap_action_diagnostic_repair_ready` is never used
+    --> crates/ripr/src/lsp/tests.rs:6634:4
+     |
+6634 | fn gap_action_diagnostic_repair_ready() -> tower_lsp_server::ls_types::Diagnostic {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `PushPullParityProfile` is never used
+    --> crates/ripr/src/lsp/tests.rs:7914:6
+     |
+7914 | enum PushPullParityProfile {
+     |      ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `label` is never used
+    --> crates/ripr/src/lsp/tests.rs:7926:8
+     |
+7925 | impl PushPullParityProfile {
+     | -------------------------- method in this implementation
+7926 |     fn label(self) -> &'static str {
+     |        ^^^^^
+
+warning: function `push_pull_parity_initialize_params` is never used
+    --> crates/ripr/src/lsp/tests.rs:7939:4
+     |
+7939 | fn push_pull_parity_initialize_params(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `commit_push_pull_parity_fixture` is never used
+    --> crates/ripr/src/lsp/tests.rs:7994:4
+     |
+7994 | fn commit_push_pull_parity_fixture(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `action_availability_signature` is never used
+    --> crates/ripr/src/lsp/tests.rs:8055:4
+     |
+8055 | fn action_availability_signature(actions: &[CodeActionOrCommand]) -> Result<Vec<String>, String> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_parity_snapshot_admitted` is never used
+    --> crates/ripr/src/lsp/tests.rs:8094:4
+     |
+8094 | fn assert_parity_snapshot_admitted(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_gap_actions_present` is never used
+    --> crates/ripr/src/lsp/tests.rs:8129:4
+     |
+8129 | fn assert_gap_actions_present(actions: &[CodeActionOrCommand], leg: &str) -> Result<(), String> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `run_push_pull_parity_leg` is never used
+    --> crates/ripr/src/lsp/tests.rs:8154:10
+     |
+8154 | async fn run_push_pull_parity_leg(profile: PushPullParityProfile) -> Result<(), String> {
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `assert_rust_toolchain_skipped` is never used
+    --> crates/ripr/src/output/doctor.rs:3860:8
+     |
+3860 |     fn assert_rust_toolchain_skipped(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `ripr` (lib test) generated 45 warnings (run `cargo fix --lib -p ripr --tests` to apply 16 suggestions)
+    Finished `test` profile [unoptimized] target(s) in 5m 31s
+     Running unittests src/lib.rs (/workspace/12010-proof/target/debug/deps/ripr-6631af7d05411de1)
+
+running 5 tests
+test analysis::classifier::finding::tests::token_only_alignment_without_sink_identity_fails_closed ... ok
+test analysis::classify::reveal::tests::sink_identity_tests::sink_identity_equal_strength_bound_oracle_wins_in_either_order ... ok
+test analysis::classify::reveal::tests::sink_identity_tests::sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can ... FAILED
+test analysis::classify::reveal::tests::sink_identity_tests::sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token ... FAILED
+test analysis::classify::reveal::tests::sink_identity_tests::sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_before_controls ... FAILED
+
+failures:
+
+---- analysis::classify::reveal::tests::sink_identity_tests::sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can stdout ----
+
+thread 'analysis::classify::reveal::tests::sink_identity_tests::sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can' (7635) panicked at crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs:16:9:
+assertion `left == right` failed: SameTestFile: StageEvidence { state: Yes, confidence: Medium, summary: "Strong oracle found: exact value or pattern assertion" }
+  left: Yes
+ right: Weak
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- analysis::classify::reveal::tests::sink_identity_tests::sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token stdout ----
+
+thread 'analysis::classify::reveal::tests::sink_identity_tests::sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token' (7636) panicked at crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs:137:9:
+assertion `left == right` failed: StageEvidence { state: Yes, confidence: Medium, summary: "Strong oracle found: exact value or pattern assertion" }
+  left: Yes
+ right: Weak
+
+---- analysis::classify::reveal::tests::sink_identity_tests::sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_before_controls stdout ----
+
+thread 'analysis::classify::reveal::tests::sink_identity_tests::sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_before_controls' (7638) panicked at crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs:84:5:
+assertion `left == right` failed: shared: StageEvidence { state: Yes, confidence: Medium, summary: "Strong oracle found: exact value or pattern assertion" }
+  left: Yes
+ right: Weak
+
+
+failures:
+    analysis::classify::reveal::tests::sink_identity_tests::sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can
+    analysis::classify::reveal::tests::sink_identity_tests::sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token
+    analysis::classify::reveal::tests::sink_identity_tests::sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_before_controls
+
+test result: FAILED. 2 passed; 3 failed; 0 ignored; 0 measured; 13534 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p ripr --lib`

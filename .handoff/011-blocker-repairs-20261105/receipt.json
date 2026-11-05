@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "source_candidate": "81019b7361a2ef7e44cad70abbab5cf0affa45ae",
+  "source_tree": "4b0189c2c9ef980351b2e1639f69dd2dc3e0cf8a",
+  "base": "dc4771c5cd694b2b707fd0c372f58debaad0486d",
+  "red_source_commit": "80ff4c80eba0387d6f31b6f6602ef648859cc2c4",
+  "red_counts": {
+    "passed": 2,
+    "failed": 3,
+    "filtered": 13534
+  },
+  "red_binary_sha256": "bee4bad4b93fc1f6de4f5b716dc8b6770118a1f27f58fcc900560a7ca57843f8",
+  "initial_broad_reveal_counts": {
+    "passed": 149,
+    "failed": 9
+  },
+  "reconciled_broad_reveal_counts": {
+    "passed": 157,
+    "failed": 1
+  },
+  "final_reveal": {
+    "source_sha": "81019b7361a2ef7e44cad70abbab5cf0affa45ae",
+    "source_tree": "4b0189c2c9ef980351b2e1639f69dd2dc3e0cf8a",
+    "command": "cargo test --locked -p ripr --lib --no-default-features --features lang-rust analysis::classify::reveal::tests:: -- --test-threads=1",
+    "native_exit": 0,
+    "passed": 158,
+    "failed": 0,
+    "ignored": 0,
+    "filtered": 13381,
+    "binary_sha256": "007418daf2dbfa7a7bbd81fe734fbc990373c183f109de2d0bb35fb8ffd2fef6",
+    "log_sha256": "2596d9f3e41b521f355b02cd8bdda6006b5047e1bf315f77544a2edf1480540f"
+  },
+  "history": {
+    "original_head": "161c59becc919be3ce4ff7a6e256531ba0176887",
+    "destination_base": "dc4771c5cd694b2b707fd0c372f58debaad0486d",
+    "source": "c09c438e5646fcb244bbafcabe57036bc58d8f3d",
+    "resolution_files": [
+      {
+        "path": "crates/ripr/src/analysis/classify/mod.rs",
+        "bytes": 10819,
+        "sha256": "c3d78a062ea41b8ad93f76326e91f70bffb4fa07a81b95248b018aa2443adb0b"
+      },
+      {
+        "path": "crates/ripr/src/app/review_comments_receipt.rs",
+        "bytes": 38328,
+        "sha256": "681ebe434e07b10bdf0b866f4efe3f658ff212d2641790c5037c7b882f69cea8"
+      },
+      {
+        "path": "crates/ripr/src/config.rs",
+        "bytes": 84108,
+        "sha256": "71df9b9116fbe960ad8c96a6ab51debb958d5cb3b2323ae4cfa1d1302f6a3a9a"
+      },
+      {
+        "path": "docs/ci/coverage.md",
+        "bytes": 9252,
+        "sha256": "bb6921de64876ecea46873b35affbc724f93a2bd378208af30a9e9aea6630805"
+      },
+      {
+        "path": "xtask/src/main.rs",
+        "bytes": 987957,
+        "sha256": "b50d3193420b7ed262602a153b48335e2ca85d1b7193667fba29870065b046fb"
+      },
+      {
+        "path": "xtask/src/policy/file_policy.rs",
+        "bytes": 82589,
+        "sha256": "ff3960fe58c3b736ae114a419ee8c1133bc31e36e119a9283a84dd11ebe9c93c"
+      },
+      {
+        "path": "policy/non-rust-allowlist.toml",
+        "bytes": 44773,
+        "sha256": "e669e3e32dada9c6daba4bec37504a62d6b8fe7014dfb96dbb7f78c597fddbc3"
+      }
+    ],
+    "remaining": "11 unmerged generated gate-decision JSON files; production gate code equals destination main, but merged guidance SHA256 differs from both sides; producer regeneration pending",
+    "status": "unqualified, unpublished source merge; original carrier untouched"
+  },
+  "holds": "No original ref updates, PR/readiness/CI request, merge, settings, promotion or release actions."
+}

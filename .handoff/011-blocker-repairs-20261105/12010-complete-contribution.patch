@@ -1,0 +1,1607 @@
+diff --git a/.ripr/traceability.d/12010-sink-identity.toml b/.ripr/traceability.d/12010-sink-identity.toml
+new file mode 100644
+index 000000000..485de7e0e
+--- /dev/null
++++ b/.ripr/traceability.d/12010-sink-identity.toml
+@@ -0,0 +1,8 @@
++[[extend]]
++id = "RIPR-SPEC-0108"
++tests = [
++  "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can",
++  "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_equal_strength_bound_oracle_wins_in_either_order",
++  "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_before_controls",
++  "crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs::sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token",
++]
+diff --git a/changelog.d/12010-sink-identity.md b/changelog.d/12010-sink-identity.md
+new file mode 100644
+index 000000000..5da881d24
+--- /dev/null
++++ b/changelog.d/12010-sink-identity.md
+@@ -0,0 +1,2 @@
++<!-- section: Fixed -->
++- Withhold strong Rust discrimination from proximity-only oracles and unchanged return-value tokens; keep identity and confirmation on the selected oracle (#12010).
+diff --git a/crates/ripr/src/analysis/classify/reveal.rs b/crates/ripr/src/analysis/classify/reveal.rs
+index d709401eb..72562b428 100644
+--- a/crates/ripr/src/analysis/classify/reveal.rs
++++ b/crates/ripr/src/analysis/classify/reveal.rs
+@@ -444,7 +444,7 @@ pub(in crate::analysis) fn reveal_outcome(
+     let (related, related_tests_total, direct_rows) =
+         finalize_related_tests_with_direct_rows(analysis.related, diff_touched, &owner_calls);
+     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
+-    let discriminate = if analysis.refused_context && !analysis.matched_any {
++    let mut discriminate = if analysis.refused_context && !analysis.matched_any {
+         StageEvidence::new(
+             StageState::No,
+             Confidence::Medium,
+@@ -488,6 +488,22 @@ pub(in crate::analysis) fn reveal_outcome(
+         )
+     };
+ 
++    // #12010: proximity and token coincidence cannot supply the identity of
++    // the strongest oracle. Keep identity on that same assertion alongside
++    // strength and confirmation; independent witnesses cannot be combined.
++    if discriminate.state == StageState::Yes && !analysis.strongest_identity {
++        let linkage = analysis
++            .strongest_reason
++            .map_or("unknown", RelationReason::as_str);
++        discriminate = StageEvidence::new(
++            StageState::Weak,
++            Confidence::Medium,
++            format!(
++                "Discriminator uncredited: strongest oracle reaches only through {linkage} linkage without sink-level evidence (identity_unresolved)"
++            ),
++        );
++    }
++
+     RevealOutcome {
+         observe,
+         discriminate,
+@@ -523,6 +539,9 @@ struct RevealAssertionAnalysis {
+     /// strength. A weaker token match must not upgrade an unrelated exact
+     /// oracle, even when both assertions are in the same related test.
+     strongest_observation_confirmed: bool,
++    /// Identity belongs to the selected assertion, never a separate weaker row.
++    strongest_identity: bool,
++    strongest_reason: Option<RelationReason>,
+     matched_any: bool,
+     /// #6692: some credited assertion pinned the owner's return value.
+     owner_pin_credited: bool,
+@@ -2310,7 +2329,33 @@ fn analyze_related_assertions(
+             (error_construction_variant.as_deref() != Some(removed)).then(|| removed.to_string())
+         })
+         .flatten();
++    // A plain return's shared tokens survive the edit and cannot confirm it.
++    // Association keeps the full token set; producer-bound return/field/effect
++    // witnesses retain their existing authority. No-before probes keep the
++    // prior lexical behavior.
++    let delta_tokens = probe
++        .before
++        .as_deref()
++        .filter(|before| {
++            !before.trim().is_empty()
++                && matches!(probe.family, ProbeFamily::ReturnValue)
++                && changed_literal_fields(probe).is_none()
++        })
++        .map(|before| {
++            let mut before_tokens = extract_identifier_tokens(before);
++            before_tokens.extend(
++                super::value_transfer::fold_literal_integer(before)
++                    .into_iter()
++                    .flat_map(|folded| extract_identifier_tokens(&folded)),
++            );
++            probe_tokens
++                .iter()
++                .filter(|token| !before_tokens.contains(token))
++                .cloned()
++                .collect::<Vec<_>>()
++        });
+     let match_context = RevealMatchContext {
++        confirmation_tokens: delta_tokens.as_deref(),
+         probe_tokens: &probe_tokens,
+         effect_literals: &effect_literals,
+         match_arm_variants: &match_arm_variants,
+@@ -2397,6 +2442,8 @@ fn analyze_related_assertions(
+     let mut strongest_kind = OracleKind::Unknown;
+     let mut strongest_proximity_only = false;
+     let mut strongest_observation_confirmed = false;
++    let mut strongest_identity = false;
++    let mut strongest_reason = None;
+     let mut matched_any = false;
+     let mut owner_pin_credited = false;
+     let mut removed_variant_pin_credited = false;
+@@ -3056,18 +3103,38 @@ fn analyze_related_assertions(
+                     probe_relative_oracle_strength(&probe.family, assertion)
+                 };
+                 relative_strength = self_computed_cap(relative_strength, self_computed);
++                let identity = matches!(
++                    reason,
++                    RelationReason::DirectOwnerCall
++                        | RelationReason::HelperOwnerCall
++                        | RelationReason::AssertionTargetAffinity
++                        | RelationReason::OwnerNamedTest
++                ) || owner_return_pin_holds(
++                    &assertion_context,
++                    assertion,
++                    owner_pinned,
++                    import_defeats_owner,
++                    cross_package_defeats_owner,
++                ) || wrapper_pinned
++                    || implicit_observer == Some(true)
++                    || recording_double_read
++                    || field_collection_read
++                    || collection_argument_read
++                    || out_parameter_confirmed;
+                 // Keep strength, kind, and confirmation on one assertion.
+                 // An equally strong confirmed oracle wins over an unrelated
+                 // one regardless of encounter order; a weaker oracle cannot.
+                 if relative_strength.rank() > strongest.rank()
+                     || (relative_strength.rank() == strongest.rank()
+                         && observation_confirmed
+-                        && !strongest_observation_confirmed)
++                        && (!strongest_observation_confirmed || (identity && !strongest_identity)))
+                 {
+                     strongest = relative_strength.clone();
+                     strongest_kind = assertion.kind.clone();
+                     strongest_proximity_only = is_proximity_only(*reason);
+                     strongest_observation_confirmed = observation_confirmed;
++                    strongest_identity = identity;
++                    strongest_reason = Some(*reason);
+                 }
+                 related.push(RelatedTest {
+                     name: test.name.clone(),
+@@ -3133,6 +3200,8 @@ fn analyze_related_assertions(
+         strongest_kind,
+         strongest_proximity_only,
+         strongest_observation_confirmed,
++        strongest_identity,
++        strongest_reason,
+         matched_any,
+         owner_pin_credited,
+         removed_variant_pin_credited,
+@@ -3369,6 +3438,8 @@ fn identifier_names_error_observer(token: &str) -> bool {
+ /// (grouped so the per-assertion matcher stays under the argument limit).
+ struct RevealMatchContext<'a> {
+     probe_tokens: &'a [String],
++    /// ReturnValue lexical confirmation only; association uses all probe tokens.
++    confirmation_tokens: Option<&'a [String]>,
+     effect_literals: &'a [String],
+     match_arm_variants: &'a [String],
+     match_arm_literals: &'a [String],
+@@ -4370,6 +4441,7 @@ fn assertion_matches_probe_detail_with_literals(
+ ) -> (bool, bool) {
+     let RevealMatchContext {
+         probe_tokens,
++        confirmation_tokens,
+         effect_literals,
+         match_arm_variants,
+         match_arm_literals,
+@@ -4430,10 +4502,14 @@ fn assertion_matches_probe_detail_with_literals(
+         .then(|| crate::analysis::extract::assertion_oracle_text(&assertion.text))
+         .flatten();
+     let confirmation_text = return_operands.as_deref().unwrap_or(&assertion.text);
+-    let confirming_token_match = probe_tokens.iter().any(|token| {
+-        contains_as_whole_word(confirmation_text, token)
+-            && (owner_bound || !owner_scoped_tokens.contains(token))
+-    });
++    let confirming_token_match = confirmation_tokens
++        .unwrap_or(probe_tokens)
++        .iter()
++        .any(|token| {
++            probe_tokens.contains(token)
++                && contains_as_whole_word(confirmation_text, token)
++                && (owner_bound || !owner_scoped_tokens.contains(token))
++        });
+     let effect_literal_match = !effect_literals.is_empty()
+         && rust_string_literals(&assertion.text)
+             .iter()
+@@ -4685,6 +4761,7 @@ fn assertion_matches_probe_detail(
+     assertion_matches_probe_detail_with_literals(
+         &RevealMatchContext {
+             probe_tokens,
++            confirmation_tokens: None,
+             effect_literals: &[],
+             match_arm_variants,
+             match_arm_literals,
+@@ -6197,6 +6274,8 @@ pub(in crate::analysis) fn is_inline_expect_snapshot(assertion: &OracleFact) ->
+ mod tests {
+     use super::*;
+ 
++    mod sink_identity_tests;
++
+     /// RIPR-SPEC-0228 rule 2: the field collection is read after the owner
+     /// call on the same, unrebound binding; comments and strings never call.
+     #[test]
+@@ -8545,9 +8624,9 @@ mod tests {
+                 ],
+                 &|_| true,
+             );
+-            if discriminate.state != StageState::Yes {
++            if discriminate.state != StageState::Weak {
+                 return Err(format!(
+-                    "{proximity:?} test lost its oracle credit: {discriminate:?}"
++                    "{proximity:?} test acquired sink identity from possible reach alone: {discriminate:?}"
+                 ));
+             }
+         }
+@@ -9263,6 +9342,7 @@ mod tests {
+         ] {
+             let context = RevealMatchContext {
+                 probe_tokens: &empty,
++                confirmation_tokens: None,
+                 effect_literals: &empty,
+                 match_arm_variants: &empty,
+                 match_arm_literals: &pattern_literals,
+@@ -9782,7 +9862,7 @@ return Err(\"typed pin\".into());
+         );
+         let test = test_with_assertions("max_header_size", vec![exact_error]);
+         let (_, proximity, _) = reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
+-        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
++        assert_eq!(proximity.state, StageState::Weak, "{proximity:?}");
+         assert!(
+             !proximity.summary.contains("error variant"),
+             "proximity-linked assertion kind was named: {proximity:?}"
+@@ -9790,6 +9870,7 @@ return Err(\"typed pin\".into());
+         // Discriminating alternate: the same assertion reached by a call
+         // keeps its kind-specific wording.
+         let (_, called, _) = reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
++        assert_eq!(called.state, StageState::Yes);
+         assert_eq!(
+             called.summary, "Strong oracle found: exact error variant assertion",
+             "{called:?}"
+@@ -9808,10 +9889,10 @@ return Err(\"typed pin\".into());
+         );
+         let test = test_with_assertions("max_header_size", vec![exact_error]);
+         let (_, proximity, _) = reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
+-        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
++        assert_eq!(proximity.state, StageState::Weak, "{proximity:?}");
+         assert_eq!(
+             proximity.summary,
+-            "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)",
++            "Discriminator uncredited: strongest oracle reaches only through same_test_file linkage without sink-level evidence (identity_unresolved)",
+             "{proximity:?}"
+         );
+     }
+@@ -11748,7 +11829,7 @@ return Err(\"typed pin\".into());
+             for (text, expected) in [
+                 (
+                     "assert_eq!(persist_audit(record), expected);",
+-                    StageState::Yes,
++                    StageState::Weak,
+                 ),
+                 ("assert_eq!(parsed, expected);", StageState::Weak),
+             ] {
+@@ -11888,10 +11969,10 @@ return Err(\"typed pin\".into());
+                 None,
+             );
+             assert_eq!(implicit.state, StageState::Yes);
+-            // A solitary proximity observer retains the prior reading.
++            // A solitary proximity observer has no sink identity (#12010).
+             let (_, alone, _) =
+                 reveal_evidence(&probe, &[(&sibling, RelationReason::SameTestFile)]);
+-            assert_eq!(alone.state, StageState::Yes);
++            assert_eq!(alone.state, StageState::Weak);
+             // Direct/helper relations confirm without a shared token.
+             for reason in [
+                 RelationReason::DirectOwnerCall,
+@@ -11906,7 +11987,7 @@ return Err(\"typed pin\".into());
+                 );
+                 assert_eq!(direct.state, StageState::Yes);
+             }
+-            // Actual token confirmation remains independent of kind.
++            // Token confirmation alone still cannot bind this sibling to the sink.
+             let token = test_with_assertions(
+                 "effect_named",
+                 vec![oracle(
+@@ -11923,8 +12004,8 @@ return Err(\"typed pin\".into());
+                 ],
+                 &|_| true,
+             );
+-            assert_eq!(confirmed.state, StageState::Yes);
+-            // The established opaque-macro allowance remains explicit.
++            assert_eq!(confirmed.state, StageState::Weak);
++            // Opaque macro reach alone cannot establish sink identity either.
+             let mut opaque = sibling.clone();
+             opaque.body = "fixture_setup!();".into();
+             let (_, allowed, _) = reveal_evidence(
+@@ -11934,7 +12015,7 @@ return Err(\"typed pin\".into());
+                     (&opaque, RelationReason::SameTestFile),
+                 ],
+             );
+-            assert_eq!(allowed.state, StageState::Yes);
++            assert_eq!(allowed.state, StageState::Weak);
+         }
+     }
+ 
+@@ -12200,10 +12281,10 @@ return Err(\"typed pin\".into());
+         assert_eq!(may_reach.state, StageState::Weak, "{}", may_reach.summary);
+         assert_eq!(may_reach.summary, PROXIMITY_CONFIRMATION_WITHHELD);
+ 
+-        // Without the pin the unindexed-call allowance still confirms.
++        // Without the pin, possible reach still does not establish sink identity.
+         let (_, unpinned, _) =
+             reveal_evidence_proximity_reach_pinning(&probe, &related, &|_| true, &|_, _| false);
+-        assert_eq!(unpinned.state, StageState::Yes, "{}", unpinned.summary);
++        assert_eq!(unpinned.state, StageState::Weak, "{}", unpinned.summary);
+     }
+ 
+     /// #6297: a same-file test that names the arm's variant through another
+@@ -12264,10 +12345,9 @@ return Err(\"typed pin\".into());
+         assert_eq!(reaching_only.state, StageState::Weak);
+         assert_ne!(reaching_only.summary, PROXIMITY_CONFIRMATION_WITHHELD);
+ 
+-        // Alone, the same-file test still confirms: proximity keeps crediting
+-        // when no related test reaches the owner by a call.
++        // Alone, the same-file test still lacks sink identity (#12010).
+         let (_, alone, _) = reveal_evidence(&probe, &[(&naming, RelationReason::SameTestFile)]);
+-        assert_eq!(alone.state, StageState::Yes, "{}", alone.summary);
++        assert_eq!(alone.state, StageState::Weak, "{}", alone.summary);
+ 
+         // A seam callee call runs the callee, not the owner, so it does not
+         // withhold the same-file confirmation either.
+@@ -12280,13 +12360,13 @@ return Err(\"typed pin\".into());
+         );
+         assert_eq!(
+             beside_seam.state,
+-            StageState::Yes,
++            StageState::Weak,
+             "{}",
+             beside_seam.summary
+         );
+ 
+         // A same-file test that may run the owner (it calls a public wrapper
+-        // of `seconds`) keeps confirming beside the reaching test.
++        // of `seconds`) still lacks an admitted sink-identity witness.
+         let (_, may_reach, _, _) = reveal_evidence_with_expression(
+             &probe,
+             &probe.expression,
+@@ -12328,7 +12408,7 @@ return Err(\"typed pin\".into());
+             },
+             None,
+         );
+-        assert_eq!(may_reach.state, StageState::Yes, "{}", may_reach.summary);
++        assert_eq!(may_reach.state, StageState::Weak, "{}", may_reach.summary);
+     }
+ 
+     /// #7063: an exact error variant is shared by every function returning
+@@ -12391,12 +12471,12 @@ return Err(\"typed pin\".into());
+                 reveal_evidence(&probe, &[(&other_owner, RelationReason::SameTestFile)]);
+             assert_eq!(
+                 alone.state,
+-                StageState::Yes,
++                StageState::Weak,
+                 "{expression}: {}",
+                 alone.summary
+             );
+ 
+-            // A same-file test that may run the owner keeps confirming.
++            // Possible reach alone does not bind the changed sink (#12010).
+             let (_, may_reach, _, _) = reveal_evidence_with_expression(
+                 &probe,
+                 &probe.expression,
+@@ -12440,7 +12520,7 @@ return Err(\"typed pin\".into());
+             );
+             assert_eq!(
+                 may_reach.state,
+-                StageState::Yes,
++                StageState::Weak,
+                 "{expression}: {}",
+                 may_reach.summary
+             );
+@@ -12520,8 +12600,8 @@ return Err(\"typed pin\".into());
+             PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
+         );
+ 
+-        // A return value that names no error variant keeps the #4486
+-        // same-file credit beside a reaching test.
++        // A return value that names no error variant still needs sink identity;
++        // possible reach through a same-file sibling cannot supply it (#12010).
+         let ok_probe = probe(ProbeFamily::ReturnValue, "return Ok(amount + 1);");
+         let same_file_ok = test_with_assertions(
+             "refund_adds_one",
+@@ -12540,7 +12620,7 @@ return Err(\"typed pin\".into());
+             &|_| true,
+         );
+         assert_ne!(ok_beside.summary, PROXIMITY_VARIANT_CONFIRMATION_WITHHELD);
+-        assert_eq!(ok_beside.state, StageState::Yes, "{}", ok_beside.summary);
++        assert_eq!(ok_beside.state, StageState::Weak, "{}", ok_beside.summary);
+     }
+ 
+     /// #9167: beside a test that calls the owner, a same-file test that cannot
+diff --git a/crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs b/crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs
+new file mode 100644
+index 000000000..857bce06f
+--- /dev/null
++++ b/crates/ripr/src/analysis/classify/reveal/tests/sink_identity_tests.rs
+@@ -0,0 +1,139 @@
++use super::*;
++
++#[test]
++fn sink_identity_proximity_cannot_supply_yes_but_direct_and_helper_can() {
++    let probe = probe(ProbeFamily::Predicate, "current.status == recorded.status");
++    let exact = test_with_assertions(
++        "other_status_is_terminal",
++        vec![oracle(
++            "assert_eq!(record.status, \"terminal\");",
++            OracleKind::ExactValue,
++            OracleStrength::Strong,
++        )],
++    );
++    for reason in [RelationReason::SameTestFile, RelationReason::SameModule] {
++        let (_, discriminate, _) = reveal_evidence(&probe, &[(&exact, reason)]);
++        assert_eq!(
++            discriminate.state,
++            StageState::Weak,
++            "{reason:?}: {discriminate:?}"
++        );
++        assert!(discriminate.summary.contains("identity_unresolved"));
++    }
++    for reason in [
++        RelationReason::DirectOwnerCall,
++        RelationReason::HelperOwnerCall,
++    ] {
++        let (_, discriminate, _) = reveal_evidence(&probe, &[(&exact, reason)]);
++        assert_eq!(
++            discriminate.state,
++            StageState::Yes,
++            "{reason:?}: {discriminate:?}"
++        );
++    }
++}
++
++#[test]
++fn sink_identity_equal_strength_bound_oracle_wins_in_either_order() {
++    let probe = probe(ProbeFamily::Predicate, "status == expected");
++    let exact = test_with_assertions(
++        "status_observation",
++        vec![oracle(
++            "assert_eq!(status, expected);",
++            OracleKind::ExactValue,
++            OracleStrength::Strong,
++        )],
++    );
++    for related in [
++        vec![
++            (&exact, RelationReason::SameTestFile),
++            (&exact, RelationReason::DirectOwnerCall),
++        ],
++        vec![
++            (&exact, RelationReason::DirectOwnerCall),
++            (&exact, RelationReason::SameTestFile),
++        ],
++    ] {
++        let (_, discriminate, _) = reveal_evidence_proximity_reach(&probe, &related, &|_| true);
++        assert_eq!(discriminate.state, StageState::Yes, "{discriminate:?}");
++    }
++}
++
++#[test]
++fn sink_identity_return_delta_rejects_shared_tokens_and_retains_changed_and_no_before_controls() {
++    let mut probe = probe(ProbeFamily::ReturnValue, "\"verifies catalog consistency\"");
++    probe.before = Some("\"checks catalog consistency\"".to_string());
++    let shared = test_with_assertions(
++        "catalog_shape",
++        vec![oracle(
++            "assert_eq!(catalog.len(), 3);",
++            OracleKind::ExactValue,
++            OracleStrength::Strong,
++        )],
++    );
++    let exact = test_with_assertions(
++        "description_text",
++        vec![oracle(
++            "assert_eq!(description, \"verifies catalog consistency\");",
++            OracleKind::ExactValue,
++            OracleStrength::Strong,
++        )],
++    );
++    let (_, discriminate, _) =
++        reveal_evidence(&probe, &[(&shared, RelationReason::DirectOwnerCall)]);
++    assert_eq!(
++        discriminate.state,
++        StageState::Weak,
++        "shared: {discriminate:?}"
++    );
++    let (_, discriminate, _) =
++        reveal_evidence(&probe, &[(&exact, RelationReason::DirectOwnerCall)]);
++    assert_eq!(
++        discriminate.state,
++        StageState::Yes,
++        "changed: {discriminate:?}"
++    );
++    probe.before = None;
++    let (_, discriminate, _) =
++        reveal_evidence(&probe, &[(&shared, RelationReason::DirectOwnerCall)]);
++    assert_eq!(
++        discriminate.state,
++        StageState::Yes,
++        "no-before: {discriminate:?}"
++    );
++}
++
++#[test]
++fn sink_identity_return_delta_cannot_borrow_a_weaker_oracles_changed_token() {
++    let mut probe = probe(ProbeFamily::ReturnValue, "\"verifies catalog consistency\"");
++    probe.before = Some("\"checks catalog consistency\"".to_string());
++    let shared = test_with_assertions(
++        "catalog_shape",
++        vec![oracle(
++            "assert_eq!(catalog.len(), 3);",
++            OracleKind::ExactValue,
++            OracleStrength::Strong,
++        )],
++    );
++    let weak_changed = test_with_assertions(
++        "description_mentions_change",
++        vec![oracle(
++            "assert!(description.contains(\"verifies\"));",
++            OracleKind::RelationalCheck,
++            OracleStrength::Weak,
++        )],
++    );
++    for related in [
++        vec![
++            (&shared, RelationReason::DirectOwnerCall),
++            (&weak_changed, RelationReason::DirectOwnerCall),
++        ],
++        vec![
++            (&weak_changed, RelationReason::DirectOwnerCall),
++            (&shared, RelationReason::DirectOwnerCall),
++        ],
++    ] {
++        let (_, discriminate, _) = reveal_evidence(&probe, &related);
++        assert_eq!(discriminate.state, StageState::Weak, "{discriminate:?}");
++    }
++}
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index 3eee6b3b7..0489cc867 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -680,7 +680,8 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// statement through the same owner-pin decision as `ripr check` (#12394).
+ /// `1.158`: a bounded `.map(owner)` chain is credited at the first input where
+ /// the change is visible (#12841).
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
++/// `1.159`: proximity-only and unchanged-return-token oracles cannot discriminate (#12010).
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.159";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -880,7 +881,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
+ /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
+ /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
+ /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
++/// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1082,7 +1084,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
+ /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
+ /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
+ /// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
++/// `0.161`: same sink-identity and return-delta refusal as full `1.159` (#12010).
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.161";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5164,7 +5167,7 @@ mod tests {
+         // 1.155 -> 1.156: different-arm error pin is one fact in every view (#12733, #12734).
+         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
+         // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.158");
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.159");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5304,8 +5307,8 @@ mod tests {
+         // 0.157 -> 0.158: same different-arm error-pin rule as full 1.156 (#12733, #12734).
+         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
+         // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.161");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.161");
+     }
+ 
+     #[test]
+diff --git a/docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md b/docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md
+index c4b3e5a3c..b974a9bb8 100644
+--- a/docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md
++++ b/docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md
+@@ -909,3 +909,28 @@ with a NoScope error, so it must run with a non-empty diff against
+ 
+ - `evidence_promotion_honesty_charter_members`: count of `must_not_promote` cases in corpus
+ - `evidence_promotion_honesty_control_cases`: count of `must_promote` cases in corpus
++
++## Sink identity and returned-text changes (#12010)
++
++`rust_binding_status_wrong_owner_observer` rejects strong exposure from an
++oracle on a nearby status rather than the changed binding decision.
++`rust_catalog_description_structural_oracle` rejects strong exposure for a
++wording change when the oracle checks only structure and shares unchanged
++tokens. Both controls are registered with `must_not_promote` and a maximum
++`weakly_exposed` class.
++
++Reveal keeps the selected oracle's identity, strength and observation
++confirmation together. A file/module relation alone caps a `Yes` discriminator
++to `Weak`; an admitted producer-bound return/effect witness retains its
++existing authority. Equal-strength ties prefer an identity-bound, confirmed
++oracle regardless of order. For a ReturnValue probe with nonempty before-text,
++plain lexical confirmation uses after-tokens absent from the before-text.
++A returned struct literal with parser-established changed fields retains the
++existing field-specific confirmation and overwrite refusals.
++Association still uses all tokens, and a producer-bound value pin remains
++authoritative. No-before-text probes retain the existing lexical behavior.
++
++The paired controls in `classify/reveal/tests/sink_identity_tests.rs` exercise
++proximity/direct/helper identity, reversed equal-strength ties, changed versus
++shared return tokens, no-before-text compatibility and refusal to borrow a
++weaker oracle's confirmation.
+diff --git a/fixtures/evidence-promotion-honesty-corpus/corpus.json b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+index 0198abf37..af4a0774e 100644
+--- a/fixtures/evidence-promotion-honesty-corpus/corpus.json
++++ b/fixtures/evidence-promotion-honesty-corpus/corpus.json
+@@ -29,6 +29,48 @@
+     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json"
+   ],
+   "cases": [
++    {
++      "id": "rust_binding_status_wrong_owner_observer",
++      "language": "rust",
++      "tier": "pure",
++      "source_fixture": "fixtures/rust_binding_status_wrong_owner_observer",
++      "vector": "nearby_value_oracle_does_not_observe_binding_decision",
++      "assertions": [
++        {
++          "type": "must_not_report_clean"
++        },
++        {
++          "type": "must_not_promote"
++        },
++        {
++          "type": "maximum_class",
++          "class": "weakly_exposed"
++        }
++      ]
++    },
++    {
++      "id": "rust_catalog_description_structural_oracle",
++      "language": "rust",
++      "tier": "pure",
++      "source_fixture": "fixtures/rust_catalog_description_structural_oracle",
++      "vector": "structural_oracle_with_coincidental_token_overlap_must_not_promote",
++      "assertions": [
++        {
++          "type": "must_not_report_clean"
++        },
++        {
++          "type": "must_not_promote"
++        },
++        {
++          "type": "expected_class",
++          "class": "weakly_exposed"
++        },
++        {
++          "type": "maximum_class",
++          "class": "weakly_exposed"
++        }
++      ]
++    },
+     {
+       "id": "typescript_push_escaped_nondiscriminator",
+       "language": "typescript",
+diff --git a/fixtures/rust_binding_status_wrong_owner_observer/SPEC.md b/fixtures/rust_binding_status_wrong_owner_observer/SPEC.md
+new file mode 100644
+index 000000000..e0f33c061
+--- /dev/null
++++ b/fixtures/rust_binding_status_wrong_owner_observer/SPEC.md
+@@ -0,0 +1,30 @@
++# Fixture: rust_binding_status_wrong_owner_observer
++
++Spec: RIPR-SPEC-0108
++
++## Given
++
++A test reaches the changed `receipt_binding_matches` comparison and carries
++a strong oracle, but the oracle observes a nearby value (the `Ready` variant
++spelling, the artifact ledger's own `status`) — never the comparison
++decision itself.
++
++## When
++
++```bash
++cargo xtask fixtures rust_binding_status_wrong_owner_observer
++```
++
++## Then
++
++RIPR must not promote the binding-comparison seam to strong exposure.
++Reach plus a strong oracle on a nearby value is the coverage mistake, not
++discrimination: no assertion observes the changed sink's accept/refuse
++decision.
++
++## Must Not
++
++- Treat an oracle naming `Ready`/`status`/`blocked` as an oracle on the
++  `status == status && violations == violations` decision.
++- Emit a repair-ready or clean result for the comparison seam.
++- Claim runtime mutation adequacy.
+diff --git a/fixtures/rust_binding_status_wrong_owner_observer/diff.patch b/fixtures/rust_binding_status_wrong_owner_observer/diff.patch
+new file mode 100644
+index 000000000..9f6ab81b9
+--- /dev/null
++++ b/fixtures/rust_binding_status_wrong_owner_observer/diff.patch
+@@ -0,0 +1,13 @@
++diff --git a/src/lib.rs b/src/lib.rs
++index 0000000..1111111 100644
++--- a/src/lib.rs
+++++ b/src/lib.rs
++@@ -16,7 +16,7 @@ pub fn receipt_binding_matches(
++     current: &AttemptVerdict,
++     recorded: &AttemptVerdict,
++ ) -> bool {
++-    format!("{current:?}") == format!("{recorded:?}")
+++    current.status == recorded.status && current.violations == recorded.violations
++ }
++ 
++ // Unrelated owner that shares `status`/`verdict` vocabulary but never
+diff --git a/fixtures/rust_binding_status_wrong_owner_observer/expected/CHANGELOG.md b/fixtures/rust_binding_status_wrong_owner_observer/expected/CHANGELOG.md
+new file mode 100644
+index 000000000..1baecbc53
+--- /dev/null
++++ b/fixtures/rust_binding_status_wrong_owner_observer/expected/CHANGELOG.md
+@@ -0,0 +1,61 @@
++# Golden Output Changes
++
++## Pending — rust_binding_status_wrong_owner_observer (1)
++
++Reason:
++RIPR-SPEC-0108: initial scaffold
++
++Command:
++`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++
++## Pending — rust_binding_status_wrong_owner_observer (2)
++
++Reason:
++RIPR-SPEC-0108: tune wrong-owner overlap
++
++Command:
++`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++
++## Pending — rust_binding_status_wrong_owner_observer (3)
++
++Reason:
++RIPR-SPEC-0108: identity gate demotes weak-token credit
++
++Command:
++`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++
++## Pending — rust_binding_status_wrong_owner_observer (4)
++
++Reason:
++RIPR-SPEC-0108: cross-test reach plus oracle shape
++
++Command:
++`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++
++## Pending — rust_binding_status_wrong_owner_observer (5)
++
++Reason:
++RIPR-SPEC-0108: withheld discriminator names actual linkage
++
++Command:
++`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
+diff --git a/fixtures/rust_binding_status_wrong_owner_observer/expected/check.json b/fixtures/rust_binding_status_wrong_owner_observer/expected/check.json
+new file mode 100644
+index 000000000..5ed29d790
+--- /dev/null
++++ b/fixtures/rust_binding_status_wrong_owner_observer/expected/check.json
+@@ -0,0 +1,293 @@
++{
++  "schema_version": "0.2",
++  "tool": "ripr",
++  "mode": "fast",
++  "root": "fixtures/rust_binding_status_wrong_owner_observer/input",
++  "base": "origin/main",
++  "summary": {"changed_rust_files":1,"probes":3,"findings":3,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":2,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
++  "analysis_outcome": {
++    "analysis_complete": true,
++    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:94b90a0533063e69f3fd02f590274b4178505c32bc88e5fc781ea8f0286fd567","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
++  },
++  "findings": [
++    {
++      "id": "probe:src_lib.rs:call_deletion:5417b899",
++      "classification": "reachable_unrevealed",
++      "severity": "warning",
++      "confidence": 0.79,
++      "probe": {
++        "id": "probe:src_lib.rs:call_deletion:5417b899",
++        "family": "call_deletion",
++        "delta": "effect",
++        "file": "fixtures/rust_binding_status_wrong_owner_observer/input/src/lib.rs",
++        "line": 19,
++        "expression": "format!(\"{current:?}\") == format!(\"{recorded:?}\")"
++       },
++      "ripr": {
++        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison"},
++        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
++        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence call effect: format!(\"{current:?}\") == format!(\"{recorded:?}\")"},
++        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
++        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
++       },
++      "evidence_path": ["reach yes: Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence call effect: format!(\"{current:?}\") == format!(\"{recorded:?}\")", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches call effect: format!(\"{current:?}\") == format!(\"{recorded:?}\") (line 19)", "related test tests/driver.rs:6 binding_inputs_reach_the_changed_comparison uses none unknown oracle"],
++      "flow_sinks": [
++        {"kind":"call_effect","text":"format!(\"{current:?}\") == format!(\"{recorded:?}\")","line":19}
++      ],
++      "evidence": ["Changed behavior appears to influence call effect: format!(\"{current:?}\") == format!(\"{recorded:?}\")", "No assertion found on related tests", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
++      "missing": ["No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
++      "assertion_texts": {
++      },
++      "activation": {
++        "observed_values": [
++        ],
++        "missing_discriminators": [
++        ]
++      },
++      "observed_values": [
++      ],
++      "missing_discriminators": [
++      ],
++      "related_tests_total": 1,
++      "related_tests": [
++        {
++          "name": "binding_inputs_reach_the_changed_comparison",
++          "file": "tests/driver.rs",
++          "line": 6,
++          "oracle_strength": "none",
++          "oracle_kind": "unknown",
++          "oracle": "",
++          "relation_reason": "direct_owner_call",
++          "relation_confidence": "high"
++        }
++      ],
++      "stop_reasons": ["proc_macro_opaque"],
++      "oracle_kind": "unknown",
++      "oracle_strength": "none",
++      "recommended_next_step": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
++      "suggested_next_action": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
++      "language": "rust",
++      "source_currentness": "base_deleted"
++    },
++    {
++      "id": "probe:src_lib.rs:field_construction:bfd5b07d",
++      "classification": "reachable_unrevealed",
++      "severity": "warning",
++      "confidence": 0.66,
++      "probe": {
++        "id": "probe:src_lib.rs:field_construction:bfd5b07d",
++        "family": "field_construction",
++        "delta": "value",
++        "file": "fixtures/rust_binding_status_wrong_owner_observer/input/src/lib.rs",
++        "line": 19,
++        "expression": "format!(\"{current:?}\") == format!(\"{recorded:?}\")"
++       },
++      "ripr": {
++        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison"},
++        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
++        "propagate": {"state":"weak","confidence":"low","summary":"No complete owner-bound propagation witness found for constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")"},
++        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
++        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
++       },
++      "evidence_path": ["reach yes: Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\") (line 19)", "related test tests/driver.rs:6 binding_inputs_reach_the_changed_comparison uses none unknown oracle", "missing discriminator format!(\"{current:?}\") == format!(\"{recorded:?}\"): No field-value assertion observes the constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")"],
++      "flow_sinks": [
++        {"kind":"struct_field","text":"format!(\"{current:?}\") == format!(\"{recorded:?}\")","line":19}
++      ],
++      "evidence": ["No assertion found on related tests", "No complete owner-bound propagation witness found for constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
++      "missing": ["Missing discriminator value: format!(\"{current:?}\") == format!(\"{recorded:?}\")", "No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
++      "assertion_texts": {
++      },
++      "activation": {
++        "observed_values": [
++        ],
++        "missing_discriminators": [
++          {
++            "value": "format!(\"{current:?}\") == format!(\"{recorded:?}\")",
++            "reason": "No field-value assertion observes the constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")",
++            "flow_sink": {"kind":"struct_field","text":"format!(\"{current:?}\") == format!(\"{recorded:?}\")","line":19}
++          }
++        ]
++      },
++      "observed_values": [
++      ],
++      "missing_discriminators": [
++        {
++          "value": "format!(\"{current:?}\") == format!(\"{recorded:?}\")",
++          "reason": "No field-value assertion observes the constructed field: format!(\"{current:?}\") == format!(\"{recorded:?}\")",
++          "flow_sink": {"kind":"struct_field","text":"format!(\"{current:?}\") == format!(\"{recorded:?}\")","line":19}
++        }
++      ],
++      "related_tests_total": 1,
++      "related_tests": [
++        {
++          "name": "binding_inputs_reach_the_changed_comparison",
++          "file": "tests/driver.rs",
++          "line": 6,
++          "oracle_strength": "none",
++          "oracle_kind": "unknown",
++          "oracle": "",
++          "relation_reason": "direct_owner_call",
++          "relation_confidence": "high"
++        }
++      ],
++      "stop_reasons": ["proc_macro_opaque"],
++      "oracle_kind": "unknown",
++      "oracle_strength": "none",
++      "recommended_next_step": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
++      "suggested_next_action": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
++      "language": "rust",
++      "source_currentness": "base_deleted"
++    },
++    {
++      "id": "probe:src_lib.rs:predicate:1ce6138c",
++      "classification": "infection_unknown",
++      "severity": "warning",
++      "confidence": 0.66,
++      "probe": {
++        "id": "probe:src_lib.rs:predicate:1ce6138c",
++        "family": "predicate",
++        "delta": "control",
++        "file": "fixtures/rust_binding_status_wrong_owner_observer/input/src/lib.rs",
++        "line": 19,
++        "expression": "current.status == recorded.status && current.violations == recorded.violations"
++       },
++      "ripr": {
++        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach receipt_binding_matches: artifact_terminal_status_is_observed, binding_inputs_reach_the_changed_comparison"},
++        "infect": {"state":"unknown","confidence":"low","summary":"Predicate changed, but no literal boundary was visible in the changed expression"},
++        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
++        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
++        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator uncredited: strongest oracle reaches only through weak_token_substring linkage without sink-level evidence (identity_unresolved)"}
++       },
++      "evidence_path": ["reach yes: Related tests appear to reach receipt_binding_matches: artifact_terminal_status_is_observed, binding_inputs_reach_the_changed_comparison", "infection unknown: Predicate changed, but no literal boundary was visible in the changed expression", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator uncredited: strongest oracle reaches only through weak_token_substring linkage without sink-level evidence (identity_unresolved)", "related test tests/artifact.rs:6 artifact_terminal_status_is_observed uses weak relational check oracle: assert!(artifact_reaches_terminal(&record));", "related test tests/artifact.rs:6 artifact_terminal_status_is_observed uses strong exact value oracle: assert_eq!(record.verdict_note, \"blocked\");", "related test tests/artifact.rs:6 artifact_terminal_status_is_observed uses weak relational check oracle: assert!(format!(\"{:?}\", verdict.status).contains(\"Ready\"));", "related test tests/driver.rs:6 binding_inputs_reach_the_changed_comparison uses none unknown oracle", "observed assertion argument value \"blocked\" at line 14", "observed assertion argument value \"Ready\" at line 15", "observed assertion argument value \"{:?}\" at line 15", "observed enum variant value AttemptStatus::Ready at line 15", "observed assertion argument value \"Ready\" at line 21", "observed assertion argument value \"{:?}\" at line 21"],
++      "flow_sinks": [
++      ],
++      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator uncredited: strongest oracle reaches only through weak_token_substring linkage without sink-level evidence (identity_unresolved)", "Predicate changed, but no literal boundary was visible in the changed expression", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach receipt_binding_matches: artifact_terminal_status_is_observed, binding_inputs_reach_the_changed_comparison"],
++      "missing": ["No detected boundary input for the changed predicate", "No strong discriminator was detected", "Predicate changed, but no literal boundary was visible in the changed expression"],
++      "assertion_texts": {
++        "14": "assert_eq!(record.verdict_note, \"blocked\");",
++        "15": "assert_eq!(format!(\"{:?}\", AttemptStatus::Ready), \"Ready\");",
++        "21": "assert!(format!(\"{:?}\", verdict.status).contains(\"Ready\"));"
++      },
++      "activation": {
++        "observed_values": [
++          {
++            "line": 14,
++            "value": "\"blocked\"",
++            "context": "assertion_argument"
++          },
++          {
++            "line": 15,
++            "value": "\"Ready\"",
++            "context": "assertion_argument"
++          },
++          {
++            "line": 15,
++            "value": "\"{:?}\"",
++            "context": "assertion_argument"
++          },
++          {
++            "line": 15,
++            "value": "AttemptStatus::Ready",
++            "context": "enum_variant"
++          },
++          {
++            "line": 21,
++            "value": "\"Ready\"",
++            "context": "assertion_argument"
++          },
++          {
++            "line": 21,
++            "value": "\"{:?}\"",
++            "context": "assertion_argument"
++          }
++        ],
++        "missing_discriminators": [
++        ]
++      },
++      "observed_values": [
++        {
++          "line": 14,
++          "value": "\"blocked\"",
++          "context": "assertion_argument"
++        },
++        {
++          "line": 15,
++          "value": "\"Ready\"",
++          "context": "assertion_argument"
++        },
++        {
++          "line": 15,
++          "value": "\"{:?}\"",
++          "context": "assertion_argument"
++        },
++        {
++          "line": 15,
++          "value": "AttemptStatus::Ready",
++          "context": "enum_variant"
++        },
++        {
++          "line": 21,
++          "value": "\"Ready\"",
++          "context": "assertion_argument"
++        },
++        {
++          "line": 21,
++          "value": "\"{:?}\"",
++          "context": "assertion_argument"
++        }
++      ],
++      "missing_discriminators": [
++      ],
++      "related_tests_total": 4,
++      "related_tests": [
++        {
++          "name": "artifact_terminal_status_is_observed",
++          "file": "tests/artifact.rs",
++          "line": 6,
++          "oracle_strength": "weak",
++          "oracle_kind": "relational_check",
++          "oracle": "assert!(artifact_reaches_terminal(&record));",
++          "relation_reason": "weak_token_substring",
++          "relation_confidence": "low"
++        },
++        {
++          "name": "artifact_terminal_status_is_observed",
++          "file": "tests/artifact.rs",
++          "line": 6,
++          "oracle_strength": "strong",
++          "oracle_kind": "exact_value",
++          "oracle": "assert_eq!(record.verdict_note, \"blocked\");",
++          "relation_reason": "weak_token_substring",
++          "relation_confidence": "low"
++        },
++        {
++          "name": "artifact_terminal_status_is_observed",
++          "file": "tests/artifact.rs",
++          "line": 6,
++          "oracle_strength": "weak",
++          "oracle_kind": "relational_check",
++          "oracle": "assert!(format!(\"{:?}\", verdict.status).contains(\"Ready\"));",
++          "relation_reason": "weak_token_substring",
++          "relation_confidence": "low"
++        },
++        {
++          "name": "binding_inputs_reach_the_changed_comparison",
++          "file": "tests/driver.rs",
++          "line": 6,
++          "oracle_strength": "none",
++          "oracle_kind": "unknown",
++          "oracle": "",
++          "relation_reason": "direct_owner_call",
++          "relation_confidence": "high"
++        }
++      ],
++      "stop_reasons": ["infection_evidence_unknown"],
++      "oracle_kind": "exact_value",
++      "oracle_strength": "strong",
++      "recommended_next_step": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
++      "suggested_next_action": "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.",
++      "language": "rust",
++      "source_currentness": "candidate_current"
++    }
++  ]
++}
+diff --git a/fixtures/rust_binding_status_wrong_owner_observer/expected/human.txt b/fixtures/rust_binding_status_wrong_owner_observer/expected/human.txt
+new file mode 100644
+index 000000000..5d8896a39
+--- /dev/null
++++ b/fixtures/rust_binding_status_wrong_owner_observer/expected/human.txt
+@@ -0,0 +1,32 @@
++ripr static RIPR exposure analysis
++mode: fast
++root: fixtures/rust_binding_status_wrong_owner_observer/input
++
++Summary: 3 probe(s), 0 exposed, 0 weak, 2 unrevealed, 0 no path, 1 unknown
++
++Analysis outcome: complete_with_findings (analysis complete).
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s).
++
++Start here:
++  State: static_limited
++  Safe next action: inspect the named static limitation before treating this as repair-ready.
++  File: fixtures/rust_binding_status_wrong_owner_observer/input/src/lib.rs:19
++  Static exposure: infection_unknown (warning, confidence 0.66)
++  Why infection_unknown: the change reaches a sink but infection could not be determined statically
++  Changed behavior: current.status == recorded.status && current.violations == recorded.violations
++  Missing discriminator: No detected boundary input for the changed predicate
++  Related test: tests/artifact.rs:6 artifact_terminal_status_is_observed
++  Next step: Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.
++  Evidence:
++    - reach yes: Related tests appear to reach receipt_binding_matches: artifact_terminal_status_is_observed, binding_inputs_reach_the_changed_comparison
++    - infection unknown: Predicate changed, but no literal boundary was visible in the changed expression
++    - 13 more evidence line(s) hidden
++
++Next: drill into the top finding:
++  ripr explain --root fixtures/rust_binding_status_wrong_owner_observer/input --diff fixtures/rust_binding_status_wrong_owner_observer/diff.patch --mode fast probe:src_lib.rs:predicate:1ce6138c
++  ripr context --root fixtures/rust_binding_status_wrong_owner_observer/input --diff fixtures/rust_binding_status_wrong_owner_observer/diff.patch --mode fast --at probe:src_lib.rs:predicate:1ce6138c
++
++Hidden:
++  2 lower-priority finding(s) omitted from default human output.
++  Full evidence: rerun with --format human-full
++  Machine data: rerun with --format json
+diff --git a/fixtures/rust_binding_status_wrong_owner_observer/input/Cargo.toml b/fixtures/rust_binding_status_wrong_owner_observer/input/Cargo.toml
+new file mode 100644
+index 000000000..4b9ccf487
+--- /dev/null
++++ b/fixtures/rust_binding_status_wrong_owner_observer/input/Cargo.toml
+@@ -0,0 +1,8 @@
++[package]
++name = "rust_binding_status_wrong_owner_observer_fixture"
++version = "0.1.0"
++edition = "2024"
++
++[lib]
++name = "rust_binding_status_wrong_owner_observer_fixture"
++path = "src/lib.rs"
+diff --git a/fixtures/rust_binding_status_wrong_owner_observer/input/src/lib.rs b/fixtures/rust_binding_status_wrong_owner_observer/input/src/lib.rs
+new file mode 100644
+index 000000000..613256bee
+--- /dev/null
++++ b/fixtures/rust_binding_status_wrong_owner_observer/input/src/lib.rs
+@@ -0,0 +1,30 @@
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum AttemptStatus {
++    Ready,
++    Tampered,
++}
++
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub struct AttemptVerdict {
++    pub status: AttemptStatus,
++    pub violations: Vec<String>,
++    pub display_paths: Vec<String>,
++}
++
++pub fn receipt_binding_matches(
++    current: &AttemptVerdict,
++    recorded: &AttemptVerdict,
++) -> bool {
++    current.status == recorded.status && current.violations == recorded.violations
++}
++
++// Unrelated owner that shares `status`/`verdict` vocabulary but never
++// reaches the receipt binding sink.
++pub struct ArtifactRecord {
++    pub status: String,
++    pub verdict_note: String,
++}
++
++pub fn artifact_reaches_terminal(record: &ArtifactRecord) -> bool {
++    record.status == "terminal"
++}
+diff --git a/fixtures/rust_binding_status_wrong_owner_observer/input/tests/artifact.rs b/fixtures/rust_binding_status_wrong_owner_observer/input/tests/artifact.rs
+new file mode 100644
+index 000000000..a6ab060d1
+--- /dev/null
++++ b/fixtures/rust_binding_status_wrong_owner_observer/input/tests/artifact.rs
+@@ -0,0 +1,22 @@
++use rust_binding_status_wrong_owner_observer_fixture::{
++    AttemptStatus, AttemptVerdict, ArtifactRecord, artifact_reaches_terminal,
++};
++
++#[test]
++fn artifact_terminal_status_is_observed() {
++    // Never reaches the changed sink. Strong oracle on the unrelated owner
++    // plus nearby-value tokens the sink also names.
++    let record = ArtifactRecord {
++        status: "terminal".to_string(),
++        verdict_note: "blocked".to_string(),
++    };
++    assert!(artifact_reaches_terminal(&record));
++    assert_eq!(record.verdict_note, "blocked");
++    assert_eq!(format!("{:?}", AttemptStatus::Ready), "Ready");
++    let verdict = AttemptVerdict {
++        status: AttemptStatus::Ready,
++        violations: vec![],
++        display_paths: vec!["out/receipt.json".to_string()],
++    };
++    assert!(format!("{:?}", verdict.status).contains("Ready"));
++}
+diff --git a/fixtures/rust_binding_status_wrong_owner_observer/input/tests/driver.rs b/fixtures/rust_binding_status_wrong_owner_observer/input/tests/driver.rs
+new file mode 100644
+index 000000000..a44cbc5cc
+--- /dev/null
++++ b/fixtures/rust_binding_status_wrong_owner_observer/input/tests/driver.rs
+@@ -0,0 +1,22 @@
++use rust_binding_status_wrong_owner_observer_fixture::{
++    AttemptStatus, AttemptVerdict, receipt_binding_matches,
++};
++
++#[test]
++fn binding_inputs_reach_the_changed_comparison() {
++    // Establishes reach and boundary-shaped inputs only: matching verdicts
++    // must bind, a status flip must refuse. No oracle observes the decision
++    // beyond executing it (smoke execution, not discrimination).
++    let clean = AttemptVerdict {
++        status: AttemptStatus::Ready,
++        violations: vec![],
++        display_paths: vec![],
++    };
++    let drifted = AttemptVerdict {
++        status: AttemptStatus::Tampered,
++        violations: vec![],
++        display_paths: vec![],
++    };
++    let _ = receipt_binding_matches(&clean, &clean);
++    let _ = receipt_binding_matches(&clean, &drifted);
++}
+diff --git a/fixtures/rust_catalog_description_structural_oracle/SPEC.md b/fixtures/rust_catalog_description_structural_oracle/SPEC.md
+new file mode 100644
+index 000000000..06ce2ae05
+--- /dev/null
++++ b/fixtures/rust_catalog_description_structural_oracle/SPEC.md
+@@ -0,0 +1,35 @@
++# Fixture: rust_catalog_description_structural_oracle
++
++Spec: RIPR-SPEC-0108
++
++## Given
++
++`default_check_description` renders the description text for the `check`
++catalog entry; `build_catalog` stores it in the asserted `Catalog`.
++`entry_description_violations` checks structural consistency only
++(duplicate/empty names and descriptions) and never inspects the wording.
++One test reaches the changed owner directly and asserts zero violations
++with a strong exact oracle; the assertion shares a probe-expression token
++(`catalog`), so the observation guard clears on coincidence.
++
++## When
++
++```bash
++cargo xtask fixtures rust_catalog_description_structural_oracle
++```
++
++The diff changes the rendered wording (`"checks catalog consistency"` ->
++`"verifies catalog consistency"`).
++
++## Then
++
++The wording row must not promote on structural evidence alone: with only the
++coincidental `catalog` token shared between oracle and changed expression,
++the row withholds at `weakly_exposed` (delta-token confirmation, #1748).
++An oracle quoting the changed word would confirm and expose.
++
++## Must Not
++
++- Treat this control as sufficient discrimination: a wording-only change
++  passes the asserting test.
++- Claim runtime mutation adequacy.
+diff --git a/fixtures/rust_catalog_description_structural_oracle/diff.patch b/fixtures/rust_catalog_description_structural_oracle/diff.patch
+new file mode 100644
+index 000000000..5c7b261f6
+--- /dev/null
++++ b/fixtures/rust_catalog_description_structural_oracle/diff.patch
+@@ -0,0 +1,13 @@
++diff --git a/src/lib.rs b/src/lib.rs
++index 0000000..1111111 100644
++--- a/src/lib.rs
+++++ b/src/lib.rs
++@@ -8,7 +8,7 @@ pub struct Catalog {
++ }
++
++ pub fn default_check_description() -> String {
++-    "checks catalog consistency".to_string()
+++    "verifies catalog consistency".to_string()
++ }
++
++ pub fn build_catalog() -> Catalog {
+diff --git a/fixtures/rust_catalog_description_structural_oracle/expected/CHANGELOG.md b/fixtures/rust_catalog_description_structural_oracle/expected/CHANGELOG.md
+new file mode 100644
+index 000000000..b4fac727f
+--- /dev/null
++++ b/fixtures/rust_catalog_description_structural_oracle/expected/CHANGELOG.md
+@@ -0,0 +1,37 @@
++# Golden Output Changes
++
++## Pending — rust_catalog_description_structural_oracle (1)
++
++Reason:
++RIPR-SPEC-0108: bless specificity-residual control fixture
++
++Command:
++`cargo xtask goldens bless rust_catalog_description_structural_oracle --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++
++## Pending — rust_catalog_description_structural_oracle (2)
++
++Reason:
++RIPR-SPEC-0108: re-bless after delta-token specificity retry demotes structural oracle
++
++Command:
++`cargo xtask goldens bless rust_catalog_description_structural_oracle --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
++
++## Pending — rust_catalog_description_structural_oracle (3)
++
++Reason:
++add human-full.txt so the RIPR-SPEC-0108 expected_class pin evaluates
++
++Command:
++`cargo xtask goldens bless rust_catalog_description_structural_oracle --reason "..."`
++
++Updated:
++- `expected/check.json`
++- `expected/human.txt`
+diff --git a/fixtures/rust_catalog_description_structural_oracle/expected/check.json b/fixtures/rust_catalog_description_structural_oracle/expected/check.json
+new file mode 100644
+index 000000000..e04e3f27e
+--- /dev/null
++++ b/fixtures/rust_catalog_description_structural_oracle/expected/check.json
+@@ -0,0 +1,73 @@
++{
++  "schema_version": "0.2",
++  "tool": "ripr",
++  "mode": "fast",
++  "root": "fixtures/rust_catalog_description_structural_oracle/input",
++  "base": "origin/main",
++  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
++  "analysis_outcome": {
++    "analysis_complete": true,
++    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":"origin/main","input_identity":"sha256:9faa4854953601f7218f40c2c6e3e9d71eba34191afe1d0ce64745175dcad732","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
++  },
++  "findings": [
++    {
++      "id": "probe:src_lib.rs:return_value:90200739",
++      "classification": "weakly_exposed",
++      "severity": "warning",
++      "confidence": 0.92,
++      "probe": {
++        "id": "probe:src_lib.rs:return_value:90200739",
++        "family": "return_value",
++        "delta": "value",
++        "file": "fixtures/rust_catalog_description_structural_oracle/input/src/lib.rs",
++        "line": 11,
++        "expression": "\"verifies catalog consistency\".to_string()"
++       },
++      "ripr": {
++        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach default_check_description: catalog_with_single_consistent_entry_has_no_violations"},
++        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
++        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: \"verifies catalog consistency\".to_string()"},
++        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
++        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
++       },
++      "evidence_path": ["reach yes: Related tests appear to reach default_check_description: catalog_with_single_consistent_entry_has_no_violations", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: \"verifies catalog consistency\".to_string()", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: \"verifies catalog consistency\".to_string() (line 11)", "related test tests/catalog.rs:6 catalog_with_single_consistent_entry_has_no_violations uses strong exact value oracle: assert_eq!(\n        entry_description_violations(&catalog),\n        Vec::<String>::new()\n    );"],
++      "flow_sinks": [
++        {"kind":"return_value","text":"\"verifies catalog consistency\".to_string()","line":11}
++      ],
++      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: \"verifies catalog consistency\".to_string()", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach default_check_description: catalog_with_single_consistent_entry_has_no_violations"],
++      "missing": ["No strong discriminator was detected"],
++      "assertion_texts": {
++      },
++      "activation": {
++        "observed_values": [
++        ],
++        "missing_discriminators": [
++        ]
++      },
++      "observed_values": [
++      ],
++      "missing_discriminators": [
++      ],
++      "related_tests_total": 1,
++      "related_tests": [
++        {
++          "name": "catalog_with_single_consistent_entry_has_no_violations",
++          "file": "tests/catalog.rs",
++          "line": 6,
++          "oracle_strength": "strong",
++          "oracle_kind": "exact_value",
++          "oracle": "assert_eq!(\n        entry_description_violations(&catalog),\n        Vec::<String>::new()\n    );",
++          "relation_reason": "direct_owner_call",
++          "relation_confidence": "high"
++        }
++      ],
++      "stop_reasons": [],
++      "oracle_kind": "exact_value",
++      "oracle_strength": "strong",
++      "recommended_next_step": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
++      "suggested_next_action": "Replace broad assertions with exact equality or a property that constrains the changed returned value.",
++      "language": "rust",
++      "source_currentness": "candidate_current"
++    }
++  ]
++}
+diff --git a/fixtures/rust_catalog_description_structural_oracle/expected/human-full.txt b/fixtures/rust_catalog_description_structural_oracle/expected/human-full.txt
+new file mode 100644
+index 000000000..0d1988b88
+--- /dev/null
++++ b/fixtures/rust_catalog_description_structural_oracle/expected/human-full.txt
+@@ -0,0 +1,40 @@
++ripr static RIPR exposure analysis
++mode: fast
++root: fixtures/rust_catalog_description_structural_oracle/input
++
++Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
++
++Analysis outcome: complete_with_findings (analysis complete).
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
++
++WARNING fixtures/rust_catalog_description_structural_oracle/input/src/lib.rs:11
++
++Changed
++  before: "checks catalog consistency".to_string()
++  after:  "verifies catalog consistency".to_string()
++
++Probe
++  family: return_value
++  delta:  value
++  owner:  src/lib.rs::default_check_description
++
++Static exposure
++  weakly_exposed (warning, confidence 0.92)
++
++Evidence
++  - reach yes: Related tests appear to reach default_check_description: catalog_with_single_consistent_entry_has_no_violations
++  - infection yes: Reachable tests can plausibly activate this changed behavior
++  - propagation yes: Complete propagation witness reaches returned value: "verifies catalog consistency".to_string()
++  - observation yes: A related test observes a value or effect near the changed behavior
++  - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
++  - local flow reaches returned value: "verifies catalog consistency".to_string() (line 11)
++  - related test tests/catalog.rs:6 catalog_with_single_consistent_entry_has_no_violations uses strong exact value oracle: assert_eq!(
++        entry_description_violations(&catalog),
++        Vec::<String>::new()
++    );
++
++Weakness
++  - No strong discriminator was detected
++
++Next step
++  Replace broad assertions with exact equality or a property that constrains the changed returned value.
+diff --git a/fixtures/rust_catalog_description_structural_oracle/expected/human.txt b/fixtures/rust_catalog_description_structural_oracle/expected/human.txt
+new file mode 100644
+index 000000000..be9ece497
+--- /dev/null
++++ b/fixtures/rust_catalog_description_structural_oracle/expected/human.txt
+@@ -0,0 +1,31 @@
++ripr static RIPR exposure analysis
++mode: fast
++root: fixtures/rust_catalog_description_structural_oracle/input
++
++Summary: 1 probe(s), 0 exposed, 1 weak, 0 unrevealed, 0 no path, 0 unknown
++
++Analysis outcome: complete_with_findings (analysis complete).
++  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
++
++Start here:
++  State: top_gap
++  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
++  File: fixtures/rust_catalog_description_structural_oracle/input/src/lib.rs:11
++  Static exposure: weakly_exposed (warning, confidence 0.92)
++  Why weakly_exposed: a related test reaches this change but does not observe the exact changed value
++  Changed behavior: "verifies catalog consistency".to_string()
++  Missing discriminator: No strong discriminator was detected
++  Related test: tests/catalog.rs:6 catalog_with_single_consistent_entry_has_no_violations
++  Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value.
++  Evidence:
++    - reach yes: Related tests appear to reach default_check_description: catalog_with_single_consistent_entry_has_no_violations
++    - infection yes: Reachable tests can plausibly activate this changed behavior
++    - 5 more evidence line(s) hidden
++
++Next: drill into the top finding:
++  ripr explain --root fixtures/rust_catalog_description_structural_oracle/input --diff fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:90200739
++  ripr context --root fixtures/rust_catalog_description_structural_oracle/input --diff fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:90200739
++
++More:
++  Full evidence: rerun with --format human-full
++  Machine data: rerun with --format json
+diff --git a/fixtures/rust_catalog_description_structural_oracle/input/Cargo.toml b/fixtures/rust_catalog_description_structural_oracle/input/Cargo.toml
+new file mode 100644
+index 000000000..b31d12b38
+--- /dev/null
++++ b/fixtures/rust_catalog_description_structural_oracle/input/Cargo.toml
+@@ -0,0 +1,4 @@
++[package]
++name = "rust_catalog_description_structural_oracle"
++version = "0.1.0"
++edition = "2024"
+diff --git a/fixtures/rust_catalog_description_structural_oracle/input/src/lib.rs b/fixtures/rust_catalog_description_structural_oracle/input/src/lib.rs
+new file mode 100644
+index 000000000..ee19f7b7d
+--- /dev/null
++++ b/fixtures/rust_catalog_description_structural_oracle/input/src/lib.rs
+@@ -0,0 +1,41 @@
++pub struct CommandEntry {
++    pub name: &'static str,
++    pub description: String,
++}
++
++pub struct Catalog {
++    pub entries: Vec<CommandEntry>,
++}
++
++pub fn default_check_description() -> String {
++    "verifies catalog consistency".to_string()
++}
++
++pub fn build_catalog() -> Catalog {
++    Catalog {
++        entries: vec![CommandEntry {
++            name: "check",
++            description: default_check_description(),
++        }],
++    }
++}
++
++// Structure-only consistency: duplicate/empty checks. Never inspects the
++// wording, so a wording-only change passes it — even though the rendered
++// description flows into the asserted catalog.
++pub fn entry_description_violations(catalog: &Catalog) -> Vec<String> {
++    let mut violations = Vec::new();
++    let mut seen = std::collections::HashSet::new();
++    for entry in &catalog.entries {
++        if entry.name.is_empty() {
++            violations.push("empty name".to_string());
++        }
++        if !seen.insert(entry.name) {
++            violations.push(format!("duplicate {}", entry.name));
++        }
++        if entry.description.is_empty() {
++            violations.push(format!("empty description for {}", entry.name));
++        }
++    }
++    violations
++}
+diff --git a/fixtures/rust_catalog_description_structural_oracle/input/tests/catalog.rs b/fixtures/rust_catalog_description_structural_oracle/input/tests/catalog.rs
+new file mode 100644
+index 000000000..24f8d5f68
+--- /dev/null
++++ b/fixtures/rust_catalog_description_structural_oracle/input/tests/catalog.rs
+@@ -0,0 +1,20 @@
++use rust_catalog_description_structural_oracle::{
++    build_catalog, default_check_description, entry_description_violations,
++};
++
++#[test]
++fn catalog_with_single_consistent_entry_has_no_violations() {
++    // Survivor shape (p1745 catalog-description row): reaches the changed
++    // owner directly, and the changed wording flows into the asserted
++    // catalog — but the STRONG exact oracle asserts structural consistency
++    // (no violations), never the wording. The assertion shares a
++    // probe-expression token (`catalog`), so the observation guard clears on
++    // coincidence. A wording-only change passes this test: the row must not
++    // promote once the specificity retry lands (RIPR-SPEC-0108 follow-up).
++    let _ = default_check_description();
++    let catalog = build_catalog();
++    assert_eq!(
++        entry_description_violations(&catalog),
++        Vec::<String>::new()
++    );
++}

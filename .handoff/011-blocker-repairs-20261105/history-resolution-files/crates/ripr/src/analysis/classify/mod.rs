@@ -1,0 +1,224 @@
+mod absorbing_tail;
+mod activation;
+mod argument_fold;
+mod arm_selection;
+mod binding_return_flow;
+mod boundary_pairing;
+mod builder_override;
+mod call_identity;
+mod caller_loop_selector;
+mod changed_span;
+mod const_flow;
+mod const_readers;
+mod context;
+mod custom_eq;
+mod decision;
+mod diff_touched;
+mod effect_carrier;
+mod element_field_pin;
+mod flow;
+mod framework_oracle;
+mod gap_admission;
+mod helper_transfer;
+mod hop_polling;
+mod implicit_effect;
+pub(in crate::analysis) use implicit_effect::{
+    ImplicitExpansionContext, ImplicitExpansionMemo, assertion_observes_scope_end,
+    destructor_credit_established,
+};
+mod facade_reach;
+mod implicit_call;
+mod indirect_owner;
+mod infection;
+mod literal_length_boundary;
+mod macro_item_names;
+mod mask_pin;
+mod match_transfer;
+mod operand_pin;
+mod out_parameter;
+mod owner_pin;
+mod owner_shape;
+mod owner_value;
+mod pinned_shape;
+mod poll_helper;
+mod propagation_witness;
+mod reach;
+mod receiver_unestablished;
+mod related_tests;
+mod reveal;
+mod scanner_transfer;
+mod slice_boundary;
+#[cfg(test)]
+mod stop_reason_contract;
+mod targeted_calls;
+mod text;
+mod transitive_reach;
+mod value_transfer;
+mod variant_field_pattern;
+
+pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
+pub(in crate::analysis) use activation::{
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_of,
+    assigned_field_read_confirms, assigned_field_weak_read_start, call_parameter_names,
+    chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
+    local_boundary, macro_names_rebound, owner_receiver_borrow, pushed_collection_compared_whole,
+    pushed_literal_path, signature_parameters, sort_value_facts, unresolved_guard_error_edge,
+};
+pub(in crate::analysis) use arm_selection::{
+    ArmSelector, error_path_arm_probe, match_arm_selection_witness_linkage,
+    match_arm_selection_witness_schema_version, unresolved_parameter_field_selector,
+};
+pub(in crate::analysis) use binding_return_flow::{
+    BindingReturnFlow, evaluate_binding_return_flow, same_file_binding_helpers,
+};
+pub(in crate::analysis) use boundary_pairing::{
+    WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
+    wrapper_return_boundary_pinned,
+};
+pub(in crate::analysis) use builder_override::{
+    constructor_starts_empty, function_returns_value, getter_plainly_reads,
+    getter_plainly_reads_key, method_cannot_store, owner_touches_field_only_at, parameter_rebound,
+    setter_plainly_writes,
+};
+pub(in crate::analysis) use call_identity::{
+    CallIdentityMemos, CallTarget, OwnerCallIdentity, bound_free_owner_calls,
+    shared_owner_call_identity, test_calls_only_through_local_rival_module, text_calls_owner,
+};
+pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
+pub(in crate::analysis) use const_flow::{
+    ChangedConsts, ConstFlow, associated_const_binding, const_value_changes, evaluate_const_flow,
+    shares_module_scope,
+};
+pub(in crate::analysis) use const_readers::{const_reader_returns, same_file_const_readers};
+pub(in crate::analysis) use context::ProbeContext;
+pub(in crate::analysis) use decision::{
+    classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,
+    missing_evidence, recommended_next_step, recommended_next_step_with_boundary, stop_reasons,
+};
+pub(in crate::analysis) use diff_touched::DiffTouchedTests;
+pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
+pub(in crate::analysis) use element_field_pin::{
+    drop_is_plain_in_closed_sources, observes_returned_element_field,
+    returned_array_construction_plain,
+};
+pub(in crate::analysis) use facade_reach::{
+    FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
+    facade_reach_witness, facade_reach_witness_pointer,
+};
+pub(in crate::analysis) use flow::{
+    local_flow_sinks, predicate_line_arms_all_agree, propagation_evidence_with_witness,
+};
+pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
+pub(in crate::analysis) use gap_admission::{
+    CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,
+    REFUSALS_ARE_ANALYZER_LIMITS, assertion_confirms_captured_log_exact_membership, is_ignored,
+    should_panic_tests_deciding_changed_panic, withhold_call_budget_gap,
+    withhold_debug_assertion_gap, withhold_log_capture_gap, withhold_mixed_refusal_gap,
+    withhold_should_panic_gap, withhold_truncated_discovery_gap, withhold_unsupported_gap,
+};
+pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
+pub(in crate::analysis) use helper_transfer::{
+    HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
+    ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_entry_pin_admits,
+    chain_forwards_return_to_observed_hops, chain_forwards_to_observed_hops,
+    chain_passes_effect_target_to_observed_hops, helper_only_reach,
+    hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
+    returned_ledger_caller_is_observed, selected_inherent_calls,
+};
+pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hops};
+pub(in crate::analysis) use implicit_call::{
+    pre_cap_syntax_only, withhold_destructor_credit, withhold_implicit_call_gap,
+};
+pub(in crate::analysis) use indirect_owner::{
+    oracle_owner_call_is_shadowed, related_tests_reach_owner_indirectly,
+    withhold_indirect_owner_gap,
+};
+pub(in crate::analysis) use infection::{
+    OwnerInputs, exercised_bool_chain_return_sink, infection_evidence_for_owner,
+};
+pub(in crate::analysis) use literal_length_boundary::refine_literal_length_boundary;
+pub(in crate::analysis) use mask_pin::unexercised_mask_bits;
+pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names};
+pub(in crate::analysis) use out_parameter::{
+    assertion_out_parameter, expression_writes_parameter, file_shadows_buffer_types,
+};
+pub(in crate::analysis) use owner_pin::{
+    AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings,
+    claims_payload_eq_candidates, direct_call_name, equality_condition_operands,
+    expected_operand_value, function_declaration_is_async, helper_pins_owner_call,
+    owner_builds_declared_error_variant, pin_scope_needs, returned_closure_pin_required,
+    targeted_free_call_reaches_owner, targeted_name_is_alias, targeted_type_name_is_unresolved,
+    trait_impl_self_type_names,
+};
+pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
+#[cfg(test)]
+pub(in crate::analysis) use owner_pin::{SCAN_LOG, nested_parallelism_allowed};
+pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
+pub(in crate::analysis) use pinned_shape::{
+    withhold_pinned_shape_gap, withhold_result_collect_err_pin,
+};
+pub(in crate::analysis) use propagation_witness::{
+    PropagationWitnessV1, assertion_compares_hand_built_field,
+    assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
+    assertion_pins_pushed_collection_count, assigned_field_path, concat_literal_tail,
+    concat_tail_witness, current_path_witness_with, direct_collection_mutation_receiver,
+    field_assignment_target, owner_may_exit_before_line, retain_returned_ledger,
+    returned_ledger_witness, sole_pushed_buffer_at, test_count_pins_pushed_collection,
+    test_counts_pushed_collection_argument,
+};
+pub(in crate::analysis) use propagation_witness::{
+    constant_tail_witness, fallible_literal_witness, format_tail_witness, result_map_witness,
+};
+#[cfg(test)]
+pub(in crate::analysis) use reach::take_external_docs_parse_count;
+pub(in crate::analysis) use reach::{
+    UnseenReachNames, includes_external_docs_with, invokes_opaque_macro, is_proximity_only,
+    is_trait_impl_method, names_identifier_outside_fn_definition, owner_may_be_reached_unseen,
+    reach_evidence, relation_establishes_reach,
+};
+pub(in crate::analysis) use receiver_unestablished::{
+    mark_receiver_unestablished, withhold_receiver_unestablished_gap,
+};
+pub(in crate::analysis) use related_tests::{
+    DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
+    body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
+    declared_dependent_package_calls_owner, find_related_tests_with_candidate_index,
+    free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
+    is_display_fmt_owner, is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
+    method_call_resolves_to_impl, module_stem, owner_call_is_direct, owner_call_text,
+    owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
+    requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
+};
+pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
+pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
+pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
+pub(in crate::analysis) use reveal::{
+    ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
+};
+pub(in crate::analysis) use reveal::{
+    NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,
+};
+pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
+pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
+pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
+// RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
+// apply variant-binding without reaching into the private `text` submodule.
+pub(in crate::analysis) use text::{
+    changed_error_variant, enum_variant_values, error_constructor_call_paths,
+    error_constructor_payloads, error_result_payload_literal_sets, exact_error_variant,
+    is_wildcard_discard_binding, rust_string_literals,
+};
+// RIPR-SPEC-0114: bounded transitive-reach walk for Rust no_static_path findings.
+// RIPR-SPEC-0115: the walk now returns a witness so the limitation can name the
+// witnessing test (file:line) and the entry public-API symbol.
+pub(in crate::analysis) use transitive_reach::{
+    InheritedGraphCounter, MAX_TRANSITIVE_DEPTH, MacroReachWitness, RUST_MACRO_REACH_MESSAGE,
+    RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE, RUST_TRANSITIVE_REACH_MESSAGE, TraitDispatchAmbiguity,
+    TransitiveReachIndex, TransitiveWitness, calls_after_definition, macro_reach_limit_kind,
+    macro_reach_limitation_detail_lines, macro_reach_witness_pointer,
+    trait_dispatch_ambiguity_detail_lines, trait_dispatch_ambiguity_pointer,
+    transitive_reach_limit_kind, transitive_reach_limitation_detail_lines,
+    transitive_reach_witness_pointer,
+};
+
+pub(in crate::analysis) use targeted_calls::{TargetedCallShape, TargetedCallSyntax};

@@ -1,0 +1,1186 @@
+schema_version = "1.0"
+policy = "non-rust-allowlist"
+owner = "core/policy"
+status = "active"
+
+# Canonical source of truth for the non-Rust file allowlist.
+#
+# `cargo xtask check-file-policy` consumes this TOML directly so each
+# exception carries owner, surface, classification, reason, and coverage
+# metadata in one governed Rust-read policy file.
+#
+# Schema:
+#   glob            file pattern this entry matches
+#   kind            short tag from the legacy txt format
+#   owner           team/area responsible for the file
+#   surface         ci | editor | docs | fixtures | rust | repo | brand | config | security
+#   classification  production | test | tooling | generated | config | docs | fixture | metadata
+#   reason          one-line justification (matches the existing txt reason)
+#   covered_by      commands/checks applicable on every host
+#   covered_by_unix (optional) non-empty cargo test selectors for Unix hosts only
+#   covered_by_windows (optional) non-empty cargo test selectors for Windows hosts only
+#   expires         (optional) date this entry must be re-justified
+#   retired         (optional) true if the entry is allowed to be unused
+#
+# See docs/FILE_POLICY.md for the doctrine.
+
+# ---------------------------------------------------------------------------
+# Documentation surfaces
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = "*.md"
+kind = "documentation"
+owner = "docs"
+surface = "docs"
+classification = "docs"
+reason = "Root documentation."
+covered_by = ["cargo xtask check-doc-index", "cargo xtask markdown-links"]
+
+[[allow]]
+glob = "AGENTS.md"
+kind = "documentation"
+owner = "agents"
+surface = "docs"
+classification = "docs"
+reason = "Agent instructions."
+covered_by = ["cargo xtask check-readme-state"]
+
+[[allow]]
+glob = "CHANGELOG.md"
+kind = "documentation"
+owner = "docs"
+surface = "docs"
+classification = "docs"
+reason = "Repository changelog."
+covered_by = ["cargo xtask check-doc-index"]
+
+[[allow]]
+glob = "changelog.d/**"
+kind = "documentation"
+owner = "docs"
+surface = "docs"
+classification = "docs"
+reason = "Per-PR changelog fragments folded into CHANGELOG.md at the release cut."
+covered_by = ["cargo xtask markdown-links", "cargo xtask check-static-language"]
+
+[[allow]]
+glob = "CONTRIBUTING.md"
+kind = "documentation"
+owner = "docs"
+surface = "docs"
+classification = "docs"
+reason = "Contribution guide."
+covered_by = []
+
+[[allow]]
+glob = "README.md"
+kind = "documentation"
+owner = "docs"
+surface = "docs"
+classification = "docs"
+reason = "Repository README."
+covered_by = ["cargo xtask check-readme-state"]
+
+[[allow]]
+glob = "docs/**"
+kind = "documentation"
+owner = "docs"
+surface = "docs"
+classification = "docs"
+reason = "Documentation, examples, snippets, and reference material."
+covered_by = ["cargo xtask check-doc-index", "cargo xtask check-spec-format"]
+
+[[allow]]
+glob = "schemas/**/*.json"
+kind = "json_schema"
+owner = "contracts"
+surface = "docs"
+classification = "config"
+reason = "Machine-readable verification contract schemas for badges and PR evidence."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-output-contracts"]
+
+# ---------------------------------------------------------------------------
+# Rust workspace metadata
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = ".cargo/config.toml"
+kind = "cargo_config"
+owner = "rust"
+surface = "rust"
+classification = "config"
+reason = "Cargo aliases for repository tooling."
+covered_by = ["cargo check --workspace --all-targets"]
+
+[[allow]]
+glob = "Cargo.lock"
+kind = "rust_lockfile"
+owner = "rust"
+surface = "rust"
+classification = "metadata"
+reason = "Cargo lockfile."
+covered_by = ["cargo check --workspace --all-targets"]
+
+[[allow]]
+glob = "Cargo.toml"
+kind = "rust_manifest"
+owner = "rust"
+surface = "rust"
+classification = "config"
+reason = "Cargo workspace manifest."
+covered_by = ["cargo check --workspace --all-targets", "cargo xtask check-lint-policy"]
+
+[[allow]]
+glob = "clippy.toml"
+kind = "lint_policy"
+owner = "repo-policy"
+surface = "rust"
+classification = "config"
+reason = "Workspace Clippy configuration; pins MSRV awareness and explicitly omits test carve-outs."
+covered_by = ["cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-lint-policy"]
+
+[[allow]]
+glob = "crates/**/Cargo.toml"
+kind = "rust_manifest"
+owner = "rust"
+surface = "rust"
+classification = "config"
+reason = "Cargo package manifests."
+covered_by = ["cargo check --workspace --all-targets"]
+
+[[allow]]
+glob = "rust-toolchain.toml"
+kind = "rust_toolchain"
+owner = "rust"
+surface = "rust"
+classification = "config"
+reason = "Pinned local Rust toolchain and components for repository development."
+covered_by = ["cargo check --workspace --all-targets"]
+
+[[allow]]
+glob = "xtask/Cargo.toml"
+kind = "rust_manifest"
+owner = "rust"
+surface = "rust"
+classification = "config"
+reason = "xtask package manifest."
+covered_by = ["cargo check -p xtask --locked"]
+
+[[allow]]
+glob = "tools/repo-policy/Cargo.toml"
+kind = "rust_manifest"
+owner = "rust"
+surface = "rust"
+classification = "config"
+reason = "Product-independent workflow and agent policy package manifest."
+covered_by = ["cargo check -p repo-policy --locked"]
+
+# ---------------------------------------------------------------------------
+# Distribution adapters
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = "packaging/python/pyproject.toml"
+kind = "python_package_manifest"
+owner = "release/distribution"
+surface = "config"
+classification = "config"
+reason = "PEP 517/621 and Maturin authoring manifest for the wheel-only ripr-rs adapter (#4490)."
+covered_by = ["cargo xtask check-release-targets"]
+
+# ---------------------------------------------------------------------------
+# CI / GitHub workflows
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = ".github/ISSUE_TEMPLATE/*.yaml"
+kind = "github_template"
+owner = "repo-process"
+surface = "ci"
+classification = "config"
+reason = "GitHub issue forms."
+covered_by = []
+
+[[allow]]
+glob = ".github/ISSUE_TEMPLATE/*.yml"
+kind = "github_template"
+owner = "repo-process"
+surface = "ci"
+classification = "config"
+reason = "GitHub issue forms."
+covered_by = []
+
+[[allow]]
+glob = ".github/dependabot.yml"
+kind = "github_dependency_automation"
+owner = "security"
+surface = "ci"
+classification = "config"
+reason = "Dependabot update configuration for Cargo, npm, and GitHub Actions."
+covered_by = []
+
+[[allow]]
+glob = ".github/settings.yml"
+kind = "github_settings_contract"
+owner = "repo-process"
+surface = "ci"
+classification = "config"
+reason = "Repository Settings App contract for merge policy, branch protection, and CI labels."
+covered_by = []
+
+[[allow]]
+glob = ".github/workflows/*.yaml"
+kind = "ci_declarative"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "GitHub Actions workflow definitions."
+covered_by = ["cargo xtask check-workflows"]
+
+[[allow]]
+glob = ".github/workflows/*.yml"
+kind = "ci_declarative"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "GitHub Actions workflow definitions."
+covered_by = ["cargo xtask check-workflows"]
+
+[[allow]]
+glob = ".github/actions/*/action.yml"
+kind = "ci_composite_action"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "GitHub Actions composite action definitions (ripr-check adoption surface, #2626)."
+covered_by = ["cargo xtask check-workflows"]
+
+[[allow]]
+glob = ".config/nextest.toml"
+kind = "ci_test_config"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "Nextest JUnit output configuration for Test Analytics workflow."
+covered_by = []
+
+[[allow]]
+glob = "codecov.yml"
+kind = "ci_coverage_policy"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "Codecov configuration for coverage status checks and reporting."
+covered_by = []
+
+# ---------------------------------------------------------------------------
+# Repo metadata
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = ".gitignore"
+kind = "repo_config"
+owner = "repo"
+surface = "repo"
+classification = "config"
+reason = "Git ignore rules."
+covered_by = []
+
+[[allow]]
+glob = "LICENSE-*"
+kind = "license"
+owner = "repo"
+surface = "repo"
+classification = "metadata"
+reason = "License files."
+covered_by = []
+
+[[allow]]
+glob = "ripr.toml.example"
+kind = "config_example"
+owner = "config"
+surface = "config"
+classification = "config"
+reason = "Example ripr configuration."
+covered_by = []
+
+[[allow]]
+glob = ".ub-review.toml"
+kind = "review_gate_config"
+owner = "release/ci"
+surface = "ci"
+classification = "config"
+reason = "ub-review gate policy config; generated by `ub-review enable` (see #1469)."
+covered_by = ["cargo xtask check-file-policy"]
+
+# ---------------------------------------------------------------------------
+# Repo policy metadata
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = ".allow/profiles/*.toml"
+kind = "policy_metadata"
+owner = "product-swarm"
+surface = "repo"
+classification = "metadata"
+reason = "Owned cargo-allow spec-system profile configuration."
+covered_by = ["cargo-allow doctor --profile spec-system --config .allow/profiles/spec-system.toml --format json"]
+
+[[allow]]
+glob = ".allow/artifacts/*.toml"
+kind = "policy_metadata"
+owner = "product-swarm"
+surface = "repo"
+classification = "metadata"
+reason = "Owned cargo-allow spec-system artifact graph ledger."
+covered_by = ["cargo-allow check --profile spec-system --config .allow/profiles/spec-system.toml --mode audit --format json"]
+
+[[allow]]
+glob = ".allow/conformance/*.json"
+kind = "policy_metadata"
+owner = "product-swarm"
+surface = "repo"
+classification = "metadata"
+reason = "Owned cargo-allow legacy-dialect conformance fixture consumed by the advisory spec-system profile."
+covered_by = ["cargo xtask check-file-policy", "cargo-allow check --profile spec-system --config .allow/profiles/spec-system.toml --mode audit --format json"]
+
+[[allow]]
+glob = ".allow/spec-system/slices/*.toml"
+kind = "policy_metadata"
+owner = "product-swarm"
+surface = "repo"
+classification = "metadata"
+reason = "PR-local ImplementationSliceV1 scope/claim records (current-v2; no live execution state)."
+covered_by = ["cargo test -p xtask --bin xtask implementation_slices_validate_and_coexist"]
+
+[[allow]]
+glob = ".allow/spec-system/reviews/*.toml"
+kind = "policy_metadata"
+owner = "product-swarm"
+surface = "repo"
+classification = "metadata"
+reason = "Per-spec SpecReviewReceiptV1 content-bound maintenance review records (advisory; no live execution state)."
+covered_by = ["cargo test -p xtask --bin xtask committed_spec_review_receipts_validate"]
+
+[[allow]]
+glob = ".ripr/*.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Committed .ripr TOML metadata (traceability, suppressions, test intent, and the tool-capability registry)."
+covered_by = ["cargo xtask check-traceability"]
+
+[[allow]]
+glob = ".ripr/tool-capabilities.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Versioned capability-authority registry schema (#2355). Report-only parser; not a CI gate."
+covered_by = ["cargo test -p xtask --bin xtask tool_capabilities"]
+
+[[allow]]
+glob = ".ripr/traceability.d/*.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Per-PR traceability fragments folded into .ripr/traceability.toml so parallel PRs do not append to the same arrays."
+covered_by = ["cargo xtask check-traceability"]
+
+[[allow]]
+glob = ".ripr/*.txt"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Policy allowlists."
+covered_by = ["cargo xtask check-allow-attributes"]
+
+[[allow]]
+glob = ".ripr/goals/*.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Codex Goals campaign metadata."
+covered_by = ["cargo xtask check-campaign"]
+
+[[allow]]
+glob = ".ripr/goals/archive/*.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Archived closed-campaign manifests; frozen history."
+covered_by = ["cargo xtask check-campaign"]
+
+[[allow]]
+glob = "metrics/*.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Machine-readable capability and metrics metadata."
+covered_by = ["cargo xtask check-capabilities"]
+
+[[allow]]
+glob = "metrics/rust-judged-behavior-panel/*.json"
+kind = "judged_panel_metadata"
+owner = "ripr/evidence-quality"
+surface = "repo"
+classification = "metadata"
+reason = "Selected Rust behavior-panel denominator, including rolling production-quiet observation, the #4795 calibration scorecard, and the #4796 feedback ledger; null labels and not_run calibration remain non-results."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask rust-judged-panel check", "cargo test -p xtask --bin xtask --locked --offline rust_judged_panel::rolling_observation", "cargo test -p xtask --bin xtask --locked --offline rust_judged_panel::calibration", "cargo test -p xtask --bin xtask --locked --offline rust_analysis_feedback"]
+
+[[allow]]
+glob = "metrics/rust-judged-behavior-panel/subjects/**"
+kind = "judged_panel_subject"
+owner = "ripr/evidence-quality"
+surface = "fixtures"
+classification = "fixture"
+reason = "Checked deterministic source, test, config, and Git materialization inputs for the three-case Rust judged panel."
+covered_by = ["cargo xtask rust-judged-panel check", "cargo test -p xtask --bin xtask rust_judged_panel::subject"]
+
+[[allow]]
+glob = "metrics/rust-judged-behavior-panel/portable/**/*.json"
+kind = "judged_panel_portable_evidence"
+owner = "ripr/evidence-quality"
+surface = "repo"
+classification = "generated"
+reason = "Bounded portable semantic projections from validated host-bound Rust judged-panel receipts; null judgment and not-run runtime remain non-results."
+generated_by = "cargo xtask rust-judged-panel packet --host-current target/ripr/rust-judged-panel/current.json"
+covered_by = ["cargo xtask rust-judged-panel check", "cargo test -p xtask --bin xtask --locked --offline rust_judged_panel::packet::tests", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/rust-repair-trust/*.json"
+kind = "trust_corpus_metadata"
+owner = "ripr/repair-trust"
+surface = "repo"
+classification = "metadata"
+reason = "Governed receipt-backed Rust repair-trust corpus input; empty or incomplete input remains limited."
+covered_by = ["cargo xtask rust-repair-trust-report", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/repair-card-usability/*.json"
+kind = "repair_card_usability_evidence"
+owner = "ripr/repair-card"
+surface = "repo"
+classification = "metadata"
+reason = "Committed RepairCard synthetic usability expectations and versioned budget-ratification decision receipt (RIPR-SPEC-0196); real-attempt ratification stays pending on the governed #1702/#1579 corpus, and drifted bounds or receipts without limitations fail closed."
+covered_by = ["cargo xtask repair-card-usability-report", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/blind-journey-contract/*.json"
+kind = "blind_journey_contract_evidence"
+owner = "test-infra"
+surface = "repo"
+classification = "metadata"
+reason = "Committed blind-journey contract decision receipt (RIPR-SPEC-0200, #4603); ratification stays scoped to the synthetic fixture corpus, drifted schema versions or receipts without limitations fail closed, and synthetic success claims no candidate qualification."
+covered_by = ["cargo xtask blind-journey-contract", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/blind-journey-execute/*.json"
+kind = "blind_journey_execute_evidence"
+owner = "test-infra"
+surface = "repo"
+classification = "metadata"
+reason = "Committed blind-journey executor decision receipt (RIPR-SPEC-0205, #4604); ratification stays scoped to the scripted fixture corpus, drifted schema versions or receipts without limitations fail closed, and synthetic success claims no installed usefulness or candidate qualification."
+covered_by = ["cargo xtask blind-journey-execute", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "policy/*.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Declarative lint and policy ledgers (see docs/CLIPPY_POLICY.md)."
+covered_by = ["cargo xtask check-lint-policy", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "deny.toml"
+kind = "supply_chain_policy"
+owner = "security"
+surface = "security"
+classification = "config"
+reason = "Cargo-deny policy for advisories, licenses, bans, and source registries."
+covered_by = ["cargo xtask check-supply-chain"]
+
+# ---------------------------------------------------------------------------
+# Editor extension
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = "editors/vscode/**/*.json"
+kind = "editor_extension_config"
+owner = "lsp/editor"
+surface = "editor"
+classification = "config"
+reason = "VS Code extension config or generated metadata."
+covered_by = ["cd editors/vscode && npm run compile"]
+
+[[allow]]
+glob = "editors/vscode/**/*.ts"
+kind = "editor_extension"
+owner = "lsp/editor"
+surface = "editor"
+classification = "production"
+reason = "VS Code extension client and tests must stay TypeScript for the VS Code Extension Host API."
+covered_by = [
+    "cd editors/vscode && npm run compile",
+    "cd editors/vscode && npm test",
+]
+
+[[allow]]
+glob = ".github/ovsx/package-lock.json"
+kind = "editor_extension_lockfile"
+owner = "lsp/editor"
+surface = "release"
+classification = "metadata"
+reason = "Pinned npm graph for the ovsx publisher used only by publish-extension.yml's Open VSX job (#3798)."
+covered_by = []
+
+[[allow]]
+glob = ".github/ovsx/package.json"
+kind = "editor_extension_manifest"
+owner = "lsp/editor"
+surface = "release"
+classification = "config"
+reason = "Manifest pinning ovsx for publish-extension.yml's Open VSX job (#3798)."
+covered_by = []
+
+[[allow]]
+glob = "editors/vscode/package-lock.json"
+kind = "editor_extension_lockfile"
+owner = "lsp/editor"
+surface = "editor"
+classification = "metadata"
+reason = "Pinned npm dependency lockfile for the extension."
+covered_by = []
+
+[[allow]]
+glob = "editors/vscode/package.json"
+kind = "editor_extension_manifest"
+owner = "lsp/editor"
+surface = "editor"
+classification = "config"
+reason = "VS Code extension package manifest."
+covered_by = ["cd editors/vscode && npm run package"]
+
+[[allow]]
+glob = "editors/vscode/test-fixtures/**"
+kind = "fixture_input"
+owner = "lsp/editor"
+surface = "editor"
+classification = "fixture"
+reason = "Fixture workspace for VS Code extension smoke tests."
+covered_by = ["cd editors/vscode && npm run test:e2e"]
+
+[[allow]]
+glob = "editors/vscode/tsconfig.json"
+kind = "editor_extension_config"
+owner = "lsp/editor"
+surface = "editor"
+classification = "config"
+reason = "VS Code TypeScript compiler config."
+covered_by = ["cd editors/vscode && npm run compile"]
+
+[[allow]]
+glob = "editors/zed/Cargo.toml"
+kind = "editor_extension_manifest"
+owner = "lsp/editor"
+surface = "editor"
+classification = "config"
+reason = "Zed extension crate manifest; Zed compiles the crate to wasm32-wasip2 outside the repository workspace (#4460)."
+covered_by = ["cd editors/zed && cargo build --locked --release --target wasm32-wasip2"]
+
+[[allow]]
+glob = "editors/zed/extension.toml"
+kind = "editor_extension_manifest"
+owner = "lsp/editor"
+surface = "editor"
+classification = "config"
+reason = "Zed extension manifest registering the ripr language server (#4460)."
+covered_by = ["cd editors/zed && cargo test --locked"]
+
+[[allow]]
+glob = "editors/zed/rust-toolchain.toml"
+kind = "rust_toolchain_pin"
+owner = "lsp/editor"
+surface = "editor"
+classification = "config"
+reason = "Names the wasm32-wasip2 target so rustup installs it when Zed builds the extension under the repository's 1.95.0 pin (#4460)."
+covered_by = ["cd editors/zed && cargo build --locked --release --target wasm32-wasip2"]
+
+# ---------------------------------------------------------------------------
+# npm distribution adapter
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = "packaging/npm/launcher/package.json"
+kind = "npm_distribution_manifest"
+owner = "release/distribution"
+surface = "repo"
+classification = "config"
+reason = "Source manifest for the script-free scoped npm launcher."
+covered_by = ["cargo xtask check-release-targets", "npm test --prefix packaging/npm/launcher", "npm --prefix packaging/npm/launcher pack --dry-run --json --ignore-scripts"]
+
+[[allow]]
+glob = "packaging/npm/launcher/bin/*.cjs"
+kind = "npm_distribution_launcher"
+owner = "release/distribution"
+surface = "repo"
+classification = "production"
+reason = "Small Node entrypoint for the scoped npm launcher; it delegates to the reviewed launcher library without installation-time code."
+covered_by = ["cargo xtask check-release-targets", "npm test --prefix packaging/npm/launcher"]
+
+[[allow]]
+glob = "packaging/npm/launcher/lib/*.cjs"
+kind = "npm_distribution_launcher"
+owner = "release/distribution"
+surface = "repo"
+classification = "production"
+reason = "Dependency-free runtime adapter that validates and launches one exact native payload."
+covered_by = ["cargo xtask check-release-targets", "npm test --prefix packaging/npm/launcher"]
+
+[[allow]]
+glob = "packaging/npm/launcher/test/*.cjs"
+kind = "npm_distribution_test"
+owner = "release/distribution"
+surface = "repo"
+classification = "test"
+reason = "Dependency-free launcher behavior and package-content controls."
+covered_by = ["npm test --prefix packaging/npm/launcher"]
+
+[[allow]]
+glob = "packaging/npm/launcher/*.md"
+kind = "npm_distribution_docs"
+owner = "release/distribution"
+surface = "docs"
+classification = "docs"
+reason = "Package-page source documentation for the npm launcher."
+covered_by = ["npm --prefix packaging/npm/launcher pack --dry-run --json --ignore-scripts"]
+
+[[allow]]
+glob = "packaging/npm/launcher/LICENSE-*"
+kind = "npm_distribution_license"
+owner = "release/distribution"
+surface = "repo"
+classification = "metadata"
+reason = "License notices included in the npm launcher tarball."
+covered_by = ["npm --prefix packaging/npm/launcher pack --dry-run --json --ignore-scripts"]
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = "docs/agent-context/review-conversations.fixture.json"
+kind = "fixture_input"
+owner = "agents/review"
+surface = "fixtures"
+classification = "fixture"
+reason = "Synthetic GraphQL response data for the documented read-only finish-pr recipe; fixture cases are exercised separately from this structural file-policy check."
+covered_by = ["cargo xtask check-file-policy"]
+covered_by_windows = ["cargo test -p xtask --bin xtask review_conversations"]
+
+[[allow]]
+glob = "crates/ripr/examples/**"
+kind = "fixture_input"
+owner = "analysis-fixtures"
+surface = "fixtures"
+classification = "fixture"
+reason = "Packaged sample workspace and diff are analyzed inputs."
+covered_by = ["cargo xtask check-fixture-contracts"]
+
+[[allow]]
+glob = "fixtures/**"
+kind = "fixture_input"
+owner = "analysis-fixtures"
+surface = "fixtures"
+classification = "fixture"
+reason = "Fixture workspaces may intentionally contain analyzed source files."
+covered_by = ["cargo xtask check-fixture-contracts", "cargo xtask fixtures"]
+
+[[allow]]
+glob = "benchmarks/dx_scoreboard/scoreboards.toml"
+kind = "benchmark_metadata"
+owner = "dx-scoreboard"
+surface = "repo"
+classification = "metadata"
+reason = "Developer-experience scoreboard definitions: pinned real-repository corpus, per-metric targets, and regression margins read by cargo xtask dx-scoreboard."
+covered_by = ["cargo xtask dx-scoreboard", "cargo test -p xtask --bin xtask dx_scoreboard", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/dx_scoreboard/testdata/*.json"
+kind = "benchmark_fixture"
+owner = "dx-scoreboard"
+surface = "fixtures"
+classification = "fixture"
+reason = "Immutable committed-record witnesses for verdict cohort regression tests; original baseline provenance and fractions are preserved without accepting a refreshed baseline."
+covered_by = ["cargo test -p xtask --bin xtask dx_scoreboard::population_tests", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/dx-scoreboard/*.json"
+kind = "benchmark_receipt"
+owner = "dx-scoreboard"
+surface = "repo"
+classification = "metadata"
+reason = "Committed developer-experience scoreboard baseline the nightly regression gate compares against; runner-dependent metrics compare only within the recorded runner class."
+covered_by = ["cargo xtask dx-scoreboard --baseline metrics/dx-scoreboard/baseline.json --gate", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/targeted_rerun_benchmark/**"
+kind = "benchmark_fixture"
+owner = "targeted-rerun"
+surface = "fixtures"
+classification = "fixture"
+reason = "Controlled Rust workspace used by the SPEC-0123 targeted-rerun benchmark receipt."
+covered_by = ["cargo xtask targeted-rerun-benchmark", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/agentic/**"
+kind = "benchmark_fixture"
+owner = "agentic-benchmarks"
+surface = "fixtures"
+classification = "fixture"
+reason = "Controlled inputs, specs, and corpora consumed by the B1-B6 agentic-surface benchmark suites and receipt."
+covered_by = ["cargo xtask agentic-bench", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "crates/ripr/vendor/**"
+kind = "vendor_proto"
+owner = "analysis"
+surface = "rust"
+classification = "config"
+reason = "Pinned upstream SCIP proto revision for optional read-only index admission (#8115)."
+covered_by = ["cargo test -p ripr --lib analysis::scip::admission::tests", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/pilot_ranking/manifest.json"
+kind = "benchmark_fixture"
+owner = "eval-corpus"
+surface = "fixtures"
+classification = "fixture"
+reason = "Pinned crates for the pilot ranking answer key; pins exact upstream commits and never vendors their source."
+covered_by = ["cargo xtask pilot-ranking check", "cargo test -p xtask --bin xtask pilot_ranking", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/real_crate_dogfood/manifest.json"
+kind = "benchmark_fixture"
+owner = "eval-corpus"
+surface = "fixtures"
+classification = "fixture"
+reason = "Pinned recent commits of popular open-source Rust crates for the real-crate dogfood measurement; pins exact upstream commits and never vendors their source."
+covered_by = ["cargo xtask real-crate-dogfood check", "cargo test -p xtask --bin xtask real_crate_dogfood", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/pilot_ranking/labels/*.json"
+kind = "benchmark_fixture"
+owner = "eval-corpus"
+surface = "fixtures"
+classification = "fixture"
+reason = "Pilot ranking answer key: cargo-mutants outcome, location and containing-function lines of each viable mutant at a pinned commit; written by `cargo xtask pilot-ranking label` after checking every mutant diff against the checkout, and holds no upstream source."
+covered_by = ["cargo xtask pilot-ranking check", "cargo test -p xtask --bin xtask pilot_ranking", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "benchmarks/rust_corpus/manifest.json"
+kind = "benchmark_fixture"
+owner = "eval-corpus"
+surface = "fixtures"
+classification = "fixture"
+reason = "Pinned real-repository Rust corpus manifest shared by evaluation lanes; pins exact upstream commits and never vendors their source."
+covered_by = ["cargo xtask rust-corpus check", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "tests/fixtures/verification/**/*.json"
+kind = "verification_contract_fixture"
+owner = "contracts"
+surface = "fixtures"
+classification = "fixture"
+reason = "Sample JSON packets proving portable verification schemas are executable."
+covered_by = ["cargo xtask check-verification-contracts"]
+
+[[allow]]
+glob = "crates/ripr/src/app/kani_import/fixtures/*.json"
+kind = "kani_import_contract_fixture"
+owner = "verification/kani-import"
+surface = "fixtures"
+classification = "fixture"
+reason = "Pinned upstream Kani contract examples and an authored no-promotion report projection; no native-run capture claim."
+covered_by = ["cargo test -p ripr --test kani_report_cli"]
+
+[[allow]]
+glob = "crates/ripr/src/app/kani_import/fixtures/native-captures/**"
+kind = "kani_native_conformance_fixture"
+owner = "verification/kani-import"
+surface = "fixtures"
+classification = "fixture"
+reason = "Untouched native Kani exports, exact source data and an authored portable provenance projection; offline replay does not execute or authenticate the verifier."
+covered_by = ["cargo test -p ripr --test kani_report_cli"]
+
+[[allow]]
+glob = "crates/ripr/tests/fixtures/causal-attribution/*.json"
+kind = "causal_attribution_fixture"
+owner = "analysis/causal-attribution"
+surface = "fixtures"
+classification = "fixture"
+reason = "Fixture-backed base/head attribution rules for canonical evidence comparison."
+covered_by = ["cargo test -p ripr --test causal_delta_fixture", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "crates/ripr/tests/data/uncertain-delivery/receipt.json"
+kind = "assertion_helper_fixture"
+owner = "analysis/test-helpers"
+surface = "fixtures"
+classification = "fixture"
+reason = "Version-pinned #4478/#7818 comparison receipt and exact diff consumed by the public API helper witness."
+covered_by = ["cargo test -p ripr --test uncertain_delivery_helper", "cargo xtask check-file-policy"]
+
+# ---------------------------------------------------------------------------
+# Portable consumer (Python stdlib packet transport)
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = "crates/ripr/tests/fixtures/mcp-gap-list-v1.schema.json"
+kind = "json_schema"
+owner = "mcp"
+surface = "fixtures"
+classification = "fixture"
+reason = "Frozen pre-filter gap-list v1 schema for strict-reader transport compatibility control."
+covered_by = ["cargo test -p ripr --test mcp_stdio", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "crates/ripr/tests/fixtures/mcp_stdio_investigation_disposition.v1.json"
+kind = "json_fixture"
+owner = "mcp"
+surface = "fixtures"
+classification = "fixture"
+reason = "Committed #4914 NOT_ESTABLISHED owner disposition and stage contract for the historical native Windows MCP stdio first-reply investigation."
+covered_by = [
+    "cargo test -p ripr --test mcp_stdio mcp_stdio_investigation_disposition_records_not_established_and_stage_witness",
+    "cargo test -p ripr --test mcp_stdio unsupported_inline_version_is_rejected_and_next_request_recovers",
+    "cargo xtask check-file-policy",
+]
+
+[[allow]]
+glob = "tools/python/portable-ripr-consumer/**/*.py"
+kind = "portable_native_consumer"
+owner = "agent/portable-consumer"
+surface = "repo"
+classification = "tooling"
+reason = "Stdlib Python 3.11+ packet consumer for agent environments that have a qualified native ripr payload but no Cargo/rustc or execution-kernel network; packet staging and oracles stay in Rust/xtask (#4713)."
+covered_by = [
+    "cargo test -p xtask --bin xtask --locked --offline portable_consumer",
+]
+# Native check/pilot journey is cfg(unix). Common packet digest/source controls
+# remain required on Windows; the Python runtime/classifier tests are Unix-only.
+covered_by_unix = [
+    "cargo test -p ripr --locked --offline --test portable_consumer_packet",
+]
+
+[[allow]]
+glob = ".github/actions/pr-candidate-admission/*.py"
+kind = "admission_decision_script"
+owner = "ci/admission"
+surface = "ci"
+classification = "tooling"
+reason = "Stdlib Python decision logic extracted from the pre-allocation admission action so the hard-cut and candidate decisions are testable outside embedded YAML shell (#5391, #2022)."
+covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest", "cargo test -p repo-policy --test review_disposition_admission"]
+
+[[allow]]
+glob = "policy/release-ledger-overrides.json"
+kind = "release_ledger_overrides"
+owner = "release/control"
+surface = "release"
+classification = "config"
+reason = "Reviewed per-commit disposition overrides for the rows disposition rule v1 cannot judge (two-parent first-parent merges, empty diffs, unclassified paths); read by `cargo xtask release-ledger derive` (#2768)."
+covered_by = ["cargo test -p xtask release_ledger", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "policy/release-hard-cut-admission.json"
+kind = "release_hard_cut_packet"
+owner = "release/control"
+surface = "ci"
+classification = "config"
+reason = "Base-owned 0.11 hard-cut admission packet read by the pre-allocation admission action; inactive by default, changed only by packet-only control PRs (#5391, #5114)."
+covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "policy/release-selection.json"
+kind = "release_selection_packet"
+owner = "release/control"
+surface = "ci"
+classification = "config"
+reason = "Selected-claim packet for the 0.11 hard cut: one resolution per claim, the open release-check issue census and the open-PR roster at the cut (#2766)."
+covered_by = ["cargo xtask check-release-targets", "cargo test -p xtask --bin xtask release_selection"]
+
+# ---------------------------------------------------------------------------
+# Brand / assets
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = "assets/**"
+kind = "asset"
+owner = "brand/docs"
+surface = "brand"
+classification = "metadata"
+reason = "Non-code assets."
+covered_by = []
+
+[[allow]]
+glob = "badges/*.json"
+kind = "generated_badge_endpoint"
+owner = "release/ci"
+surface = "docs"
+classification = "generated"
+reason = "Generated Shields endpoint JSON for public README badges."
+generated_by = "cargo xtask badges"
+covered_by = ["cargo xtask badges --check", "cargo xtask badges", "cargo xtask check-badge-endpoints", "cargo xtask update-badge-endpoints"]
+
+[[allow]]
+glob = ".allow/conformance/*.json"
+kind = "config"
+owner = "core/policy"
+surface = "config"
+classification = "config"
+reason = "cargo-allow spec-system conformance fixtures for legacy TOML dialect validation (#1761/#1836)"
+covered_by = ["cargo xtask check-spec-format", "cargo xtask check-doc-index"]
+
+[[allow]]
+glob = "metrics/public-proof/dx-scoreboard.json"
+kind = "public_proof_receipt"
+owner = "ripr/evidence-quality"
+surface = "repo"
+classification = "generated"
+reason = "Committed copy of metrics/dx-scoreboard/baseline.json that docs/PUBLIC_PROOF.md is rendered from."
+generated_by = "cargo xtask public-proof --refresh-receipts"
+covered_by = ["cargo xtask public-proof --check", "cargo test -p xtask --bin xtask public_proof"]
+
+[[allow]]
+glob = "metrics/public-proof/verdict-corpus.json"
+kind = "public_proof_receipt"
+owner = "ripr/evidence-quality"
+surface = "repo"
+classification = "generated"
+reason = "Committed snapshot of the report fixtures/rust-verdict-corpus/expected/rows/ describes (summary derived from the rows, plus the rows) that docs/PUBLIC_PROOF.md is rendered from."
+generated_by = "cargo xtask public-proof --refresh-receipts"
+covered_by = ["cargo xtask public-proof --check", "cargo test -p xtask --bin xtask public_proof"]
+
+[[allow]]
+glob = "metrics/public-proof/corpus-manifest.json"
+kind = "public_proof_receipt"
+owner = "ripr/evidence-quality"
+surface = "repo"
+classification = "generated"
+reason = "Committed copy of benchmarks/rust_corpus/manifest.json that docs/PUBLIC_PROOF.md is rendered from."
+generated_by = "cargo xtask public-proof --refresh-receipts"
+covered_by = ["cargo xtask public-proof --check", "cargo test -p xtask --bin xtask public_proof"]
+
+[[allow]]
+glob = "metrics/public-proof/mutation-spot-check.json"
+kind = "public_proof_receipt"
+owner = "ripr/evidence-quality"
+surface = "repo"
+classification = "fixture"
+reason = "Committed mutation spot-check harness output that docs/PUBLIC_PROOF.md is rendered from. It has no in-repo producer command, so it is edited by hand and not refreshed by public-proof."
+covered_by = ["cargo test -p xtask --bin xtask public_proof"]
+
+[[allow]]
+glob = "metrics/public-proof/first-run-*.json"
+kind = "public_proof_receipt"
+owner = "ripr/evidence-quality"
+surface = "repo"
+classification = "fixture"
+reason = "Committed first-run walk harness output that docs/PUBLIC_PROOF.md is rendered from. It has no in-repo producer command, so it is edited by hand and not refreshed by public-proof."
+covered_by = ["cargo test -p xtask --bin xtask public_proof"]
+
+[[allow]]
+glob = "metrics/public-proof/install.json"
+kind = "public_proof_receipt"
+owner = "ripr/evidence-quality"
+surface = "repo"
+classification = "fixture"
+reason = "Committed standalone install timing harness output that docs/PUBLIC_PROOF.md is rendered from. It has no in-repo producer command, so it is edited by hand and not refreshed by public-proof."
+covered_by = ["cargo test -p xtask --bin xtask public_proof"]
+
+[[allow]]
+glob = "metrics/public-proof/agent-as-user.json"
+kind = "public_proof_receipt"
+owner = "ripr/evidence-quality"
+surface = "repo"
+classification = "fixture"
+reason = "Committed agent-as-user run harness output that docs/PUBLIC_PROOF.md is rendered from. It has no in-repo producer command, so it is edited by hand and not refreshed by public-proof."
+covered_by = ["cargo test -p xtask --bin xtask public_proof"]
+
+[[allow]]
+glob = ".ci/contabo-product.sh"
+kind = "ci-entrypoint"
+owner = "ci"
+surface = "ci"
+classification = "tooling"
+reason = "#4988: pinned EM CI requires a Bash script path; minimal shim prepares workspace temp and delegates command ownership to Rust and existing Rust Gates."
+covered_by = ["cargo test -p xtask --example contabo_product_proof"]
+
+[[allow]]
+glob = ".ci/contabo-result.sh"
+kind = "ci-entrypoint"
+owner = "ci"
+surface = "ci"
+classification = "tooling"
+reason = "#4988: EM CI requires a Bash result script; bounded jq policy consumes the centrally authenticated product import without Cargo bootstrap, another uploader or native-auth implementation."
+# The result-policy test target is cfg(target_os = "linux"); on Windows it
+# enumerates zero tests, which the covered-by check rejects, so the shared
+# product proof covers every host and the policy test covers Unix.
+covered_by = ["cargo test -p xtask --example contabo_product_proof"]
+covered_by_unix = ["cargo test -p xtask --test contabo_result_policy"]
+
+[[allow]]
+glob = ".ci/contabo-product-contract.json"
+kind = "ci-artifact-contract"
+owner = "ci"
+surface = "ci"
+classification = "metadata"
+reason = "#4988/#7164: exact source-owned product member declaration recognized by the reviewed central ripr-product transport; preserves native producer paths and bounded custody without authorizing arbitrary .ci files."
+covered_by = ["cargo test -p xtask --example contabo_product_proof product_members_are_bound_to_actual_producer_paths"]
+
+[[allow]]
+glob = "benchmarks/stub_quality/cases/**/Cargo.toml"
+kind = "fixture_input"
+owner = "analysis-fixtures"
+surface = "fixtures"
+classification = "fixture"
+reason = "Stub quality corpus crates are analyzed inputs for judging suggested tests (#8361)."
+covered_by = ["cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "policy/doc-artifacts.d/*.toml"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Per-PR document-artifact fragments merged into policy/doc-artifacts.toml so parallel spec PRs do not append to the same ledger tail."
+covered_by = ["cargo xtask check-doc-artifacts"]
+
+[[allow]]
+glob = "policy/*_allowlist.d/*.txt"
+kind = "policy_metadata"
+owner = "repo-policy"
+surface = "repo"
+classification = "metadata"
+reason = "Per-PR count-policy allowlist rows merged into policy/process_allowlist.txt and policy/network_allowlist.txt so parallel PRs do not append to the same list tail."
+covered_by = ["cargo xtask check-process-policy", "cargo xtask check-network-policy"]
+
+[[allow]]
+glob = "packaging/npm/*.json"
+kind = "npm_bootstrap_metadata"
+owner = "release"
+surface = "config"
+classification = "config"
+reason = "Bounded native-only npm template and exact published wheel pin; version is derived from the qualified native source."
+covered_by = ["python3 -m unittest discover -s .github/scripts -p test_npm_package.py"]
+
+[[allow]]
+glob = "xtask/tests/fixtures/source_promotion_control/impossible-validated.json"
+kind = "verification_contract_fixture"
+owner = "release/ci"
+surface = "fixtures"
+classification = "fixture"
+reason = "Impossible validated-state input is a fail-closed corpus fixture for the Rust source-promotion controller contract."
+covered_by = ["cargo test -p xtask source_promotion_control"]
+
+# ---------------------------------------------------------------------------
+# Brand / assets
+# ---------------------------------------------------------------------------
+
+[[allow]]
+glob = ".github/scripts/npm_consumer.py"
+kind = "npm_installed_consumer"
+owner = "release"
+surface = "ci"
+classification = "test"
+reason = "Checkout-free npm, npx, global and local installed-native journeys use only the runner standard library."
+covered_by = ["python3 .github/scripts/npm_consumer.py target/ripr/npm-qualified target/ripr/npm-consumer"]
+
+[[allow]]
+glob = ".github/scripts/test_python_consumer_evidence.py"
+kind = "python_consumer_evidence"
+owner = "release"
+surface = "ci"
+classification = "test"
+reason = "Bounded standard-library diagnostic recorder and local fixtures for checkout-free wheel consumers; no admission or package execution."
+covered_by = ["python3 -m unittest discover -s .github/scripts -p test_python_consumer_evidence.py"]
+
+[[allow]]
+glob = ".github/scripts/npm_package.py"
+kind = "npm_package_admission"
+owner = "release"
+surface = "ci"
+classification = "tooling"
+reason = "Standard-library ZIP, RECORD, tar and read-only GitHub evidence admission preserves exact native bytes before a separate stage-only OIDC job; no artifact code executes in admission."
+covered_by = ["python3 -m unittest discover -s .github/scripts -p test_npm_package.py"]
+
+[[allow]]
+glob = ".github/scripts/test_pypi_admission.py"
+kind = "python_release_admission_test"
+owner = "release"
+surface = "ci"
+classification = "test"
+reason = "Dependency-free negative controls for source/run/artifact/metadata admission."
+covered_by = ["python3 -m unittest discover -s .github/scripts -p test_pypi_admission.py"]
+
+[[allow]]
+glob = ".github/scripts/test_npm_package.py"
+kind = "npm_package_admission_test"
+owner = "release"
+surface = "ci"
+classification = "test"
+reason = "Dependency-free source/run/archive/consumer/stage-result controls and loopback npm transport tests exercise the actual admission and qualified tar bytes without registry credentials."
+covered_by = ["python3 -m unittest discover -s .github/scripts -p test_npm_package.py"]
+
+[[allow]]
+glob = ".github/scripts/pypi_admission.py"
+kind = "python_release_admission"
+owner = "release"
+surface = "ci"
+classification = "tooling"
+reason = "Bounded standard-library Python wheel/ZIP admission before OIDC; executes no artifact code."
+covered_by = ["python3 -m unittest discover -s .github/scripts -p test_pypi_admission.py"]
+
+[[allow]]
+glob = ".github/scripts/python_consumer_evidence.py"
+kind = "python_consumer_evidence"
+owner = "release"
+surface = "ci"
+classification = "tooling"
+reason = "Bounded standard-library diagnostic recorder and local fixtures for checkout-free wheel consumers; no admission or package execution."
+covered_by = ["python3 -m unittest discover -s .github/scripts -p test_python_consumer_evidence.py"]
+
+[[allow]]
+glob = "tests/fixtures/source_promotion_contract/*.json"
+kind = "fixture_input"
+owner = "release/ci"
+surface = "fixtures"
+classification = "fixture"
+reason = "Source-promotion rejection fixtures are JSON corpus inputs for the Rust xtask contract test."
+covered_by = ["cargo test -p xtask --bin xtask source_promotion_workflow"]
+
+[[allow]]
+glob = ".agents/skills/finish-pr/scripts/*.py"
+kind = "merge_guard_script"
+owner = "ci/merge-flow"
+surface = "ci"
+classification = "tooling"
+reason = "Stdlib Python helper that refuses an expected-head squash without exact-head successful Result evidence (#11781); read-only gh api except the single expected-head merge."
+covered_by = ["cargo test -p xtask --test guarded_merge_selftest"]
+
+[[allow]]
+glob = ".agents/skills/finish-pr/tests/*.py"
+kind = "merge_guard_test"
+owner = "ci/merge-flow"
+surface = "ci"
+classification = "test"
+reason = "Fake-API unittest suite for the exact-head merge guard (#11781); run through the Rust wrapper test so CI executes it."
+covered_by = ["cargo test -p xtask --test guarded_merge_selftest"]
