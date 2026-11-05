@@ -1,0 +1,28 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-integration/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 3m 29s
+     Running tests/native_path_roots.rs (/workspace/12010-proof/target/debug/deps/native_path_roots-785bcb6d5d1aa864)
+
+running 4 tests
+test equivalent_root_spellings_preserve_analysis_identity_and_repeated_json ... ok
+test long_root_check_round_trips_or_names_the_windows_path_limit ... ok
+test spaced_root_check_and_file_fact_cache_round_trip ... ok
+test unicode_root_check_and_file_fact_cache_round_trip ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+
+     Running tests/return_diagnostic_confirmation.rs (/workspace/12010-proof/target/debug/deps/return_diagnostic_confirmation-f88ac163747e464e)
+
+running 10 tests
+test diagnostic_only_token_cannot_confirm_return ... ok
+test direct_wording_observer_remains_exposed ... ok
+test discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle ... ok
+test established_effect_carrier_binds_the_called_instance_only ... ok
+test native_mutants_separate_structural_and_value_observers ... ok
+test persisted_effect_identity_tracks_the_changed_argument_not_written_siblings ... ok
+test persisted_effect_observer_retains_identity_without_lending_it_to_another_instance ... ok
+test returned_field_constructor_identity_respects_namespace ... ok
+test returned_field_identity_rejects_mutation_inside_let_initializers ... ok
+test returned_fields_and_builders_keep_real_identity_and_reject_replaced_values ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.94s
+

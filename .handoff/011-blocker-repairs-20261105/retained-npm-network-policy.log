@@ -1,0 +1,1 @@
+check-network-policy: pass (target/ripr/reports/network-policy.md)

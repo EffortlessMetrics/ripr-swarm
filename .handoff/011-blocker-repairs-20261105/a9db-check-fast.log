@@ -1,0 +1,10 @@
+Selector identity: origin/main=984c69a290486b1da9d91700a6f771045ab079e1 HEAD=a9dbeba9b34cbe6d7f767b8b13cef7435549224b merge-base=984c69a290486b1da9d91700a6f771045ab079e1
+Changed files: 411
+Ref freshness: not checked (local refs; run `git fetch origin main` and retry if this basis is unexpected).
+Scope: committed diff selects checks; gates inspect the live worktree.
+
+$ cargo fmt --check
+check-static-language: pass (target/ripr/reports/static-language.md)
+xtask: check-fast gate failed after selector establishment (Selector identity: origin/main=984c69a290486b1da9d91700a6f771045ab079e1 HEAD=a9dbeba9b34cbe6d7f767b8b13cef7435549224b merge-base=984c69a290486b1da9d91700a6f771045ab079e1): check-command-catalog failed; see target/ripr/reports/command-catalog.md
+command catalog entries must follow the xtask help catalog order
+command catalog has duplicate entry `check-fast`
