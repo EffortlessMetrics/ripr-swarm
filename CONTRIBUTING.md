@@ -115,6 +115,10 @@ to `$HOME/.cargo` and `$HOME/.rustup` only when unset. Relative or empty homes a
 refused because fixture commands change directories. It exports an exact
 `RUSTUP_TOOLCHAIN`, the resolved `RUSTC`, and `RUSTUP_AUTO_INSTALL=0`; nested
 fixtures inherit the selected compiler even when they contain their own pin.
+Directories added to `PATH` must not contain colons, which separate PATH entries.
+Activation refuses an unrepresentable Cargo-home or physical sysroot path before
+changing exports, including a colon reached through a symlink target. Spaces and
+symlinked homes remain supported when the selected PATH directories are representable.
 Existing conflicting `RUSTC` / `CARGO_BUILD_RUSTC` or compiler-wrapper environment
 variables cause a refusal with an explicit repair. Remove an override deliberately
 when switching compilers. Shell functions or aliases named `cargo` or `rustc`

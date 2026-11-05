@@ -203,6 +203,19 @@ for wrapper in RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER C
 done
 run_case 'relative Cargo home leaves parent unchanged' 'export CARGO_HOME=relative; '"$failure_check"
 run_case 'empty Rustup home leaves parent unchanged' 'export RUSTUP_HOME=; '"$failure_check"
+run_case 'colon in Cargo home PATH entry leaves parent unchanged' '
+ln -s "$CARGO_HOME" "$TEST_REPO/cargo:alias"
+export CARGO_HOME="$TEST_REPO/cargo:alias"
+'"$failure_check"
+run_case 'colon in physical sysroot PATH entry leaves parent unchanged' '
+cp -R "$RUSTUP_HOME" "$TEST_REPO/rustup:copy"
+export RUSTUP_HOME="$TEST_REPO/rustup:copy"
+'"$failure_check"
+run_case 'safe home spelling cannot hide a colon in the physical sysroot' '
+cp -R "$RUSTUP_HOME" "$TEST_REPO/rustup:physical"
+ln -s "$TEST_REPO/rustup:physical" "$TEST_REPO/rustup safe alias"
+export RUSTUP_HOME="$TEST_REPO/rustup safe alias"
+'"$failure_check"
 run_case 'readonly export leaves parent unchanged' 'readonly LLVM_COV=sentinel; '"$failure_check"
 run_case 'integer export leaves parent unchanged' 'declare -i RUSTUP_TOOLCHAIN=0; '"$failure_check"
 run_case 'array export leaves parent unchanged' 'declare -a LLVM_COV=(sentinel second); '"$failure_check"

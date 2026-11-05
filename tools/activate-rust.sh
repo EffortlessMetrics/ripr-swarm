@@ -175,6 +175,12 @@ _ripr_activate_rust() {
     fi
 
     prefixes=("$sysroot/bin" "$llvm_bin" "$cargo_home/bin")
+    for prefix in "${prefixes[@]}"; do
+        if [[ $prefix == *:* ]]; then
+            printf 'activate-rust: PATH directory %q contains a colon; choose a Cargo home and physical toolchain path without colons, including symlink targets. No activation was applied.\n' "$prefix" >&2
+            return 1
+        fi
+    done
     new_path=$sysroot/bin:$llvm_bin:$cargo_home/bin
     path_tail=${PATH-}
     while :; do
