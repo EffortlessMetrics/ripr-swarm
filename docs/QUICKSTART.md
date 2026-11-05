@@ -2,8 +2,11 @@
 
 Your tests pass. Would they notice if the change you just made were wrong?
 
-Inspect a change, read the testing gap, and decide which focused test to add.
-ripr uses static analysis; it does not run mutants or write the test for you.
+ripr reads your diff and the related tests and names a changed behavior no
+test appears to check, plus the missing case or assertion. Where a repair route
+exists, it also names the test to add. You read the gap and decide which
+focused test to write. ripr uses static analysis; it does not run mutants or
+write the test for you.
 
 ## Choose Your Path
 
