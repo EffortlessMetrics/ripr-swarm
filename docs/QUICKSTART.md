@@ -246,6 +246,11 @@ Use this loop while developing a change or reviewing a test improvement. It
 uses the installed development CLI described above and the project's own test
 runner; it does not require a repair attempt.
 
+To try the loop in a small project without cloning RIPR, follow
+[Your first focused Rust test](how-to/first-rust-test.md). It provides the
+project files, a fixed production patch, and an equality assertion to inspect
+and run.
+
 **Keep the production comparison fixed.** From the repository root, choose a
 base before the production change you want to examine. For a branch targeting
 `origin/main`, this POSIX-shell example resolves that base once:
