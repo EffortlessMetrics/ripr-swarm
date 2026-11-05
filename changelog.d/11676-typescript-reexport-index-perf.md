@@ -1,4 +1,4 @@
-<!-- section: Performance -->
+<!-- section: Changed -->
 - `ripr check` warm runs in TypeScript workspaces with many `export *`
   barrels no longer scan every re-export edge for every resolution frame:
   steady-state analysis on a 5,400-file barrel-heavy synthetic workspace
