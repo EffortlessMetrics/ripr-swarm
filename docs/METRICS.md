@@ -163,6 +163,22 @@ for boards, instruments, and the ingest format, and
 Release-ladder numbers live in [Position on 2026-11-04](#position-on-2026-11-04).
 Other counts are generated, not copied here:
 
+- Repository orientation inventory: `cargo xtask current-state` writes
+  `target/ripr/reports/current-state.{json,md}`; `--json` also prints the JSON.
+  Its current coverage is checkout repository identity, workspace version/MSRV,
+  declared development/release authorities, the command-catalog entry count, and
+  four retired goal-authority markers in the current roadmap section.
+  `cargo xtask current-state --check` checks those markers, support-map file
+  existence, and a nonempty catalog. The broader inventory and drift coverage
+  remains open under [#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330).
+- Registered artifact and support structure: `cargo xtask repo-contract-report`
+  writes `target/ripr/reports/source-of-truth-graph.{json,md}` from the artifact
+  ledger and its fragments, support rows, and existing structural diagnostics.
+  Use `cargo xtask check-doc-artifacts` and `cargo xtask check-support-tiers`
+  for their dedicated checks. These establish registered paths, relationships,
+  recorded statuses, and supported proof references within their checked scope;
+  they do not decide semantic implementation completeness, earned support
+  tiers, live issue acceptance, or release authorization.
 - Capability status: `cargo xtask metrics` and
   [Capability matrix](CAPABILITY_MATRIX.md).
 - Fixture, golden and verdict-corpus results: `cargo xtask fixtures`,
