@@ -8,6 +8,12 @@ struct RetentionFixture {
     manifest: AcceptedManifest,
 }
 
+impl Drop for RetentionFixture {
+    fn drop(&mut self) {
+        discard_partial_dir(&self.root);
+    }
+}
+
 impl RetentionFixture {
     fn new(name: &str) -> Result<Self, String> {
         let root = temp_root(name);
@@ -184,7 +190,11 @@ fn non_complete_repeats_retain_exact_bytes_without_comparison_credit() -> Result
             RunStatus::Unsupported,
             b"unsupported stdout".as_slice(),
         ),
-        ("malformed", RunStatus::Crashed, b"{malformed\xff".as_slice()),
+        (
+            "malformed",
+            RunStatus::Crashed,
+            b"{malformed\xff".as_slice(),
+        ),
     ] {
         let fixture = RetentionFixture::new(&format!("repeat-retention-{name}"))?;
         let stderr = b"repeat stderr\0\xff\xfe";
@@ -235,7 +245,6 @@ fn non_complete_repeats_retain_exact_bytes_without_comparison_credit() -> Result
             );
         }
         assert!(execution["subjects"][0]["infrastructure_limitation"].is_null());
-        discard_partial_dir(&fixture.root);
     }
     Ok(())
 }
@@ -261,14 +270,25 @@ fn repeat_digests_track_each_stream_without_comparison_credit() -> Result<(), St
         assert_eq!(fixture.retained_bytes("stderr")?, stderr);
         rows.push(receipt["repos"][0].clone());
         retained.push(execution["subjects"][0]["stability"]["retained_output"].clone());
-        discard_partial_dir(&fixture.root);
     }
     assert_eq!(rows[0], rows[1]);
     assert_eq!(rows[0], rows[2]);
-    assert_ne!(retained[0]["stdout"]["sha256"], retained[1]["stdout"]["sha256"]);
-    assert_eq!(retained[0]["stderr"]["sha256"], retained[1]["stderr"]["sha256"]);
-    assert_eq!(retained[0]["stdout"]["sha256"], retained[2]["stdout"]["sha256"]);
-    assert_ne!(retained[0]["stderr"]["sha256"], retained[2]["stderr"]["sha256"]);
+    assert_ne!(
+        retained[0]["stdout"]["sha256"],
+        retained[1]["stdout"]["sha256"]
+    );
+    assert_eq!(
+        retained[0]["stderr"]["sha256"],
+        retained[1]["stderr"]["sha256"]
+    );
+    assert_eq!(
+        retained[0]["stdout"]["sha256"],
+        retained[2]["stdout"]["sha256"]
+    );
+    assert_ne!(
+        retained[0]["stderr"]["sha256"],
+        retained[2]["stderr"]["sha256"]
+    );
     Ok(())
 }
 
@@ -357,8 +377,10 @@ fn complete_repeats_preserve_existing_comparison_and_digest_shapes() -> Result<(
         let expected_gate = if stable { "pass" } else { "review" };
         let expected_stable_count = if stable { 8 } else { 7 };
         assert_eq!(receipt["summary"]["gate_status"], expected_gate);
-        assert_eq!(receipt["summary"]["gap_id_stable_count"], expected_stable_count);
-        discard_partial_dir(&fixture.root);
+        assert_eq!(
+            receipt["summary"]["gap_id_stable_count"],
+            expected_stable_count
+        );
     }
     Ok(())
 }
@@ -408,7 +430,6 @@ fn unstarted_and_failed_capture_routes_never_invent_repeat_output() -> Result<()
         for stream in ["stdout", "stderr"] {
             assert!(fixture.retained_bytes(stream).is_err());
         }
-        discard_partial_dir(&fixture.root);
     }
     Ok(())
 }
@@ -458,7 +479,6 @@ fn repeat_write_failures_keep_the_run_and_cannot_improve_a_mixed_gate() -> Resul
                     .as_str()
                     .is_some_and(|text| text.contains("raw evidence could not be retained"))
             );
-            discard_partial_dir(&fixture.root);
         }
     }
     Ok(())
@@ -492,6 +512,5 @@ fn repeat_retention_failure_still_rechecks_binary_identity() -> Result<(), Strin
             .as_str()
             .is_some_and(|text| text.contains("binary content identity drifted"))
     );
-    discard_partial_dir(&fixture.root);
     Ok(())
 }
