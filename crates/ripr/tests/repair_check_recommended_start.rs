@@ -58,6 +58,19 @@ fn repo(
     test: &str,
     feature_branch: bool,
 ) -> Result<Repo, String> {
+    repo_with_src_files(label, base, changed, test, feature_branch, &[])
+}
+
+/// [`repo`] plus extra files under `src/` (`(name, text)`), present in both
+/// commits.
+fn repo_with_src_files(
+    label: &str,
+    base: &str,
+    changed: &str,
+    test: &str,
+    feature_branch: bool,
+    src_files: &[(&str, &str)],
+) -> Result<Repo, String> {
     let root = std::env::temp_dir().join(format!("ripr-recstart-{label}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
@@ -71,6 +84,9 @@ fn repo(
     std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|e| e.to_string())?;
     std::fs::write(root.join("src/lib.rs"), base).map_err(|e| e.to_string())?;
     std::fs::write(root.join("tests/t.rs"), test).map_err(|e| e.to_string())?;
+    for (name, text) in src_files {
+        std::fs::write(root.join("src").join(name), text).map_err(|e| e.to_string())?;
+    }
     git(&root, &["init", "-q"])?;
     git(&root, &["config", "core.autocrlf", "false"])?;
     git(&root, &["branch", "-M", "main"])?;
@@ -664,6 +680,114 @@ fn a_weak_read_of_a_written_field_starts_the_repair_check_recommends() -> Result
     ] {
         let skipped = weak.replace("#[test]", &format!("#[test]\n{attr}"));
         assert_no_write_start(label, WRITE_BASE, &changed, &skipped, "static_unknown")?;
+    }
+    Ok(())
+}
+
+/// #11870 remainder: a private or `pub(crate)` field written by a changed
+/// setter starts a repair from a weak read only where the related test can
+/// name the field and repair can edit the test: an inline test module. A
+/// private field read from a child module file, a `pub(crate)` field read from
+/// `tests/` (its own crate) and every read the policy cannot place start
+/// nothing in either command.
+#[test]
+fn a_weak_read_of_a_private_or_crate_field_starts_only_where_the_test_can_name_it()
+-> Result<(), String> {
+    let private = WRITE_BASE.replace("pub count", "count");
+    let crate_visible = WRITE_BASE.replace("pub count", "pub(crate) count");
+    let inline = |lib: &str, read: &str| {
+        format!(
+            "{lib}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn t() {{\n        let mut c = Counter::new();\n        c.bump();\n{read}\n    }}\n}}\n"
+        )
+    };
+    let weak = "        assert!(c.count > 0);";
+    let bump = |lib: &str| lib.replace("self.count = 1;", "self.count = 2;");
+    for (label, lib) in [("privinline", &private), ("crateinline", &crate_visible)] {
+        let (base, new) = (inline(lib, weak), inline(&bump(lib), weak));
+        let started = repo(label, &base, &new, "", true)?;
+        if finding_classes(&started.root)? != ["weakly_exposed"] {
+            return Err(format!("{label}: expected one weakly_exposed finding"));
+        }
+        assert_starts_check_recommendation(&started, label)?;
+        // The same write read exactly, through a getter, sibling or not at
+        // all, starts nothing.
+        for (variant, read) in [
+            ("strong", "        assert_eq!(c.count, 2);"),
+            ("sibling", "        assert!(c.other > 0);"),
+            ("none", "        assert!(c.other == 0);"),
+            ("eq", "        assert!(c.count == 2);"),
+            (
+                "alias",
+                "        assert!(c.count > 0);\n        let n = c.count;\n        assert_eq!(n, 2);",
+            ),
+        ] {
+            let (base, new) = (inline(lib, read), inline(&bump(lib), read));
+            let none = repo(&format!("{label}{variant}"), &base, &new, "", true)?;
+            if check_start_id(&none.root)?.is_some() {
+                return Err(format!("{label} {variant}: must start nothing"));
+            }
+            ripr(&none.root, &["repair"])?;
+            if attempts(&none.root) != 0 {
+                return Err(format!("{label} {variant}: repair started an attempt"));
+            }
+        }
+    }
+    // A private field observed through a getter in an inline test: no read of
+    // the field, so no seam and no start.
+    let getter_lib = private.replace(
+        "    pub fn bump",
+        "    pub fn count(&self) -> u32 {\n        self.count\n    }\n\n    pub fn bump",
+    );
+    let getter = "        assert!(c.count() > 0);";
+    let (base, new) = (
+        inline(&getter_lib, getter),
+        inline(&bump(&getter_lib), getter),
+    );
+    let repo_getter = repo("privgetter", &base, &new, "", true)?;
+    if check_start_id(&repo_getter.root)?.is_some() {
+        return Err("a getter read of a private field must start nothing".to_string());
+    }
+    // A test the field is out of reach for: private from a child module file,
+    // `pub(crate)` from the integration crate.
+    let tests_mod = "use super::*;\n\n#[test]\nfn t() {\n    let mut c = Counter::new();\n    c.bump();\n    assert!(c.count > 0);\n}\n";
+    let child = |lib: &str| format!("{lib}\n#[cfg(test)]\nmod tests;\n");
+    let (base, new) = (child(&private), child(&bump(&private)));
+    let private_child = repo_with_src_files(
+        "privchild",
+        &base,
+        &new,
+        "",
+        true,
+        &[("tests.rs", tests_mod)],
+    )?;
+    if check_start_id(&private_child.root)?.is_some() {
+        return Err("a private field read from a child module file must start nothing".to_string());
+    }
+    let (base, new) = (child(&crate_visible), child(&bump(&crate_visible)));
+    let crate_child = repo_with_src_files(
+        "cratechild",
+        &base,
+        &new,
+        "",
+        true,
+        &[("tests.rs", tests_mod)],
+    )?;
+    // The field is nameable there, but a child module file is no test surface
+    // repair may edit, so check offers no start either.
+    if check_start_id(&crate_child.root)?.is_some() {
+        return Err("a child module test file is no editable test surface".to_string());
+    }
+    let integration =
+        write_test("    let mut c = Counter::new();\n    c.bump();\n    assert!(c.count > 0);");
+    let crate_integration = repo(
+        "crateintegration",
+        &crate_visible,
+        &bump(&crate_visible),
+        &integration,
+        true,
+    )?;
+    if check_start_id(&crate_integration.root)?.is_some() {
+        return Err("a pub(crate) field read from tests/ must start nothing".to_string());
     }
     Ok(())
 }

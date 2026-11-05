@@ -4319,6 +4319,8 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
     let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
         return false;
     };
+    // #11870: a non-public field is read only by a test that can name it.
+    let reach = super::field_reach::declared_field_reach(owner, path, index);
     let mut weak = false;
     for test in tests {
         let direct = super::related_tests::owner_call_is_direct(test, owner, index);
@@ -4332,6 +4334,17 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
             {
                 weak_reads.push((at, binding));
             }
+        }
+        if !weak_reads.is_empty()
+            && reach.is_some_and(|reach| {
+                !super::field_reach::test_can_name_field(
+                    reach,
+                    owner.file.as_path(),
+                    test.file.as_path(),
+                )
+            })
+        {
+            return false;
         }
         // Pass two: any other assertion that reads the written field or names
         // a binding it was weakly read from may be the exact check the rules

@@ -3925,6 +3925,7 @@ pub(crate) fn classify_seams_in_file_with_shared_index(
 
 fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Vec<RepoSeam> {
     let mut seams: Vec<RepoSeam> = Vec::new();
+    let admission = FieldSeamAdmission::new(index);
 
     // Iterate `production_files` in caller-given order, but the final
     // sort below makes the output independent of that order anyway.
@@ -3957,7 +3958,9 @@ fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Ve
             ) else {
                 continue;
             };
-            seams.push(seam);
+            if admission.admits(&seam, &facts.source) {
+                seams.push(seam);
+            }
         }
     }
 
@@ -4107,6 +4110,7 @@ pub(crate) fn inventory_seams_from_index_bounded(
         eprintln!("{disclosure}");
     }
     let mut collector = BoundedSeamCollector::new(limit);
+    let admission = FieldSeamAdmission::new(index);
     for file in production_files {
         cancellation::checkpoint()?;
         let Some(facts) = index.files().get(file) else {
@@ -4134,7 +4138,8 @@ pub(crate) fn inventory_seams_from_index_bounded(
                 &line_starts,
                 &crlf_pairs,
                 &arm_ranges,
-            ) {
+            ) && admission.admits(&seam, &facts.source)
+            {
                 collector.push(seam);
             }
         }
@@ -4170,6 +4175,63 @@ fn match_arm_source_ranges(
     }
 }
 
+/// Admits a non-public written field's seam (#11870) only when a related
+/// test can name the field and reads it weakly: the seam's evidence then
+/// carries the start's missing-discriminator fact. Any other write of a
+/// private or `pub(crate)` field stays ungraded, since its tests observe it
+/// through a getter or `Display` and a missing direct read is no gap. Every
+/// other seam is admitted. The grip context is built once, on first need.
+struct FieldSeamAdmission<'a> {
+    index: &'a RustIndex,
+    context: std::cell::OnceCell<test_grip_evidence::CompactGripContext<'a>>,
+}
+
+impl<'a> FieldSeamAdmission<'a> {
+    fn new(index: &'a RustIndex) -> Self {
+        Self {
+            index,
+            context: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn admits(&self, seam: &RepoSeam, source: &str) -> bool {
+        if !written_field_is_nonpublic(seam, source) {
+            return true;
+        }
+        // The owner's file must show the field's declaration, so its reach is
+        // known; an undeclared one stays ungraded.
+        let RequiredDiscriminator::FieldValue { field } = seam.required_discriminator() else {
+            return false;
+        };
+        let declared =
+            rust_index::find_owner_function(self.index, seam.file(), seam.display_line())
+                .is_some_and(|owner| {
+                    crate::analysis::classify::declared_field_reach(owner, field, self.index)
+                        .is_some()
+                });
+        if !declared {
+            return false;
+        }
+        let context = self
+            .context
+            .get_or_init(|| test_grip_evidence::CompactGripContext::new(self.index));
+        !test_grip_evidence::compact_evidence_for_seam(seam, context)
+            .missing_discriminators
+            .is_empty()
+    }
+}
+
+/// Whether `seam` is a `self.<field> = ..` write whose field this file does
+/// not declare plain `pub`.
+fn written_field_is_nonpublic(seam: &RepoSeam, source: &str) -> bool {
+    seam.kind() == SeamKind::FieldConstruction
+        && crate::analysis::classify::field_assignment_target(seam.expression()).is_some()
+        && matches!(
+            seam.required_discriminator(),
+            RequiredDiscriminator::FieldValue { field } if !field_declared_public(source, field)
+        )
+}
+
 fn build_seam_from_shape(
     path: &Path,
     shape: &ProbeShapeFact,
@@ -4192,7 +4254,6 @@ fn build_seam_from_shape(
         Some(written_field_of_shape(
             owners.owner(shape.start_line)?,
             shape,
-            source,
         )?)
     } else {
         None
@@ -4276,11 +4337,11 @@ fn build_seam_from_shape(
 /// (#11398): the diff probe's own rule, with no method resolution available
 /// here, so a later `self.m()` call counts as a possible write and the shape
 /// gets no seam. Only a plain one-segment field qualifies, since the read rule
-/// names the field by that one word.
+/// names the field by that one word. A field this file does not declare plain
+/// `pub` is admitted by [`FieldSeamAdmission`] (#11870), not here.
 fn written_field_of_shape(
     owner: &crate::analysis::facts::FunctionFact,
     shape: &ProbeShapeFact,
-    source: &str,
 ) -> Option<String> {
     crate::analysis::classify::assigned_field_path(
         owner.body.as_str(),
@@ -4290,7 +4351,6 @@ fn written_field_of_shape(
         &|_| None,
     )
     .filter(|path| !path.contains('.'))
-    .filter(|field| field_declared_public(source, field))
 }
 
 /// Whether this file declares `field` with plain `pub` visibility (a scoped

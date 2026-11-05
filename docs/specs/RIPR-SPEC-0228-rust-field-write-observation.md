@@ -287,11 +287,19 @@ rejected alternative. Any can be reversed later without touching the rest.
    `field_written_in_method`); when the receiver mode is not recorded they name
    neither value. Repository
    scope resolves no `self` methods, so a later `self.m()` call counts as a
-   possible write and the write gets no seam. Only a field this file declares
-   plain `pub` gets the seam: a private or `pub(crate)` field is observed
+   possible write and the write gets no seam. A field this file declares
+   plain `pub` gets the seam. A private or `pub(crate)` field is observed
    through a getter or `Display`, so a missing direct read is not a gap a test
    can close and the pilot ranking would recommend a well-observed setter
-   (bytesize's `format` setters displaced confirmed picks). A builder's tail `self` hands the
+   (bytesize's `format` setters displaced confirmed picks); its write gets a
+   seam only when the start policy below holds over the owner's related tests
+   (#11870), so a getter-only or unread write stays ungraded. The owner's file
+   must declare the field on the owner's impl type, once, and every related
+   test that reads it weakly must be able to name it: a private (or scoped
+   `pub(super)` / `pub(in ..)`) field from the declaring file, a `pub(crate)`
+   field from any file under the same library `src/` (never `tests/`,
+   `benches/`, `examples/`, `src/bin/` or `main.rs`, which are other crates).
+   An undeclared or ambiguous declaration withholds. A builder's tail `self` hands the
    value to the caller; it is not a later write, for the diff probe and the
    seam alike. A field write starts a repair from a weak read only
    (#11870); otherwise `ripr check` and `ripr repair` both refuse with "a

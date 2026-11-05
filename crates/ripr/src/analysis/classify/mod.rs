@@ -16,6 +16,7 @@ mod decision;
 mod diff_touched;
 mod effect_carrier;
 mod element_field_pin;
+mod field_reach;
 mod flow;
 mod framework_oracle;
 mod gap_admission;
@@ -105,6 +106,7 @@ pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
     facade_reach_witness, facade_reach_witness_pointer,
 };
+pub(in crate::analysis) use field_reach::declared_field_reach;
 pub(in crate::analysis) use flow::{
     local_flow_sinks, predicate_line_arms_all_agree, propagation_evidence_with_witness,
 };
