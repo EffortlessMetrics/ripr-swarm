@@ -270,6 +270,12 @@ pub(super) fn expected_limitation_violations(
         )];
     };
     let expression = normalized_seam_expression(expression);
+    if expression.is_empty() {
+        return vec![format!(
+            "{case_label}: `expected_repo_seam_limitation` requires a nonempty expression \
+             after trimming whitespace and one optional comma"
+        )];
+    }
     let matched: Vec<&Value> = seams
         .iter()
         .filter(|seam| {
@@ -852,6 +858,21 @@ mod tests {
             false,
         );
         assert!(!missing.is_empty());
+        let empty_expression = json!({"seams": [{
+            "seam_id": "empty", "owner": owner, "expression": "",
+            "evidence_record": {"static_limitations": []}
+        }]});
+        for selector in ["", " ", ",", " , "] {
+            let malformed = expected_limitation_violations(
+                "empty expression",
+                &empty_expression,
+                owner,
+                selector,
+                category,
+                false,
+            );
+            assert!(!malformed.is_empty());
+        }
     }
 
     #[test]
