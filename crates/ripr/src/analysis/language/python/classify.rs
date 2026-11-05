@@ -11,6 +11,7 @@ use super::conditional_expression;
 use super::dataclass_default::dataclass_default_credits;
 use super::discriminators::python_missing_discriminators;
 use super::dunder_truthiness;
+use super::exception_variant::exception_variant_credits;
 use super::guard_activation;
 use super::imported_call_operator::{IMPORTED_CALL_LIMIT_EVIDENCE, imported_call_credits};
 use super::message_pin;
@@ -37,8 +38,7 @@ use super::sink_alignment::{
 use super::static_limits::{
     LAMBDA_LIMIT_EVIDENCE, PythonStaticLimit, contains_lambda_keyword,
     heuristic_only_relation_limit, implicit_dunder_dispatch_limit, integer_literal_swap,
-    module_object_rebind_limit,
-    static_limit_for_focused_change, unpinned_equality_dunder_limit,
+    module_object_rebind_limit, static_limit_for_focused_change, unpinned_equality_dunder_limit,
     unresolved_pytest_fixture_names,
 };
 use super::table_rows::python_unvaried_table_operand;
@@ -144,6 +144,13 @@ pub(super) struct PythonNoBehaviorContext {
     /// (`module_value.rs`, #9423). A diff with any other changed line cannot
     /// reconstruct the old module and keeps the abstention.
     pub(super) sole_line_replacement: bool,
+    /// The current per-file import check used the raw workspace write view
+    /// and all admitted module spellings, before legacy path refusal flags.
+    pub(super) module_import_unshadowed: bool,
+    /// The current bounded workspace scan found no source, package or compiled
+    /// module that can replace the imported pytest framework. Only the bounded
+    /// class-only exception reading consumes this positive admission fact.
+    pub(super) pytest_import_unshadowed: bool,
 }
 
 /// An old declaration line (`def`, `async def`, `class` or a decorator) in
@@ -454,6 +461,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                     owner,
                     owners,
                     all_tests,
+                    no_behavior.module_import_unshadowed,
                 )
             })
             .unwrap_or_default();
@@ -573,14 +581,59 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 })
         })
         .flatten();
+    let module_string_sink = module_read.map(|reading| &reading.sink).or_else(|| {
+        module_value
+            .first()
+            .and_then(|credit| module_constant.string_pin(credit.assertion))
+            .map(|pin| &pin.sink)
+    });
     let memo = related;
     let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
-    for credit in module_value.iter().filter(|credit| {
-        module_constant
-            .string_pins
-            .iter()
-            .any(|assertion| std::ptr::eq(*assertion, credit.assertion))
-    }) {
+    // A class-only exception assertion is exact only for this raised-type
+    // replacement, with its own context call reaching the edited statement.
+    let exception_variants = if no_behavior.sole_line_replacement
+        && no_behavior.module_import_unshadowed
+        && no_behavior.pytest_import_unshadowed
+    {
+        owner_source
+            .zip(
+                owners
+                    .iter()
+                    .find(|candidate| candidate.is_module_owner() && candidate.file == owner.file),
+            )
+            .map(|(source, module_owner)| {
+                exception_variant_credits(
+                    &ModuleEdit {
+                        file,
+                        line,
+                        line_text,
+                        old_line_text,
+                        new_source: source,
+                    },
+                    owner,
+                    module_owner,
+                    &related_candidates,
+                )
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    for credit in &exception_variants {
+        if let Some(row) = related.iter_mut().find(|row| {
+            row.file == credit.test.file
+                && row.line == credit.test.line
+                && row.name == credit.test.name
+        }) {
+            row.oracle = Some(credit.assertion.text.clone());
+            row.oracle_kind = OracleKind::ExactErrorVariant;
+            row.oracle_strength = OracleStrength::Strong;
+        }
+    }
+    for credit in module_value
+        .iter()
+        .filter(|credit| module_constant.string_pin(credit.assertion).is_some())
+    {
         if let Some(row) = related.iter_mut().find(|row| {
             row.file == credit.test.file
                 && row.line == credit.test.line
@@ -634,6 +687,23 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         guard_entered,
         literal_pair.as_ref(),
     );
+    // The credit retains the original assertion and its parsed context;
+    // another strong assertion in the same test cannot donate or erase it.
+    let alignment = match exception_variants.first() {
+        Some(credit) => SinkAlignment {
+            changed_sink: alignment.changed_sink,
+            observed_sink: Some(credit.assertion.gate_text.clone()),
+            oracle_alignment: "direct".to_string(),
+            alignment_reason: "strong_oracle_observes_changed_exception_variant".to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: credit.test.name.clone(),
+                test_file: credit.test.file.clone(),
+                text: credit.assertion.text.clone(),
+                kind: OracleKind::ExactErrorVariant,
+            }),
+        },
+        None => alignment,
+    };
     let alignment = match module_value.first() {
         Some(credit) => SinkAlignment {
             changed_sink: alignment.changed_sink,
@@ -644,11 +714,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 test_name: credit.test.name.clone(),
                 test_file: credit.test.file.clone(),
                 text: credit.assertion.text.clone(),
-                kind: if module_constant
-                    .string_pins
-                    .iter()
-                    .any(|assertion| std::ptr::eq(*assertion, credit.assertion))
-                {
+                kind: if module_constant.string_pin(credit.assertion).is_some() {
                     credit.assertion.oracle_kind.clone()
                 } else {
                     OracleKind::ExactValue
@@ -1546,7 +1612,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             python_infection_evidence(&family, line_text).summary
         },
     );
-    let propagate = if module_read.is_some() && static_limit.is_none() {
+    let propagate = if module_string_sink.is_some() && static_limit.is_none() {
         StageEvidence::new(
             StageState::Yes,
             Confidence::Low,
@@ -1557,8 +1623,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     };
     let flow_sink = (static_limit.is_none() && !imported_literal_gap)
         .then(|| {
-            module_read
-                .map(|reading| reading.sink.clone())
+            module_string_sink
+                .cloned()
                 .or_else(|| python_flow_sink_for(&family, owner, line, line_text))
         })
         .flatten();
@@ -1963,12 +2029,25 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         {
             evidence.push(format!("dunder_truthiness_read: integer construction passes before and fails after `{}` ({})", credit.assertion.text, test.name));
             evidence.push(format!("test_oracle: exact_value strong ({})", test.name));
+        } else if let Some(credit) = exception_variants
+            .iter()
+            .find(|credit| std::ptr::eq(credit.test, test))
+        {
+            evidence.push(format!(
+                "exception_variant_read: `{}` rejects `{}` and accepts `{}` at the changed raise ({})",
+                credit.assertion.text, credit.old_type, credit.new_type, test.name
+            ));
+            evidence.push(format!(
+                "test_oracle: exact_error_variant strong ({})",
+                test.name
+            ));
+            evidence.push(format!(
+                "test_oracle_shape: exception_assertion ({})",
+                test.name
+            ));
         } else if let Some(credit) = module_value.iter().find(|credit| {
             std::ptr::eq(credit.test, test)
-                && module_constant
-                    .string_pins
-                    .iter()
-                    .any(|assertion| std::ptr::eq(*assertion, credit.assertion))
+                && module_constant.string_pin(credit.assertion).is_some()
         }) {
             evidence.push(format!(
                 "test_oracle: {} strong ({})",

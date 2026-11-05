@@ -6288,6 +6288,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "coverage/report.ts",
         "src/client.generated.ts",
         "public/js/app.min.js",
+        "packages/docs/components/ecosystem.ts",
     ] {
         let path = root.join(rel);
         let parent = path
@@ -6328,6 +6329,7 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         "coverage/report.ts",
         "src/client.generated.ts",
         "public/js/app.min.js",
+        "packages/docs/components/ecosystem.ts",
     ]
     .into_iter()
     .map(|path| ChangedFile {
@@ -6351,7 +6353,15 @@ fn analyze_diff_does_not_count_excluded_or_generated_typescript_files() -> Resul
         finding.probe.location.file.components().any(|component| {
             matches!(
                 component.as_os_str().to_str(),
-                Some("node_modules" | "dist" | "vendor" | "build" | "coverage" | "__generated__")
+                Some(
+                    "node_modules"
+                        | "dist"
+                        | "vendor"
+                        | "build"
+                        | "coverage"
+                        | "__generated__"
+                        | "docs"
+                )
             )
         }) || finding
             .probe

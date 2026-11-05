@@ -32,7 +32,8 @@ use super::module_constants::{
     module_literal_constants, module_table_binding_at,
 };
 use super::related_tests::{
-    import_source_module_matches_owner, owner_module_callees, submodule_receivers,
+    import_source_module_matches_owner, owner_module_callees, owner_module_paths,
+    submodule_receivers,
 };
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, is_test_file};
@@ -1107,7 +1108,7 @@ pub(super) fn import_path_configured<'a>(
 /// whitespace-separated words after the key's `=` through its continuation
 /// lines, which, as in iniconfig, run on across blank and `#`/`;` comment
 /// lines.
-fn sets_unread_import_path(toml_file: bool, text: &str) -> bool {
+pub(super) fn sets_unread_import_path(toml_file: bool, text: &str) -> bool {
     let lowered = text.to_ascii_lowercase();
     if lowered.contains("addopts") {
         return true;
@@ -2250,17 +2251,32 @@ pub(super) struct ModuleValueRead<'a> {
     pub(super) sink: FlowSinkFact,
 }
 
+/// A fully evaluated string comparison owns the reader's return sink even
+/// after its assertion becomes discriminating and needs no repair guidance.
+pub(super) struct ModuleStringPin<'a> {
+    pub(super) assertion: &'a PythonAssertion,
+    pub(super) sink: FlowSinkFact,
+}
+
 #[derive(Default)]
 pub(super) struct ModuleConstantEvidence<'a> {
     pub(super) credits: Vec<ModuleValueCredit<'a>>,
     /// Fully evaluated direct string comparisons retain their oracle kind
     /// while gaining strong discrimination; other consumers keep their rows.
-    pub(super) string_pins: Vec<&'a PythonAssertion>,
+    pub(super) string_pins: Vec<ModuleStringPin<'a>>,
     /// Current-side string assertions reject the old value. Only an exact
     /// equality pin may be edited in the diff.
     pub(super) current_pins: Vec<&'a PythonAssertion>,
     pub(super) weak_reads: Vec<ModuleValueRead<'a>>,
     pub(super) unresolved_string_read: bool,
+}
+
+impl<'a> ModuleConstantEvidence<'a> {
+    pub(super) fn string_pin(&self, assertion: &PythonAssertion) -> Option<&ModuleStringPin<'a>> {
+        self.string_pins
+            .iter()
+            .find(|pin| std::ptr::eq(pin.assertion, assertion))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2349,6 +2365,19 @@ pub(super) struct Reader {
     pub(super) expression: Expr,
 }
 
+fn reader_return_sink(owner: &PythonOwner, reader: &Reader, source: &str) -> FlowSinkFact {
+    FlowSinkFact {
+        kind: FlowSinkKind::ReturnValue,
+        text: format!(
+            "return {}",
+            super::source_utils::text_for_range(source, reader.expression.range())
+        ),
+        line: SourceText::new(source)
+            .line_for_offset(usize::from(reader.expression.range().start())),
+        owner: Some(owner.symbol_id()),
+    }
+}
+
 /// What an expression's names and calls mean while it is evaluated.
 pub(super) struct Scope<'a> {
     pub(super) constant: &'a str,
@@ -2398,12 +2427,14 @@ pub(super) struct ModuleEdit<'a> {
 
 /// Discriminating credits and weak string-reader observations for a certain
 /// module constant replacement. An unresolved string edit explicitly retains
-/// unknown consumer reach rather than claiming there is no path.
+/// unknown consumer reach rather than claiming there is no path. Every string
+/// route requires the workspace producer's positive module-import identity.
 pub(super) fn module_constant_evidence<'a>(
     edit: &ModuleEdit<'_>,
     module_owner: &PythonOwner,
     owners: &[PythonOwner],
     all_tests: &'a [PythonTest],
+    module_import_unshadowed: bool,
 ) -> ModuleConstantEvidence<'a> {
     let string_edit = match (
         constant_line(edit.line_text),
@@ -2414,6 +2445,17 @@ pub(super) fn module_constant_evidence<'a>(
         }
         _ => false,
     };
+    if string_edit
+        && (!module_import_unshadowed
+            || module_owner.foreign_writes.reflection_elsewhere()
+            || module_owner.foreign_writes.names_may_differ_elsewhere()
+            || module_owner.foreign_writes.writes_dunder())
+    {
+        return ModuleConstantEvidence {
+            unresolved_string_read: true,
+            ..ModuleConstantEvidence::default()
+        };
+    }
     let mut evidence = credits(edit, module_owner, owners, all_tests).unwrap_or_default();
     evidence.unresolved_string_read =
         string_edit && evidence.credits.is_empty() && evidence.weak_reads.is_empty();
@@ -2605,7 +2647,11 @@ fn credits<'a>(
                 if test.constant_rebinding.assigns_attribute(&owner.name) {
                     continue;
                 }
-                let spellings = reader_spellings(test, owner, &module_owner.foreign_writes);
+                let spellings = if string_values {
+                    direct_reader_spellings(test, owner, &module_owner.foreign_writes)
+                } else {
+                    reader_spellings(test, owner, &module_owner.foreign_writes)
+                };
                 if spellings.is_empty() {
                     continue;
                 }
@@ -2659,7 +2705,6 @@ fn credits<'a>(
                         ) else {
                             continue;
                         };
-                        let text = SourceText::new(new_source);
                         out.weak_reads.push(ModuleValueRead {
                             test,
                             assertion,
@@ -2668,20 +2713,7 @@ fn credits<'a>(
                             call,
                             old,
                             new,
-                            sink: FlowSinkFact {
-                                kind: FlowSinkKind::ReturnValue,
-                                text: format!(
-                                    "return {}",
-                                    super::source_utils::text_for_range(
-                                        new_source,
-                                        new_reader.expression.range(),
-                                    )
-                                ),
-                                line: text.line_for_offset(usize::from(
-                                    new_reader.expression.range().start(),
-                                )),
-                                owner: Some(owner.symbol_id()),
-                            },
+                            sink: reader_return_sink(owner, new_reader, new_source),
                         });
                     }
                     continue;
@@ -2690,7 +2722,10 @@ fn credits<'a>(
                     out.current_pins.push(assertion);
                 }
                 if reading.is_some() {
-                    out.string_pins.push(assertion);
+                    out.string_pins.push(ModuleStringPin {
+                        assertion,
+                        sink: reader_return_sink(owner, new_reader, new_source),
+                    });
                 }
                 out.credits.push(credit(
                     test,
@@ -2708,7 +2743,9 @@ fn credits<'a>(
             // The constant read through a reader a sibling module's function
             // forwards to (#9619).
             for forwarder in &forwarders {
-                if test.constant_rebinding.edited_in_diff {
+                // The positive string-import fact covers the changed file,
+                // not this additional module's import identity.
+                if string_values || test.constant_rebinding.edited_in_diff {
                     continue;
                 }
                 let (_, old_reader, new_reader) = &readers[forwarder.reader];
@@ -3584,6 +3621,28 @@ pub(super) fn reader_spellings(
         });
     }
     keep_unshadowed(test, callees)
+}
+
+/// The string-import fact proves the owner's physical module paths. A
+/// package re-export has its own import identity and cannot borrow that fact.
+fn direct_reader_spellings(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    module_foreign: &ForeignWrites,
+) -> Vec<String> {
+    let modules = owner_module_paths(&owner.file);
+    let mut direct = std::collections::BTreeSet::new();
+    for import in &test.imports {
+        if import.imported == owner.name && modules.contains(&import.source_module) {
+            direct.insert(import.alias.clone());
+        }
+        for receiver in submodule_receivers(import, owner, &test.file) {
+            direct.insert(format!("{receiver}.{}", owner.name));
+        }
+    }
+    let mut callees = reader_spellings(test, owner, module_foreign);
+    callees.retain(|callee| direct.contains(callee));
+    callees
 }
 
 pub(super) fn keep_unshadowed(test: &PythonTest, mut spellings: Vec<String>) -> Vec<String> {

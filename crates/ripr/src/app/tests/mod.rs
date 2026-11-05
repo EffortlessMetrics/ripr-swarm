@@ -17,6 +17,8 @@ mod preview_analyzed_outcome;
 mod python_test_note;
 // Drives the Python adapter end to end through `check_workspace_with_config`.
 #[cfg(feature = "lang-python")]
+mod python_exception_variant;
+#[cfg(feature = "lang-python")]
 mod python_family_selection_packets;
 #[cfg(feature = "lang-python")]
 mod python_module_reader_packets;
@@ -27,6 +29,8 @@ mod python_repo_mode_repair_failclosed;
 mod rendering_contracts;
 #[cfg(feature = "lang-typescript")]
 mod typescript_clause_single_token_packets;
+#[cfg(feature = "lang-typescript")]
+mod typescript_error_variant_packets;
 #[cfg(feature = "lang-typescript")]
 mod typescript_family_selection_packets;
 #[cfg(feature = "lang-typescript")]

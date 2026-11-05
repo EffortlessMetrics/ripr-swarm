@@ -239,8 +239,7 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
     let verify_command = evidence_value(finding, "suggested_verify_command: ")?.to_string();
     let verify_command_confidence =
         evidence_value(finding, "suggested_verify_command_confidence: ")?.to_string();
-    let stop_conditions =
-        stop_conditions(&repair_family, &missing_discriminator, &verify_command);
+    let stop_conditions = stop_conditions(&repair_family, &missing_discriminator, &verify_command);
     let repair_action = evidence_value(finding, "suggested_repair_action: ")
         .unwrap_or("add_or_strengthen_test")
         .to_string();

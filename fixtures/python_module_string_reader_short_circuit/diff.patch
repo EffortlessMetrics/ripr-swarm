@@ -1,0 +1,8 @@
+--- a/settings.py
++++ b/settings.py
+@@ -1,4 +1,4 @@
+-GREETING = 'hello'
++GREETING = 'hi'
+ 
+ def greet(name):
+     return f'{GREETING}, {name}'

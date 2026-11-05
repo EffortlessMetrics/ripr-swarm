@@ -418,15 +418,17 @@ Options:
   --gap-id ID          Start a repair for one canonical Python or TypeScript
                        preview gap printed by `ripr check`; exclusive with
                        `--seam-id` and requires `--base`. The before phase
-                       re-runs the diff-scoped
-                       check, refuses unless the finding's repair packet is
-                       ready, and records the check-findings snapshot. Run
+                       re-runs the diff-scoped check, refuses unless the
+                       finding's repair packet is ready, and records the
+                       check-findings snapshot. Run
                        `--attempt ID --phase after` after committing the
                        focused test: it re-runs the check against the recorded
                        base commit, reports the gap closed only when it reads
                        exposed (otherwise it refuses and the attempt stays
-                       retryable), then enforces the edit cage. It issues no
-                       receipt; the closure rides the verify result.
+                       retryable), then enforces the edit cage. It records
+                       advisory static movement and an attempt receipt without
+                       running the focused test. Run the suggested test command
+                       and keep the repair only if that test passes.
   --base REF           The Git base the diff-scoped check compares against;
                        required with, and valid only for, `--gap-id`.
   --attempt ID         Select one durable repair attempt; valid for `after`
