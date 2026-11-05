@@ -350,7 +350,11 @@ fn source_mentions_do_not_manufacture_a_panic_limitation() -> Result<(), String>
             assert_eq!(named[0].stage, "discriminate");
             assert_eq!(named[0].state, "no");
             assert_eq!(named[0].reason, entry.evidence.discriminate.summary);
-            assert!(named[0].reason.starts_with(&format!("{}: ", limit.as_str())));
+            assert!(
+                named[0]
+                    .reason
+                    .starts_with(&format!("{}: ", limit.as_str()))
+            );
             assert!(named[0].reason.contains("passes only if something panics"));
         }
     }
