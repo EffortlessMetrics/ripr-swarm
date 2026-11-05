@@ -70,7 +70,7 @@ receipt's `fields_not_yet_recorded`.
 
 Kept here, not as a repository file, because repository policy keeps non-Rust
 programming files to approved surfaces. Porting it to `xtask` is slice 2 of #12912.
-Save as `score.py` and run `python3 -I score.py benchmarks/agent_ab/tasks/answer-keys.json TASK TREE`.
+Unviable (does not compile) and timed-out mutants are reported separately and never count as caught; all 21 mutants in the key were checked to compile on 2026-11-05. Save as `score.py` and run `python3 -I score.py benchmarks/agent_ab/tasks/answer-keys.json TASK TREE`.
 
 ```python
 import sys,subprocess,shutil,os,json
@@ -83,7 +83,13 @@ tgt=tree+'.mut-target'
 env=dict(os.environ,CARGO_TARGET_DIR=tgt)
 def run(d,t=None):
     e=dict(env,CARGO_TARGET_DIR=t or tgt)
-    return subprocess.run(['cargo','test','-q','--offline'],cwd=d,capture_output=True,env=e).returncode
+    # A mutant that does not compile is unviable, never "caught"; a hang is a timeout.
+    try:
+        b=subprocess.run(['cargo','test','--no-run','-q','--offline'],cwd=d,capture_output=True,env=e,timeout=600)
+        if b.returncode!=0: return 'unviable'
+        return subprocess.run(['cargo','test','-q','--offline'],cwd=d,capture_output=True,env=e,timeout=600).returncode
+    except subprocess.TimeoutExpired:
+        return 'timeout'
 res={'task':task,'baseline_test_pass':run(tree,tree+'.base-target')==0,'mutants':{}}
 for m in k['mutants']:
     if os.path.exists(work): shutil.rmtree(work)
@@ -92,7 +98,8 @@ for m in k['mutants']:
     if s.count(m['from'])!=1:
         res['mutants'][m['id']]='NOMATCH'; continue
     open(p,'w').write(s.replace(m['from'],m['to']))
-    res['mutants'][m['id']]='caught' if run(work)!=0 else 'MISSED'
+    r=run(work)
+    res['mutants'][m['id']]=r if isinstance(r,str) else ('caught' if r!=0 else 'MISSED')
 shutil.rmtree(work,ignore_errors=True)
 c=sum(v=='caught' for v in res['mutants'].values())
 res['caught']=c; res['total']=len(k['mutants'])
