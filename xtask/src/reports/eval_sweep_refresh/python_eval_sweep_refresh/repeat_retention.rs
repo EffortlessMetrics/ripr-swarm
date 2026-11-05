@@ -1,5 +1,5 @@
-use super::*;
 use super::super::retention::{StabilityAttempt, finish_subject_analysis};
+use super::*;
 
 struct RetentionFixture {
     root: PathBuf,
