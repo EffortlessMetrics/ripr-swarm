@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import uuid
 from measurements import digest, terminal_usage
+from scoring import tests_digest
 
 
 BRIEF = """You are working in a small Rust crate (the current directory). The most recent git commit (`git show HEAD`) changed the behavior of the library code in `src/` and added a thin test file in `tests/`.
@@ -51,8 +52,8 @@ def run_identity(task_id, arm, model, rep, max_turns, cohort_id, timeout=900):
     source = Path(__file__).resolve().parent
     protocol = dict(brief=BRIEF, allowed_tools=ALLOWED, configs=CONFIGS, timeout=timeout,
                     harness={name: (source / name).read_text(encoding="utf-8")
-                             for name in ("run_one.py", "lib.py", "measurements.py", "mutate.py")})
-    return dict(receipt_schema_version=2, task=task_id, arm=arm, config=CONFIGS[arm],
+                             for name in ("run_one.py", "lib.py", "workspace.py", "measurements.py", "mutate.py", "scoring.py")})
+    return dict(receipt_schema_version=3, task=task_id, arm=arm, config=CONFIGS[arm],
                 model=model, rep=rep, max_turns=max_turns, cohort_id=cohort_id,
                 task_sha256=digest(TASKS[task_id]), protocol_sha256=digest(protocol),
                 mutants=len(TASKS[task_id]["mutants"]))
@@ -89,13 +90,13 @@ def run(task_id, arm, model, rep, work="/tmp/cohort-work", timeout=900, ripr_bin
         write(f"{d}/mcp.json", json.dumps({"mcpServers": {"ripr": {"command": ripr_bin, "args": ["mcp", "--stdio"]}}}))
         cmd += ["--mcp-config", f"{d}/mcp.json"]
     ripr_version = sh([ripr_bin, "--version"]).stdout.strip() if c["surface"] != "none" else None
-    t0 = time.time()
+    t0 = time.monotonic()
     try:
         p = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, text=True, timeout=timeout)
         out, rc = p.stdout, p.returncode
     except subprocess.TimeoutExpired as e:
         out, rc = (e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or "")), -9
-    wall = time.time() - t0
+    wall = time.monotonic() - t0
     Path(d, "transcript.jsonl").write_text(out, encoding="utf-8")
     tool_calls = ripr_calls = 0; final = {}
     for line in out.splitlines():
@@ -109,12 +110,14 @@ def run(task_id, arm, model, rep, work="/tmp/cohort-work", timeout=900, ripr_bin
                     if "ripr" in json.dumps(blk.get("input", {})) or str(blk.get("name", "")).startswith("mcp__ripr"): ripr_calls += 1
         if ev.get("type") == "result": final = ev
     measured = terminal_usage(final)
+    scoring_start = time.monotonic()
     try:
-        sc = score(t, repo, f"{d}/score-target")
+        sc = score(t, repo, f"{d}/score-target", archive_tests=f"{d}/final-tests")
     except Exception as error:
         # Scorer failure must not erase the already-incurred agent cost.
         sc = dict(valid=False, src_unchanged=None, mutants=len(t["mutants"]),
                   killed=None, survived=None, error=f"scorer exception: {error!r}")
+    scoring_wall = time.monotonic() - scoring_start
     metadata_error = None
     try:
         numstat = sh("git diff HEAD --numstat -- tests", repo, GIT).stdout.strip()
@@ -126,11 +129,12 @@ def run(task_id, arm, model, rep, work="/tmp/cohort-work", timeout=900, ripr_bin
                agent_wall_s=round(wall, 1), api_ms=final.get("duration_api_ms"), is_error=final.get("is_error"),
                valid=sc["valid"], src_unchanged=sc["src_unchanged"], mutants=sc["mutants"], killed=sc["killed"],
                survived=sc["survived"], score_error=sc["error"], test_numstat=numstat, metadata_error=metadata_error)
+    rec.update(score=sc, scoring_wall_s=scoring_wall, evaluation_wall_s=wall + scoring_wall)
     rec.update(identity)
     rec.update(measured)
     try:
-        shutil.copytree(f"{repo}/tests", f"{d}/final-tests", dirs_exist_ok=True)
-    except OSError as error:
+        rec["final_tests_sha256"] = tests_digest(f"{d}/final-tests")
+    except (OSError, ValueError) as error:
         rec["artifact_error"] = repr(error)
     Path(d, "record.json").write_text(json.dumps(rec, indent=1, allow_nan=False), encoding="utf-8")
     shutil.rmtree(f"{d}/agent-target", ignore_errors=True); shutil.rmtree(f"{d}/score-target", ignore_errors=True)

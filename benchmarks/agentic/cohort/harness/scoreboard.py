@@ -13,6 +13,7 @@ import statistics as st
 import sys
 
 from measurements import TOKEN_FIELDS, completed, nonnegative, token_count
+from scoring import quality_verified
 
 
 def wilson(k, n, z=1.96):
@@ -42,6 +43,9 @@ def load(paths):
                 row = json.loads(line)
                 if not isinstance(row, dict):
                     raise ValueError("receipt must be an object")
+                version = row.get("receipt_schema_version", 1)
+                if type(version) is not int or version not in (1, 2, 3):
+                    raise ValueError("unsupported receipt_schema_version")
                 for key in ("task", "arm", "model"):
                     if not isinstance(row.get(key), str) or not row[key].strip():
                         raise ValueError(f"missing or invalid {key}")
@@ -96,6 +100,10 @@ def success(row):
     return completed(row) and escape(row) == 0.0
 
 
+def verified_success(row):
+    return success(row) and quality_verified(row)
+
+
 def metric(rows, field):
     values = []
     for row in rows:
@@ -141,7 +149,13 @@ def paired(rows, controls):
     full = bool(pairs) and len(pairs) == len(rows) == len(controls)
     cost_complete = full and len(measured_costs) == len(pairs)
     quality_complete = full and len(measured_quality) == len(pairs)
-    return dict(pairs=len(pairs), unmatched_runs=[list(k) for k in sorted(arm.keys() - base.keys())],
+    verified_pairs = [(a, b) for a, b in pairs if quality_verified(a) and quality_verified(b)]
+    verified_complete = full and len(verified_pairs) == len(pairs)
+    return dict(verified_quality_pairs=len(verified_pairs),
+                comparison_status=("partial_pairing" if not full else "missing_usage" if not cost_complete
+                                   else "quality_not_verified" if not verified_complete else "descriptive_matched"),
+                verified_escape_rate_vs_none=mean([escape(a) - escape(b) for a, b in verified_pairs]) if verified_complete else None,
+                pairs=len(pairs), unmatched_runs=[list(k) for k in sorted(arm.keys() - base.keys())],
                 unmatched_control_runs=[list(k) for k in sorted(base.keys() - arm.keys())],
                 subject_mismatches=mismatches, complete_pairing=full,
                 task_protocol_identity_matched=bool(pairs) and all(a.get("task_sha256") and a.get("protocol_sha256") for a, _ in pairs),
@@ -163,12 +177,17 @@ def build_report(rows):
             raise ValueError(f"mixed ripr versions in cohort {cohort}, {config}; split the cohort")
         n = len(runs)
         fixed = sum(success(r) for r in runs)
+        verified_fixed = sum(verified_success(r) for r in runs)
+        verified = [r for r in runs if quality_verified(r)]
         scores = [escape(r) for r in runs]
         measured_scores = [s for s in scores if s is not None]
         metrics = {field: metric(runs, field) for field in
-                   ("tokens", "cost_usd", "agent_wall_s", "turns", "tool_calls", "ripr_calls", *TOKEN_FIELDS)}
-        row = dict(report_schema_version=2, cohort=cohort, ripr=next(iter(versions), None), model=model,
+                   ("tokens", "cost_usd", "agent_wall_s", "scoring_wall_s", "evaluation_wall_s", "turns", "tool_calls", "ripr_calls", *TOKEN_FIELDS)}
+        row = dict(report_schema_version=3, cohort=cohort, ripr=next(iter(versions), None), model=model,
                    max_turns=cap, config=config, runs=n, successful_runs=fixed,
+                   verified_quality_runs=len(verified), verified_successful_runs=verified_fixed,
+                   verified_escape_rate=mean([escape(r) for r in verified]),
+                   legacy_quality_runs=sum("score" not in r for r in runs),
                    completed_runs=sum(completed(r) for r in runs),
                    harness_error_runs=sum(bool(r.get("error")) for r in runs),
                    unscored_runs=n - len(measured_scores), fix_rate=fixed / n,
@@ -181,6 +200,8 @@ def build_report(rows):
             m = metrics[field]
             row[field + "_per_success"] = (m["observed_total"] / fixed
                                            if fixed and m["missing_runs"] == 0 else None)
+            row[field + "_per_verified_success"] = (m["observed_total"] / verified_fixed
+                                                    if verified_fixed and m["missing_runs"] == 0 else None)
         if config != "none" and cap is not None:
             row["paired"] = paired(runs, groups.get((cohort, model, cap, "none"), []))
             row["tokens_vs_none_x"] = row["paired"]["tokens_vs_none_x"]
@@ -200,29 +221,31 @@ def render(table):
 
     lines = ["# Agent cohort measurement report", "",
              "Descriptive only: token volume is not billed cost or evidence of quality improvement.",
-             "Cost per success includes all attempts; incomplete cost stays not measured.",
+             "Reported quality retains historical scorer claims; only verified quality satisfies the pass/fail/pass protocol.",
+             "Cost per verified success includes all attempts; incomplete cost stays not measured.",
              "Full versions, cache components, observed totals and unmatched keys are in the JSON report.", ""]
     lines += [f"{alias}: `{name}`" for name, alias in cohorts.items()]
-    lines += ["", "| Cohort / model / turn cap / config | Attempts | Complete | Success | Scored | Escape | Tokens mean [n/N] | SDK $ mean [n/N] | Tokens/success |",
-              "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    lines += ["", "| Cohort / model / turn cap / config | Attempts | Complete | Reported success | Verified success | Scored | Escape (reported) | Tokens mean [n/N] | SDK $ mean [n/N] | Tokens/verified success |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for row in table:
         tokens, cost = row["metrics"]["tokens"], row["metrics"]["cost_usd"]
         n = row["runs"]
-        lines.append(f"| {label(row)} | {n} | {row['completed_runs']} | {row['successful_runs']} | "
+        lines.append(f"| {label(row)} | {n} | {row['completed_runs']} | {row['successful_runs']} | {row['verified_successful_runs']} | "
                      f"{row['escape_measured_runs']}/{n} | {cell(row['escape_rate'], '.1%')} | "
                      f"{cell(tokens['mean'])} [{tokens['measured_runs']}/{n}] | "
-                     f"{cell(cost['mean'])} [{cost['measured_runs']}/{n}] | {cell(row['tokens_per_success'])} |")
+                     f"{cell(cost['mean'])} [{cost['measured_runs']}/{n}] | {cell(row['tokens_per_verified_success'])} |")
     lines += ["", "## Paired comparisons against none", "",
               "Hashes matched means recorded task/protocol digests agree, not independent attestation.", "",
-              "| Group | Pairs | Unmatched arm/control | Subject mismatches | Hashes matched | Token/quality pairs | Token x none | Success delta | Escape delta |",
-              "|---|---:|---:|---:|---|---:|---:|---:|---:|"]
+              "| Group | Pairs | Unmatched arm/control | Subject mismatches | Hashes matched | Token/quality pairs | Token x none | Success delta (reported) | Escape delta (reported) | Verified quality pairs | Comparison |",
+              "|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---|"]
     for row in table:
         p = row["paired"]
         if p is not None:
             lines.append(f"| {label(row)} | {p['pairs']} | {len(p['unmatched_runs'])}/{len(p['unmatched_control_runs'])} | "
                          f"{len(p['subject_mismatches'])} | {p['task_protocol_identity_matched']} | "
                          f"{p['tokens_measured_pairs']}/{p['quality_measured_pairs']} | {cell(p['tokens_vs_none_x'])} | "
-                         f"{cell(p['fix_rate_vs_none'], '+.1%')} | {cell(p['escape_rate_vs_none'], '+.1%')} |")
+                         f"{cell(p['fix_rate_vs_none'], '+.1%')} | {cell(p['escape_rate_vs_none'], '+.1%')} | "
+                         f"{p['verified_quality_pairs']} | {p['comparison_status']} |")
     return "\n".join(lines) + "\n"
 
 

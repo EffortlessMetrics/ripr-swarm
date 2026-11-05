@@ -105,6 +105,33 @@ class CollectionTests(unittest.TestCase):
             self.assertEqual(row["tokens"], 100)
             self.assertIn("git failed", row["metadata_error"])
 
+    def test_score_evidence_and_exact_archive_reach_the_record(self):
+        from scoring import tests_digest
+        evidence = dict(valid=True, src_unchanged=True, mutants=1, killed=1, survived=[],
+                        error=None, score_protocol="synthetic-collection-boundary", marker="retained")
+        def scorer(task, repo, target, archive_tests=None):
+            write(str(Path(archive_tests) / "behavior.rs"), "// exact graded tests\n")
+            # The agent checkout may move after the grading snapshot was taken.
+            write(str(Path(repo) / "tests" / "behavior.rs"), "// later checkout state\n")
+            return evidence
+        self.runner.score.side_effect = scorer
+        with tempfile.TemporaryDirectory() as directory:
+            row = self.collect(directory)
+            archive = next(Path(directory).glob("*/final-tests"))
+            self.assertEqual(row["score"], evidence)
+            self.assertEqual(row["final_tests_sha256"], tests_digest(archive))
+            self.assertEqual((archive / "behavior.rs").read_text(), "// exact graded tests\n")
+            self.assertNotIn("artifact_error", row)
+            self.assertGreaterEqual(row["scoring_wall_s"], 0)
+            self.assertAlmostEqual(row["evaluation_wall_s"] - row["scoring_wall_s"], row["agent_wall_s"], delta=0.1)
+
+    def test_missing_scored_archive_keeps_cost_without_artifact_credit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            row = self.collect(directory)
+            self.assertEqual(row["tokens"], 100)
+            self.assertIn("artifact_error", row)
+            self.assertNotIn("final_tests_sha256", row)
+
     def test_repeated_job_does_not_overwrite_prior_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             self.collect(directory)

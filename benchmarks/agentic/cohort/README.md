@@ -12,9 +12,23 @@ Arms (same brief, plus one paragraph):
 - `A1-diagnostics`: told to run `ripr check --base HEAD~1` first.
 - `A2-packet-loop`: told to run `ripr agent brief --base HEAD~1 --json` first and follow its `next` commands.
 
-Hidden oracle: the agent's final `tests/` are run on the pristine code (must pass) and on each hidden mutant of `src/lib.rs`. Escaped defect rate = surviving mutants / mutants. A mutant that times out or fails a test counts as killed. Per run we record turns, tool calls, ripr calls, tokens, cost, wall time (`receipts/`).
+Hidden oracle: the agent's final `tests/` are run on the pristine code (must pass) and on each hidden mutant of `src/lib.rs`. Escaped defect rate = surviving mutants / mutants. A catch now requires a nonempty pristine pass, a separately compiled mutant
+whose tests actually fail, and a restored-pristine pass with the same test subject.
+Timeouts, build failures, process errors and missing tests are unresolved, not
+catches. See the [oracle contract](ORACLE_CONTRACT.md). Per run we record turns, tool calls, ripr calls, tokens, cost, wall time (`receipts/`).
 
 Tasks: 8 hand-written single-function tasks with hand-written mutants (each validated killable by a reference suite) and 3 larger multi-function tasks (`calendar`, `expr`, `textfmt`) whose mutants are generated mechanically (`harness/mutate.py`) and kept only if a Sonnet-written oracle suite kills them (`harness/oracle.py`).
+
+## Historical-result qualification
+
+The tables and interpretations below are retained original observations from the
+pre-v3 scorer. That scorer counted timeouts and some other failures as catches;
+these receipts do not retain enough execution evidence to establish which runs,
+if any, were affected. Their numeric values are not rewritten, but they are **not
+requalified results** or evidence of a token-efficiency benefit. New reports label
+legacy quality explicitly and withhold cost per verified success until the native
+controls described below are present. Rerun or independently regrade retained
+artifacts before using historical quality as an acceptance baseline.
 
 ## Result (2026-11-04, ripr 0.10.0 installed binary, 99 runs, no invalid runs)
 
@@ -71,7 +85,7 @@ completion and hidden-oracle outcomes, then compares matched task/replicate pair
 within the same cohort, model and turn budget. Missing usage is not zero; failed
 attempts do not disappear. Full RIPR version strings are retained and mixed
 versions within a cohort/config are rejected. See the
-[measurement contract](MEASUREMENT_CONTRACT.md) for receipt/report v2, pairing,
+[measurement contract](MEASUREMENT_CONTRACT.md) for receipt/report v3, pairing,
 cache accounting, cost per success and limitations.
 
 Configs live in `CONFIGS` in `harness/run_one.py`: surface (check, brief, MCP),
@@ -83,7 +97,7 @@ original observations, not recomputed or statistically requalified by this chang
 ## Limits
 
 - Isolation: the agent's tool grant is narrow (file tools plus `cargo test`, `cargo build`, `ripr` and read-only `git`/`ls`/`cat`), not a general shell, but `cargo test` executes agent-written code and `acceptEdits` lets it write anywhere the process can. Run the harness only in a disposable environment with no secrets; it does not enforce isolation or redaction itself.
-- Known scorer limits (being repaired in a child PR): a timed-out or otherwise failing mutant run counts as killed, a pristine run that executes zero tests counts as valid, and scoring runs in the agent-edited checkout. Escape rates above are therefore best read as lower bounds with unverified scorer provenance.
+- The historical scorer counted timeouts and other failures as catches, admitted zero-test pristine runs, and graded the agent checkout. The new scorer repairs those mechanisms; historical escape rates still have unverified provenance and are not requalified by this change.
 - One provider (Anthropic), two models. The "two providers" bar is not met; no other provider is reachable from this environment.
 - Mutants for the large and real-code tasks are mechanical (not cargo-mutants, which is not installed here) and filtered by Sonnet-written suites, so bugs those suites could not kill are excluded; this biases toward bugs that are easy to kill.
 - First-party tasks are small (under 120 lines). Real-code tasks are single-crate, and only `src/lib.rs` is mutated.
@@ -102,10 +116,19 @@ python3 scoreboard.py out out.jsonl
 Needs `claude` on PATH and `ripr`. Runs create unique trial directories under
 `/tmp/cohort-work`; repeated trials do not overwrite prior transcripts or tests.
 The old `agg.py` is a historical quick summary, not the measurement-integrity
-report. Run the offline accounting tests without any model, Cargo or network:
+report. Run the instrument tests without any model or network. Native Cargo
+controls are explicitly skipped when Cargo is unavailable locally:
 
 ```sh
-python3 -m unittest discover -s benchmarks/agentic/cohort/harness -p 'test_*.py' -v
+python3 -I benchmarks/agentic/cohort/harness/selftest.py
 ```
 
-Run that test command from the repository root.
+Run that command from the repository root. The native CI-owned route requires
+Git, Cargo, all five named native controls and zero skips:
+
+```sh
+cargo test -p xtask --test agent_cohort_selftest
+```
+
+This route runs tiny dependency-free offline crates and instrument tests, not a
+model or paid cohort. Missing native evidence is a failure, never a passing skip.

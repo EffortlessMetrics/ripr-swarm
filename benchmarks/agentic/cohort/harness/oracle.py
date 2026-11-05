@@ -1,7 +1,9 @@
 import sys, os, json, shutil, subprocess
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from lib import *
-from mutate import gen, apply
+from mutate import gen
+from scoring import PROTOCOL, canonical_hash, qualified_outcome, qualified_compile_exclusion
 import run_one
 PROMPT = """You are working in a small Rust crate (the current directory). Write an exhaustive, high-quality integration test suite in `tests/` for ALL the public behavior in `src/lib.rs`: every branch, boundary (both sides), error variant, overflow and edge input. Tests must pass on the current code (`cargo test --offline`). Do not modify `src/`. Think hard about inputs that distinguish subtly wrong implementations. When done reply with one sentence."""
 def agent(task_id, k, model):
@@ -17,19 +19,46 @@ def filter_mutants(task_id, test_dirs):
     for i, td in enumerate(test_dirs):
         for f in os.listdir(td): shutil.copy(f"{td}/{f}", f"{d}/tests/oracle{i}_{f}")
     tgt = f"/tmp/cohort-oracle/{task_id}/ftgt"
-    assert cargo_test(d, tgt).returncode == 0, "oracle suite must pass on pristine code"
-    orig = open(f"{d}/src/lib.rs").read(); keep = []
-    cands = gen(orig, cap=70)
-    for ln, new in cands:
-        open(f"{d}/src/lib.rs", "w").write(apply(orig, ln, new))
-        r = cargo_test(d, tgt); out = r.stdout + r.stderr
-        if r.returncode == 0: continue                      # unkilled by every oracle suite: drop (equivalent or exotic)
-        if "could not compile" in out and "src/lib.rs" in out: continue  # invalid mutant
-        keep.append([ln, new])
-    open(f"{d}/src/lib.rs", "w").write(orig)
-    md=os.path.join(os.path.dirname(os.path.abspath(__file__)),"..","mutants"); os.makedirs(md, exist_ok=True)
-    json.dump(keep, open(f"{md}/{task_id}.json", "w"))
-    print(task_id, "candidates", len(cands), "killable kept", len(keep), flush=True)
+    cands = gen(t["new_src"], cap=70)
+    qualified = score(dict(t, mutants=cands), d, tgt)
+    md = Path(__file__).resolve().parent.parent / "mutants"
+    md.mkdir(parents=True, exist_ok=True)
+    # Preserve all candidate outcomes, including excluded and unresolved cases.
+    (md / f"{task_id}.qualification.json").write_text(
+        json.dumps(qualified, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    keep = select_qualified_mutants(cands, qualified)
+    (md / f"{task_id}.json").write_text(json.dumps(keep) + "\n", encoding="utf-8")
+    print(task_id, "candidates", len(cands), "pass/fail/pass kept", len(keep), flush=True)
+
+
+def select_qualified_mutants(candidates, result):
+    if (result.get("score_protocol") != PROTOCOL or result.get("valid") is not True
+            or result.get("edit_scope_valid") is not True or result.get("src_unchanged") is not True
+            or result.get("scope_violations") != []):
+        raise ValueError("reference suite did not establish a pristine pass")
+    rows = result.get("mutant_results", [])
+    if (not candidates or result.get("mutants") != len(candidates) or len(rows) != len(candidates)
+            or any(not isinstance(r, dict) or type(r.get("id")) is not int for r in rows)
+            or [r["id"] for r in rows] != list(range(len(candidates)))):
+        raise ValueError("reference qualification omitted candidates")
+    keep = []
+    for candidate, row in zip(candidates, rows):
+        if row.get("mutation_sha256") != canonical_hash(candidate):
+            raise ValueError("reference candidate identity mismatch")
+        outcome = qualified_outcome(row, result.get("baseline"))
+        if outcome == "caught":
+            keep.append(candidate)
+        elif outcome == "survived" or qualified_compile_exclusion(row, result.get("baseline")):
+            continue
+        else:
+            # A timeout, malformed mutant or process failure is
+            # unresolved qualification, not a candidate silently filtered away.
+            raise ValueError("reference qualification incomplete; preserve the prior mutant list")
+    if not keep:
+        raise ValueError("no candidate has a verified pass/fail/pass reference")
+    return keep
+
+
 if __name__ == "__main__":
     ids = sys.argv[1:] or ["calendar", "expr", "textfmt"]
     jobs = [(i, k, m) for i in ids for k, m in enumerate(["sonnet", "sonnet"])]

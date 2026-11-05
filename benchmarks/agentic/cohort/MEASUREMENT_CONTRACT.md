@@ -6,7 +6,7 @@ separately; a lower token ratio is not an efficiency-win verdict.
 
 ## Collection and token accounting
 
-New receipts use `receipt_schema_version: 2`. `run_one.py` consumes the terminal
+New receipts use `receipt_schema_version: 3`. `run_one.py` consumes the terminal
 `result.usage` once, preserving input, output, cache-creation input and cache-read
 input counters under `usage`. `tokens` is their sum only when all four are
 nonnegative integer measurements. Explicit zero cache counters are valid; missing,
@@ -32,13 +32,16 @@ and control shim. Collection remains opt-in; no default CI model calls are added
 ## Denominators and outcomes
 
 The JSON report remains a list of per-config rows, now with
-`report_schema_version: 2`. Consumers must use the new coverage fields and null
+`report_schema_version: 3`. Consumers must use the new coverage fields and null
 semantics rather than treating missing values as zero. Every receipt is an
 attempt, including failures. `completed_runs`, `successful_runs`,
 `harness_error_runs`, `unscored_runs` and `escape_measured_runs` are separate counts.
-A successful run requires terminal completion, unchanged production source, a
-passing pristine test suite, a nonempty internally consistent mutant result and
-zero recorded survivors. A timeout with good partial tests is not completed
+The compatibility fields `successful_runs` and `fix_rate` retain reported
+historical quality. A reported successful run requires terminal completion,
+unchanged production source, a passing pristine test suite, a nonempty internally
+consistent mutant result and zero recorded survivors. New verified-quality fields
+add the execution and source checks in [the oracle contract](ORACLE_CONTRACT.md).
+Only `verified_successful_runs` contributes to cost per verified success. A timeout with good partial tests is not completed
 success. Empty or inconsistent oracle results are unscored, not perfect results.
 
 `escape_rate` is the mean fraction of escaped mutants over measured runs only;
@@ -89,10 +92,43 @@ old cohorts were comparable. Model aliases are not pinned model snapshots, and a
 reported RIPR version is not a verified executable digest. There is no significance
 test for token savings, pooled-provider result or causal-benefit claim here.
 
-The underlying scorer is unchanged, including its existing timeout/failure
-classification. This accounting change does not validate that classifier, remove
-model-generated-oracle bias, create harder tasks, randomize trial order, record
-all tool-output bytes, or establish real-world quality improvements. Those remain
-separate acceptance under #12902/#12912. Before spending on the next cohort, freeze
-comparable inputs, choose tasks with useful headroom, and predeclare quality and
-budget criteria. Do not infer improvement from output compression alone.
+## Version 3: executed quality and whole-evaluation cost
+
+`score` retains the evaluator-owned production/test identities, actual baseline,
+each intended mutant, restored-code controls, phase outcomes and unresolved IDs.
+`run_one.py` archives the exact tests transferred into grading and binds that
+archive digest in `final_tests_sha256`. A later mutation of the agent checkout
+cannot rewrite the archived test subject. Source/configuration is rebuilt from
+the frozen task, not the agent's mutable Git HEAD. The scorer contract describes
+which trusted native observations support a catch and the limits of that claim.
+
+The report distinguishes `verified_quality_runs`, `verified_successful_runs`,
+`verified_escape_rate` and `legacy_quality_runs`. New `tokens_per_verified_success`
+and `cost_usd_per_verified_success` divide all measured attempt spend by verified,
+completed successes; missing spend or zero verified successes produces null.
+Legacy reported scores and old cost-per-reported-success fields stay readable,
+but the Markdown headline uses cost per **verified** success. No historical
+receipt acquires executed quality merely by being read by the new scorer.
+
+`scoring_wall_s` measures the scoring call separately from agent execution;
+`evaluation_wall_s` is agent plus scoring elapsed time, not whole-process startup,
+artifact flush, cleanup or billing duration. Missing legacy timing stays unknown.
+Paired comparisons report `verified_quality_pairs` and verified escape deltas;
+`comparison_status` distinguishes partial pairing, missing usage, unverified
+quality and a descriptive fully matched comparison. Even fully measured,
+quality-verified pairs are descriptive observations, not a significance test or
+an automatic token-efficiency win.
+
+Reference-mutant qualification now consumes this same execution owner. It keeps
+all attempted candidates and can exclude actual compiler-rejected mutants with
+valid restoration evidence; timeout/build/process/zero-test failures cannot be
+quietly removed from the selection. Incomplete qualification preserves the prior
+selected mutant list and writes the unresolved qualification record for repair.
+
+The changed instrument does not remove model-generated-oracle bias, create harder
+tasks, randomize trial order, authenticate supplied receipts, record all
+agent-visible tool-output bytes, or establish real-world quality improvement.
+These remain separate acceptance under #12902/#12912. Before another paid cohort,
+freeze comparable inputs, validate reference controls, predeclare quality/budget
+criteria and preserve the planned-attempt denominator. Do not infer improvement
+from output compression or a cheaper failed attempt.
