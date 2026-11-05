@@ -2185,8 +2185,9 @@ fn perl_preview_lines(preview: &output::doctor::DoctorPerlPreview) -> Vec<String
         ));
     }
 
-    // Find a compatible exporter: one that answers `--version` AND accepts
-    // the managed `ripr-facts` subcommand. A binary that only answers
+    // Find a compatible exporter: one that accepts the managed `ripr-facts`
+    // subcommand (`--version` only supplies the reported version; the
+    // canonical exporter has none). A binary that only answers
     // `--version` (for example the published perllsp LSP server) is reported
     // as found-but-incompatible, never as a working exporter.
     lines.extend(perl_exporter_lines(&preview.exporter));
@@ -2338,12 +2339,13 @@ fn perl_producer_configured(config: Option<&RiprConfig>) -> Option<String> {
 /// Result of probing for a Perl fact exporter.
 #[derive(Debug, PartialEq, Eq)]
 enum PerlExporterProbe {
-    /// Answers `--version` and accepts the managed `ripr-facts` subcommand.
+    /// Accepts the managed `ripr-facts` subcommand. `version` is
+    /// "version unknown" when `--version` did not answer.
     Compatible { bin: String, version: String },
     /// Answers `--version` but rejects `ripr-facts`, so managed mode would
     /// fail against it. Not an exporter ripr can use.
     Incompatible { bin: String, version: String },
-    /// No candidate answered `--version`.
+    /// No candidate answered `--version` or accepted `ripr-facts`.
     NotFound,
     /// A PATH hit canonicalized inside the analyzed root and was not run
     /// (#5349). Carries the resolved program path for the report.
@@ -2503,7 +2505,10 @@ fn probe_perl_exporter(root: &Path, config: Option<&RiprConfig>) -> PerlExporter
         }
         let program = judged;
         let bin = program.display().to_string();
-        let Some(version) = run_exporter_probe(&program, &["--version"], timeout)
+        // The canonical exporter has no top-level `--version` (it exits 1 on
+        // it), so a failed version probe is not "missing": the capability
+        // probe below decides compatibility and the version reads unknown.
+        let version_answer = run_exporter_probe(&program, &["--version"], timeout)
             .filter(|output| output.status.success())
             .map(|output| {
                 String::from_utf8_lossy(&output.stdout)
@@ -2512,19 +2517,20 @@ fn probe_perl_exporter(root: &Path, config: Option<&RiprConfig>) -> PerlExporter
                     .unwrap_or("")
                     .trim()
                     .to_string()
-            })
-        else {
-            continue;
-        };
-        let version = if version.is_empty() {
-            "version unknown".to_string()
-        } else {
-            version
+            });
+        let answered_version = version_answer.is_some();
+        let version = match version_answer {
+            Some(version) if !version.is_empty() => version,
+            _ => "version unknown".to_string(),
         };
         if exporter_accepts_ripr_facts(&program, timeout) {
             return PerlExporterProbe::Compatible { bin, version };
         }
-        first_incompatible.get_or_insert(PerlExporterProbe::Incompatible { bin, version });
+        // Only a binary that answered `--version` is reported as an
+        // incompatible exporter; a silent non-exporter stays not found.
+        if answered_version {
+            first_incompatible.get_or_insert(PerlExporterProbe::Incompatible { bin, version });
+        }
     }
     // A refusal is a security decision and must not be masked by an
     // incompatible hit for the other candidate name (#5349 finding 3).

@@ -620,7 +620,7 @@ suite('VS Code test host diagnostics', () => {
     const marker = "      const matrixUserData = path.join(userDataPath, 'multiroot');";
     assert.strictEqual(source.split(marker).length, 2, 'bind exactly one matrix setup');
     const start = source.indexOf(marker);
-    const end = source.indexOf('      await runTests({', start);
+    const end = source.indexOf('      await runtime.runTests({', start);
     assert.ok(end > start, 'matrix setup must end before the native host launch');
     const prepare = new Function('fs', 'path', 'process', 'userDataPath', 'matrixRoot',
       'testServerPath', 'resetHostLogDir',

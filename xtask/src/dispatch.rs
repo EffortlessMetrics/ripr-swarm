@@ -65,6 +65,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::RustRepairTrustReport => super::reports::rust_repair_trust_report(),
         XtaskCommand::RepairCardUsabilityReport => super::reports::repair_card_usability_report(),
         XtaskCommand::RepairFunnelReport => super::reports::repair_funnel_report(),
+        XtaskCommand::RepairStartPage(args) => super::outcome_page::run(&args),
         XtaskCommand::BlindJourneyContract => super::reports::blind_journey_contract_report(),
         XtaskCommand::BlindJourneyExecute => super::reports::blind_journey_execute_report(),
         XtaskCommand::OrchestrationScorecard(args) => {
@@ -247,6 +248,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::policy::check_changelog_fragments_with_args(&args)
         }
         XtaskCommand::FoldChangelog(args) => super::policy::fold_changelog(&args),
+        XtaskCommand::InstallReceipt(args) => super::policy::install_receipt(&args),
         XtaskCommand::CheckReadmeState => super::check_readme_state(),
         XtaskCommand::MarkdownLinks => super::markdown_links(),
         XtaskCommand::CheckPrShape(args) => super::check_pr_shape_with_args(&args),

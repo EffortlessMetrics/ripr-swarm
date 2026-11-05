@@ -189,6 +189,33 @@ classification = "config"
 reason = "PEP 517/621 and Maturin authoring manifest for the wheel-only ripr-rs adapter (#4490)."
 covered_by = ["cargo xtask check-release-targets"]
 
+[[allow]]
+glob = "plugins/muse/ripr/**/*.json"
+kind = "muse_plugin_manifest"
+owner = "agent/plugin"
+surface = "config"
+classification = "config"
+reason = "Native Muse plugin manifest for the RIPR package (#13106); Muse requires JSON, validated by the installed muse validator."
+covered_by = ["muse plugins validate plugins/muse/ripr --json"]
+
+[[allow]]
+glob = "plugins/muse/ripr/**/*.md"
+kind = "muse_plugin_docs"
+owner = "agent/plugin"
+surface = "docs"
+classification = "docs"
+reason = "Muse plugin skills, README, and host notes are Markdown by host contract (#13106)."
+covered_by = ["muse plugins validate plugins/muse/ripr --json", "muse skills validate plugins/muse/ripr/skills/ripr-repair --json"]
+
+[[allow]]
+glob = "benchmarks/muse-plugin/**"
+kind = "muse_plugin_evaluation_suite"
+owner = "agent/plugin"
+surface = "fixtures"
+classification = "fixture"
+reason = "Muse plugin evaluation scenarios, fixtures, expected verdicts, and retained receipts (#13106); the evaluator inspects these artifacts independently of the agent."
+covered_by = ["muse plugins validate plugins/muse/ripr --json"]
+
 # ---------------------------------------------------------------------------
 # CI / GitHub workflows
 # ---------------------------------------------------------------------------
@@ -732,6 +759,24 @@ reason = "Committed developer-experience scoreboard baseline the nightly regress
 covered_by = ["cargo xtask dx-scoreboard --baseline metrics/dx-scoreboard/baseline.json --gate", "cargo xtask check-file-policy"]
 
 [[allow]]
+glob = "benchmarks/repair_start/*.json"
+kind = "benchmark_fixture"
+owner = "dx-scoreboard"
+surface = "fixtures"
+classification = "fixture"
+reason = "Pinned 24-diff repair-start case trees and the bars and regression floor read by cargo xtask repair-start-page (#12903)."
+covered_by = ["cargo test -p xtask --bin xtask outcome_page", "cargo xtask check-file-policy"]
+
+[[allow]]
+glob = "metrics/outcome/seed/*.json"
+kind = "benchmark_receipt"
+owner = "dx-scoreboard"
+surface = "repo"
+classification = "metadata"
+reason = "Dated manual-harness repair-start receipts that seed the outcome page trend before the nightly lane records its own."
+covered_by = ["cargo test -p xtask --bin xtask outcome_page", "cargo xtask check-file-policy"]
+
+[[allow]]
 glob = "benchmarks/targeted_rerun_benchmark/**"
 kind = "benchmark_fixture"
 owner = "targeted-rerun"
@@ -1099,3 +1144,12 @@ surface = "ci"
 classification = "test"
 reason = "Fake-API unittest suite for the exact-head merge guard (#11781); run through the Rust wrapper test so CI executes it."
 covered_by = ["cargo test -p xtask --test guarded_merge_selftest"]
+
+[[allow]]
+glob = "metrics/install/*.json"
+kind = "install_receipt"
+owner = "release/install"
+surface = "ci"
+classification = "metadata"
+reason = "Checked-in install receipt and channel dispositions (#13064); written and re-validated by the Rust xtask command, not hand-maintained logic."
+covered_by = ["cargo xtask install-receipt --check"]

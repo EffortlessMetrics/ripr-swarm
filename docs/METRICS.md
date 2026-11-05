@@ -42,17 +42,17 @@ owner under [the release transaction](RELEASE_TRANSACTION.md) and
 
 | Level | Meaning | Criterion (working default) | Instrument |
 | --- | --- | --- | --- |
-| R0 installable and honest | A new user installs it, gets a first result, and is not misled. | False verdict rate at most 1% (stricter than the 5% public-proof ceiling in [PUBLIC_PROOF](PUBLIC_PROOF.md)). | Verdict corpus (`cargo xtask verdict-corpus check`). |
+| R0 installable and honest | A new user installs it, gets a first result, and is not misled. | False verdict rate at most 1% (stricter than the 5% public-proof ceiling in [PUBLIC_PROOF](PUBLIC_PROOF.md)). | Verdict corpus (`cargo xtask verdict-corpus check`); registry install time (not first result) and channel coverage: `cargo xtask install-receipt --check` over `metrics/install/receipt.json`. |
 | | | Install to first useful result at most 300 s on Linux, macOS and Windows, every shipped channel, verified against the published version. | `first_run` board; weekly published-install matrix ([#12938](https://github.com/EffortlessMetrics/ripr-swarm/pull/12938)). |
 | | | No crash, hang or silent clean result on messy repositories. | Robustness corpus ([#11524](https://github.com/EffortlessMetrics/ripr-swarm/issues/11524), [#12924](https://github.com/EffortlessMetrics/ripr-swarm/issues/12924)). |
-| R1 reliable | Same answer on every surface, fast and small enough to leave on. | Warm `ripr check` p50 under 1 s and p95 under 3 s up to about 1,000 Rust files. | `cargo xtask dx-scoreboard`. |
-| | | Peak memory under 150 MB for 100 to 800 Rust files, under 512 MB for 3,000-file Python/TypeScript repositories, hard cap 1 GiB. | `dx-scoreboard` speed rows. |
+| R1 reliable | Same answer on every surface, fast and small enough to leave on. | Warm `ripr check` p50 under 1 s and p95 under 3 s up to about 1,000 Rust files. | `cargo xtask dx-scoreboard`: `speed.warm_check_p50_ms` and `speed.warm_check_p95_ms` (nearest rank over `--samples`, default 3; p95 is the maximum below 20 samples). |
+| | | Peak memory under 150 MB for 100 to 800 Rust files, under 512 MB for 3,000-file Python/TypeScript repositories, hard cap 1 GiB. | `dx-scoreboard` `speed.warm_check_peak_rss_mb` (maximum over the warm samples), held per `[[size_tier]]` ceiling in `scoreboards.toml`. |
 | | | Zero contradictory refusals for one item across CLI, LSP, MCP and agent output. | The manual consistency matrix, until an automated check exists ([#10712](https://github.com/EffortlessMetrics/ripr-swarm/issues/10712)). |
 | | | The classification and fail-closed core is proved on every pull request (target; the lane is advisory today). | Kani lane (`cargo xtask kani`), required ([#12904](https://github.com/EffortlessMetrics/ripr-swarm/issues/12904)). |
 | | | Flake rate under 1% on required lanes. | Test-analytics flake ledger. |
-| R2 useful | People and agents finish the loop: gap, repair, verified. | Repair starts on at least 80% of gaps `check` reports. | Not-ready harness and the nightly outcome page ([#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903)). |
-| | | Precision of "discriminator" claims at least 97% against real mutants, published by language and operator. | `mutation-spot-check` ([#12900](https://github.com/EffortlessMetrics/ripr-swarm/issues/12900)). |
-| | | Recall of runtime survivors flagged as a gap or an honest unknown at least 80%, published by language. | Same corpus ([#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901)). |
+| R2 useful | People and agents finish the loop: gap, repair, verified. | Repair starts on at least 80% of gaps `check` reports. | `cargo xtask repair-start-page --ripr <binary>` (nightly `Outcome Page` lane; dated receipts `repair-start-<date>.json`; per language on the pinned small-diff set, [#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903)). Real-repository repair start (click, the TypeScript set) has no checked-in instrument yet. |
+| | | Precision of "discriminator" claims at least 97% against real mutants, published by language and operator. | `cargo xtask mutation-spot-check`; receipt `metrics/public-proof/mutation-spot-check.json` ([#12900](https://github.com/EffortlessMetrics/ripr-swarm/issues/12900)). |
+| | | Recall of runtime survivors flagged as a gap or an honest unknown at least 80%, published by language. | `cargo xtask mutation-spot-check`, same receipt (`recall_of_missed`; [#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901)). |
 | | | Every verdict class has locked-in goldens per language. | Lock-in matrix ([#12922](https://github.com/EffortlessMetrics/ripr-swarm/issues/12922)). |
 | R3 critical | Nobody wants to be without it. | Agents with ripr beat agents without it by a statistically clear margin on a public task suite. | With/without cohort ([#12902](https://github.com/EffortlessMetrics/ripr-swarm/issues/12902)). |
 | | | Under a Kani or Verus harness, a changed line gets a source-bound answer that tells a strong harness from a vacuous one. | FV cohort ([#10745](https://github.com/EffortlessMetrics/ripr-swarm/issues/10745)). |
@@ -78,9 +78,12 @@ met.
 
 ### Position on 2026-11-04
 
-Reported by the owning threads against main `b80ce950`. Recall, repair-start
-and latency figures come from their issues ([#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901),
-[#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903),
+Reported by the owning threads against main `b80ce950`; the Recall row is
+re-derived against main `9b45bd6b`. Recall is reproduced by a checked-in
+instrument: `cargo xtask mutation-spot-check` and its receipt
+`metrics/public-proof/mutation-spot-check.json`. Repair-start and latency
+figures still come from their issues
+([#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903),
 [#12947](https://github.com/EffortlessMetrics/ripr-swarm/issues/12947)) and are not yet
 reproduced by a checked-in instrument. Refresh with each new baseline.
 
@@ -88,15 +91,16 @@ reproduced by a checked-in instrument. Refresh with each new baseline.
 | --- | --- | --- | --- |
 | False verdict rate | 0 of 846 (38% abstain) | 1% | yes |
 | Robustness | 75 cases, no crash, hang or silent clean | hold | yes |
-| First value, all channels | Linux passes; first-run nightly red since 10-28; other OS and channels untested | 300 s everywhere | no |
-| Warm check latency | 36 to 60 s on 3,280-file ripr-swarm ([#12947](https://github.com/EffortlessMetrics/ripr-swarm/issues/12947)) | p50 under 1 s | no |
-| Peak memory | 1.3 GB on ripr-swarm; 125 to 376 MB on pilots | 150 to 512 MB | no |
+| First value, all channels | Receipt `metrics/install/receipt.json` (matrix run 41902877159, 2026-11-04): cargo works on 5 platforms but macos-15-intel took 729 s; PyPI and npm work on Linux x86-64 only; binstall, VS Code and CI init untested | 300 s everywhere | no |
+| Warm check latency (`speed.warm_check_p50_ms`, `speed.warm_check_p95_ms`) | about 31 s p50 on 3,280-file ripr-swarm after [#12985](https://github.com/EffortlessMetrics/ripr-swarm/pull/12985) (was 36 to 60 s; [#12947](https://github.com/EffortlessMetrics/ripr-swarm/issues/12947)); no p95 yet, earlier figures are single samples | p50 under 1 s, p95 under 3 s up to about 1,000 Rust files | no |
+| Peak memory (`speed.warm_check_peak_rss_mb`) | about 0.9 GB on ripr-swarm after [#12999](https://github.com/EffortlessMetrics/ripr-swarm/pull/12999) (was 1.3 GB); 125 to 376 MB on pilots | 150 MB for 100 to 800 Rust files, 512 MB for 3,000-file Python/TypeScript, hard cap 1 GiB | no |
 | Cross-surface contradictions | Manual matrix only; [#10712](https://github.com/EffortlessMetrics/ripr-swarm/issues/10712), #10718, #10720 open | 0 | no |
 | Kani on the core | 65 harnesses; classify and next_action proved; 5 refusal paths not; lane advisory | required | no |
 | Flakes on required lanes | about 1.5% | under 1% | no |
-| Repair start | Rust 6 of 22, Python 8, TypeScript 6; click 0 of 10; TypeScript 0 of 178 | 80% | no |
+| Repair start | On the pinned small-diff set, observed with `cargo xtask repair-start-page` on main `689225b2` (a local run; the first nightly receipt becomes the checked trend): Rust 7 of 24 (29%), Python 8 of 22 (36%), TypeScript 6 of 22 (27%); Python and TypeScript start through `ripr agent repair --gap-id` because `ripr repair` refuses them. Real repositories (click 0 of 10, TypeScript 0 of 178) are owner-reported and not reproduced by a checked-in instrument | 80% | no |
 | Precision | 96.8% (61 of 63) | 97% | no |
-| Recall | about 11% (34 of 322) | 80% | no |
+| Recall, strict (flagged ungripped) | 10.6% (34 of 322 runtime-missed); Rust only | 80% | no |
+| Recall, flagged or honest unknown (ungripped, weakly_gripped, activation_unknown, opaque) | 58.7% (189 of 322: 34 + 0 + 151 + 4); Rust only, Python and TypeScript not established | 80% | no |
 | Agent lift, FV strength, retention | not measured | see R3 | not established |
 
 Result: R0 is not yet met (first value across channels is unproven), and R1
@@ -163,6 +167,22 @@ for boards, instruments, and the ingest format, and
 Release-ladder numbers live in [Position on 2026-11-04](#position-on-2026-11-04).
 Other counts are generated, not copied here:
 
+- Repository orientation inventory: `cargo xtask current-state` writes
+  `target/ripr/reports/current-state.{json,md}`; `--json` also prints the JSON.
+  Its current coverage is checkout repository identity, workspace version/MSRV,
+  declared development/release authorities, the command-catalog entry count, and
+  four retired goal-authority markers in the current roadmap section.
+  `cargo xtask current-state --check` checks those markers, support-map file
+  existence, and a nonempty catalog. The broader inventory and drift coverage
+  remains open under [#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330).
+- Registered artifact and support structure: `cargo xtask repo-contract-report`
+  writes `target/ripr/reports/source-of-truth-graph.{json,md}` from the artifact
+  ledger and its fragments, support rows, and existing structural diagnostics.
+  Use `cargo xtask check-doc-artifacts` and `cargo xtask check-support-tiers`
+  for their dedicated checks. These establish registered paths, relationships,
+  recorded statuses, and supported proof references within their checked scope;
+  they do not decide semantic implementation completeness, earned support
+  tiers, live issue acceptance, or release authorization.
 - Capability status: `cargo xtask metrics` and
   [Capability matrix](CAPABILITY_MATRIX.md).
 - Fixture, golden and verdict-corpus results: `cargo xtask fixtures`,

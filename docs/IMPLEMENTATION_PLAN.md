@@ -1,23 +1,145 @@
 # Implementation Plan
 
-This is the working PR checklist for building `ripr` incrementally. It is more
-operational than the [roadmap](ROADMAP.md): each entry should become a scoped PR
-with clear artifacts, tests, documentation updates, and gates.
+This plan turns the [roadmap](ROADMAP.md) into bounded implementation outcomes.
+Start with the current priorities below, then read the linked issue, current
+source, and all-state PRs. An existing candidate owns its remaining work.
+The [campaign map and original PR checklists](#historical-implementation-inventory)
+are retained history, not an instruction to rebuild completed capabilities.
 
-The checklist is grouped into
-[implementation campaigns](IMPLEMENTATION_CAMPAIGNS.md). A campaign may work
-through multiple work items, but each work item should follow the
-[scoped PR contract](SCOPED_PR_CONTRACT.md).
+The [tracking model](REPO_TRACKING_MODEL.md) separates product direction,
+proposals, specs, ADRs, campaign plans, scoped PR slices, and live GitHub
+execution state. Use the existing [scoped PR contract](SCOPED_PR_CONTRACT.md);
+this page adds no scheduler, writer reservation, support tier, or release gate.
 
-This file is one layer of the repo's centralized, agent-neutral tracking
-model. The full layering — proposals (why), specs (what), ADRs (durable
-decisions), this plan (work queue), campaign ledger, live GitHub issues/PRs,
-scoped slices under `.allow/spec-system/slices/`, and closeout handoffs — is
-documented in the
-[repo tracking model](REPO_TRACKING_MODEL.md). Retired singleton goal files
-do not select work. Reach for a proposal in
-[`docs/proposals/`](proposals/) before a spec when the change spans more
-than one behavior contract or touches repo shape.
+## Current delivery priorities
+
+The near-term consumer is a developer or agent completing an ordinary installed
+Rust workflow under [#1693](https://github.com/EffortlessMetrics/ripr-swarm/issues/1693).
+The ranked experience backlog is [#9278](https://github.com/EffortlessMetrics/ripr-swarm/issues/9278).
+These are continuation routes, not claims that every linked issue is freshly
+reproduced or that a listed PR has landed. Read live state before starting.
+
+| Outcome and existing owner | Next bounded acceptance | Dependency and claim boundary |
+| --- | --- | --- |
+| Honest agent completion: [#13096](https://github.com/EffortlessMetrics/ripr-swarm/issues/13096), [#13125](https://github.com/EffortlessMetrics/ripr-swarm/issues/13125), [#13138](https://github.com/EffortlessMetrics/ripr-swarm/issues/13138). | Finish the existing MCP, generated-guidance, and compact-output repairs; exercise no-scope, partial, unsupported, and truncated output against a complete-analysis control. | These are separate consumers of producer completeness. One repaired surface or an empty findings array cannot establish completion everywhere. |
+| Repeat an installed journey: [#4508](https://github.com/EffortlessMetrics/ripr-swarm/issues/4508), [#13079](https://github.com/EffortlessMetrics/ripr-swarm/issues/13079). | Exercise the literal public route on an identified artifact; preserve prior attempts while repeating a new attempt, and test stale/current recovery. | Source tests, package installation, native test execution, terminal receipt, and personal adoption remain distinct. Do not delete retained evidence to make a repeat pass. |
+| Finish a real governed Rust repair: [#1601](https://github.com/EffortlessMetrics/ripr-swarm/issues/1601) → [#3075](https://github.com/EffortlessMetrics/ripr-swarm/issues/3075), broader corpus [#1560](https://github.com/EffortlessMetrics/ripr-swarm/issues/1560). | Consume a complete producer-owned route, make the authorized test-only edit, execute a nonempty native selection, challenge the discriminator, and retain current before/after and terminal evidence. | Route observation precedes the attempt. A packet, route, fixture, or native green result alone is not a counted repair. Ordinary useful check/explain use does not wait for this transaction. |
+| Earn Python follow-through: [#12956](https://github.com/EffortlessMetrics/ripr-swarm/issues/12956), [#11425](https://github.com/EffortlessMetrics/ripr-swarm/issues/11425), installed journey [#4518](https://github.com/EffortlessMetrics/ripr-swarm/issues/4518). | Re-measure the existing real-repository cases; finish the selected bounded reach/target repair and execute the installed interpreter/test/receipt route or retain its precise limitation. | A test-only may-reach graph is measurement evidence. It does not establish enforced edges, shipped verdict changes, safe repair starts, or installed completion. TypeScript keeps its separate [#4519](https://github.com/EffortlessMetrics/ripr-swarm/issues/4519) contract. |
+| Make daily cost measurable and lower it: [#12947](https://github.com/EffortlessMetrics/ripr-swarm/issues/12947), [#12906](https://github.com/EffortlessMetrics/ripr-swarm/issues/12906), [#10809](https://github.com/EffortlessMetrics/ripr-swarm/issues/10809). | Finish existing measurement/cache candidates; compare repeated matched cold/warm, production-edit and test-edit workloads, including memory and completed output. | Keep the named workload, host, binary, cache regime and variance. Use the accepted owner/config for regression limits; provisional [ladder targets](METRICS.md#release-ladder) do not install new CI policy. |
+| Establish valid usefulness evidence: [#12900](https://github.com/EffortlessMetrics/ripr-swarm/issues/12900)/[#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901), [#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903), [#12902](https://github.com/EffortlessMetrics/ripr-swarm/issues/12902)/[#12912](https://github.com/EffortlessMetrics/ripr-swarm/issues/12912). | Finish collection and admission repairs before interpreting calibration, repair-yield, or paired agent comparisons; retain negative and incomplete runs with the full denominator. | Valid instrumentation is a prerequisite for a benefit claim. Isolation/exit-status work [#13113](https://github.com/EffortlessMetrics/ripr-swarm/issues/13113), scoreboard admission [#13124](https://github.com/EffortlessMetrics/ripr-swarm/issues/13124), and malformed-output admission [#13132](https://github.com/EffortlessMetrics/ripr-swarm/issues/13132) are distinct obligations. |
+
+Independent outcomes can proceed in parallel. A later language, client, or
+formal-verification contract must not become a prerequisite for an otherwise
+useful ordinary Rust/native-test workflow. Release selection remains in the
+[release execution index](releases/0.11.0-roadmap.md) and its governing issues.
+
+## Recover the current state and next milestone
+
+Start from the [installed-use checkpoints](roadmap/experience.md#milestones-for-installed-ordinary-use)
+for ordinary adoption, or the [Rust repair acceptance path](../plans/rust-one-shot-evidence-to-repair.md#current-resumption-and-acceptance)
+for a governed route, attempt, pilot, or corpus. The
+[plan index](../plans/README.md#current-outcome-routes) routes language, client,
+and property/formal work to existing owners. A larger programme's incomplete
+acceptance does not prevent an independently useful bounded outcome.
+
+Recover three kinds of evidence before selecting the next change:
+
+1. **Authored direction and acceptance.** Read the controlling issue's current
+   decisions, the relevant plan/spec, and the support claim. A dated campaign
+   checkbox or a merged implementation is evidence for its own subject; the
+   parent still needs each required outcome.
+2. **Repository facts and structural health.** Use the existing collectors in
+   [Metrics](METRICS.md#current-baseline). `cargo xtask current-state --json`
+   supplies the bootstrap identity/version/catalog/retired-marker inventory;
+   `cargo xtask repo-contract-report` supplies the registered artifact and
+   support graph. Their check commands cover their declared scopes. A pass
+   does not establish semantic lifecycle completion or live GitHub state.
+3. **Live execution and available inputs.** Read the issue, all-state equivalent
+   PRs, current heads, reviews, checks, and applicable receipts. A complete
+   source change can still lack installed execution or independent acceptance.
+   If GitHub, the generated inventory, or the required artifact is unavailable,
+   state that limitation and the evidence needed to resume; do not infer a
+   clean board or invent an unowned task.
+
+For each milestone, record its exact unmet predicate and the smallest change
+that can satisfy it, the existing owner/candidate, required input, strongest
+wrong-result control, and consumer that will accept the result. Keep the record
+on that issue or PR. The roadmap links it instead of copying a moving queue.
+The experience roadmap describes the evidence retained per ordinary task;
+the Rust plan and corpus contract define counted governed opportunities.
+
+Inventory coverage and checked-drift gaps remain with
+[#2330](https://github.com/EffortlessMetrics/ripr-swarm/issues/2330), using the
+existing artifact/support collectors. Authored lifecycle and support decisions
+remain with [#2328](https://github.com/EffortlessMetrics/ripr-swarm/issues/2328).
+The closed synthetic orientation proof [#2331](https://github.com/EffortlessMetrics/ripr-swarm/issues/2331)
+and its oracle follow-up [#13074](https://github.com/EffortlessMetrics/ripr-swarm/issues/13074)
+retain their boundaries; neither establishes the integrated cold-start outcome
+under [#2324](https://github.com/EffortlessMetrics/ripr-swarm/issues/2324).
+Consume their existing candidates rather than starting another orientation
+implementation from this planning page.
+
+## Choose and finish one slice
+
+1. **Select the unmet user predicate.** Read the current issue and substantive
+   decisions, inspect source, and search all-state PRs. Continue an equivalent
+   candidate instead of starting another writer from an old checklist.
+2. **Name its dependency and evidence.** State the actual input/artifact,
+   expected result, strongest wrong-result control, focused proof, and rollback.
+   Missing source, target, permission, or producer evidence stays a named blocker.
+3. **Deliver the whole bounded change.** Keep implementation, discriminating
+   tests, output/help/docs, and the changelog together when the contract needs
+   them. Use the existing semantic owner and [repository procedures](../AGENTS.md).
+4. **Qualify the selected candidate.** Complete focused proof and source review,
+   publish the coherent Draft, address material findings, then request the
+   installed pre-merge route. A Ready toggle is not a CI request.
+5. **Reconcile after the protected merge.** Read back the landing and record the
+   exact accepted predicate, proof, residual work, and next owner in the existing
+   issue. Close only the acceptance actually satisfied; a merged child does
+   not complete a support tier, adoption programme, or release.
+
+For a real repair, keep the evidence chain explicit: observed route → complete
+producer-backed target and discriminator → authorized test edit → actual
+native execution → current after-state → independent acceptance and receipt.
+Failed verification, wrong targets, assistance, timeouts, abandonment, and
+missing results remain visible. A missing instrument is not a zero finding.
+
+## Required Gates
+
+Use the smallest proof that covers the changed risk, following
+[validation guidance](agent-context/validation.md) and
+[AGENTS.md](../AGENTS.md#local-proof-versus-hosted-merge-proof).
+`cargo xtask precommit` is the cheap local policy/selected-proof entry point;
+it is not hosted CI or full-suite evidence. Read its actual result and selection.
+
+For roadmap-only edits, the directly relevant existing checks are
+`cargo xtask current-state --check` and `cargo xtask markdown-links`, plus
+`check-doc-index` / `check-doc-artifacts` when paths or registration change.
+Preserve the roadmap archive boundary and existing incoming heading anchors.
+These checks validate structure, not the truth of a product or release claim;
+verify load-bearing issue, PR, and receipt references separately.
+
+Follow [merge flow](MERGE_FLOW.md) for current hosted qualification. Until
+verified queue migration, `merge-ready` requests the selected candidate's
+late PR qualification; Ready alone requests nothing. Inspect the actual docs
+gate for a docs-only route, required Result, current reviews, and integration
+state before protected expected-head squash. Do not report skipped Rust work
+as executed proof or bypass missing checks.
+
+Use `cargo xtask ci-full`, package/release checks, and platform-specific
+extension proof only for their applicable scope or a concrete failed gate.
+The command inventory in the canonical validation guide is not a required
+sequence for every edit. This plan adds no CI triggers or release operations.
+
+## Historical implementation inventory
+
+Everything below records earlier campaign plans and original PR checklists.
+Preserve their links and checkboxes as historical evidence. Words such as
+"Active", "Complete", "next", and "open" describe the recorded campaign state,
+not today's selection or proof. An unchecked item may already have a successor;
+a checked item does not establish current installed behavior or parent closure.
+Return to the [current priorities](#current-delivery-priorities) and live issues
+before allocating work.
 
 ## Campaign Map
 
@@ -1220,44 +1342,3 @@ Deliverables:
 Acceptance:
 
 - [x] Warm run avoids reparsing unchanged files.
-
-## Required Gates
-
-Use focused proof during implementation. Before publication, run:
-
-```bash
-cargo xtask precommit
-```
-
-`precommit` is the cheap non-mutating shift-left command. For one complete
-local review and package pass, run `cargo xtask ci-full`. It
-runs the review-ready `check-pr` lane, the evidence gates (`fixtures`,
-`goldens check`, `test-oracle-report`, `dogfood`, and `metrics`), then the
-package listing and publish dry-run. See `AGENTS.md` local validation.
-
-Do not run the Rust command block below as a sequential required list. It is
-the inventory for targeted reruns when a specific gate failed. Claiming
-CI-equivalent completeness still requires `ci-full` or the routed `check-*`
-list; `precommit` does not substitute for those.
-
-Rust targeted-rerun inventory:
-
-```bash
-cargo fmt --check
-cargo check --workspace --all-targets
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo doc --workspace --no-deps
-cargo package -p ripr --list
-cargo publish -p ripr --dry-run
-```
-
-Extension PRs: neither `precommit` nor `ci-full` runs the VS Code compile
-or package checks. For changes under `editors/vscode`, run:
-
-```bash
-cd editors/vscode
-npm ci
-npm run compile
-npm run package
-```

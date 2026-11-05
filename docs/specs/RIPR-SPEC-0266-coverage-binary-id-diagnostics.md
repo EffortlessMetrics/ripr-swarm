@@ -6,9 +6,9 @@ Owner: repo-policy / coverage diagnostics
 
 Created: 2026-10-13
 
-Linked issues: #4978
+Linked issues: #4978, #13116
 
-Linked PRs: #7579
+Linked PRs: #7579, #13121
 
 Standalone reason: #4978 records failed coverage diagnostics from the CI
 coverage adapter. This contract governs only the additive diagnostic evidence;
@@ -24,8 +24,12 @@ change any language or platform support tier.
 
 Policy impact:
 
-- Additive fields in the CI failure manifest only. No hosted workflow, required
-  gate, profile input, profile retention, or original failure outcome changes.
+- Version-aware layout metadata and bounded raw-version-mismatch capture in the
+  CI failure manifest. Required gates, validated profile inputs, retention limits
+  and the original failure outcome remain unchanged.
+- A focused stable-toolchain job in the existing advisory future-Clippy workflow
+  exercises the real compiler/LLVM boundary and isolated fixture activation
+  without running workspace coverage.
 
 ## Problem
 
@@ -36,8 +40,35 @@ unavailable evidence and ambiguity without attributing a test or cause.
 ## Behavior
 
 The adapter may read at most the bounded prefix supplied by its caller and
-recognizes only LLVM raw64 little-endian version 10 profile ID blocks. Each
-profile retains at most 32 ID entries of at most 128 bytes each. If a later
+recognizes only LLVM raw64 little-endian version 10 and 11 profile ID blocks.
+The complete version selects both the header size and reported layout:
+
+| Raw version | Header bytes | `binary_ids.layout` |
+| --- | --- | --- |
+| 10 | 128 | `llvm_raw64_le_v10` |
+| 11 | 152 | `llvm_raw64_le_v11` |
+
+`BinaryIdsSize` remains at byte offset 16; the length-prefixed ID block begins
+after the complete version-specific header. LLVM added three uniform-counter
+fields in [the v11 format change](https://github.com/llvm/llvm-project/commit/ab95a8e7bb519a91abdfa5722ec40c0e0909f8f4).
+The [writer](https://github.com/llvm/llvm-project/blob/ab95a8e7bb519a91abdfa5722ec40c0e0909f8f4/compiler-rt/lib/profile/InstrProfilingWriter.c)
+writes the entire header before the binary IDs. The adapter does not interpret
+counter data, mask variant flags, or guess a future version's layout. Unknown
+versions, flagged variants and other magic values remain unsupported. Available
+and partial results identify the selected layout; a short version-specific
+header remains unavailable even when it declares an empty ID block.
+
+When the active compiler's matching LLVM tool reports
+`warning: <snapshot path>: raw profile version mismatch: ...`, the manifest
+retains the bounded prefix with `error_family: raw_profile_version_mismatch`.
+This [LLVM diagnostic](https://github.com/rust-lang/llvm-project/blob/1b9c0d5ff9bbe7634aead059efe6b11a7eeba145/llvm/lib/ProfileData/InstrProf.cpp)
+can occur when replaying a retained v10 profile with a newer LLVM reader. The
+warning must identify an exact validated snapshot path; unknown warnings and
+other paths remain unclassified. Capturing the diagnostic does not convert a
+profile or change the failed merge result.
+
+Each profile retains at most 32 ID entries of at most 128 bytes each, within an
+8,192-byte ID block. If a later
 entry exceeds that per-profile count, already parsed entries remain available,
 `binary_ids.status` is `partial`, and the reason is `id_count_limit`. The
 aggregate mapping deduplicates across captured profiles and retains at most 32
@@ -69,10 +100,21 @@ coverage failure.
 
 ## Required Evidence
 
-- Exercise the genuine retained 160-byte header/ID from run 38613901957 with
-  matching LLVM: retain its bytes and failed merge outcome; associate only a
-  controlled exact-ID instrumented ELF, never claiming a historical producer.
-
+- Exercise the genuine retained 160-byte header/ID from run 38613901957 with the
+  active compiler's matching LLVM: retain its bytes and failed merge outcome
+  for malformed data or a raw-version mismatch; associate only a controlled
+  exact-ID instrumented ELF, never claiming a historical producer.
+- Capture a known raw-version-mismatch warning only for an exact pinned input
+  path. Refuse unknown warnings, inexact warning names and other paths.
+- Parse v10 and v11 fixtures with exact IDs and layout labels, including a v11
+  header containing a decoy at the old v10 ID offset. Require the real ID after
+  byte 152 and reject unsupported versions and variant flags.
+- Exercise short headers, short ID length/body/padding, oversized declarations
+  and partial ID prefixes for both supported layouts. Preserve the selected
+  layout and existing unavailable/partial distinctions.
+- Exercise the active compiler's genuine profile with its matching
+  `llvm-profdata`; retain exactly that version's header and ID block, verify
+  executable association, and preserve the shortened profile's merge failure.
 - Parse 33 valid IDs and verify the first 32 are retained with explicit
   partiality; verify a retained exact match remains visible and absent IDs
   remain unavailable under partial scope.
@@ -87,7 +129,8 @@ coverage failure.
 ## Non-Goals
 
 - Determining the historical coverage producer or cause of a short profile.
-- Changing instrumentation, profile bytes, coverage thresholds, or CI policy.
+- Changing instrumentation, profile bytes, coverage thresholds, or required
+  merge gates.
 - Scanning outside the four declared build roots or collecting whole binaries.
 
 ## Acceptance Examples
@@ -106,6 +149,13 @@ coverage failure.
 The committed controls in
 `tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs` include:
 
+- `raw_binary_ids_are_exact_and_unknown_layouts_are_explicit` and
+  `raw_v11_ids_start_after_the_extended_header`: exact v10/v11 IDs and labels,
+  unsupported-version/variant refusal, and a decoy at the obsolete v10 offset.
+- `raw_supported_headers_are_required_even_without_ids`,
+  `raw_id_block_and_length_limits_remain_bounded` and
+  `raw_id_truncation_preserves_only_valid_prefixes`: version-specific header
+  admission, bounded declarations, short ID records and retained partial IDs.
 - `profile_id_count_limit_keeps_the_valid_prefix_and_marks_mapping_partial`
   and `unavailable_profile_id_input_prevents_a_definitive_negative_mapping`:
   retained prefix and inconclusive negative evidence.
@@ -129,6 +179,24 @@ The committed controls in
 - `real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata`: native
   LLVM association; missing matching LLVM tools are a proof failure.
 
+The Linux capture seam is covered in
+`tools/repo-policy/src/coverage_diagnostics/linux.rs`:
+
+- `raw_profile_version_mismatch_capture_requires_known_warning_and_exact_path`
+  retains the recognized diagnostic and bytes only for an exact pinned input;
+  unknown warning text and unrelated paths remain unclassified.
+
+The stable advisory job is covered in `tools/repo-policy/tests/future_clippy.rs`:
+
+- `stable_compatibility_requires_matching_tools_and_focused_commands` refuses
+  missing tools, incorrect activation, conditional preparation, ignored failures,
+  missing diagnostic, `frontdoor` or Clippy commands, and setup placed after the
+  proof commands.
+- `behavior::stable_identity_uses_matching_llvm_and_preserves_tool_failures`
+  exercises the workflow's identity script with a selected sysroot containing a
+  space, a wrong LLVM tool on `PATH`, and compiler/sysroot/host/LLVM failures.
+  These shell fixtures do not substitute for genuine compiler/LLVM execution.
+
 ## Implementation Mapping
 
 - `tools/repo-policy/src/coverage_diagnostics/binary_ids.rs` owns bounded
@@ -137,6 +205,8 @@ The committed controls in
   fields and preserves retained profile hashes during manifest compaction; it
   is the Linux-only capture machinery submodule gated by #7624 reachability.
 - `docs/ci/coverage.md` documents the failure-manifest output and claim limits.
+- `.github/workflows/future-clippy.yml` runs the bounded stable compatibility
+  check alongside the existing pinned advisory lint scan.
 - `.ripr/traceability.toml` connects this spec's tests, code and outputs.
 
 ## Metrics

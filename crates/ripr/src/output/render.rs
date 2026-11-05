@@ -64,6 +64,13 @@ pub(crate) fn render_check_with_config_and_progress(
                 &output.root,
             ))
         }
+        OutputFormat::JsonCompact => {
+            let findings_budget = json::check_findings_byte_budget()?;
+            Ok(json::render_compact(&stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            )))
+        }
         OutputFormat::CheckFindingsJson => {
             let inputs = output
                 .analysis_outcome
@@ -91,8 +98,16 @@ pub(crate) fn render_check_with_config_and_progress(
             ),
         )),
         OutputFormat::Sarif => {
+            // Fail-closed budget resolution: an unparseable
+            // `RIPR_SARIF_RESULTS_BYTES` aborts the run, never rendering.
+            let results_budget = sarif::sarif_results_byte_budget()?;
             let suppressions = load_suppressions(output, config)?;
-            Ok(sarif::render_findings_sarif(output, config, &suppressions))
+            Ok(sarif::render_findings_sarif_with_budget(
+                output,
+                config,
+                &suppressions,
+                results_budget,
+            ))
         }
         OutputFormat::BadgeJson => {
             let summary = ripr_summary_with_suppressions(output, config)?;
@@ -246,10 +261,12 @@ pub(crate) fn render_check_with_config_and_progress(
             progress,
             || analysis::inventory_classified_seams_at_with_config(&output.root, config),
             |(classified, limit_info)| {
-                Ok(sarif::render_repo_seams_sarif(
+                let results_budget = sarif::sarif_results_byte_budget()?;
+                Ok(sarif::render_repo_seams_sarif_with_budget(
                     &classified,
                     limit_info.as_ref(),
                     config,
+                    results_budget,
                 ))
             },
         ),
@@ -334,6 +351,16 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
             Ok(attach_canonical_next_action(
                 rendered, output, config, drill_in, provenance,
             ))
+        }
+        OutputFormat::JsonCompact => {
+            let findings_budget = json::check_findings_byte_budget()?;
+            let rendered = stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            );
+            Ok(json::render_compact(&attach_canonical_next_action(
+                rendered, output, config, drill_in, provenance,
+            )))
         }
         _ => render_check_with_config_and_progress(output, format, config, progress),
     }

@@ -641,11 +641,21 @@ pub(super) fn durable_receipt_document(
 /// default `ripr_refresh` analyses the committed diff and does not see an
 /// uncommitted edit, so the re-check names `source: "worktree"` (audit
 /// finding 2).
-pub(super) fn verify_after_editing_tests() -> Value {
+///
+/// The re-check must analyse the same scope as the snapshot the agent read, so
+/// it carries that snapshot's explicit base (#13196). A snapshot analysed
+/// against the default branch has no base and keeps the base-less route. The
+/// caller's own spelling is retained, as in `ripr_refresh`'s retry route; the
+/// server already bounds it to `MAX_BASE_REVISION_BYTES`.
+pub(super) fn verify_after_editing_tests(base: Option<&str>) -> Value {
+    let mut arguments = json!({ "source": "worktree" });
+    if let Some(base) = base {
+        arguments["base"] = json!(base);
+    }
     json!({
         "mcp": {
             "tool": "ripr_refresh",
-            "arguments": { "source": "worktree" },
+            "arguments": arguments,
         },
         "note": "run the project's tests yourself (ripr executes nothing); the default ripr_refresh analyses the committed diff and does not see an uncommitted edit",
     })
@@ -676,7 +686,7 @@ fn refusal_next(
             "write_test_by_hand",
             "ripr_prepare_repair has no repair route for this item; read `finding_guidance` (the item's `missing` and `recommended_next_step`), add or tighten the test yourself, then re-check",
             gap_route,
-            verify_after_editing_tests(),
+            verify_after_editing_tests(None),
         ),
         "seam_inventory_truncated" => (
             "change_policy",
@@ -797,6 +807,10 @@ impl WorkspaceSession {
                 item.stub_route.as_ref(),
                 item.terminal_static_limit().as_ref(),
             );
+            let mut next = next;
+            if next["after_editing_tests"].is_object() {
+                next["after_editing_tests"] = verify_after_editing_tests(snapshot.base.as_deref());
+            }
             let terminal = next["kind"] == "terminal_static_limit";
             let document = json!({
                 "schema_version": REPAIR_PACKET_SCHEMA_VERSION,
@@ -1283,6 +1297,24 @@ pub(super) mod tests {
             desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         })
+    }
+
+    /// #13196: the post-edit re-check keeps the snapshot's explicit base, so
+    /// following it re-analyses the same scope; a default-branch snapshot keeps
+    /// the base-less route.
+    #[test]
+    fn verify_after_editing_tests_retains_the_selected_base() -> Result<(), String> {
+        let default = verify_after_editing_tests(None);
+        if default["mcp"]["arguments"] != json!({ "source": "worktree" }) {
+            return Err(format!("default route changed: {default}"));
+        }
+        let based = verify_after_editing_tests(Some("abc123~1"));
+        if based["mcp"]["tool"] != "ripr_refresh"
+            || based["mcp"]["arguments"] != json!({ "source": "worktree", "base": "abc123~1" })
+        {
+            return Err(format!("explicit base was dropped: {based}"));
+        }
+        Ok(())
     }
 
     /// Audit finding 1/6: one terminal refusal reason maps to exactly one
