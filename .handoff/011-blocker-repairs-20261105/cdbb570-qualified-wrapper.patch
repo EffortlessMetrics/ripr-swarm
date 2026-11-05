@@ -1,0 +1,206 @@
+diff --git a/changelog.d/12010-sink-identity.md b/changelog.d/12010-sink-identity.md
+index 684d03866..49ff84db0 100644
+--- a/changelog.d/12010-sink-identity.md
++++ b/changelog.d/12010-sink-identity.md
+@@ -1,2 +1,2 @@
+ <!-- section: Fixed -->
+-- Withhold strong Rust discrimination from proximity-only oracles and unchanged return-value tokens; keep identity and confirmation on the selected oracle, including established returned-array fields and forwarded helper results (#12010).
++- Withhold strong Rust discrimination from proximity-only oracles and unchanged return-value tokens; keep identity and confirmation on the selected oracle, including established returned-array fields and bound bare or qualified wrapper results (#12010).
+diff --git a/crates/ripr/src/analysis/classify/boundary_pairing.rs b/crates/ripr/src/analysis/classify/boundary_pairing.rs
+index 7bc0828c3..0f1115397 100644
+--- a/crates/ripr/src/analysis/classify/boundary_pairing.rs
++++ b/crates/ripr/src/analysis/classify/boundary_pairing.rs
+@@ -117,19 +117,32 @@ pub(in crate::analysis) fn wrapper_return_boundary_pinned(
+         return false;
+     };
+     let name = hop.caller.name.as_str();
++    let qualified = super::helper_transfer::assertion_bound_qualified_entry_path(
++        index,
++        test,
++        assertion,
++        &hop.caller,
++    );
++    let path = qualified.as_deref().unwrap_or(name);
++    let whole_entry = |operand: &str| {
++        if qualified.is_some() {
++            super::helper_transfer::operand_is_exact_call(operand, path)
++        } else {
++            super::owner_pin::direct_call_name(operand) == Some(name)
++        }
++    };
+     let literal = |text: &str| {
+         matches!(text.trim(), "true" | "false") || argument_is_whole_numeric_literal(text.trim())
+     };
+     let whole_call = assertion_comparison_operands(&assertion.text).is_some_and(|[left, right]| {
+-        (super::owner_pin::direct_call_name(left) == Some(name) && literal(right))
+-            || (super::owner_pin::direct_call_name(right) == Some(name) && literal(left))
++        (whole_entry(left) && literal(right)) || (whole_entry(right) && literal(left))
+     });
+     assertion.text.trim_start().starts_with("assert_eq!")
+         && assertion.kind == OracleKind::ExactValue
+         && assertion.strength == OracleStrength::Strong
+         && whole_call
+         && chain_forwards_owner_result(&owner.name, chain)
+-        && assertion_names_one_entry_call(owner, name, assertion, Some((test, scope)))
++        && assertion_names_one_entry_call_at_path(owner, name, path, assertion, Some((test, scope)))
+         && assertion_observes_boundary_entry_call(owner, name, assertion, activation)
+ }
+ 
+@@ -203,6 +216,34 @@ pub(in crate::analysis) fn has_same_test_boundary_oracle_pairing(
+             )
+         });
+     }
++    if wrapper_entry.is_some_and(|entry| {
++        let Some(hop) = entry.chain.hops.last() else {
++            return false;
++        };
++        related_tests.iter().any(|test| {
++            let rows = std::cell::OnceCell::new();
++            test.assertions.iter().any(|assertion| {
++                assertion_admitted(test, assertion)
++                    && super::helper_transfer::assertion_bound_qualified_entry_path(
++                        index,
++                        test,
++                        assertion,
++                        &hop.caller,
++                    )
++                    .is_some()
++                    && wrapper_return_boundary_pinned(
++                        owner,
++                        assertion,
++                        entry.chain,
++                        rows.get_or_init(|| (entry.test_activation)(test)),
++                        test,
++                        index,
++                    )
++            })
++        })
++    }) {
++        return true;
++    }
+     // #6694 / #6672: a private helper reached only through a wrapper pairs
+     // on the wrapper call when every hop hands the helper's result to its
+     // caller's return; any other chain shape keeps the pairing missing.
+@@ -510,11 +551,25 @@ fn assertion_names_one_entry_call(
+     entry: &str,
+     assertion: &OracleFact,
+     test: Option<(&TestSummary, super::argument_fold::FoldScope<'_>)>,
++) -> bool {
++    assertion_names_one_entry_call_at_path(owner, entry, entry, assertion, test)
++}
++
++fn assertion_names_one_entry_call_at_path(
++    owner: &FunctionSummary,
++    entry: &str,
++    path: &str,
++    assertion: &OracleFact,
++    test: Option<(&TestSummary, super::argument_fold::FoldScope<'_>)>,
+ ) -> bool {
+     let whole_entry = assertion_comparison_operands(&assertion.text).is_some_and(|operands| {
+-        operands
+-            .into_iter()
+-            .any(|operand| super::owner_pin::direct_call_name(operand) == Some(entry))
++        operands.into_iter().any(|operand| {
++            if path == entry {
++                super::owner_pin::direct_call_name(operand) == Some(entry)
++            } else {
++                super::helper_transfer::operand_is_exact_call(operand, path)
++            }
++        })
+     });
+     let subject = assertion_subject(&assertion.text);
+     let entry_calls = owner_call_argument_lists(&subject, entry);
+diff --git a/crates/ripr/src/analysis/classify/helper_transfer.rs b/crates/ripr/src/analysis/classify/helper_transfer.rs
+index 2ff1c1e23..aa2637534 100644
+--- a/crates/ripr/src/analysis/classify/helper_transfer.rs
++++ b/crates/ripr/src/analysis/classify/helper_transfer.rs
+@@ -2234,10 +2234,43 @@ pub(crate) fn chain_entry_pin_admits(
+     chain_forwards_return_to_observed_hops(owner_name, chain, related_tests, index, identity)
+ }
+ 
+-/// Whether `operand` is exactly one direct call of `name` (`entry(1)`),
+-/// after optional grouping parens and `&`: no path qualifier, receiver,
+-/// operator or trailing projection.
+-fn operand_is_exact_call(operand: &str, name: &str) -> bool {
++/// Resolve a qualified entry spelling only for this assertion's whole-call
++/// operand. A same-named call elsewhere in the test supplies no authority.
++pub(in crate::analysis) fn assertion_bound_qualified_entry_path(
++    index: &RustIndex,
++    test: &crate::analysis::facts::TestSummary,
++    assertion: &crate::analysis::facts::OracleFact,
++    entry: &FunctionSummary,
++) -> Option<String> {
++    if !assertion.text.contains("::") {
++        return None;
++    }
++    let operands = super::reveal::assertion_comparison_operands(&assertion.text)?;
++    let last_line = assertion
++        .line
++        .checked_add(assertion.text.matches('\n').count())?;
++    test.calls
++        .iter()
++        .filter(|call| {
++            call.name == entry.name
++                && (assertion.line..=last_line).contains(&call.line)
++                && !test_call_is_shadowed_for_entry(index, test, entry, call.line)
++        })
++        .find_map(|call| {
++            super::related_tests::own_crate_qualified_entry_path(index, test, entry, call.line)
++                .filter(|path| {
++                    path.contains("::")
++                        && operands
++                            .iter()
++                            .any(|operand| operand_is_exact_call(operand, path))
++                })
++        })
++}
++
++/// Whether `operand` is exactly one call of the supplied callee spelling,
++/// after grouping and `&`, with no operator or trailing projection. A
++/// qualified spelling is used only after the caller establishes its binding.
++pub(super) fn operand_is_exact_call(operand: &str, name: &str) -> bool {
+     let masked = crate::analysis::extract::mask_comments_and_strings(operand);
+     let mut text = masked.trim();
+     loop {
+diff --git a/crates/ripr/tests/crate_qualified_entry_reach.rs b/crates/ripr/tests/crate_qualified_entry_reach.rs
+index f2f4421fc..0620d6b53 100644
+--- a/crates/ripr/tests/crate_qualified_entry_reach.rs
++++ b/crates/ripr/tests/crate_qualified_entry_reach.rs
+@@ -2113,3 +2113,37 @@ fn an_in_file_relative_import_of_another_scope_stays_refused() -> Result<(), Str
+         "nearer let binding",
+     )
+ }
++
++#[test]
++fn qualified_wrapper_boundary_credit_stays_on_the_observed_call() -> Result<(), String> {
++    let observed = "assert_eq!(qual_reach::inner::order_discount(10), 5);";
++    for (body, exposed) in [
++        (format!("let input=10;\n    assert_eq!(input,10);\n    {observed}"), true),
++        (format!("{observed}\n    let input=10;\n    assert_eq!(input,10);"), true),
++        ("let input=10;\n    let _=qual_reach::inner::order_discount(input);\n    assert_eq!(input,10);".to_string(), false),
++        ("assert_eq!(qual_reach::inner::order_discount(10) * 0, 0);".to_string(), false),
++    ] {
++        let package = module_package("src/inner.rs", MODULE_LIB, test_file(&body), vec![]);
++        assert_eq!(package.classification()? == "exposed", exposed, "{body}");
++    }
++    let foreign = "mod other { pub fn other_discount(_: u32) -> u32 { 5 } }\n";
++    let tests = format!(
++        "{foreign}{}",
++        test_file(
++            "let _=qual_reach::inner::order_discount(10);\n    assert_eq!(other::other_discount(10),5);"
++        )
++    );
++    assert_ne!(
++        module_package("src/inner.rs", MODULE_LIB, tests, vec![]).classification()?,
++        "exposed"
++    );
++    let separate = format!(
++        "{}\n#[test]\nfn activates_only() {{ let _=qual_reach::inner::order_discount(10); }}\n",
++        test_file("assert_eq!(qual_reach::inner::order_discount(50),5);")
++    );
++    assert_ne!(
++        module_package("src/inner.rs", MODULE_LIB, separate, vec![]).classification()?,
++        "exposed"
++    );
++    Ok(())
++}

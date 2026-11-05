@@ -1,0 +1,74 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-integration/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 6.22s
+     Running tests/crate_qualified_entry_reach.rs (/workspace/12010-proof/target/debug/deps/crate_qualified_entry_reach-ce245d87877f290b)
+
+running 43 tests
+test a_closure_shadow_does_not_veto_commented_outer_calls ... ok
+test a_hyphenated_package_links_through_its_underscored_name ... ok
+test a_lib_name_is_the_only_admitted_spelling ... ok
+test a_longer_path_does_not_link ... ok
+test a_module_path_that_is_not_the_entrys_does_not_link ... ok
+test a_module_qualified_call_fails_closed_on_rebinding_and_include ... ok
+test a_module_qualified_own_crate_call_links ... ok
+test a_nearer_binding_inside_the_test_body_shadows_the_import ... ok
+test a_nearer_binding_or_same_line_non_code_does_not_admit_a_bare_call ... ok
+test a_quoted_own_crate_call_beside_a_foreign_call_does_not_link ... ok
+test a_rebindable_crate_name_does_not_link ... ok
+test a_relative_import_resolved_to_the_entrys_module_links ... ok
+test a_relative_import_that_does_not_name_the_entrys_module_stays_refused ... ok
+test a_test_module_child_does_not_link ... ok
+test a_unit_test_inside_src_does_not_link ... ok
+test a_workspace_member_does_not_link ... ok
+test an_absolute_import_prefix_goes_through_the_same_proof ... ok
+test an_entry_in_a_binary_crate_does_not_link ... ok
+test an_entry_outside_the_crate_root_does_not_link ... ok
+test an_imported_suffix_must_spell_the_entrys_module_path ... ok
+test an_in_file_relative_import_of_another_scope_stays_refused ... ok
+test an_in_file_test_module_import_resolves_from_its_own_scope ... ok
+test an_inline_module_entry_reexported_at_the_root_links_only_by_import ... ok
+test an_item_position_macro_in_the_test_crate_fails_closed ... ok
+test an_own_looking_import_prefix_must_name_the_library ... ok
+test an_unplaceable_module_does_not_link ... ok
+test another_crate_qualifier_does_not_link ... ok
+test bare_spelling_in_non_code_text_does_not_admit_an_import ... ok
+test cfg_on_module_declarations_is_read_from_the_syntax_tree ... FAILED
+test conditional_remapped_and_duplicate_chains_keep_a_relative_import_refused ... ok
+test imported_spelling_is_the_linked_baseline ... ok
+test include_spellings_in_the_test_crate_or_library_fail_closed ... FAILED
+test multiline_non_code_text_does_not_admit_a_foreign_call ... ok
+test nearer_bindings_and_scope_changes_keep_a_relative_import_refused ... ok
+test nested_cfg_and_shadowing_module_shapes_fail_closed ... ok
+test own_crate_qualified_entry_call_links ... ok
+test relative_and_reexport_import_routes_are_refused ... ok
+test test_crate_reexport_module_routes_link_through_self ... ok
+test test_crate_reexport_module_routes_refuse_shadow_and_cycle ... ok
+test the_declaration_chain_must_reach_the_definitions_file ... ok
+test the_library_must_bind_the_imported_module_path_to_the_entrys_file ... ok
+test type_namespace_items_do_not_shadow_the_imported_call ... ok
+test unit_crate_imports_scoped_bindings_and_inline_ancestors ... ok
+
+failures:
+
+---- cfg_on_module_declarations_is_read_from_the_syntax_tree stdout ----
+
+thread 'cfg_on_module_declarations_is_read_from_the_syntax_tree' (339144) panicked at crates/ripr/tests/crate_qualified_entry_reach.rs:723:5:
+assertion `left == right` failed: control
+  left: "weakly_exposed"
+ right: "exposed"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- include_spellings_in_the_test_crate_or_library_fail_closed stdout ----
+
+thread 'include_spellings_in_the_test_crate_or_library_fail_closed' (339434) panicked at crates/ripr/tests/crate_qualified_entry_reach.rs:660:5:
+assertion `left == right` failed: control renders
+  left: "weakly_exposed"
+ right: "exposed"
+
+
+failures:
+    cfg_on_module_declarations_is_read_from_the_syntax_tree
+    include_spellings_in_the_test_crate_or_library_fail_closed
+
+test result: FAILED. 41 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.04s
+
+error: test failed, to rerun pass `-p ripr --test crate_qualified_entry_reach`

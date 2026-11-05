@@ -1,0 +1,66 @@
+{
+  "stage": "owner-call-compatibility",
+  "candidate": "2de3449b72eb51f5c4976bad86213b104f8356f2",
+  "tree": "e39302e5715990210a17e4d0084fa2a5c668ad3f",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "owner_pin_execution",
+    "--test",
+    "crate_qualified_entry_reach",
+    "--test",
+    "glob_call_identity",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 101,
+  "guard_stop": null,
+  "seconds": 20.03,
+  "counts": {
+    "passed": 41,
+    "failed": 2,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 0
+  },
+  "log_sha256": "8bad8622c3f810d189e48185800e9fc297afe9f93f1aba41dde23a6406e70b9b",
+  "peak_cgroup_memory_bytes": 3049250816,
+  "samples": [
+    {
+      "utc": "2026-11-05T10:32:23.485157+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "2de3449b72eb51f5c4976bad86213b104f8356f2",
+      "pid": 337508,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 2592686080,
+      "workspace_free_bytes": 22886731776,
+      "temp_free_bytes": 9428471808
+    },
+    {
+      "utc": "2026-11-05T10:32:33.487066+00:00",
+      "stage": "owner-call-compatibility",
+      "head": "2de3449b72eb51f5c4976bad86213b104f8356f2",
+      "pid": 337508,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 3049250816,
+      "workspace_free_bytes": 22513856512,
+      "temp_free_bytes": 9428434944
+    }
+  ]
+}
