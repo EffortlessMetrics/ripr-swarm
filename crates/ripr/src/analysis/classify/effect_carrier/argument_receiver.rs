@@ -10,9 +10,9 @@ use crate::analysis::syntax::parse_clean_source_file;
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode,
-    ast::{self, HasArgList, HasName},
+    ast::{self, HasArgList, HasAttrs, HasName},
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(in crate::analysis) struct ArgumentReceiver {
     parameter: usize,
@@ -54,21 +54,221 @@ fn mentions(node: &ra_ap_syntax::SyntaxNode, binding: &str) -> bool {
             })
     })
 }
-fn field_root(expr: ast::Expr) -> Option<(String, String)> {
-    match expr {
-        ast::Expr::PrefixExpr(prefix) => field_root(prefix.expr()?),
-        ast::Expr::RefExpr(reference) => field_root(reference.expr()?),
-        ast::Expr::ParenExpr(paren) => field_root(paren.expr()?),
-        ast::Expr::MethodCallExpr(call) if call.arg_list()?.args().next().is_none() => {
-            field_root(call.receiver()?)
+fn field_root(mut expression: ast::Expr) -> Option<(String, String)> {
+    for _ in 0..super::MAX_DEPTH {
+        expression = match expression {
+            ast::Expr::PrefixExpr(prefix) => prefix.expr()?,
+            ast::Expr::RefExpr(reference) => reference.expr()?,
+            ast::Expr::ParenExpr(paren) => paren.expr()?,
+            ast::Expr::MethodCallExpr(call)
+                if call.arg_list()?.args().next().is_none()
+                    && call.name_ref().is_some_and(|name| {
+                        matches!(
+                            name.text(),
+                            "borrow" | "as_ref" | "as_slice" | "as_str" | "clone"
+                        )
+                    }) =>
+            {
+                call.receiver()?
+            }
+            ast::Expr::FieldExpr(field) => {
+                return Some((
+                    bare_path(field.expr()?)?,
+                    field.name_ref()?.text().to_string(),
+                ));
+            }
+            _ => return None,
+        };
+    }
+    None
+}
+// Payload identity is a narrower question than the carrier's may-write set.
+// Bound only direct parameter stores and collection writes, with no hidden
+// initializer, parameter rebinding, or later unrelated access to that field.
+fn method_expression(source: &str) -> Option<ast::MethodCallExpr> {
+    let function = parse_function(&format!("fn probe() {{ {}; }}", source))?;
+    let statements: Vec<_> = function.body()?.stmt_list()?.statements().collect();
+    let [statement] = statements.as_slice() else {
+        return None;
+    };
+    let ast::Expr::MethodCallExpr(call) = expression(statement)? else {
+        return None;
+    };
+    Some(call)
+}
+fn changed_parameters(
+    before: &str,
+    after: &ast::MethodCallExpr,
+    callee: &FunctionSummary,
+) -> Option<BTreeSet<String>> {
+    let before = method_expression(before)?;
+    if before.name_ref()?.text() != after.name_ref()?.text()
+        || compact(&before.receiver()?.syntax().text().to_string())
+            != compact(&after.receiver()?.syntax().text().to_string())
+    {
+        return None;
+    }
+    let previous: Vec<_> = before.arg_list()?.args().collect();
+    let current: Vec<_> = after.arg_list()?.args().collect();
+    let function = parse_function(&callee.body)?;
+    let parameters: Vec<_> = function.param_list()?.params().collect();
+    if current.len() != previous.len() || current.len() != parameters.len() {
+        return None;
+    }
+    let mut changed = BTreeSet::new();
+    for (at, (old, new)) in previous.iter().zip(&current).enumerate() {
+        if crate::analysis::classify::propagation_witness::normalize_semantic_text(
+            &old.syntax().text().to_string(),
+        ) == crate::analysis::classify::propagation_witness::normalize_semantic_text(
+            &new.syntax().text().to_string(),
+        ) {
+            continue;
         }
-        ast::Expr::FieldExpr(field) => Some((
-            bare_path(field.expr()?)?,
-            field.name_ref()?.text().to_string(),
-        )),
+        let ast::Pat::IdentPat(pattern) = parameters[at].pat()? else {
+            return None;
+        };
+        let name = pattern.name()?.text().to_string();
+        if crate::analysis::classify::parameter_rebound(&callee.body, &name) {
+            return None;
+        }
+        changed.insert(name);
+    }
+    (!changed.is_empty()).then_some(changed)
+}
+fn parameter_value(mut expression: ast::Expr, parameters: &BTreeSet<String>) -> bool {
+    for _ in 0..super::MAX_DEPTH {
+        let next = match expression {
+            ast::Expr::PathExpr(path) => {
+                return bare_path(ast::Expr::PathExpr(path))
+                    .is_some_and(|name| parameters.contains(&name));
+            }
+            ast::Expr::ParenExpr(paren) => paren.expr(),
+            ast::Expr::RefExpr(reference) if reference.mut_token().is_none() => reference.expr(),
+            ast::Expr::MethodCallExpr(call)
+                if call.name_ref().is_some_and(|name| {
+                    matches!(name.text(), "to_string" | "to_owned" | "clone")
+                }) && call.generic_arg_list().is_none()
+                    && call
+                        .arg_list()
+                        .is_some_and(|args| args.args().next().is_none()) =>
+            {
+                call.receiver()
+            }
+            _ => return false,
+        };
+        let Some(next) = next else { return false };
+        expression = next;
+    }
+    false
+}
+fn storage_field(mut expression: ast::Expr) -> Option<String> {
+    for _ in 0..super::MAX_DEPTH {
+        expression = match expression {
+            ast::Expr::MethodCallExpr(call)
+                if call.name_ref()?.text() == "borrow_mut"
+                    && call.arg_list()?.args().next().is_none() =>
+            {
+                call.receiver()?
+            }
+            ast::Expr::FieldExpr(field) if bare_path(field.expr()?).as_deref() == Some("self") => {
+                return Some(field.name_ref()?.text().to_string());
+            }
+            _ => return None,
+        };
+    }
+    None
+}
+fn parameter_write(expression: ast::Expr, parameters: &BTreeSet<String>) -> Option<String> {
+    if expression.attrs().next().is_some() {
+        return None;
+    }
+    match expression {
+        ast::Expr::BinExpr(assignment)
+            if assignment.op_kind() == Some(ast::BinaryOp::Assignment { op: None })
+                && parameter_value(assignment.rhs()?, parameters) =>
+        {
+            storage_field(assignment.lhs()?)
+        }
+        ast::Expr::MethodCallExpr(call) => {
+            let name = call.name_ref()?;
+            if !matches!(
+                name.text(),
+                "push" | "push_back" | "push_front" | "push_str" | "set"
+            ) || call.generic_arg_list().is_some()
+            {
+                return None;
+            }
+            let arity = 1;
+            let arguments: Vec<_> = call.arg_list()?.args().collect();
+            if arguments.len() != arity
+                || !arguments
+                    .into_iter()
+                    .any(|arg| parameter_value(arg, parameters))
+            {
+                return None;
+            }
+            storage_field(call.receiver()?)
+        }
         _ => None,
     }
 }
+fn parameter_fields(
+    callee: &FunctionSummary,
+    parameters: &BTreeSet<String>,
+) -> Option<BTreeSet<String>> {
+    let function = parse_function(&callee.body)?;
+    let body = function.body()?;
+    if function.attrs().next().is_some()
+        || body.syntax().descendants().any(|node| {
+            ast::MacroCall::can_cast(node.kind()) || ast::CallExpr::can_cast(node.kind())
+        })
+    {
+        return None;
+    }
+    let mut mentions = BTreeMap::<String, usize>::new();
+    for field in body.syntax().descendants().filter_map(ast::FieldExpr::cast) {
+        if field.expr().and_then(bare_path).as_deref() == Some("self") {
+            *mentions
+                .entry(field.name_ref()?.text().to_string())
+                .or_default() += 1;
+        }
+    }
+    let statements = body.stmt_list()?;
+    let mut writes = BTreeMap::<String, usize>::new();
+    let mut admitted_methods = 0;
+    for expression in statements
+        .statements()
+        .filter_map(|statement| expression(&statement))
+        .chain(statements.tail_expr())
+    {
+        if let Some(field) = parameter_write(expression.clone(), parameters) {
+            admitted_methods += expression
+                .syntax()
+                .descendants()
+                .filter(|node| ast::MethodCallExpr::can_cast(node.kind()))
+                .count();
+            *writes.entry(field).or_default() += 1;
+        }
+    }
+    // A helper or another method could replace or alias the stored state.
+    // Do not borrow a carrier from that opaque execution.
+    if body
+        .syntax()
+        .descendants()
+        .filter(|node| ast::MethodCallExpr::can_cast(node.kind()))
+        .count()
+        != admitted_methods
+    {
+        return None;
+    }
+    Some(
+        writes
+            .into_iter()
+            .filter_map(|(field, count)| (mentions.get(&field) == Some(&count)).then_some(field))
+            .collect(),
+    )
+}
+
 impl ArgumentReceiver {
     pub(in crate::analysis) fn establish(
         probe: &Probe,
@@ -131,7 +331,18 @@ impl ArgumentReceiver {
         }
         // Reuse the carrier's write attribution. Merely reading self.status
         // must not identify an observer of the self.sent write.
-        let fields = super::function_field_use(callee)?.writes;
+        let uses = super::function_field_use(callee)?;
+        let mut fields = uses.writes;
+        if matches!(probe.family, ProbeFamily::SideEffect)
+            && let Some(before) = probe.before.as_deref()
+        {
+            if uses.whole_self || !uses.self_calls.is_empty() {
+                return None;
+            }
+            let parameters = changed_parameters(before, &call, callee)?;
+            let carrying = parameter_fields(callee, &parameters)?;
+            fields.retain(|field| carrying.contains(field));
+        }
         (!fields.is_empty()).then_some(Self { parameter, fields })
     }
     pub(in crate::analysis) fn admits(

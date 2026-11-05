@@ -11632,6 +11632,10 @@ impl RetryBuilder { pub fn new()->Self { Self { attempts: 4, delay_ms: 100 } } p
             let facts = crate::analysis::rust_index::summarize_file(test.file.clone(), source);
             index.insert_file_only(test.file.clone(), facts);
         }
+        // Both fixture files are complete independent crate roots; there are
+        // no module/include edges. Supply the same closed execution-context
+        // premise as the owner-pin fixtures, rather than bypassing admission.
+        index.execution_module_parents = Some(Default::default());
         let syntax = crate::analysis::classify::OwnerPinSyntax::default();
         reveal_evidence_with_value_identity(probe, related, &|test, assertion| {
             crate::analysis::classify::builder_override::owner_field_read_identity(
