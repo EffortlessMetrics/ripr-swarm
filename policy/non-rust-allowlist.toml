@@ -1108,3 +1108,12 @@ surface = "ci"
 classification = "test"
 reason = "Fake-API unittest suite for the exact-head merge guard (#11781); run through the Rust wrapper test so CI executes it."
 covered_by = ["cargo test -p xtask --test guarded_merge_selftest"]
+
+[[allow]]
+glob = "metrics/install/*.json"
+kind = "install_receipt"
+owner = "release/install"
+surface = "ci"
+classification = "metadata"
+reason = "Checked-in install receipt and channel dispositions (#13064); written and re-validated by the Rust xtask command, not hand-maintained logic."
+covered_by = ["cargo xtask install-receipt --check"]
