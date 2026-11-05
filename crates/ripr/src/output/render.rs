@@ -55,21 +55,15 @@ pub(crate) fn render_check_with_config_and_progress(
         OutputFormat::HumanFull => Ok(human::terminal_safe(human::render_full_with_config(
             output, config,
         ))),
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::JsonCompact => {
             // Fail-closed budget resolution (#5203): an unparseable
             // `RIPR_CHECK_FINDINGS_BYTES` aborts the run, never rendering.
             let findings_budget = json::check_findings_byte_budget()?;
-            Ok(stamp_check_json(
+            let rendered = stamp_check_json(
                 json::render_with_config(output, config, findings_budget),
                 &output.root,
-            ))
-        }
-        OutputFormat::JsonCompact => {
-            let findings_budget = json::check_findings_byte_budget()?;
-            Ok(json::render_compact(&stamp_check_json(
-                json::render_with_config(output, config, findings_budget),
-                &output.root,
-            )))
+            );
+            Ok(super::compact_json::finish(rendered, format))
         }
         OutputFormat::CheckFindingsJson => {
             let inputs = output
@@ -98,16 +92,8 @@ pub(crate) fn render_check_with_config_and_progress(
             ),
         )),
         OutputFormat::Sarif => {
-            // Fail-closed budget resolution: an unparseable
-            // `RIPR_SARIF_RESULTS_BYTES` aborts the run, never rendering.
-            let results_budget = sarif::sarif_results_byte_budget()?;
             let suppressions = load_suppressions(output, config)?;
-            Ok(sarif::render_findings_sarif_with_budget(
-                output,
-                config,
-                &suppressions,
-                results_budget,
-            ))
+            Ok(sarif::render_findings_sarif(output, config, &suppressions))
         }
         OutputFormat::BadgeJson => {
             let summary = ripr_summary_with_suppressions(output, config)?;
@@ -261,12 +247,10 @@ pub(crate) fn render_check_with_config_and_progress(
             progress,
             || analysis::inventory_classified_seams_at_with_config(&output.root, config),
             |(classified, limit_info)| {
-                let results_budget = sarif::sarif_results_byte_budget()?;
-                Ok(sarif::render_repo_seams_sarif_with_budget(
+                Ok(sarif::render_repo_seams_sarif(
                     &classified,
                     limit_info.as_ref(),
                     config,
-                    results_budget,
                 ))
             },
         ),
@@ -338,7 +322,7 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
         OutputFormat::Agent => Ok(human::terminal_safe(
             human::render_agent_with_config_and_navigation(output, config, drill_in, provenance),
         )),
-        OutputFormat::Json => {
+        OutputFormat::Json | OutputFormat::JsonCompact => {
             // The public CLI JSON adapter has navigation/provenance; reuse
             // the check producer rather than re-inferring mode here (#7258).
             // The generic JSON arm below has neither and must not invent a
@@ -348,19 +332,10 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
                 json::render_with_config(output, config, findings_budget),
                 &output.root,
             );
-            Ok(attach_canonical_next_action(
+            let rendered = attach_canonical_next_action(
                 rendered, output, config, drill_in, provenance,
-            ))
-        }
-        OutputFormat::JsonCompact => {
-            let findings_budget = json::check_findings_byte_budget()?;
-            let rendered = stamp_check_json(
-                json::render_with_config(output, config, findings_budget),
-                &output.root,
             );
-            Ok(json::render_compact(&attach_canonical_next_action(
-                rendered, output, config, drill_in, provenance,
-            )))
+            Ok(super::compact_json::finish(rendered, format))
         }
         _ => render_check_with_config_and_progress(output, format, config, progress),
     }
@@ -414,7 +389,7 @@ pub(crate) fn detect_python_repo_exposure_guidance_pub(
 ///    would otherwise be a silent empty result).
 /// 2. TypeScript or JavaScript files are present in the workspace (detected
 ///    by path extension via `workspace_preview_language_files`).
-/// 3. No Rust source files are found at the root (the workspace has no
+/// 3. No Rust source files are found in the workspace (the workspace has no
 ///    Rust crate presence that could legitimately produce zero seams).
 ///
 /// Condition 3 is the key guard for the "additive / no Rust regression"
@@ -446,7 +421,7 @@ fn detect_ts_full_repo_guidance(
 
     // Guard: if there are Rust files, the empty-seam result is a legitimate
     // Rust analysis outcome (e.g. a workspace with no production shapes), not
-    // a TS-first scan gap. Only fire when Rust is absent.
+    // a TS-first scan gap. The scope is full repo, so check at the root.
     let rust_files = analysis::workspace_rust_files(root);
     if !rust_files.is_empty() {
         return None;
@@ -827,6 +802,8 @@ fn missing_test_efficiency_badge_summary(
 
 #[cfg(test)]
 mod tests {
+    mod json_compact;
+
     use super::{
         attach_canonical_next_action, render_check_with_config,
         render_check_with_config_and_navigation_and_progress,

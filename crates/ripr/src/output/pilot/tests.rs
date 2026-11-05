@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 mod native_artifacts;
+mod panic_outcome;
 mod spec_0237;
 mod timeout_retry;
 

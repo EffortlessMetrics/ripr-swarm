@@ -5088,6 +5088,45 @@ mod tests {
         );
     }
 
+    /// #13037: a weak finding whose next step says a related test already has
+    /// an exact assertion must not also say "No strong assertion was detected";
+    /// the default line names the missing link instead, while a finding with no
+    /// such next step keeps the fixed wording.
+    #[test]
+    fn digest_missing_line_does_not_contradict_an_exact_assertion_next_step() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.missing = vec!["No strong discriminator was detected".to_string()];
+        finding.recommended_next_step = Some(
+            "The related test `t` already has an exact assertion; this does not establish observation of the returned value."
+                .to_string(),
+        );
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(
+            digest.contains("No assertion was tied to the changed value"),
+            "{digest}"
+        );
+        assert!(
+            !digest.contains("No strong assertion was detected"),
+            "{digest}"
+        );
+
+        finding.recommended_next_step = Some("Add a boundary test.".to_string());
+        let plain = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(
+            plain.contains("No strong assertion was detected"),
+            "{plain}"
+        );
+    }
+
     /// #10691: the default text names the classifier's "nothing strong notices
     /// this" entry and the catch-all change type in plain words, while the
     /// producer's wording stays in `missing` (JSON, `human-full`) and every

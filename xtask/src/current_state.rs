@@ -14,6 +14,18 @@ pub(crate) const CURRENT_STATE_CLAIM_BOUNDARY: &str = "Read-only current-state i
  decide whether a support tier is deserved, whether a spec is complete, whether an issue \
  should close, or whether a release is authorized.";
 
+/// Where ordinary development happens, and the source release umbrella. These
+/// name the program's authorities, not the checkout the command runs in. The
+/// orientation proof derives its receipt authorities from them, not from the
+/// corpus it judges (#13074).
+pub(crate) const DEVELOPMENT_AUTHORITY: &str = "EffortlessMetrics/ripr-swarm";
+pub(crate) const RELEASE_AUTHORITY: &str = "EffortlessMetrics/ripr#1463";
+
+/// Issue number of the release umbrella named by [`RELEASE_AUTHORITY`].
+pub(crate) fn release_authority_issue() -> Option<u64> {
+    RELEASE_AUTHORITY.rsplit('#').next()?.parse().ok()
+}
+
 const ROADMAP_PATH: &str = "docs/ROADMAP.md";
 const SUPPORT_TIERS_PATH: &str = "docs/status/SUPPORT_TIERS.md";
 const DELETED_GOAL_MARKERS: [&str; 4] = [
@@ -158,8 +170,8 @@ pub(crate) fn produce_current_state(root: &Path) -> Result<CurrentStateInventory
         default_branch: "main".to_string(),
         crate_version: read_crate_version(root)?,
         rust_msrv: read_msrv(root)?,
-        development_authority: "EffortlessMetrics/ripr-swarm".to_string(),
-        release_authority: "EffortlessMetrics/ripr#1463".to_string(),
+        development_authority: DEVELOPMENT_AUTHORITY.to_string(),
+        release_authority: RELEASE_AUTHORITY.to_string(),
         command_catalog_entries: catalog_count,
         live_doc_deleted_command_hits: scan_deleted_commands(&current_section),
         claim_boundary: CURRENT_STATE_CLAIM_BOUNDARY.to_string(),
