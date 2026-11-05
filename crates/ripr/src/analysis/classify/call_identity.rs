@@ -131,6 +131,8 @@ pub(crate) struct CallIdentityMemos {
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
     constants: std::sync::OnceLock<ConstantTable>,
+    /// Standard bool-clone view, including importer and expansion authority.
+    pub(super) bool_clone_view: std::sync::OnceLock<bool>,
     /// #9209: the workspace's non-plain `Drop` impls, read once per index so
     /// `drop_is_plain` is a lookup instead of a per-probe corpus parse.
     drop_impls: std::sync::OnceLock<super::element_field_pin::DropImplIndex>,

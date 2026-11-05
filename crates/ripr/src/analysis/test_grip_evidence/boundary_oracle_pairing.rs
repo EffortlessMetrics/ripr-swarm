@@ -3,7 +3,7 @@ use super::{CompactGripContext, FunctionSummary, RepoSeam, TestSummary};
 use crate::analysis::classify::{
     OwnerPinSyntax, OwnerReturnPin, ProbeContext, WrapperEntryPairing,
     activation_and_boundary_input, has_same_test_boundary_oracle_pairing,
-    has_wrapper_boundary_oracle_pairing, targeted_free_call_reaches_owner,
+    has_wrapper_boundary_oracle_pairing, returned_boundary_probe, targeted_free_call_reaches_owner,
 };
 use crate::domain::{DeltaKind, Probe, ProbeFamily, ProbeId, SourceLocation};
 
@@ -18,9 +18,9 @@ pub(super) fn missing(
     let Some(owner) = owner
         .filter(|owner| owner.file == seam.file() && owner.id.0.replace('\\', "/") == seam.owner())
     else {
-        return true;
+        return seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary;
     };
-    let probe = Probe {
+    let mut probe = Probe {
         id: ProbeId(format!("repo-boundary-pairing:{}", seam.id().as_str())),
         location: SourceLocation::new(seam.file().to_path_buf(), seam.display_line(), 1),
         owner: Some(owner.id.clone()),
@@ -32,6 +32,20 @@ pub(super) fn missing(
         expected_sinks: Vec::new(),
         required_oracles: Vec::new(),
     };
+    // A whole returned bool comparison has the same pairing obligation as
+    // its predicate. Other return values gain no boundary requirement.
+    if seam.kind() == crate::analysis::seams::SeamKind::ReturnValue {
+        probe.family = ProbeFamily::ReturnValue;
+        let unconditional = OwnerReturnPin::establish(&probe, owner, index)
+            .is_some_and(|pin| pin.is_unconditional_boolean_tail());
+        if !unconditional {
+            return false;
+        }
+        let Some(predicate) = returned_boundary_probe(&probe, owner, index, true) else {
+            return false;
+        };
+        probe = predicate;
+    }
     let chain = context.boundary_chain(owner);
     let activation = activation_and_boundary_input(
         &probe,

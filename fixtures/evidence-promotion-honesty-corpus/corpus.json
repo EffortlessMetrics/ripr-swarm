@@ -46,7 +46,8 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-operand-return.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-macro-preceding-return.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-missing-expected.json",
-    "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-wrong-receiver.json"
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-wrong-receiver.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-bool-clone-trait-interception.json"
   ],
   "cases": [
     {

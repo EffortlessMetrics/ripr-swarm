@@ -11438,7 +11438,7 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
         .is_some_and(|(field, receiver)| field == receiver)
 }
 
-fn projected_standard_roots_shadowed(index: &RustIndex) -> bool {
+pub(super) fn projected_standard_roots_shadowed(index: &RustIndex) -> bool {
     index.files().values().any(|facts| {
         #[cfg(test)]
         PROJECTED_WORKSPACE_FILE_VISITS.with(|count| count.set(count.get() + 1));

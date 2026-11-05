@@ -784,8 +784,10 @@ fn evidence_for_seam_with_context(
     // The stage maxima cannot borrow an equality input from one test and an
     // exact assertion from another. Apply the existing diff pairing authority
     // and fail closed when that pairing cannot be established.
-    if seam.kind() == SeamKind::PredicateBoundary
-        && activate.state == StageState::Yes
+    if matches!(
+        seam.kind(),
+        SeamKind::PredicateBoundary | SeamKind::ReturnValue
+    ) && activate.state == StageState::Yes
         && discriminate.state == StageState::Yes
         && boundary_oracle_pairing::missing(seam, owner_fn, &credited, context, pin_syntax)
     {
@@ -2656,8 +2658,10 @@ pub(crate) fn compact_evidence_for_seam(
     // The stage maxima cannot borrow an equality input from one test and an
     // exact assertion from another. Apply the existing diff pairing authority
     // and fail closed when that pairing cannot be established.
-    if seam.kind() == SeamKind::PredicateBoundary
-        && activate.state == StageState::Yes
+    if matches!(
+        seam.kind(),
+        SeamKind::PredicateBoundary | SeamKind::ReturnValue
+    ) && activate.state == StageState::Yes
         && discriminate.state == StageState::Yes
         && boundary_oracle_pairing::missing(seam, owner_fn, &credited, context, pin_syntax)
     {

@@ -63,6 +63,7 @@ pub(super) fn pairs(
             if clone.name_ref().is_none_or(|name| name.text() != "clone")
                 || clone.generic_arg_list().is_some()
                 || clone.arg_list().is_none_or(|list| list.args().next().is_some())
+                || !super::super::implicit_effect::standard_bool_clone_view(index)
                 || index.files().values().any(|file| file.source.contains("no_implicit_prelude"))
             { return false; }
             let Some(receiver) = clone.receiver() else { return false };

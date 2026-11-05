@@ -4,3 +4,4 @@
 - Keep the split-test returned-comparison honesty control non-promoting: the unasserted boundary calls cannot borrow the far-input test oracle.
 - Preserve primitive boolean helper and eager-callback boundary observers only when the helper compares the exact returned value (#12010).
 - Bind a unit-error pattern to the first guarded return selected by its literal input, without lending that witness to a later identical return (#12010).
+- Refuse intercepted boolean Clone observers and apply the same boundary pairing to a returned comparison; retain standard dispatch and unrelated nominal observers (#12010).

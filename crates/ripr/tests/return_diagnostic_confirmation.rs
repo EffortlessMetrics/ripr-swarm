@@ -1081,6 +1081,16 @@ fn borrowed_boolean_helpers_pair_only_the_result_their_assertion_reads() -> Resu
             false,
         ),
     ];
+    let cases = cases.into_iter().chain([
+        ("by-value trait clone", "trait CounterfeitClone { fn clone(self)->bool; } impl CounterfeitClone for bool { fn clone(self)->bool { true } } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", false),
+        ("aliased bool trait clone", "type Flag=bool; trait CounterfeitClone { fn clone(self)->bool; } impl CounterfeitClone for Flag { fn clone(self)->bool { true } } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", false),
+        ("rebound allowed trait name", "trait Add { fn clone(self)->bool; } impl Add for bool { fn clone(self)->bool { true } } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", false),
+        ("macro-generated clone impl", "macro_rules! emit { () => { trait CounterfeitClone { fn clone(self)->bool; } impl CounterfeitClone for bool { fn clone(self)->bool { true } } }; } emit!(); fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", false),
+        ("other nominal trait clone", "struct Other; trait CounterfeitClone { fn clone(self)->bool; } impl CounterfeitClone for Other { fn clone(self)->bool { true } } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", true),
+        ("other standard Clone", "struct Other; impl Clone for Other { fn clone(&self)->Self { Self } } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", true),
+        ("unrelated standard Drop", "struct Other; impl Drop for Other { fn drop(&mut self) {} } fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", true),
+        ("explicit standard Clone", "use std::clone::Clone; fn run_test(want:bool,got:bool) { assert_eq!(got,want); }", "run_test(true,gate(10).clone());", true),
+    ]);
     let scratch = std::env::temp_dir().join(format!("ripr-borrowed-bool-{}", std::process::id()));
     struct Cleanup(std::path::PathBuf);
     impl Drop for Cleanup {
@@ -1090,7 +1100,7 @@ fn borrowed_boolean_helpers_pair_only_the_result_their_assertion_reads() -> Resu
     }
     std::fs::create_dir(&scratch).map_err(|e| e.to_string())?;
     let _cleanup = Cleanup(scratch.clone());
-    for (at, (label, helper, body, positive)) in cases.into_iter().enumerate() {
+    for (at, (label, helper, body, positive)) in cases.enumerate() {
         let root = scratch.join(at.to_string());
         std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
         std::fs::write(
@@ -1109,15 +1119,22 @@ fn borrowed_boolean_helpers_pair_only_the_result_their_assertion_reads() -> Resu
             serde_json::from_str(&render_check(&output, &OutputFormat::RepoExposureJson)?)
                 .map_err(|e| e.to_string())?;
         let seams = report["seams"].as_array().ok_or("seams missing")?;
-        let predicate = seams
+        let compared = seams
             .iter()
-            .find(|s| s["expression"] == "n>=10")
-            .ok_or_else(|| format!("{label}: predicate missing: {report}"))?;
+            .filter(|s| s["expression"] == "n>=10")
+            .collect::<Vec<_>>();
         assert_eq!(
-            predicate["grip_class"] == "strongly_gripped",
-            positive,
-            "{label}: {predicate}"
+            compared.len(),
+            2,
+            "{label}: require both predicate and return-value seams: {report}"
         );
+        for seam in compared {
+            assert_eq!(
+                seam["grip_class"] == "strongly_gripped",
+                positive,
+                "{label}: {seam}"
+            );
+        }
     }
     Ok(())
 }
