@@ -5738,8 +5738,8 @@ pub(in crate::analysis::classify) fn assertion_has_closed_candidate_values(
             return false;
         };
         enum_value(path)
-            && !file_rebinds_type(index, &test.file, &name.text())
-            && !super::owner_pin::targeted_type_name_is_unresolved(test, index, &name.text())
+            && !file_rebinds_type(index, &test.file, name.text())
+            && !super::owner_pin::targeted_type_name_is_unresolved(test, index, name.text())
     };
     let mut candidate_seen = false;
     arguments.into_iter().take(operands).all(|argument| {
