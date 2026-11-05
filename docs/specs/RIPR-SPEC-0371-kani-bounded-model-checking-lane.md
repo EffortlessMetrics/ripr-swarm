@@ -110,9 +110,9 @@ qualification.
 ### The command
 
 `cargo xtask kani [--allow-empty] [--harness <name>] [--default-unwind <n>]
-[--timeout-secs <n>] [--harness-timeout-secs <n>]` discovers the harnesses under `crates/ripr/src`, runs
-`cargo kani -p ripr` once for them (Kani compiles the whole library, so a
-run per harness would multiply the build) and writes `target/ripr/reports/kani.md` with one
+[--timeout-secs <n>] [--harness-timeout-secs <n>]` discovers harnesses under `crates/ripr/src` and `crates/ripr-contract/src`, runs
+`cargo kani` once per owning package (`ripr` and `ripr-contract`) for them,
+with one shared whole-run deadline and writes `target/ripr/reports/kani.md` with one
 row per harness. Each row is exactly one of:
 
 - `VERIFIED`: Kani reported a successful verification and every `cover!` was
@@ -149,7 +149,7 @@ checkouts; the CI lane never passes it.
 
 `.github/workflows/kani.yml` is advisory and not a required check. It runs
 nightly, on dispatch and when `merge-ready` is applied to a pull request that
-touches ripr source, with `kani-verifier` pinned to an exact version. See
+touches either owning crate source, with `kani-verifier` pinned to an exact version. See
 [CI](../CI.md#advisory-kani-lane).
 
 ## What a proof does and does not claim
@@ -182,7 +182,7 @@ It does not claim:
 
 ## Known Limits
 
-- Kani compiles the whole `ripr` library; a run takes minutes and several GB of
+- Kani compiles each owning library; a run takes minutes and several GB of
   memory.
 - Harness discovery is textual (`#[kani::proof` followed by `fn name`) and
   rejects duplicate names in the selected inventory. It does not establish

@@ -1,5 +1,5 @@
 //! Kani harnesses for feedback vocabulary totality and reference
-//! classification. Run: `cargo kani -p ripr --harness <name>`.
+//! classification. Run: `cargo kani -p ripr-contract --harness <name>`.
 
 use super::*;
 use crate::domain::proof_domains::{

@@ -3,3 +3,5 @@
   both directions of executed-control state and outcome predicates, and shared
   constructor-list/exhaustiveness guards for symbolic enum domains. Fixed identity
   bounds remain; packet validation and full-program verification are not claimed (#12109).
+- Keep the internal Kani lane covering domain proofs moved to `ripr-contract`,
+  with per-package result attribution and the existing shared deadline (#12109).

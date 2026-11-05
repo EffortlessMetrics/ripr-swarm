@@ -1,5 +1,5 @@
 //! Kani harnesses for executed-control result-state predicates.
-//! Run: `cargo kani -p ripr --harness <name>`.
+//! Run: `cargo kani -p ripr-contract --harness <name>`.
 
 use super::*;
 

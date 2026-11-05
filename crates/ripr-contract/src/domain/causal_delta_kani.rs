@@ -2,7 +2,7 @@
 //!
 //! Identity strings are fixed literals ("o"/"b"/"d"): the property under proof
 //! is the decision table over `GapState` x `OracleStrength` x availability,
-//! not string handling. Run: `cargo kani -p ripr --harness <name>`.
+//! not string handling. Run: `cargo kani -p ripr-contract --harness <name>`.
 
 use super::*;
 

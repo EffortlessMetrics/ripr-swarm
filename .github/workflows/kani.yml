@@ -7,6 +7,7 @@ on:
     types: [labeled]
     paths:
       - "crates/ripr/src/**"
+      - "crates/ripr-contract/src/**"
       - "xtask/src/kani_lane.rs"
       - ".github/workflows/kani.yml"
   workflow_dispatch:
@@ -27,7 +28,7 @@ concurrency:
 # "Lighter, later, tighter" (docs/CI.md): this is not a required check and does
 # not run on ordinary pushes or PR updates. It runs nightly, on dispatch, and
 # when `merge-ready` is applied to a PR that touches ripr source (the `paths`
-# filter above). Kani compiles the whole `ripr` library for verification, so a
+# filter above). Kani compiles each owning library for verification, so a
 # run is minutes, not seconds.
 #
 # The pass/fail contract lives in `cargo xtask kani`, not in shell: a missing

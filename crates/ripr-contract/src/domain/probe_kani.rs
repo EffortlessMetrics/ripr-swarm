@@ -1,6 +1,6 @@
 //! Kani harnesses for probe vocabulary: source-currentness can never be
 //! silently upgraded, stop reasons exist exactly for unknown classes, and
-//! probe-family wire tokens round-trip. Run: `cargo kani -p ripr --harness <name>`.
+//! probe-family wire tokens round-trip. Run: `cargo kani -p ripr-contract --harness <name>`.
 
 use super::*;
 
