@@ -113,6 +113,14 @@ no changed source file in a language ripr analyzes was available, so ripr
 examined no behavior." It replaces "No findings: ripr checked no changed
 behavior." (#11396); the note below carries the detail.
 
+When the compared Git range is empty by construction (the base commit is
+`HEAD` itself), the headline instead says "the diff against the comparison base
+is empty (no changed files)", and the base-branch `Safe next action` prints
+`ripr check --base HEAD~1` when `HEAD~1` resolves (#13036). A Git range that
+changed files but no checkable behavior (for example only tests changed after the
+feature commit) adds a hint to choose a base before the change. Neither changes
+a verdict.
+
 When `no_scope_provided` is true, a note is appended after the
 "No diff-derived mutation exposure probes found." line. The note names what
 was actually established (#4012):

@@ -1571,18 +1571,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_covered_by_production_wrapper_enumerates_through_cargo() -> Result<(), String> {
-        // End-to-end pin on the production wrapper (not the injected
-        // closure): the args construction, bounded capture, and status
-        // mapping all run for real, and an existing test filter enumerates
-        // successfully.
-        let commands = [common(
-            12,
-            "cargo test -p xtask test_covered_by_classification_is_token_aware",
-        )];
-        validate_test_covered_by("policy.toml", &commands).map(|_| ())
-    }
+    // The positive end-to-end pin (real wrapper, real Cargo enumeration, an
+    // existing filter succeeds) is owned by `cargo xtask check-file-policy`, which
+    // the blocking "Repository policy preflight" (`cargo xtask ci-policy`) runs
+    // against every declared pointer (#12916). It is not repeated as a ~100 s
+    // nextest test; the failure path below stays here as the cheap negative.
 
     #[test]
     fn test_covered_by_production_wrapper_preserves_cargo_stderr() -> Result<(), String> {

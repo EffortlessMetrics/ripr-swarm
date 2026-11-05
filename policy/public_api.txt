@@ -64,7 +64,6 @@ pub const ripr::output::start_here_state::START_HERE_UNSAFE_PATH
 pub const ripr::output::start_here_state::START_HERE_UNSUPPORTED_SCHEMA
 pub const ripr::output::start_here_state::START_HERE_WRONG_ROOT
 pub enum ripr::analysis::AnalysisMode
-pub enum ripr::analysis::LanguageRunStatus
 pub enum ripr::app::Mode
 pub enum ripr::domain::language_availability::AutoDetectionPolicy
 pub enum ripr::domain::language_availability::AvailabilityState
@@ -174,7 +173,6 @@ pub mod ripr::output::start_here_state
 pub mod ripr::provider_contract
 pub struct ripr::analysis::AnalysisOptions
 pub struct ripr::analysis::AnalysisResult
-pub struct ripr::analysis::LanguageRun
 pub struct ripr::analysis::PreviewLanguageAdvisory
 pub struct ripr::app::CheckInput
 pub struct ripr::app::CheckOutput
@@ -284,6 +282,8 @@ pub use ripr::SuppressedCheckFinding
 pub use ripr::TestEvidenceEntry
 pub use ripr::TestEvidenceSummary
 pub use ripr::analysis::DiffScopeFilter
+pub use ripr::analysis::LanguageRun
+pub use ripr::analysis::LanguageRunStatus
 pub use ripr::analysis::PARTIAL_DIFF_LANGUAGE_TIER_VERSION
 pub use ripr::analysis::PARTIAL_DIFF_SELECTION_VERSION
 pub use ripr::analysis::PartialDiffScope

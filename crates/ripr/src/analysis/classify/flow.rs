@@ -276,6 +276,14 @@ fn predicate_flow_sinks(
             owner,
         )];
     }
+    if let Some(branch) = tail_if_parameter_branches(probe, owner_fn) {
+        return vec![flow_sink(
+            FlowSinkKind::ReturnValue,
+            branch.text,
+            branch.line,
+            owner,
+        )];
+    }
     if let Some(return_fact) = nearest_return(owner_fn, probe.location.line) {
         return vec![flow_sink(
             FlowSinkKind::ReturnValue,
@@ -893,6 +901,67 @@ fn tail_if_branch_value(
     Some(LocalTextFact {
         line: probe.location.line,
         text: sink_text,
+    })
+}
+
+/// #6694: the rustfmt tail `if <cond> {` / `a` / `} else {` / `b` / `}` whose
+/// two branch values are different parameters of the owner (`if value > cap {
+/// cap } else { value }`, the body of a generic `min`/`max`/clamp helper). The
+/// condition decides which parameter the function returns, so the first branch
+/// is the value sink. Fails closed: the function body is exactly that `if`
+/// (no earlier statement can rebind a parameter), the owner returns a value,
+/// the probe is the `if` condition, and each branch is one bare parameter name
+/// (distinct, so the choice is observable). A literal, call or other
+/// expression branch keeps the adjacency reading of [`next_branch_value`].
+fn tail_if_parameter_branches(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+) -> Option<LocalTextFact> {
+    let function = owner_fn?;
+    if probe.owner.as_ref() != Some(&function.id) || probe.location.line != function.start_line + 1
+    {
+        return None;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
+    let lines: Vec<&str> = masked.lines().map(str::trim).collect();
+    let [
+        signature,
+        head,
+        then_value,
+        else_head,
+        else_value,
+        inner_close,
+        outer_close,
+    ] = lines.as_slice()
+    else {
+        return None;
+    };
+    if !signature_returns_value(signature)
+        || !signature.ends_with('{')
+        || *else_head != "} else {"
+        || *inner_close != "}"
+        || *outer_close != "}"
+    {
+        return None;
+    }
+    let condition = head.strip_prefix("if ")?.strip_suffix('{')?.trim();
+    let code = |text: &str| {
+        crate::analysis::language::mask_rust_comments_and_strings(text)
+            .trim()
+            .to_string()
+    };
+    if condition.is_empty() || condition != code(&probe.expression) {
+        return None;
+    }
+    let parameters = super::call_parameter_names(function);
+    let is_parameter =
+        |name: &str| is_plain_identifier(name) && parameters.iter().any(|known| known == name);
+    if !is_parameter(then_value) || !is_parameter(else_value) || then_value == else_value {
+        return None;
+    }
+    Some(LocalTextFact {
+        line: probe.location.line + 1,
+        text: (*then_value).to_string(),
     })
 }
 
@@ -2903,6 +2972,76 @@ mod tests {
             item: Default::default(),
             impl_context: Default::default(),
         }
+    }
+
+    /// #6694: `if c { a } else { b }` as a helper's whole body over two
+    /// distinct parameters sinks the condition at the first branch value;
+    /// every other shape keeps no sink.
+    #[test]
+    fn parameter_returning_tail_if_sinks_the_condition_only_when_whole_and_distinct() {
+        let sinks = |body: &str| {
+            let owner = function(body);
+            local_flow_sinks(
+                &probe(ProbeFamily::Predicate, "cap < value", 2),
+                Some(&owner),
+            )
+        };
+        let capped = |branches: &str, prefix: &str| {
+            format!(
+                "fn capped<T: PartialOrd + Copy>(value: T, cap: T) -> T {{\n{prefix}    if cap < value {{\n{branches}}}\n}}"
+            )
+        };
+        let found = sinks(&capped(
+            "        cap\n    } else {\n        value\n    ",
+            "",
+        ));
+        assert!(
+            found
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue
+                    && sink.text == "cap"
+                    && sink.line == 3),
+            "{found:?}"
+        );
+        for (label, body) in [
+            (
+                "a statement before the if",
+                capped(
+                    "        cap\n    } else {\n        value\n    ",
+                    "    let value = value;\n",
+                ),
+            ),
+            (
+                "the same parameter in both branches",
+                capped("        value\n    } else {\n        value\n    ", ""),
+            ),
+            (
+                "a branch that is no parameter",
+                capped("        cap\n    } else {\n        other\n    ", ""),
+            ),
+            (
+                "a statement after the branches",
+                capped("        cap\n    } else {\n        value\n    ", "")
+                    .replace("    }\n}", "    }\n    ;\n}"),
+            ),
+        ] {
+            let found = sinks(&body);
+            assert!(
+                found
+                    .iter()
+                    .all(|sink| sink.text != "cap" && sink.text != "value"),
+                "{label}: {found:?}"
+            );
+        }
+        // A unit-returning function has no value to decide.
+        let unit = sinks(
+            "fn capped(value: u32, cap: u32) {\n    if cap < value {\n        cap\n    } else {\n        value\n    }\n}",
+        );
+        assert!(
+            unit.iter()
+                .all(|sink| sink.text != "cap" && sink.text != "value"),
+            "{unit:?}"
+        );
     }
 
     // ── #6695: `.ok_or(Variant)?` propagates that error from the owner ──
