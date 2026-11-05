@@ -6,7 +6,7 @@ Owner: xtask / repo-infra
 
 Created: 2026-10-12
 
-Linked issues: #5073, #7826
+Linked issues: #5073, #7826, #13222
 
 Linked PRs: #7521
 
@@ -66,8 +66,13 @@ the aggregate write error. Successful leaves cannot mask a reporting error.
 The selected leaves inspect filesystem, policy, or Git-index inputs
 independently. They do not consume earlier leaf reports, invoke Cargo
 build/test/Clippy children, or run the compilation-bearing `check-file-policy`.
-Git queries remain permitted. `cargo xtask` can compile the driver before
-executing this command; the existing Windows bootstrap may reexecute it.
+Git queries remain permitted. The lint-policy leaf discovers workspace members
+with `cargo metadata --format-version 1 --no-deps --locked --offline` (#13222).
+This reads Cargo manifests without compiling targets or build scripts,
+downloading dependencies, or updating `Cargo.lock`. Discovery failures remain
+lint-policy failures alongside any ledger violations and other leaf failures.
+`cargo xtask` can compile the driver before executing this command; the existing
+Windows bootstrap may reexecute it.
 The catalog exposes the command as a local non-mutating check with
 `ci_enforced = false`.
 
@@ -85,8 +90,10 @@ The catalog exposes the command as a local non-mutating check with
 - Exercise early I/O errors despite stale reports and aggregate write errors
   with both failing and otherwise healthy leaves.
 - Inspect selected call trees and retain native process-trace evidence where
-  available for the absence of Cargo/compiler children. Linux execution does
-  not establish native Windows execution.
+  available for the absence of build/test/Clippy or compiler children. The
+  read-only Cargo metadata child is permitted. An uncompilable target and build
+  script must not block this scan; the lockfile must remain unchanged. Linux
+  execution does not establish native Windows execution.
 
 Focused proof route:
 
@@ -121,6 +128,12 @@ cargo xtask check-doc-artifacts
    returned failure retains the executable diagnostic and the write error.
 5. Given healthy leaves and an unwritable aggregate report path, the command
    returns failure despite all nine leaf successes.
+6. Given a Cargo-valid workspace with deliberately uncompilable targets and
+   build scripts, the command reads member metadata and returns success without
+   changing the lockfile.
+7. Given failed workspace discovery and lint-ledger drift, plus an independent
+   executable violation, the command reports both failing leaves and publishes
+   a new lint-policy report containing both lint errors despite an old pass.
 
 ## Test Mapping
 
@@ -131,6 +144,8 @@ All cases invoke the real driver through `xtask/tests/policy_all.rs`:
 - Example 3: `policy_all_keeps_early_io_error_and_does_not_trust_stale_leaf_report`.
 - Example 4: `policy_all_report_write_error_preserves_leaf_failures`.
 - Example 5: `policy_all_healthy_leaves_still_fail_when_aggregate_report_cannot_be_written`.
+- Example 6: `policy_all_reads_metadata_without_compiling_members_or_changing_the_lockfile`.
+- Example 7: `policy_all_keeps_membership_discovery_failure_and_other_leaf_failures`.
 
 `.ripr/traceability.toml` registers the exact file/symbol references. A
 traceability-check pass validates registered paths; it does not itself show
@@ -151,7 +166,7 @@ that a test symbol exists or ran. See [Spec-test-code traceability](../SPEC_TEST
 
 ## Metrics
 
-- `unit_test_pass_rate` for the five named actual-driver cases, with the
+- `unit_test_pass_rate` for the named actual-driver cases, with the
   executed/failed/ignored counts retained in the test output.
 - Literal nine-check membership and first/sixth failure counts are contract
   assertions, not new telemetry counters or timing budgets.

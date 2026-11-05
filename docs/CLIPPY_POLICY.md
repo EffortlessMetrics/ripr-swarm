@@ -181,6 +181,8 @@ verifies that:
   (they're future flips, not active);
 - every Rust or Clippy lint in `[workspace.lints.rust]` or
   `[workspace.lints.clippy]` has a matching ledger entry;
+- every actual Cargo workspace member opts in with `[lints] workspace = true`,
+  without replacing or overriding the shared policy with member-local lint tables;
 - every `[[planned]]` `activate_when_msrv` that is already met by
   `[workspace.package] rust-version` has a remaining non-MSRV `blocked_by`
   (empty or MSRV-only `blocked_by` text fails; `reason` does not satisfy
@@ -189,6 +191,15 @@ verifies that:
   unique `id` / `lint`, required nonblank fields, a `target` that is not
   in the past, and a lint that is not already `[[active]]`, `[[planned]]`,
   or present in `Cargo.toml`.
+
+Membership comes from `cargo metadata --format-version 1 --no-deps --locked
+--offline --manifest-path Cargo.toml`, including nondefault members and any
+members Cargo resolves through globs or path dependencies (#13222). The gate
+reads each selected manifest as TOML and rejects missing, false, malformed, or
+member-local lint configuration. It fails if membership discovery is incomplete,
+ambiguous, or unsuccessful; it does not exempt fixture workspaces. This read-only
+metadata command does not build targets, run build scripts, download dependencies,
+or update `Cargo.lock`.
 
 The workspace lint levels are read from parsed TOML. String settings such as
 `panic = "deny"` and table settings such as
