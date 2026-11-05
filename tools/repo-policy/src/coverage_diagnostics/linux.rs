@@ -993,8 +993,18 @@ mod tests {
         );
         for (name, message, use_pinned, count) in [
             ("mismatch", mismatch, true, 1),
-            ("unknown", "unsupported instrumentation profile hash type", true, 0),
-            ("lookalike", "raw profile version mismatch-extra: unknown error", true, 0),
+            (
+                "unknown",
+                "unsupported instrumentation profile hash type",
+                true,
+                0,
+            ),
+            (
+                "lookalike",
+                "raw profile version mismatch-extra: unknown error",
+                true,
+                0,
+            ),
             ("source_path", mismatch, false, 0),
         ] {
             let out = t.0.join(format!("evidence-{name}"));
@@ -1009,13 +1019,24 @@ mod tests {
                     .ok_or("merge list missing")?;
                 let names = fs::read_to_string(listing).map_err(|e| e.to_string())?;
                 let path = if use_pinned {
-                    names.lines().next().ok_or("merge input missing")?.to_owned()
+                    names
+                        .lines()
+                        .next()
+                        .ok_or("merge input missing")?
+                        .to_owned()
                 } else {
                     file.to_string_lossy().into_owned()
                 };
                 let stderr =
                     format!("warning: {path}: {message}\nerror: no profile can be merged\n");
-                Ok(tool_result(Some(1), b"", stderr.as_bytes(), false, false, false))
+                Ok(tool_result(
+                    Some(1),
+                    b"",
+                    stderr.as_bytes(),
+                    false,
+                    false,
+                    false,
+                ))
             })?;
             assert_eq!(report["merge_replay"]["exit"], 1);
             assert_eq!(report["original_coverage_outcome"], "failure");

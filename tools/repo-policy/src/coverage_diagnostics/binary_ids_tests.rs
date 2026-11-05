@@ -186,7 +186,11 @@ fn retained_october_14_header_maps_only_instrumented_exact_id_and_preserves_fail
     let report = capture(&f.0, &list, &out, tool)?;
     assert_eq!(report["merge_replay"]["exit"], 1, "{report}");
     assert_eq!(report["original_coverage_outcome"], "failure");
-    assert_eq!(report["captured"].as_array().map(Vec::len), Some(1), "{report}");
+    assert_eq!(
+        report["captured"].as_array().map(Vec::len),
+        Some(1),
+        "{report}"
+    );
     assert_eq!(report["captured"][0]["retained_bytes"], 160, "{report}");
     assert_eq!(
         report["captured"][0]["binary_ids"]["ids"],
@@ -226,7 +230,7 @@ fn raw_binary_ids_are_exact_and_unknown_layouts_are_explicit() {
             profile_ids(&bytes),
             json!({"status": "available", "ids": [hex(&id)], "layout": layout})
         );
-        for unsupported in [0, 9, 12, 10 | (1_u64 << 56), 11 | (1_u64 << 56)] {
+        for unsupported in [0, 9, 12, 0x0a | (1_u64 << 56), 0x0b | (1_u64 << 56)] {
             let mut bad = bytes.clone();
             put64(&mut bad, 8, unsupported);
             let parsed = profile_ids(&bad);
@@ -691,7 +695,9 @@ fn real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata() -> Result
     let kept = header_bytes
         .checked_add(usize::try_from(u64le(&full_bytes, 16)?).map_err(|e| e.to_string())?)
         .ok_or("real profile id block overflow")?;
-    let retained = full_bytes.get(..kept).ok_or("real profile id block truncated")?;
+    let retained = full_bytes
+        .get(..kept)
+        .ok_or("real profile id block truncated")?;
     fs::write(&short, retained).map_err(|e| e.to_string())?;
     let list = f.0.join("ripr-swarm-profraw-list");
     fs::write(&list, format!("{}\n", short.display())).map_err(|e| e.to_string())?;

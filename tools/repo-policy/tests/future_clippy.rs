@@ -79,7 +79,9 @@ fn stable_compatibility_requires_matching_tools_and_focused_commands() -> Result
                 .filter(|line| line.trim_start().starts_with("RUSTUP_TOOLCHAIN:"))
                 .count()
                 != 1
-            || !stable.lines().any(|line| line == "    runs-on: ubuntu-latest")
+            || !stable
+                .lines()
+                .any(|line| line == "    runs-on: ubuntu-latest")
             || !stable.lines().any(|line| line == "    timeout-minutes: 15")
             || stable.lines().any(|line| {
                 line.starts_with("        if:")
