@@ -905,3 +905,29 @@ fn primitive_named_format_effect_carries_only_its_changed_argument() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn tuple_option_projection_keeps_its_receiver_and_changed_slot() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/rust_same_method_owner_type_positive");
+    let source =
+        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
+    let original = std::fs::read_to_string(fixture.join("input/tests/size_hints.rs"))
+        .map_err(|e| e.to_string())?;
+    let manifest =
+        std::fs::read_to_string(fixture.join("input/Cargo.toml")).map_err(|e| e.to_string())?;
+    let diff = std::fs::read_to_string(fixture.join("diff.patch")).map_err(|e| e.to_string())?;
+    for (test,exposed) in [
+        (original.clone(),true),
+        (original.replace("assert_eq!(it.size_hint().1, Some(it.remaining));","assert_eq!(it.size_hint().0, 0);"),false),
+        (original.replace("assert_eq!(it.size_hint().1, Some(it.remaining));","let hint=it.size_hint();\n    assert_eq!(hint.1, Some(it.remaining));"),true),
+        (original.replace("assert_eq!(it.size_hint().1, Some(it.remaining));","let mut hint=it.size_hint();\n    hint=(0,Some(it.remaining));\n    assert_eq!(hint.1, Some(it.remaining));"),false),
+        (original.replace("::WhileSome;","::{WhileSome,Combinations};").replace("assert_eq!(it.size_hint().1, Some(it.remaining));","let _=it.size_hint();\n    let other=Combinations { remaining:2 };\n    assert_eq!(other.size_hint().1, Some(other.remaining));"),false),
+    ] {
+        let report=check_report(&source,&test,&manifest,&diff)?;
+        let findings=report["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(),1,"{report}");
+        assert_eq!(findings[0]["classification"]=="exposed",exposed,"{test}: {report}");
+    }
+    Ok(())
+}

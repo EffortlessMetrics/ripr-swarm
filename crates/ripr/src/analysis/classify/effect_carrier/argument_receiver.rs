@@ -56,63 +56,7 @@ fn mentions(node: &ra_ap_syntax::SyntaxNode, binding: &str) -> bool {
             })
     })
 }
-// A trait on Ref<Vec<_>> can intercept first/last before dereferencing to
-// the slice, even when its method declaration is outside the index. The
-// workspace import closure is deliberately conservative: an unread external
-// import (including a re-export in another indexed file) withholds this
-// projection witness. Ordinary field identity and closed standard imports
-// keep their existing admission.
-fn projection_imports_closed(index: &RustIndex) -> bool {
-    // MemberCrates admits only a witnessed library target at src/lib.rs.
-    // A globally familiar crate name is not its binding in this importer:
-    // Cargo can bind the package's own name, or even `alloc`, to an outside
-    // dependency. Resolve each nonstandard root through manifest authority.
-    // The value-equality witness separately certifies the std/core roots.
-    let library_roots: Vec<_> = index
-        .files()
-        .iter()
-        .map(|(path, _)| path)
-        .filter(|path| path.ends_with("src/lib.rs"))
-        .collect();
-    index.files().iter().all(|(file, facts)| {
-        let known = |root: &str| {
-            matches!(root, "std" | "core" | "crate" | "self" | "super")
-                || library_roots.iter().any(|library| {
-                    index
-                        .member_crates
-                        .import_names(file, library)
-                        .iter()
-                        .any(|bound| bound == root)
-                })
-        };
-        if crate::analysis::classify::reveal::flattened_use_paths(&facts.source)
-            .iter()
-            .any(|import| {
-                !known(
-                    import
-                        .path
-                        .trim_start_matches("::")
-                        .split("::")
-                        .next()
-                        .unwrap_or_default(),
-                )
-            })
-        {
-            return false;
-        }
-        if !facts.source.contains("extern") {
-            return true;
-        }
-        let Some(file) = parse_clean_source_file(&facts.source) else {
-            return false;
-        };
-        file.tree()
-            .syntax()
-            .descendants()
-            .filter_map(ast::ExternCrate::cast)
-            .all(|item| item.name_ref().is_some_and(|name| known(name.text())))
-    })
-}
+
 fn field_root(
     mut expression: ast::Expr,
     index: &RustIndex,
@@ -557,7 +501,8 @@ impl ArgumentReceiver {
             parameter,
             fields,
             receiver_type: receiver_ty,
-            projection_imports_closed: projection_imports_closed(index),
+            projection_imports_closed:
+                crate::analysis::classify::call_identity::closed_method_dispatch_imports(index),
         })
     }
     pub(in crate::analysis) fn admits(

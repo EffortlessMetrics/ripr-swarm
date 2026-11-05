@@ -146,6 +146,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
     /// (#12796). The test side still checks that `T` is a plain
     /// single-integer-field struct.
     tuple_projection: Option<String>,
+    /// The sole changed tuple slot is `None` -> `Some(self.integer_field)`.
+    /// Its numeric projection observes that changed slot, never a sibling.
+    tuple_option_projection: Option<(String, String)>,
     /// The owner is an `async fn`, so a test reads its return value as
     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
     awaited: bool,
@@ -4839,6 +4842,9 @@ impl OwnerReturnPin {
     ) -> Option<Self> {
         let name = owner.name.as_str();
         let call = pin_call(owner, index)?;
+        let tuple_option_projection = matches!(path, ReturnPathGate::Any)
+            .then(|| changed_tuple_option_projection(owner, probe))
+            .flatten();
         // #6544: a bare call's same-package module-level rivals are settled
         // per test by the import or path that spells the call; every other
         // competing definition still refuses the pin here.
@@ -4846,7 +4852,13 @@ impl OwnerReturnPin {
             CallKind::Bare => super::call_identity::shared_owner_call_identity(index, owner),
             CallKind::Method | CallKind::Associated => None,
         };
-        if other_definition_competes(owner, index, call.kind(), identity.as_deref()) {
+        if other_definition_competes(
+            owner,
+            index,
+            call.kind(),
+            identity.as_deref(),
+            tuple_option_projection.is_some(),
+        ) {
             return None;
         }
         let walked_positions =
@@ -4883,6 +4895,7 @@ impl OwnerReturnPin {
                 &probe.expression,
             ),
             tuple_projection,
+            tuple_option_projection,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
                 super::poll_helper::verified_helpers(index)
@@ -4998,7 +5011,7 @@ impl OwnerReturnPin {
             || !field_compares_with_derived_equality(type_name, field, index)
             || derives_clone(type_name, index)
             || workspace_declares_trait(index, "Clone")
-            || other_definition_competes(owner, index, CallKind::Method, None)
+            || other_definition_competes(owner, index, CallKind::Method, None, false)
         {
             return None;
         }
@@ -5018,6 +5031,7 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             tuple_projection: None,
+            tuple_option_projection: None,
             closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -5106,7 +5120,7 @@ impl OwnerReturnPin {
         // #6617 keeps the associated-function pin to a return value: a
         // `T::new()` whole-value field pin is a separate claim.
         if matches!(call, PinCall::Associated { .. })
-            || other_definition_competes(owner, index, call.kind(), None)
+            || other_definition_competes(owner, index, call.kind(), None, false)
         {
             return None;
         }
@@ -5129,6 +5143,7 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             tuple_projection: None,
+            tuple_option_projection: None,
             closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -5217,7 +5232,7 @@ impl OwnerReturnPin {
         // As for a whole-value field: no associated-function pin, and no
         // other definition may take a call by the owner's name.
         if matches!(call, PinCall::Associated { .. })
-            || other_definition_competes(owner, index, call.kind(), None)
+            || other_definition_competes(owner, index, call.kind(), None, false)
         {
             return None;
         }
@@ -5232,6 +5247,7 @@ impl OwnerReturnPin {
             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
             pointer_return_change: None,
             tuple_projection: None,
+            tuple_option_projection: None,
             closed_owner: None,
             awaited: declares_async(owner, index),
             poll_helpers: if declares_async(owner, index) {
@@ -5328,12 +5344,15 @@ impl OwnerReturnPin {
         operands: [&'a str; 2],
         index: &RustIndex,
         syntax: &OwnerPinSyntax,
-    ) -> Option<[&'a str; 2]> {
-        let type_name = self.tuple_projection.as_deref()?;
+    ) -> Option<([&'a str; 2], &str)> {
+        let suffix = self
+            .tuple_option_projection
+            .as_ref()
+            .map_or(".0", |(suffix, _)| suffix.as_str());
         let strip = |operand: &'a str| {
             operand
                 .trim()
-                .strip_suffix(".0")
+                .strip_suffix(suffix)
                 .map(str::trim_end)
                 .filter(|base| !base.is_empty())
         };
@@ -5342,13 +5361,29 @@ impl OwnerReturnPin {
             (None, Some(base)) => [operands[0], base],
             _ => return None,
         };
-        let owner = index.functions().iter().find(|function| {
-            function.file == self.owner_file
-                && function.name == self.name
-                && function.start_line == self.owner_start_line
+        let owner = index.functions().iter().find(|f| {
+            f.file == self.owner_file
+                && f.name == self.name
+                && f.start_line == self.owner_start_line
         })?;
-        field_builtin_integer_of(owner, type_name, "0", true, index, syntax)?;
-        Some(stripped)
+        if let Some((_, field)) = &self.tuple_option_projection {
+            let type_name = match &owner.item.container {
+                FunctionContainer::Inherent { self_ty }
+                | FunctionContainer::TraitImpl { self_ty, .. } => self_ty,
+                _ => return None,
+            };
+            if ["Option", "Some", "None"]
+                .iter()
+                .any(|name| wrapper_may_be_rebound(name, index))
+            {
+                return None;
+            }
+            field_builtin_integer_of(owner, type_name, field, true, index, syntax)?;
+        } else {
+            let type_name = self.tuple_projection.as_deref()?;
+            field_builtin_integer_of(owner, type_name, "0", true, index, syntax)?;
+        }
+        Some((stripped, suffix))
     }
 
     fn default_trait_call_shape<'a>(
@@ -5787,7 +5822,7 @@ impl OwnerReturnPin {
             // integer tuple struct is the changed `T(e)`'s own `e`, so the
             // projection reads as the whole-value pin on the owner call.
             let (operands, projection) = match self.projected_operands(operands, index, syntax) {
-                Some(stripped) => (stripped, ".0"),
+                Some(projected) => projected,
                 None => (operands, ""),
             };
             // #9478: a typed immutable function pointer lends its exact call,
@@ -8099,6 +8134,75 @@ pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
         owner_call_shape(operand, name),
         Some(CallShape::Bare | CallShape::Path(_))
     )
+}
+
+/// The only changed slot of a whole returned tuple is an Option's
+/// presence, stored from one plain self field. Numeric sibling projections
+/// cannot borrow this identity. Type/equality and receiver gates run later.
+fn changed_tuple_option_projection(
+    owner: &FunctionSummary,
+    probe: &Probe,
+) -> Option<(String, String)> {
+    fn tuple(source: &str) -> Option<ast::TupleExpr> {
+        let parsed = parse_clean_source_file(source)?;
+        let function = parsed
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::Fn::cast)?;
+        let body = function.body()?.stmt_list()?;
+        if body.statements().next().is_some() {
+            return None;
+        }
+        let ast::Expr::TupleExpr(tuple) = body.tail_expr()? else {
+            return None;
+        };
+        Some(tuple)
+    }
+    let after = tuple(&owner.body)?;
+    if collapse_whitespace(&after.syntax().text().to_string())
+        != collapse_whitespace(&probe.expression)
+    {
+        return None;
+    }
+    let before = tuple(&format!("fn previous() {{ {} }}", probe.before.as_deref()?))?;
+    let old: Vec<_> = before.fields().collect();
+    let new: Vec<_> = after.fields().collect();
+    if old.len() != new.len() {
+        return None;
+    }
+    let mut changed = old.iter().zip(&new).enumerate().filter(|(_, (a, b))| {
+        collapse_whitespace(&a.syntax().text().to_string())
+            != collapse_whitespace(&b.syntax().text().to_string())
+    });
+    let (position, (old, new)) = changed.next()?;
+    if changed.next().is_some() {
+        return None;
+    }
+    if old.syntax().text().to_string().trim() != "None" {
+        return None;
+    }
+    let ast::Expr::CallExpr(call) = new else {
+        return None;
+    };
+    if call.expr()?.syntax().text().to_string() != "Some" {
+        return None;
+    }
+    let args: Vec<_> = call.arg_list()?.args().collect();
+    let [ast::Expr::FieldExpr(field)] = args.as_slice() else {
+        return None;
+    };
+    if field.expr()?.syntax().text().to_string() != "self" {
+        return None;
+    }
+    let ty = declared_return_type(&owner.body)?;
+    let types = top_level_arguments(ty.strip_prefix('(')?.strip_suffix(')')?);
+    let selected = types.get(position)?.split_whitespace().collect::<String>();
+    let integer = selected.strip_prefix("Option<")?.strip_suffix('>')?;
+    if !INTEGER_TYPES.contains(&integer) {
+        return None;
+    }
+    Some((format!(".{position}"), field.name_ref()?.text().to_string()))
 }
 
 /// #12796: the tuple struct `T` when the changed tail is exactly `T(e)` or
@@ -12601,7 +12705,7 @@ fn free_call_reaches_definition(
 ) -> bool {
     if !owner.item.has_body
         || !matches!(pin_call(owner, index), Some(PinCall::Bare))
-        || other_definition_competes(owner, index, CallKind::Bare, None)
+        || other_definition_competes(owner, index, CallKind::Bare, None, false)
         || index
             .files()
             .get(&owner.file)
@@ -13291,11 +13395,75 @@ fn climb_one_level(
 /// function: inherent and trait-impl functions of any type, trait items,
 /// unknown containers, and every unindexed `fn name`. A free function
 /// cannot be the target of a type path, so it never competes.
+/// A same-named method on a different, explicitly declared root nominal
+/// type cannot dispatch on this pin's receiver. Unread traits and aliases
+/// retain the old refusal; assertion-local receiver binding still applies.
+fn method_receivers_are_distinct_nominal_types(
+    owner: &FunctionSummary,
+    other: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    fn ty(function: &FunctionSummary) -> Option<&str> {
+        match &function.item.container {
+            FunctionContainer::Inherent { self_ty }
+            | FunctionContainer::TraitImpl { self_ty, .. } => Some(self_ty.as_str()),
+            _ => None,
+        }
+    }
+    let (Some(a), Some(b)) = (ty(owner), ty(other)) else {
+        return false;
+    };
+    if a == b
+        || !is_plain_identifier(a)
+        || !is_plain_identifier(b)
+        || !super::call_identity::closed_method_dispatch_imports(index)
+    {
+        return false;
+    }
+    // The shared import closure's std/core exclusion is certified elsewhere
+    // by collection value equality. This new nominal route instead refuses
+    // explicit standard-root imports and extern aliases altogether.
+    if index.files().values().any(|facts| {
+        facts.source.contains("extern")
+            || flattened_use_paths(&facts.source).iter().any(|import| {
+                matches!(
+                    import.path.trim_start_matches("::").split("::").next(),
+                    Some("std" | "core")
+                )
+            })
+    }) {
+        return false;
+    }
+    [(owner, a), (other, b)]
+        .into_iter()
+        .all(|(function, name)| {
+            index.files().get(&function.file).is_some_and(|facts| {
+                let Some(shape) = local_type_equality(&facts.source, name) else {
+                    return false;
+                };
+                if shape.generic_params
+                    || shape.other_attributes
+                    || declaring_file_rebinds(&facts.source, name, true, index)
+                {
+                    return false;
+                }
+                parse_clean_source_file(&facts.source).is_some_and(|file| {
+                    file.tree()
+                        .syntax()
+                        .children()
+                        .filter_map(ast::Struct::cast)
+                        .any(|item| item.name().is_some_and(|n| n.text() == name))
+                })
+            })
+        })
+}
+
 fn other_definition_competes(
     owner: &FunctionSummary,
     index: &RustIndex,
     kind: CallKind,
     settled_per_test: Option<&OwnerCallIdentity>,
+    changed_tuple_projection: bool,
 ) -> bool {
     let method = kind == CallKind::Method;
     let associated = kind == CallKind::Associated;
@@ -13319,6 +13487,8 @@ fn other_definition_competes(
                     && function.item.has_self_param
                     && function.item.has_body
                     && !is_self_forward(&function.body, name)
+                    && !(changed_tuple_projection
+                        && method_receivers_are_distinct_nominal_types(owner, function, index))
             }
         }
     });
@@ -13522,7 +13692,7 @@ pub(in crate::analysis) fn pin_scope_needs(
         CallKind::Method | CallKind::Associated => None,
     };
     needs.competing_definitions =
-        !other_definition_competes(owner, index, kind, identity.as_deref());
+        !other_definition_competes(owner, index, kind, identity.as_deref(), false);
     needs
 }
 
@@ -15069,12 +15239,11 @@ fn test_file_helpers_reaching_owner(
     });
     candidates
         .into_iter()
-        .filter_map(|helper| {
-            // Missing owner identity cannot certify an independent helper.
-            owner
-                .is_none_or(|owner| callers.caller_reaches(index, owner, None, helper))
-                .then(|| helper.to_string())
+        // Missing owner identity cannot certify an independent helper.
+        .filter(|helper| {
+            owner.is_none_or(|owner| callers.caller_reaches(index, owner, None, helper))
         })
+        .map(str::to_string)
         .collect()
 }
 

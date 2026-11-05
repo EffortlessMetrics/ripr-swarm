@@ -700,7 +700,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.165`: returned comparisons retain same-owner/element boundary pairing.
 /// `1.166`: canonical scalar-match and unit-error unwrap observer identity.
 /// `1.167`: typed helper-call independence and primitive named-format effect carriers.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.167";
+/// `1.168`: changed tuple Option slots retain nominal receiver and component identity.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.168";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -913,7 +914,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.167";
 /// `0.167`: same returned-boundary pairing as full `1.165`.
 /// `0.168`: same observer identity as full `1.166`.
 /// `0.169`: same observer identities as full `1.167`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
+/// `0.170`: same tuple-component identity as full `1.168`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1128,7 +1130,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
 /// `0.167`: same returned-boundary pairing as full `1.165`.
 /// `0.168`: same observer identity as full `1.166`.
 /// `0.169`: same observer identities as full `1.167`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
+/// `0.170`: same tuple-component identity as full `1.168`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5284,7 +5287,7 @@ mod tests {
         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
         // Composed main and successor invalidate both predecessor branches.
         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.167");
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.168");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5430,8 +5433,8 @@ mod tests {
         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.169");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.169");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
     }
 
     #[test]
@@ -5763,6 +5766,7 @@ mod tests {
             ("pre-returned-boundary-pairing", "1.164", "0.166"),
             ("pre-scalar-and-unit-error-identity", "1.165", "0.167"),
             ("pre-helper-and-formatted-effect-identity", "1.166", "0.168"),
+            ("pre-tuple-component-identity", "1.167", "0.169"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -5836,7 +5840,7 @@ mod tests {
     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
         for previous in [
             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
-            "0.161", "0.162", "0.163", "0.164", "0.165", "0.166", "0.167", "0.168",
+            "0.161", "0.162", "0.163", "0.164", "0.165", "0.166", "0.167", "0.168", "0.169",
         ] {
             for compact in [false, true] {
                 let scratch = integrity_scratch("property-shard-generation")?;

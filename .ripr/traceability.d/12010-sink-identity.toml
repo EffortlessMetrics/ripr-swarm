@@ -18,4 +18,5 @@ tests = [
   "crates/ripr/tests/return_diagnostic_confirmation.rs::bound_literal_matches_keeps_scalar_identity_and_currentness",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::independent_same_named_method_helper_does_not_look_self_computed",
   "crates/ripr/tests/return_diagnostic_confirmation.rs::primitive_named_format_effect_carries_only_its_changed_argument",
+  "crates/ripr/tests/return_diagnostic_confirmation.rs::tuple_option_projection_keeps_its_receiver_and_changed_slot",
 ]
