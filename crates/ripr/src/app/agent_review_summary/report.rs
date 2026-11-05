@@ -21,9 +21,9 @@ use super::util::string_field;
 /// Plain-language early-state copy for Markdown when check has not run (#10696).
 pub(crate) const NO_ANALYSIS_YET: &str = "No analysis yet. Run `ripr check` first.";
 
-/// Fresh repository with no repair attempt yet (#10696).
+/// Plain copy when the analysis outcome and receipt are unavailable (#10696).
 pub(crate) const FRESH_REVIEW_SUMMARY_HEADLINE: &str =
-    "Nothing to review yet: no repair has been run.";
+    "Review incomplete: analysis outcome and repair receipt are unavailable.";
 
 pub(crate) fn review_summary_is_fresh_early_state(
     surfaces: &[AgentReviewSurface],

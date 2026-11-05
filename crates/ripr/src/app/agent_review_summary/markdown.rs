@@ -31,11 +31,18 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
     );
     if fresh {
         rendered.push_str("Movement: nothing to compare yet.\n");
-        rendered.push_str(&format!("Receipt: {NO_RECEIPT_BEFORE_REPAIR}\n"));
     } else {
         rendered.push_str(&format!("Movement: {}\n", report.static_movement.state));
-        if report.static_movement.state == "missing_artifact" {
+    }
+    if report.static_movement.state == "missing_artifact" {
+        if report
+            .surfaces
+            .iter()
+            .any(|surface| surface.name == "agent_receipt" && surface.state == "missing")
+        {
             rendered.push_str(&format!("Receipt: {NO_RECEIPT_BEFORE_REPAIR}\n"));
+        } else {
+            rendered.push_str("Receipt: unavailable or invalid.\n");
         }
     }
     match &report.analysis_outcome {

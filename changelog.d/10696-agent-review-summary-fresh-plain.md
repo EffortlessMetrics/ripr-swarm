@@ -1,2 +1,2 @@
 <!-- section: Changed -->
-- `ripr agent review-summary` on a fresh repository without a repair attempt now says "Nothing to review yet: no repair has been run." instead of movement/outcome jargon (#10696).
+- `ripr agent review-summary` when analysis and receipt are unavailable now says "Review incomplete: analysis outcome and repair receipt are unavailable." instead of movement/outcome jargon (#10696).

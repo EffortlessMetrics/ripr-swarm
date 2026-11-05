@@ -61,7 +61,7 @@
   },
   "reviewer_summary": {
     "evidence": "Run agent receipt after verify to create review evidence.",
-    "headline": "Nothing to review yet: no repair has been run.",
+    "headline": "Review incomplete: analysis outcome and repair receipt are unavailable.",
     "remaining": "Run the next command listed by agent status.",
     "reviewer_should_inspect": [
       "target/ripr/reports/agent-receipt.json",
@@ -70,7 +70,7 @@
       "target/ripr/reports/operator-cockpit.json",
       "target/ripr/reports/repo-exposure.json"
     ],
-    "what_changed": "Nothing to review yet: no repair has been run."
+    "what_changed": "Review incomplete: analysis outcome and repair receipt are unavailable."
   },
   "root": "repo root",
   "schema_version": "0.1",

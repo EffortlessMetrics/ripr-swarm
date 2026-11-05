@@ -138,8 +138,8 @@
     }
   ],
   "reviewer_summary": {
-    "headline": "Nothing to review yet: no repair has been run.",
-    "what_changed": "Nothing to review yet: no repair has been run.",
+    "headline": "Review incomplete: analysis outcome and repair receipt are unavailable.",
+    "what_changed": "Review incomplete: analysis outcome and repair receipt are unavailable.",
     "evidence": "Run agent receipt after verify to create review evidence.",
     "remaining": "Run the next command listed by agent status.",
     "reviewer_should_inspect": [
