@@ -38,11 +38,14 @@ mod tests {{
     index.extend_tests(facts.tests.iter().cloned());
     index.insert_file_only(path.clone(), facts);
     let seams = inventory_seams_from_index(&[path], &index);
-    let mut predicates = seams.into_iter().filter(|seam| {
-        seam.kind() == SeamKind::PredicateBoundary && seam.display_line() == 2
-    });
+    let mut predicates = seams
+        .into_iter()
+        .filter(|seam| seam.kind() == SeamKind::PredicateBoundary && seam.display_line() == 2);
     let seam = predicates.next().ok_or("missing div predicate seam")?;
-    assert!(predicates.next().is_none(), "expected exactly one div predicate");
+    assert!(
+        predicates.next().is_none(),
+        "expected exactly one div predicate"
+    );
     let mut evidence = evidence_for_seams(std::slice::from_ref(&seam), &index);
     let evidence = evidence.pop().ok_or("missing div predicate evidence")?;
     let class = classify_seam(&seam, &evidence);
@@ -91,14 +94,27 @@ fn named_panic_limit_withholds_pilot_and_brief_without_reclassifying() -> Result
     assert_eq!(pilot["actionable_seams_total"], 0);
     assert_eq!(pilot["withheld_static_limitations_total"], 1);
     assert_eq!(pilot["top_actionable_seams"], serde_json::json!([]));
-    for command in ["repair_command", "after_snapshot_command", "outcome_command"] {
+    for command in [
+        "repair_command",
+        "after_snapshot_command",
+        "outcome_command",
+    ] {
         assert!(pilot["next"][command].is_null(), "{command}: {pilot}");
     }
     let markdown = render_pilot_summary_md(&entries, context);
-    assert!(markdown.contains("None ranked: 1 spot were withheld"), "{markdown}");
-    assert!(markdown.contains("this is not a clean result"), "{markdown}");
+    assert!(
+        markdown.contains("None ranked: 1 spot were withheld"),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("this is not a clean result"),
+        "{markdown}"
+    );
     let terminal = render_pilot_terminal(&entries, context);
-    assert!(terminal.contains("none ranked: 1 spot were withheld"), "{terminal}");
+    assert!(
+        terminal.contains("none ranked: 1 spot were withheld"),
+        "{terminal}"
+    );
 
     let config = RiprConfig::default();
     for working_set in [
@@ -119,13 +135,19 @@ fn named_panic_limit_withholds_pilot_and_brief_without_reclassifying() -> Result
             "{:?}",
             brief.warnings
         );
-        assert_eq!(brief.omitted_by_policy, usize::from(working_set.seam_id.is_none()));
+        assert_eq!(
+            brief.omitted_by_policy,
+            usize::from(working_set.seam_id.is_none())
+        );
     }
 
     let record = evidence_record_json_value(&evidence_record_for(&entries[0], None));
     assert_eq!(record["grip_class"], "reachable_unrevealed");
     assert_eq!(record["actionability"]["class"], "static_limitation");
-    assert_eq!(record["canonical_item"]["canonical_item_kind"], "limitation");
+    assert_eq!(
+        record["canonical_item"]["canonical_item_kind"],
+        "limitation"
+    );
     let limits = record["static_limitations"]
         .as_array()
         .ok_or("static_limitations must be an array")?;
@@ -137,11 +159,23 @@ fn named_panic_limit_withholds_pilot_and_brief_without_reclassifying() -> Result
     assert_eq!(named[0]["stage"], "discriminate");
     assert_eq!(named[0]["state"], "no");
     assert_eq!(named[0]["reason"], entries[0].evidence.discriminate.summary);
-    assert_eq!(named[0]["repair_route"], "analysis/oracle-semantics-audit-fixes");
-    assert_eq!(record["canonical_item"]["static_limitations"], record["static_limitations"]);
-    assert_eq!(record["recommendation"]["action"], "inspect_static_limitation");
+    assert_eq!(
+        named[0]["repair_route"],
+        "analysis/oracle-semantics-audit-fixes"
+    );
+    assert_eq!(
+        record["canonical_item"]["static_limitations"],
+        record["static_limitations"]
+    );
+    assert_eq!(
+        record["recommendation"]["action"],
+        "inspect_static_limitation"
+    );
     for command in ["repair_command", "verify_command", "receipt_command"] {
-        assert!(record["canonical_item"][command].is_null(), "{command}: {record}");
+        assert!(
+            record["canonical_item"][command].is_null(),
+            "{command}: {record}"
+        );
     }
     assert_eq!(
         serde_json::to_value(&entries[0]).map_err(|error| error.to_string())?,

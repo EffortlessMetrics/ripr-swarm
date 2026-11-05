@@ -140,7 +140,10 @@ fn named_panic_limit_with_concrete_stages_withholds_pilot_and_brief() {
             assert_eq!(limits[0].reason, entry.evidence.discriminate.summary);
         }
         let entries = [entry];
-        assert_eq!(top_actionable_seams(&entries, 5, None).len(), usize::from(!withheld));
+        assert_eq!(
+            top_actionable_seams(&entries, 5, None).len(),
+            usize::from(!withheld)
+        );
         let brief = select_agent_brief_seams(
             &entries,
             &working_set,

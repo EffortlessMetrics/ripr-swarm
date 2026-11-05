@@ -870,9 +870,10 @@ impl AgentBriefOmission {
                 && !entry.class.is_static_limitation()
                 && crate::output::evidence_record::is_static_limited(entry)
             {
-                if entry.evidence.names_static_limit(
-                    crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved,
-                ) {
+                if entry
+                    .evidence
+                    .names_static_limit(crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved)
+                {
                     return Some(Self::PanicOutcomeUnresolved(entry.class));
                 }
                 return Some(Self::EvidenceLimited(entry.class));

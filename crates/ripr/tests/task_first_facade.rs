@@ -3145,8 +3145,11 @@ fn pilot_and_brief_withhold_the_should_panic_limitation() -> Result<(), String> 
         let root = &fixture.root;
         populate_should_panic_fixture(root, extra_test)?;
         if snapshot_disabled {
-            std::fs::write(root.join("ripr.toml"), "[oracles]\nsnapshot_strength = \"none\"\n")
-                .map_err(|error| format!("write snapshot policy: {error}"))?;
+            std::fs::write(
+                root.join("ripr.toml"),
+                "[oracles]\nsnapshot_strength = \"none\"\n",
+            )
+            .map_err(|error| format!("write snapshot policy: {error}"))?;
             std::fs::write(
                 root.join("Cargo.toml"),
                 format!("{FIXTURE_CARGO_TOML}\n[dev-dependencies]\ninsta = \"1\"\n"),
@@ -3193,9 +3196,16 @@ fn pilot_and_brief_withhold_the_should_panic_limitation() -> Result<(), String> 
                     .ok_or("the seam must retain every evidence stage")?;
                 assert!(!matches!(state, "unknown" | "opaque"), "{stage}: {record}");
             }
-            assert_eq!(limitations.len(), 1, "only the named panic limit applies: {record}");
+            assert_eq!(
+                limitations.len(),
+                1,
+                "only the named panic limit applies: {record}"
+            );
         }
-        assert_eq!(ranked.iter().any(|entry| entry["seam_id"] == seam_id), selected);
+        assert_eq!(
+            ranked.iter().any(|entry| entry["seam_id"] == seam_id),
+            selected
+        );
         if !selected {
             assert!(
                 summary["withheld_static_limitations_total"]
@@ -3207,12 +3217,22 @@ fn pilot_and_brief_withhold_the_should_panic_limitation() -> Result<(), String> 
 
         let brief = run_ripr(
             root,
-            &["agent", "brief", "--root", &root_arg, "--seam-id", seam_id, "--json"],
+            &[
+                "agent",
+                "brief",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                seam_id,
+                "--json",
+            ],
         )?;
         assert_exit(&brief, 0, "brief on the exact should_panic seam");
         let brief: serde_json::Value = serde_json::from_slice(&brief.stdout)
             .map_err(|error| format!("parse agent brief: {error}"))?;
-        let top = brief["top_seams"].as_array().ok_or("brief must emit top_seams")?;
+        let top = brief["top_seams"]
+            .as_array()
+            .ok_or("brief must emit top_seams")?;
         assert_eq!(top.len(), usize::from(selected), "{brief}");
         if selected {
             assert_eq!(top[0]["seam_id"], seam_id);
