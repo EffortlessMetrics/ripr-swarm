@@ -4602,7 +4602,9 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
                 .pointer("/error/data/current_snapshot_id")
                 .and_then(Value::as_str)
                 != Some(snapshot_id.as_str())
-            || reply.pointer("/error/data/recovery").and_then(Value::as_str)
+            || reply
+                .pointer("/error/data/recovery")
+                .and_then(Value::as_str)
                 != Some(
                     "re-read ripr_workspace_status for the current snapshot identity, then retry",
                 )
@@ -4627,7 +4629,9 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
             || reply
                 .pointer("/error/data/resource_templates")
                 .and_then(Value::as_array)
-                .is_none_or(|templates| !templates.contains(&json!("ripr://snapshot/{snapshot_id}")))
+                .is_none_or(|templates| {
+                    !templates.contains(&json!("ripr://snapshot/{snapshot_id}"))
+                })
         {
             return Err(format!(
                 "an encoded namespace must not become a route: {reply}"
@@ -4643,7 +4647,10 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         json!({ "snapshot_id": encoded_snapshot_id }),
         REPLY_TIMEOUT,
     )?;
-    if encoded_tool.pointer("/result/isError").and_then(Value::as_bool) != Some(true)
+    if encoded_tool
+        .pointer("/result/isError")
+        .and_then(Value::as_bool)
+        != Some(true)
         || encoded_tool
             .pointer("/result/structuredContent/failure/code")
             .and_then(Value::as_str)
