@@ -1,6 +1,23 @@
 use super::*;
 use crate::analysis::classifier::classify_probe;
+use crate::analysis::facts::drop_in::DropInManifests;
 use crate::domain::{DeltaKind, Probe, ProbeFamily, ProbeId, SourceLocation};
+
+fn owner_index_from_source(source: &str) -> Result<FixtureIndex, String> {
+    let mut fixture = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
+    // Match production's manifest authority as well as its actual source root.
+    fixture.index.drop_in_manifests = DropInManifests::new(&fixture._fixture_root);
+    for root in ["std", "core"] {
+        if !fixture
+            .index
+            .drop_in_manifests
+            .unbound_standard_root(Path::new("src/lib.rs"), root)
+        {
+            return Err(format!("owner fixture did not establish its {root} manifest binding"));
+        }
+    }
+    Ok(fixture)
+}
 
 fn subject(assertion: &str, method_body: Option<&str>) -> String {
     let method_body = method_body.unwrap_or(
@@ -103,7 +120,7 @@ fn same_named_call_kinds_refuse_only_wrong_owner_repo_oracles() -> Result<(), St
         ),
     ] {
         let source = subject(assertion, method_body);
-        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+        let index = owner_index_from_source(&source)?;
         let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
         let selected: Vec<_> = seams
             .iter()
@@ -167,7 +184,7 @@ fn same_named_call_kinds_keep_diff_owner_observation_scoped() -> Result<(), Stri
         ),
     ] {
         let source = subject(assertion, None);
-        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+        let index = owner_index_from_source(&source)?;
         let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
         let arm = seams
             .iter()
@@ -745,7 +762,7 @@ mod tests {
 "##,
         ),
     ] {
-        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
+        let index = owner_index_from_source(source)?;
         let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
         let selected: Vec<_> = seams
             .iter()

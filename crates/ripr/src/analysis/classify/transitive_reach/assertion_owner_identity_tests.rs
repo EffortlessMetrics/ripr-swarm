@@ -1,5 +1,6 @@
 use super::*;
 use crate::analysis::facts::WorkspaceRootAuthority;
+use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -59,6 +60,7 @@ fn parsed_index(source: &str) -> Result<ParsedIndex, String> {
     .map_err(|error| error.to_string())?;
     std::fs::create_dir(fixture.root.join("src")).map_err(|error| error.to_string())?;
     std::fs::write(fixture.root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    fixture.index.drop_in_manifests = DropInManifests::new(&fixture.root);
     fixture.index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         &fixture.root,
         fixture
@@ -75,6 +77,15 @@ fn parsed_index(source: &str) -> Result<ParsedIndex, String> {
     ) != Some(PathBuf::from("src/lib.rs"))
     {
         return Err("owner fixture did not establish its actual crate root".to_string());
+    }
+    for root in ["std", "core"] {
+        if !fixture
+            .index
+            .drop_in_manifests
+            .unbound_standard_root(Path::new("src/lib.rs"), root)
+        {
+            return Err(format!("owner fixture did not establish its {root} manifest binding"));
+        }
     }
     Ok(fixture)
 }
