@@ -4778,9 +4778,10 @@ fn file_content_contains_plain_test_gate(content: &str) -> bool {
             break;
         };
         index += relative;
-        let Some(end) = attribute_block_end(&content[index..]) else {
-            index += 2;
-            continue;
+        let Some(end) = crate::analysis::outer_attribute_end(&content[index..]) else {
+            // Ambiguous text must fall through to the exact policy; do not
+            // rescan each nested opener in an unterminated attribute.
+            return true;
         };
         let attribute = content[index..index + end].trim();
         if crate::analysis::attribute_is_plain_test_gate(attribute) {
@@ -4789,27 +4790,6 @@ fn file_content_contains_plain_test_gate(content: &str) -> bool {
         index += end;
     }
     false
-}
-
-/// The inclusive end offset of one `#[...]` attribute starting at `source[0]`.
-fn attribute_block_end(source: &str) -> Option<usize> {
-    let mut depth = 0u32;
-    for (offset, ch) in source.char_indices() {
-        match ch {
-            '[' => depth = depth.saturating_add(1),
-            ']' => {
-                if depth == 0 {
-                    return None;
-                }
-                depth -= 1;
-                if depth == 0 {
-                    return Some(offset + ch.len_utf8());
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
@@ -6426,6 +6406,22 @@ mod tests {
         assert!(!file_content_contains_plain_test_gate(
             "#[cfg(\n    feature = \"slow\"\n)]\nmod t {}\n"
         ));
+    }
+
+    #[test]
+    fn multiline_gate_ignores_brackets_in_comments_and_literals() {
+        for source in [
+            "#[cfg(/* ] */\n test)]\nmod tests {}",
+            "#[cfg(/* [ /* ] */ ] */\n test)]\nmod tests {}",
+            "#[doc = r#\"[ ]\"#]\n#[cfg(\n test)]\nmod tests {}",
+            "é\n#[cfg(// ]\n test)]\nmod tests {}",
+        ] {
+            assert!(file_content_contains_plain_test_gate(source), "{source}");
+        }
+        assert!(!file_content_contains_plain_test_gate(
+            "#[cfg(\nfeature = \"slow]\"\n)]"
+        ));
+        assert!(file_content_contains_plain_test_gate("#[cfg(\n test"));
     }
 
     /// #11458: TypeScript adapter test conventions (`*.spec.*`, `test-*`,
