@@ -122,7 +122,11 @@ fn rendered(output: &CheckOutput) -> String {
 }
 
 fn agent_dispatch(output: &CheckOutput, config: &RiprConfig) -> Result<String, String> {
-    crate::output::render::render_check_with_config(output, &crate::app::OutputFormat::Agent, config)
+    crate::output::render::render_check_with_config(
+        output,
+        &crate::app::OutputFormat::Agent,
+        config,
+    )
 }
 
 fn outcome_output(
@@ -197,8 +201,14 @@ fn agent_dispatch_discloses_actual_partial_zero_check_output() -> Result<(), Str
         assert!(output.findings.is_empty());
         assert!(!output.no_scope_provided);
         let text = agent_dispatch(&output, &config)?;
-        assert!(text.contains("analysis=incomplete|outcome=partial_with_limitations\n"), "{text}");
-        assert!(text.contains("limitation=language_adapter_unavailable|"), "{text}");
+        assert!(
+            text.contains("analysis=incomplete|outcome=partial_with_limitations\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("limitation=language_adapter_unavailable|"),
+            "{text}"
+        );
         assert!(text.contains("|recovery="), "{text}");
         assert!(
             text.contains("\nstop=analysis incomplete; zero findings is not a clean result\n"),
@@ -227,9 +237,15 @@ fn agent_dispatch_never_completes_incomplete_empty_or_exposed_reports() -> Resul
         ] {
             let output = outcome_output(kind, findings)?;
             let text = agent_dispatch(&output, &RiprConfig::default())?;
-            assert!(text.contains(&format!("analysis=incomplete|outcome={token}\n")), "{text}");
+            assert!(
+                text.contains(&format!("analysis=incomplete|outcome={token}\n")),
+                "{text}"
+            );
             assert!(text.contains("\nstop=analysis incomplete;"), "{text}");
-            assert!(text.contains("|recovery=retry the selected input\n"), "{text}");
+            assert!(
+                text.contains("|recovery=retry the selected input\n"),
+                "{text}"
+            );
             assert!(!text.contains("\ndone="), "{text}");
         }
     }
@@ -248,10 +264,16 @@ fn agent_dispatch_keeps_partial_gaps_and_complete_controls() -> Result<(), Strin
     let config = RiprConfig::default();
     let partial = outcome_output(PartialWithLimitations, vec![weak_gap("probe:gap", 2)])?;
     let text = agent_dispatch(&partial, &config)?;
-    assert!(text.contains("analysis=incomplete|outcome=partial_with_limitations\n"), "{text}");
+    assert!(
+        text.contains("analysis=incomplete|outcome=partial_with_limitations\n"),
+        "{text}"
+    );
     assert!(text.contains("|id=probe:gap\n"), "{text}");
     assert!(text.contains("next=ripr explain probe:gap\n"), "{text}");
-    assert!(!text.contains("\ndone=") && !text.contains("\nstop="), "{text}");
+    assert!(
+        !text.contains("\ndone=") && !text.contains("\nstop="),
+        "{text}"
+    );
 
     for (kind, findings) in [
         (CompleteNoFindings, Vec::new()),
@@ -262,14 +284,20 @@ fn agent_dispatch_keeps_partial_gaps_and_complete_controls() -> Result<(), Strin
     ] {
         let text = agent_dispatch(&outcome_output(kind, findings)?, &config)?;
         assert!(text.contains("\ndone="), "{text}");
-        assert!(!text.contains("analysis=incomplete") && !text.contains("\nstop="), "{text}");
+        assert!(
+            !text.contains("analysis=incomplete") && !text.contains("\nstop="),
+            "{text}"
+        );
     }
     let text = agent_dispatch(
         &outcome_output(CompleteWithFindings, vec![weak_gap("probe:gap", 2)])?,
         &config,
     )?;
     assert!(text.contains("next=ripr explain probe:gap\n"), "{text}");
-    assert!(!text.contains("analysis=incomplete") && !text.contains("\ndone="), "{text}");
+    assert!(
+        !text.contains("analysis=incomplete") && !text.contains("\ndone="),
+        "{text}"
+    );
     // A producer-declared advisory limitation does not make a complete run
     // incomplete. Testing limitations.len() instead of the closed kind is wrong.
     let advisory_limit = AnalysisLimitation::new(
@@ -298,7 +326,10 @@ fn agent_dispatch_keeps_partial_gaps_and_complete_controls() -> Result<(), Strin
         .insert(0, advisory_limit);
     let text = agent_dispatch(&mixed, &config)?;
     assert!(text.contains("limitation=producer_failure|"), "{text}");
-    assert!(text.contains("|recovery=retry the selected input\n"), "{text}");
+    assert!(
+        text.contains("|recovery=retry the selected input\n"),
+        "{text}"
+    );
     assert!(text.contains("+1 more analysis limitations;"), "{text}");
     assert!(!text.contains("limitation=eol_only_churn|"), "{text}");
     Ok(())
