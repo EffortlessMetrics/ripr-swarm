@@ -83,6 +83,7 @@ fn inline_policy() -> Result<EditCagePolicy, String> {
         ignored_build_output: None,
         untracked_build_lockfile: None,
         inline_test_module_target: true,
+        external_test_file_target: false,
     })
 }
 
@@ -457,6 +458,7 @@ fn a_confined_target_change_without_an_observation_fails_closed() -> Result<(), 
         &AttemptDelta {
             comparable: true,
             inline_test_region: None,
+            external_test_file_region: None,
             changes: vec![AttemptPathChange::modified("src/lib.rs")],
         },
     );

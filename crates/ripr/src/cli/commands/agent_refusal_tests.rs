@@ -32,6 +32,7 @@ fn sample_policy(inline_test_module_target: bool) -> Result<EditCagePolicy, Stri
         ignored_build_output: None,
         untracked_build_lockfile: None,
         inline_test_module_target,
+        external_test_file_target: false,
     })
 }
 
