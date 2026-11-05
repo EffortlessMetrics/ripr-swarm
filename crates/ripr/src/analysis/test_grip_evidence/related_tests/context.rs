@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 /// lines while classifying every seam in a workspace.
 pub(crate) struct CompactGripContext<'a> {
     pub(in crate::analysis::test_grip_evidence) index: &'a RustIndex,
+    pub(in crate::analysis::test_grip_evidence) property_macros:
+        crate::analysis::language::PropertyMacroMentionIndex<'a>,
     pub(in crate::analysis::test_grip_evidence) tests: Vec<CompactTest<'a>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_call_name: BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_helper_owner_call_name:
@@ -629,6 +631,7 @@ impl<'a> CompactGripContext<'a> {
         checkpoint()?;
         Ok(Self {
             index,
+            property_macros: crate::analysis::language::PropertyMacroMentionIndex::for_index(index),
             tests,
             tests_by_call_name,
             tests_by_helper_owner_call_name,
