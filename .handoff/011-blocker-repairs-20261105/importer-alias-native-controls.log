@@ -1,0 +1,9 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-011-current-main/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 3m 55s
+     Running tests/owner_pin_execution.rs (/workspace/12010-proof/target/debug/deps/owner_pin_execution-fc73420b2f1915cf)
+
+running 1 test
+test external_collection_trait_cannot_supply_payload_identity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 69 filtered out; finished in 8.79s
+

@@ -5,7 +5,7 @@
   "patch_sha256": "aa5db8dc775ac3ff2fd51afdc8adb3852bbf9658e0609b4d851423351a1d9ba4",
   "patch_bytes": 17254,
   "base": "147d1968ab4ff0d9739c0c328a1a50a274073f76",
-  "status": "focused real-Cargo alias controls running; not yet qualified",
+  "status": "focused real-Cargo alias controls passed1/0; exact producer/driver build running",
   "reproduced": "Single-package own-name dependency alias and alloc alias falsely credit external trait first/last. Correct and wrong native Cargo tests each pass; old producer reports exposed. Multi-member collision was not discriminating and is not claimed reproduced.",
   "before_producer": "0.11.0+147d1968ab4ff0d9739c0c328a1a50a274073f76+languages:rust=1,typescript=1,python=1,perl=0",
   "repair": "Reuse importer-aware MemberCrates.import_names for indexed library roots; remove unconditional alloc root; advance cache generation to full1.163 / compact+sharded0.165 and reject predecessor.",
@@ -23,5 +23,11 @@
     "promotion trust hold",
     "release selection scope_pending"
   ],
-  "history_merge_authority": "Clarified explicit one-PR protected history-preserving direct merge approval; no protection bypass or change; qualification still required"
+  "history_merge_authority": "Clarified explicit one-PR protected history-preserving direct merge approval; no protection bypass or change; qualification still required",
+  "focused_receipt": "importer-alias-native-controls-receipt.json",
+  "focused_counts": {
+    "passed": 1,
+    "failed": 0,
+    "filtered": 69
+  }
 }

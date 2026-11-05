@@ -1,0 +1,294 @@
+{
+  "stage": "importer-alias-native-controls",
+  "candidate": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+  "tree": "7ccb0143bf76b2dbd902291a42f11d10142ebc35",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--test",
+    "owner_pin_execution",
+    "external_collection_trait_cannot_supply_payload_identity",
+    "--",
+    "--exact",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 250.11,
+  "counts": {
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 69
+  },
+  "log_sha256": "53da2e75b7a6f5d09e8e86b8ec739459125b5cf93fd7e7b2ea5ab77a95d8f5ad",
+  "peak_cgroup_memory_bytes": 7681269760,
+  "samples": [
+    {
+      "utc": "2026-11-05T16:57:35.200205+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 2039218176,
+      "workspace_free_bytes": 21535543296,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:57:45.201560+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 10.0,
+      "cgroup_memory_bytes": 2580422656,
+      "workspace_free_bytes": 22003339264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:57:55.206419+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 20.01,
+      "cgroup_memory_bytes": 3364380672,
+      "workspace_free_bytes": 22003339264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:58:05.207166+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 30.01,
+      "cgroup_memory_bytes": 3424940032,
+      "workspace_free_bytes": 22003339264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:58:15.209181+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 40.01,
+      "cgroup_memory_bytes": 3611471872,
+      "workspace_free_bytes": 22003339264,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:58:25.215060+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 50.02,
+      "cgroup_memory_bytes": 3845664768,
+      "workspace_free_bytes": 22000680960,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:58:35.215720+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 60.02,
+      "cgroup_memory_bytes": 4170579968,
+      "workspace_free_bytes": 21999931392,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:58:45.219143+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 70.02,
+      "cgroup_memory_bytes": 4545204224,
+      "workspace_free_bytes": 21999931392,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:58:55.223033+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 80.02,
+      "cgroup_memory_bytes": 4931731456,
+      "workspace_free_bytes": 21999931392,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:59:05.223742+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 90.02,
+      "cgroup_memory_bytes": 5294985216,
+      "workspace_free_bytes": 21999931392,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:59:15.224386+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 100.03,
+      "cgroup_memory_bytes": 5677391872,
+      "workspace_free_bytes": 21999931392,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:59:25.225777+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 110.03,
+      "cgroup_memory_bytes": 5952962560,
+      "workspace_free_bytes": 21997223936,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:59:35.226985+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 120.03,
+      "cgroup_memory_bytes": 6441033728,
+      "workspace_free_bytes": 21931139072,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:59:45.227619+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 130.03,
+      "cgroup_memory_bytes": 6868049920,
+      "workspace_free_bytes": 21931139072,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T16:59:55.228405+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 140.03,
+      "cgroup_memory_bytes": 7242350592,
+      "workspace_free_bytes": 21931139072,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:00:05.229433+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 150.03,
+      "cgroup_memory_bytes": 7285301248,
+      "workspace_free_bytes": 21978361856,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:00:15.230589+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 160.03,
+      "cgroup_memory_bytes": 7430864896,
+      "workspace_free_bytes": 21940723712,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:00:25.240417+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 170.04,
+      "cgroup_memory_bytes": 7439581184,
+      "workspace_free_bytes": 21895241728,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:00:35.245682+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 180.05,
+      "cgroup_memory_bytes": 7478128640,
+      "workspace_free_bytes": 21861195776,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:00:45.247850+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 190.05,
+      "cgroup_memory_bytes": 7450636288,
+      "workspace_free_bytes": 21815377920,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:00:55.249984+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 200.05,
+      "cgroup_memory_bytes": 7532023808,
+      "workspace_free_bytes": 21774110720,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:01:05.251489+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 210.05,
+      "cgroup_memory_bytes": 7469924352,
+      "workspace_free_bytes": 21719920640,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:01:15.253044+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 220.05,
+      "cgroup_memory_bytes": 7681269760,
+      "workspace_free_bytes": 21680513024,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:01:25.269927+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 230.07,
+      "cgroup_memory_bytes": 2606915584,
+      "workspace_free_bytes": 21532131328,
+      "temp_free_bytes": 9441329152
+    },
+    {
+      "utc": "2026-11-05T17:01:35.277109+00:00",
+      "stage": "importer-alias-native-controls",
+      "head": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
+      "pid": 855208,
+      "elapsed": 240.08,
+      "cgroup_memory_bytes": 2678542336,
+      "workspace_free_bytes": 21532131328,
+      "temp_free_bytes": 9439940608
+    }
+  ]
+}
