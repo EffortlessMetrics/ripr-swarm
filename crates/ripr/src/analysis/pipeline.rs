@@ -3163,7 +3163,8 @@ fn is_excluded_from_typescript_preview_analysis(
             &language_config.typescript.excluded_file_patterns,
             path,
         )
-        || (crate::config::is_detectable_excluded_typescript_path(path)
+        || ((crate::config::is_detectable_excluded_typescript_path(path)
+            || crate::config::is_typescript_docs_site_path(path))
             && !crate::config::is_declared_handwritten_typescript_path(
                 &language_config.typescript.handwritten_files,
                 path,
@@ -9551,6 +9552,41 @@ index 0000000..1111111 100644
         if count != 3 {
             return Err(format!(
                 "expected only admitted TypeScript lines to count, got {count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_typescript_line_count_excludes_docs_site_unless_declared_handwritten()
+    -> Result<(), String> {
+        // The pipeline exclusion site (not just the adapter predicate) must
+        // refuse docs-site components, and a declared handwritten path under
+        // `docs/` must be admitted again; a near-miss name stays source.
+        let files = vec![
+            changed_line_file("web/app.ts", 2, 1),
+            changed_line_file("packages/docs/components/ecosystem.tsx", 2_001, 0),
+            changed_line_file("packages/docsify/index.ts", 4, 0),
+        ];
+
+        let default_count = changed_language_line_count(
+            &files,
+            LanguageId::TypeScript,
+            &crate::config::LanguagesConfig::default(),
+        );
+        if default_count != 7 {
+            return Err(format!(
+                "expected docs-site lines excluded and the near miss counted, got {default_count}"
+            ));
+        }
+
+        let mut declared = crate::config::LanguagesConfig::default();
+        declared.typescript.handwritten_files =
+            vec!["packages/docs/components/ecosystem.tsx".to_string()];
+        let declared_count = changed_language_line_count(&files, LanguageId::TypeScript, &declared);
+        if declared_count != 2_008 {
+            return Err(format!(
+                "expected the declared handwritten docs path to count again, got {declared_count}"
             ));
         }
         Ok(())

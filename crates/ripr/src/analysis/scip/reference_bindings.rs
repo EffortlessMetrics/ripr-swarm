@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScipReferenceBindings {
     project_root_relative: String,
-    /// SCIP definition symbols keyed by workspace-relative path and terminal name.
-    owner_definition_symbols: BTreeMap<(String, String), Vec<String>>,
+    /// Definition authority keyed by captured path, name and exact fn-token/body range.
+    owner_definition_symbols: BTreeMap<(String, String, usize, usize), Vec<String>>,
     /// Reference occurrences keyed by `(path, line, start_character, end_character)`.
     reference_symbols: BTreeMap<(String, i32, i32, i32), Vec<String>>,
     position_encodings: BTreeMap<String, i32>,
@@ -46,49 +46,76 @@ impl ScipReferenceBindings {
         let (index, project_root_relative) =
             snapshot.into_index_for_consumed_sources(consumed, retained_sources.iter().copied())?;
         let mut bindings = Self::from_index(&project_root_relative, &index);
-        // A terminal SCIP name cannot identify one of several same-file Rust
-        // owners. Count the retained declarations, including inactive cfg items,
-        // rather than trusting the supplied index to enumerate every owner.
-        let counts = retained_sources
-            .into_iter()
-            .map(|(path, source)| {
-                let counts =
-                    crate::analysis::syntax::parse_clean_source_file(source).map(|parsed| {
-                        let mut counts = BTreeMap::<String, usize>::new();
-                        for function in parsed
-                            .tree()
-                            .syntax()
-                            .descendants()
-                            .filter_map(ast::Fn::cast)
-                        {
-                            if let Some(name) = function.name() {
-                                *counts
-                                    .entry(name.text().trim_start_matches("r#").to_string())
-                                    .or_default() += 1;
-                            }
-                        }
-                        counts
-                    });
-                (path.to_path_buf(), counts)
-            })
-            .collect::<BTreeMap<_, _>>();
-        bindings.owner_definition_symbols.retain(|(path, name), _| {
+        let sources = retained_sources.into_iter().collect::<BTreeMap<_, _>>();
+        for document in &index.documents {
             let relative = Path::new(&project_root_relative)
-                .join(path)
+                .join(&document.relative_path)
                 .components()
                 .filter(|part| !matches!(part, std::path::Component::CurDir))
                 .collect::<PathBuf>();
-            counts
-                .get(&relative)
-                .and_then(Option::as_ref)
-                .and_then(|counts| counts.get(name))
-                == Some(&1)
-        });
+            let Some(source) = sources.get(relative.as_path()) else {
+                continue;
+            };
+            let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(source) else {
+                continue;
+            };
+            let mut functions = BTreeMap::new();
+            for function in parsed
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::Fn::cast)
+            {
+                let (Some(name), Some(keyword)) = (function.name(), function.fn_token()) else {
+                    continue;
+                };
+                let name_range = name.syntax().text_range();
+                functions.insert(
+                    (
+                        u32::from(name_range.start()) as usize,
+                        u32::from(name_range.end()) as usize,
+                    ),
+                    (
+                        name.text().trim_start_matches("r#").to_string(),
+                        u32::from(keyword.text_range().start()) as usize,
+                        u32::from(function.syntax().text_range().end()) as usize,
+                    ),
+                );
+            }
+            for occurrence in document
+                .occurrences
+                .iter()
+                .filter(|occurrence| is_definition(occurrence))
+            {
+                let Some(range) =
+                    occurrence_source_range(source, occurrence, document.position_encoding)
+                else {
+                    continue;
+                };
+                let Some((name, start, end)) = functions.get(&range) else {
+                    continue;
+                };
+                if simple_symbol_name(&occurrence.symbol).as_ref() != Some(name) {
+                    continue;
+                }
+                bindings
+                    .owner_definition_symbols
+                    .entry((
+                        normalize_relative_path(&document.relative_path),
+                        name.clone(),
+                        *start,
+                        *end,
+                    ))
+                    .or_default()
+                    .push(occurrence.symbol.clone());
+            }
+        }
         Ok(bindings)
     }
 
     fn from_index(project_root_relative: &str, index: &Index) -> Self {
-        let mut owner_definition_symbols: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+        let owner_definition_symbols: BTreeMap<(String, String, usize, usize), Vec<String>> =
+            BTreeMap::new();
         let mut reference_symbols: BTreeMap<(String, i32, i32, i32), Vec<String>> = BTreeMap::new();
         let mut position_encodings = BTreeMap::new();
         for document in &index.documents {
@@ -101,14 +128,7 @@ impl ScipReferenceBindings {
                 let Some((line, start)) = occurrence_start(occurrence) else {
                     continue;
                 };
-                if is_definition(occurrence) {
-                    if let Some(name) = simple_symbol_name(&occurrence.symbol) {
-                        owner_definition_symbols
-                            .entry((relative_path.clone(), name))
-                            .or_default()
-                            .push(occurrence.symbol.clone());
-                    }
-                } else if is_reference(occurrence) {
+                if is_reference(occurrence) {
                     let end = match occurrence.range.as_slice() {
                         [_, _, end] => *end,
                         [_, _, end_line, end] if *end_line == line => *end,
@@ -129,6 +149,27 @@ impl ScipReferenceBindings {
         }
     }
 
+    #[cfg(test)]
+    fn from_index_for_call_span_tests(project_root_relative: &str, index: &Index) -> Self {
+        let mut bindings = Self::from_index(project_root_relative, index);
+        for document in &index.documents {
+            for occurrence in document
+                .occurrences
+                .iter()
+                .filter(|occurrence| is_definition(occurrence))
+            {
+                if let Some(name) = simple_symbol_name(&occurrence.symbol) {
+                    bindings
+                        .owner_definition_symbols
+                        .entry((normalize_relative_path(&document.relative_path), name, 0, 0))
+                        .or_default()
+                        .push(occurrence.symbol.clone());
+                }
+            }
+        }
+        bindings
+    }
+
     /// Whether a bare call to `callee` in `test_file` at `call_line` resolves
     /// through admitted SCIP to the owner's definition symbol.
     #[expect(
@@ -144,13 +185,14 @@ impl ScipReferenceBindings {
         callee: &str,
         owner_file: &Path,
         owner_name: &str,
+        owner_range: std::ops::Range<usize>,
         same_line_same_name_calls: usize,
     ) -> bool {
         if same_line_same_name_calls != 1 {
             return false;
         }
         let Some(owner_symbol) =
-            self.owner_definition_symbol(workspace_root, owner_file, owner_name)
+            self.owner_definition_symbol(workspace_root, owner_file, owner_name, owner_range)
         else {
             return false;
         };
@@ -189,11 +231,15 @@ impl ScipReferenceBindings {
         workspace_root: &Path,
         owner_file: &Path,
         owner_name: &str,
+        owner_range: std::ops::Range<usize>,
     ) -> Option<String> {
         let path = self.relative_path(workspace_root, owner_file)?;
-        let symbols = self
-            .owner_definition_symbols
-            .get(&(path, owner_name.to_string()))?;
+        let symbols = self.owner_definition_symbols.get(&(
+            path,
+            owner_name.trim_start_matches("r#").to_string(),
+            owner_range.start,
+            owner_range.end,
+        ))?;
         match symbols.len() {
             1 => Some(symbols[0].clone()),
             _ => None,
@@ -203,17 +249,55 @@ impl ScipReferenceBindings {
     fn relative_path(&self, workspace_root: &Path, file: &Path) -> Option<String> {
         let workspace = workspace_root.canonicalize().ok()?;
         let project_root = workspace.join(&self.project_root_relative);
-        let project_root = project_root.canonicalize().ok()?;
         let file = if file.is_absolute() {
             file.to_path_buf()
         } else {
             workspace.join(file)
         };
-        let file = file.canonicalize().ok()?;
-        file.strip_prefix(&project_root)
-            .ok()
-            .map(|relative| normalize_relative_path(relative.to_string_lossy().as_ref()))
+        let relative = file.strip_prefix(&project_root).ok()?;
+        // Binding keys belong to the captured snapshot. Resolving this file
+        // again could redirect an old owner to another admitted document.
+        // SCIP paths are UTF8; lossy projection cannot identify a raw path.
+        let mut normalized = PathBuf::new();
+        for component in relative.components() {
+            match component {
+                std::path::Component::Normal(part) => {
+                    if part.to_str()?.contains('\\') {
+                        return None;
+                    }
+                    normalized.push(part);
+                }
+                std::path::Component::CurDir => {}
+                _ => return None,
+            }
+        }
+        Some(normalize_relative_path(normalized.to_str()?))
     }
+}
+
+/// Convert one exact single-line encoded occurrence into retained raw bytes.
+fn occurrence_source_range(
+    source: &str,
+    occurrence: &Occurrence,
+    encoding: i32,
+) -> Option<(usize, usize)> {
+    let (line, start) = occurrence_start(occurrence)?;
+    let end = match occurrence.range.as_slice() {
+        [_, _, end] => *end,
+        [_, _, end_line, end] if *end_line == line => *end,
+        _ => return None,
+    };
+    let line = usize::try_from(line).ok()?;
+    let text = source.lines().nth(line)?;
+    let offset = source
+        .split_inclusive('\n')
+        .take(line)
+        .map(str::len)
+        .sum::<usize>();
+    Some((
+        offset.checked_add(character_to_byte(text, start, encoding)?)?,
+        offset.checked_add(character_to_byte(text, end, encoding)?)?,
+    ))
 }
 
 /// Call facts deliberately deduplicate names on a source line. Re-establish
@@ -311,6 +395,31 @@ mod tests {
         Document, Metadata, Occurrence, ProtocolVersion, TextEncoding, ToolInfo,
     };
 
+    fn function_span(
+        source: &str,
+        name: &str,
+        ordinal: usize,
+    ) -> Result<std::ops::Range<usize>, String> {
+        let parsed =
+            crate::analysis::syntax::parse_clean_source_file(source).ok_or("source parse")?;
+        let function = parsed
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .filter(|function| {
+                function
+                    .name()
+                    .is_some_and(|found| found.text().trim_start_matches("r#") == name)
+            })
+            .nth(ordinal)
+            .ok_or("function identity")?;
+        Ok(
+            u32::from(function.fn_token().ok_or("fn token")?.text_range().start()) as usize
+                ..u32::from(function.syntax().text_range().end()) as usize,
+        )
+    }
+
     #[test]
     fn reference_binding_resolves_cross_package_call_to_owner_definition() -> Result<(), String> {
         let temp = tempfile_dir("bindings")?;
@@ -375,7 +484,7 @@ mod tests {
             ],
             ..Index::default()
         };
-        let bindings = ScipReferenceBindings::from_index(".", &index);
+        let bindings = ScipReferenceBindings::from_index_for_call_span_tests(".", &index);
         assert_eq!(
             simple_symbol_name(scoped_owner_symbol),
             Some("score".to_string())
@@ -388,6 +497,7 @@ mod tests {
             "expect_response",
             &project.join("crates/alpha/src/lib.rs"),
             "expect_response",
+            0..0,
             1,
         ));
         assert!(!bindings.call_resolves_to_owner(
@@ -398,6 +508,7 @@ mod tests {
             "expect_response",
             &project.join("crates/alpha/src/lib.rs"),
             "other_name",
+            0..0,
             1,
         ));
         assert!(!bindings.call_resolves_to_owner(
@@ -408,6 +519,7 @@ mod tests {
             "expect_response",
             &project.join("crates/alpha/src/lib.rs"),
             "expect_response",
+            0..0,
             2,
         ));
         let duplicate_owner_index = Index {
@@ -432,7 +544,8 @@ mod tests {
             }],
             ..Index::default()
         };
-        let ambiguous = ScipReferenceBindings::from_index(".", &duplicate_owner_index);
+        let ambiguous =
+            ScipReferenceBindings::from_index_for_call_span_tests(".", &duplicate_owner_index);
         assert!(
             !ambiguous.call_resolves_to_owner(
                 &project,
@@ -442,6 +555,7 @@ mod tests {
                 "score",
                 &project.join("crates/alpha/src/lib.rs"),
                 "score",
+                0..0,
                 1,
             ),
             "duplicate same-name owners in one file must fail closed"
@@ -465,6 +579,7 @@ mod tests {
             documents: vec![
                 Document {
                     relative_path: "owner.rs".into(),
+                    position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
                     occurrences: vec![Occurrence {
                         symbol: alpha.into(),
                         range: vec![0, 7, 12],
@@ -525,8 +640,17 @@ mod tests {
                 retained_sources,
             )
             .map_err(|error| error.reason())?;
-            Ok(bindings
-                .call_resolves_to_owner(&project, &test, 1, source, "score", &owner, "score", 1))
+            Ok(bindings.call_resolves_to_owner(
+                &project,
+                &test,
+                1,
+                source,
+                "score",
+                &owner,
+                "score",
+                function_span("pub fn score() -> u32 { 1 }", "score", 0)?,
+                1,
+            ))
         };
         assert!(
             !resolves(&index)?,
@@ -612,7 +736,17 @@ mod tests {
             ScipReferenceBindings::from_admitted_snapshot(snapshot, &consumed, retained_sources)
                 .map_err(|error| error.reason())?;
         assert!(
-            bindings.call_resolves_to_owner(&project, &file, 2, line, "score", &file, "score", 1),
+            bindings.call_resolves_to_owner(
+                &project,
+                &file,
+                2,
+                line,
+                "score",
+                &file,
+                "score",
+                function_span(source, "score", 0)?,
+                1,
+            ),
             "retained validated index/root must survive file replacement"
         );
         assert!(
@@ -638,96 +772,153 @@ mod tests {
     }
 
     #[test]
-    fn same_file_function_names_cannot_share_definition_authority() -> Result<(), String> {
+    fn definitions_bind_only_the_actual_function_span_and_kind() -> Result<(), String> {
         use crate::analysis::consumed_source::ConsumedRustSources;
         use sha2::{Digest, Sha256};
         let project = tempfile_dir("same-file-owner")?;
         let call_source = "#[test] fn t() { score(); }\n";
         let call = call_source.find("score()").ok_or("missing call")?;
-        let symbol = "scip rust-analyzer cargo alpha 0.1.0 alpha/active/score().";
-        for duplicate in [false, true] {
-            let owner = if duplicate {
-                "#[cfg(any())] mod inactive { pub fn r#score() -> u32 { 1 } }\nmod active { pub fn score() -> u32 { 7 } }\npub use active::score;\n"
-            } else {
-                "mod active { pub fn score() -> u32 { 7 } }\npub use active::score;\n"
-            };
-            let definition_line = usize::from(duplicate);
-            let definition_column = owner
-                .lines()
-                .nth(definition_line)
-                .ok_or("definition line")?
-                .find("score()")
-                .ok_or("definition")?;
-            let index = Index {
-                documents: vec![
-                    Document {
-                        relative_path: "owner.rs".into(),
-                        occurrences: vec![Occurrence {
-                            symbol: symbol.into(),
-                            range: vec![
-                                definition_line as i32,
-                                definition_column as i32,
-                                (definition_column + 5) as i32,
-                            ],
-                            symbol_roles: SymbolRole::Definition as i32,
-                            ..Occurrence::default()
-                        }],
-                        ..Document::default()
-                    },
-                    Document {
-                        relative_path: "test.rs".into(),
-                        position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
-                        occurrences: vec![Occurrence {
-                            symbol: symbol.into(),
-                            range: vec![0, call as i32, (call + 5) as i32],
-                            ..Occurrence::default()
-                        }],
-                        ..Document::default()
-                    },
-                ],
-                ..Index::default()
-            };
-            let bytes = index.encode_to_vec();
-            let index_path = project.join("index.scip");
-            let manifest_path = project.join("manifest.json");
-            std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
-            std::fs::write(project.join("owner.rs"), owner).map_err(|e| e.to_string())?;
-            std::fs::write(project.join("test.rs"), call_source).map_err(|e| e.to_string())?;
-            let manifest = serde_json::json!({"schema_version":"ripr-scip-admission-manifest-v1","index_sha256":format!("{:x}",Sha256::digest(&bytes)),"producer":{"name":"same-file-definition-regression","version":"1"},"project_root_relative":".","source_files":[
-                {"relative_path":"owner.rs","source_sha256":format!("{:x}",Sha256::digest(owner.as_bytes()))},
-                {"relative_path":"test.rs","source_sha256":format!("{:x}",Sha256::digest(call_source.as_bytes()))}
-            ]});
-            std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
-            let mut consumed = ConsumedRustSources::default();
-            consumed.record(Path::new("owner.rs"), Some(owner.as_bytes()));
-            consumed.record(Path::new("test.rs"), Some(call_source.as_bytes()));
-            let bindings = ScipReferenceBindings::from_admitted_index(
-                &project,
-                &index_path,
-                &manifest_path,
-                &consumed,
-                [
-                    (Path::new("owner.rs"), owner),
-                    (Path::new("test.rs"), call_source),
-                ],
-            )
-            .map_err(|e| e.reason())?;
-            // The public lookup has only a file/name owner key. Neither the
-            // inactive nor active same-name owner may borrow this symbol.
-            assert_eq!(
-                bindings.call_resolves_to_owner(
+        for encoding in [
+            PositionEncoding::Utf8CodeUnitOffsetFromLineStart,
+            PositionEncoding::Utf16CodeUnitOffsetFromLineStart,
+            PositionEncoding::Utf32CodeUnitOffsetFromLineStart,
+        ] {
+            for scenario in [0, 4, 2, 1, 3] {
+                let duplicate = scenario != 0;
+                let symbol = if scenario == 2 {
+                    "scip rust-analyzer cargo alpha 0.1.0 alpha/active/score."
+                } else {
+                    "scip rust-analyzer cargo alpha 0.1.0 alpha/active/score()."
+                };
+                let owner = if scenario == 4 {
+                    "mod active { pub fn r#score() -> u32 { 7 } }\npub use active::score;\n"
+                } else if scenario == 2 {
+                    "#[cfg(any())] mod inactive { pub fn score() -> u32 { 1 } }\nmod active { pub const score: fn() -> u32 = || 7; }\npub use active::score;\n"
+                } else if scenario == 3 {
+                    "#[cfg(any())] mod inactive { pub fn score() -> u32 { 7 } } mod active { pub fn score() -> u32 { 7 } } pub use active::score;\n"
+                } else if duplicate {
+                    "#[cfg(any())] mod inactive { pub fn r#score() -> u32 { 1 } }\nmod active { pub fn score() -> u32 { 7 } }\npub use active::score;\n"
+                } else {
+                    "mod active { pub fn score() -> u32 { 7 } }\npub use active::score;\n"
+                };
+                let owner = format!("const LABEL: &str = \"🚀\"; {owner}");
+                let owner = owner.as_str();
+                let definition_line = usize::from(matches!(scenario, 1 | 2));
+                let definition_text = owner
+                    .lines()
+                    .nth(definition_line)
+                    .ok_or("definition line")?;
+                let definition_byte = definition_text
+                    .rfind(if scenario == 2 {
+                        "score:"
+                    } else if scenario == 4 {
+                        "r#score()"
+                    } else {
+                        "score()"
+                    })
+                    .ok_or("definition")?;
+                let prefix = &definition_text[..definition_byte];
+                let definition_column = match encoding {
+                    PositionEncoding::Utf8CodeUnitOffsetFromLineStart => prefix.len(),
+                    PositionEncoding::Utf16CodeUnitOffsetFromLineStart => {
+                        prefix.encode_utf16().count()
+                    }
+                    _ => prefix.chars().count(),
+                };
+                let name_len = if scenario == 4 { 7 } else { 5 };
+                let index = Index {
+                    documents: vec![
+                        Document {
+                            relative_path: "owner.rs".into(),
+                            position_encoding: encoding as i32,
+                            occurrences: vec![Occurrence {
+                                symbol: symbol.into(),
+                                range: vec![
+                                    definition_line as i32,
+                                    definition_column as i32,
+                                    (definition_column + name_len) as i32,
+                                ],
+                                symbol_roles: SymbolRole::Definition as i32,
+                                ..Occurrence::default()
+                            }],
+                            ..Document::default()
+                        },
+                        Document {
+                            relative_path: "test.rs".into(),
+                            position_encoding: encoding as i32,
+                            occurrences: vec![Occurrence {
+                                symbol: symbol.into(),
+                                range: vec![0, call as i32, (call + 5) as i32],
+                                ..Occurrence::default()
+                            }],
+                            ..Document::default()
+                        },
+                    ],
+                    ..Index::default()
+                };
+                let bytes = index.encode_to_vec();
+                let index_path = project.join("index.scip");
+                let manifest_path = project.join("manifest.json");
+                std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
+                std::fs::write(project.join("owner.rs"), owner).map_err(|e| e.to_string())?;
+                std::fs::write(project.join("test.rs"), call_source).map_err(|e| e.to_string())?;
+                let manifest = serde_json::json!({"schema_version":"ripr-scip-admission-manifest-v1","index_sha256":format!("{:x}",Sha256::digest(&bytes)),"producer":{"name":"same-file-definition-regression","version":"1"},"project_root_relative":".","source_files":[
+                    {"relative_path":"owner.rs","source_sha256":format!("{:x}",Sha256::digest(owner.as_bytes()))},
+                    {"relative_path":"test.rs","source_sha256":format!("{:x}",Sha256::digest(call_source.as_bytes()))}
+                ]});
+                std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
+                let mut consumed = ConsumedRustSources::default();
+                consumed.record(Path::new("owner.rs"), Some(owner.as_bytes()));
+                consumed.record(Path::new("test.rs"), Some(call_source.as_bytes()));
+                let bindings = ScipReferenceBindings::from_admitted_index(
                     &project,
-                    &project.join("test.rs"),
-                    1,
-                    call_source.trim_end(),
-                    "score",
-                    &project.join("owner.rs"),
-                    "score",
-                    1
-                ),
-                !duplicate,
-                "same-file duplicate={duplicate}"
-            );
+                    &index_path,
+                    &manifest_path,
+                    &consumed,
+                    [
+                        (Path::new("owner.rs"), owner),
+                        (Path::new("test.rs"), call_source),
+                    ],
+                )
+                .map_err(|e| e.reason())?;
+                // The first function is inactive except in the unique-owner case.
+                // Constant coordinates and same-line sibling functions cannot lend
+                // this actual source owner their authority.
+                assert_eq!(
+                    bindings.call_resolves_to_owner(
+                        &project,
+                        &project.join("test.rs"),
+                        1,
+                        call_source.trim_end(),
+                        "score",
+                        &project.join("owner.rs"),
+                        "score",
+                        function_span(owner, "score", 0)?,
+                        1,
+                    ),
+                    matches!(scenario, 0 | 4),
+                    "definition scenario={scenario}"
+                );
+                if matches!(scenario, 1 | 3) {
+                    let inactive = function_span(owner, "score", 0)?;
+                    let actual = function_span(owner, "score", 1)?;
+                    assert_ne!(inactive, actual);
+                    assert!(
+                        bindings.call_resolves_to_owner(
+                            &project,
+                            &project.join("test.rs"),
+                            1,
+                            call_source.trim_end(),
+                            "score",
+                            &project.join("owner.rs"),
+                            "score",
+                            actual,
+                            1
+                        ),
+                        "actual active owner scenario={scenario}"
+                    );
+                }
+            }
         }
         std::fs::remove_dir_all(project).map_err(|e| e.to_string())?;
         Ok(())
@@ -739,6 +930,7 @@ mod tests {
         use sha2::{Digest, Sha256};
         let project = tempfile_dir("captured-source")?;
         let owner = "pub fn score() -> u32 { 1 }\n";
+        let owner_range = function_span(owner, "score", 0)?;
         let old = "use beta::score;\n#[test] fn t() { score(); }\n";
         let current = old.replace("beta::score", "alpha::score");
         let call_line = old.lines().nth(1).ok_or("missing call line")?;
@@ -749,6 +941,7 @@ mod tests {
             documents: vec![
                 Document {
                     relative_path: "owner.rs".into(),
+                    position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart as i32,
                     occurrences: vec![Occurrence {
                         symbol: symbol.into(),
                         range: vec![0, 7, 12],
@@ -830,6 +1023,7 @@ mod tests {
                 "score",
                 &project.join("owner.rs"),
                 "score",
+                owner_range.clone(),
                 1,
             )
         };
@@ -878,6 +1072,7 @@ mod tests {
         use sha2::{Digest, Sha256};
         let project = tempfile_dir("coordinate-source")?;
         let owner = "pub fn f() -> u32 { 1 }\n";
+        let owner_range = function_span(owner, "f", 0)?;
         let plain = "use beta::f; #[test] fn unrelated() { let (_, value) = (alpha::f, f()); assert_eq!(value, 7); }";
         let alpha = "scip rust-analyzer cargo alpha 0.1.0 alpha/f().";
         let beta = "scip rust-analyzer cargo beta 0.1.0 beta/f().";
@@ -906,6 +1101,8 @@ mod tests {
                     documents: vec![
                         Document {
                             relative_path: "owner.rs".into(),
+                            position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart
+                                as i32,
                             occurrences: vec![Occurrence {
                                 symbol: alpha.into(),
                                 range: vec![0, 7, 8],
@@ -972,6 +1169,7 @@ mod tests {
                         "f",
                         &project.join("owner.rs"),
                         "f",
+                        owner_range.clone(),
                         1,
                     )
                 };
@@ -1002,6 +1200,45 @@ mod tests {
                     "later live edits cannot replace matching retained coordinate bytes"
                 );
             }
+        }
+        std::fs::remove_dir_all(project).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn captured_relative_keys_do_not_follow_live_filesystem_aliases() -> Result<(), String> {
+        let project = tempfile_dir("captured-path-key")?;
+        let bindings = ScipReferenceBindings::from_index(".", &Index::default());
+        let file = project.join("owner.rs");
+        assert_eq!(
+            bindings.relative_path(&project, Path::new("owner.rs")),
+            Some("owner.rs".into())
+        );
+        assert_eq!(
+            bindings.relative_path(&project, &file),
+            Some("owner.rs".into())
+        );
+        assert_eq!(
+            bindings.relative_path(&project, Path::new("../outside.rs")),
+            None
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::{ffi::OsStringExt, fs::symlink};
+            assert_eq!(
+                bindings.relative_path(&project, Path::new(r"nested\owner.rs")),
+                None
+            );
+            let invalid = std::ffi::OsString::from_vec(vec![b'f', 0xff, b'.', b'r', b's']);
+            assert_eq!(bindings.relative_path(&project, Path::new(&invalid)), None);
+            std::fs::write(project.join("other.rs"), "pub fn score() {}\n")
+                .map_err(|e| e.to_string())?;
+            symlink(project.join("other.rs"), &file).map_err(|e| e.to_string())?;
+            assert_eq!(
+                bindings.relative_path(&project, &file),
+                Some("owner.rs".into()),
+                "a new live symlink cannot change captured document identity"
+            );
         }
         std::fs::remove_dir_all(project).map_err(|e| e.to_string())?;
         Ok(())

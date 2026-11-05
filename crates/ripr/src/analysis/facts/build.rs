@@ -123,6 +123,7 @@ pub(crate) fn extend_index_from_loaded_files_with_cache(
         .include_targets
         .extend(extra_index.include_targets.iter().cloned());
     super::includes::resolve_repository_local_includes(root, index);
+    super::resource_dependencies::attach_resource_dependencies(root, index);
     index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         root,
         index
@@ -306,6 +307,7 @@ fn build_index_with_file_fact_cache_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
     let (mut index, files_content_hash) = batched?;
     cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
+    super::resource_dependencies::attach_resource_dependencies(root, &mut index);
     cancellation::checkpoint()?;
     index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         root,
@@ -719,6 +721,7 @@ fn build_index_with_adapters(
     }
     cancellation::checkpoint()?;
     super::includes::resolve_repository_local_includes(root, &mut index);
+    super::resource_dependencies::attach_resource_dependencies(root, &mut index);
     cancellation::checkpoint()?;
     index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
         root,
@@ -1509,6 +1512,15 @@ pub fn check(x: i32) -> bool {
         assert_eq!(warm.file_fact_cache.misses, 0);
         assert_eq!(warm.file_fact_cache.stores, 0);
         assert_eq!(warm.index.files().get(&file), cold.index.files().get(&file));
+        for index in [&cold.index, &warm.index] {
+            let owner = index.functions().first().ok_or("missing cached owner")?;
+            let facts = index.files().get(&file).ok_or("missing cached file")?;
+            assert_eq!(
+                owner.body.range_in(&facts.data().source),
+                Some(4..bytes.len() - 1),
+                "cold and cached indexed owners retain their exact file allocation/range"
+            );
+        }
         Ok(())
     }
 

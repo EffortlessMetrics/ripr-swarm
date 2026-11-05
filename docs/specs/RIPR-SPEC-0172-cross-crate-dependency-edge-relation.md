@@ -400,10 +400,23 @@ capture alone does not establish coordinate identity. Both adapters supply the
 actual retained source iterator; no live reread can replace it. Ordinary matching
 UTF-8/16/32 position controls and post-admission mutation behavior remain intact.
 
-A file/name definition key requires exactly one matching function declaration
-in the admitted retained document. Multiple same-terminal-name declarations
-across modules, including inactive conditional items and raw identifier names,
-withhold enrichment for every such owner. Supplied SCIP symbol count does not
-prove source-owner uniqueness. This is a conservative ambiguity refusal, not a
-claim of full definition-coordinate identity. Missing or unparseable retained
-source cannot establish this authority.
+Definition authority must match an actual retained `ast::Fn` name-token range,
+converted with the document's declared UTF-8/16/32 encoding, and the exact
+function range starting at its `fn` token. A terminal name, SCIP symbol kind or
+unique function count alone cannot identify the owner: a callable constant or
+another same-line function can have the same name. Exact function spans
+separate supported sibling owners; unrelated term definitions contribute no
+function authority.
+
+The consumer obtains that function range only from `SourceText` sharing the
+actual retained `FileData.source` allocation. Owned, lexical or equal-text
+foreign allocations have no range authority. Attached cached `FileFacts` link
+function spans into their newly decoded parent allocation and preserve this
+proof; detached/inline bodies remain unknown. Both production consumers require
+this range. No new cache schema or public analysis option is introduced.
+
+Document keys use strict lexical UTF8 workspace/project-relative paths. Live
+owner-file canonicalization, symlink changes and lossy filename projection may
+not redirect a captured owner to another admitted document. Escaping or
+unrepresentable keys withhold enrichment within this adapter; general path
+behavior is unchanged.

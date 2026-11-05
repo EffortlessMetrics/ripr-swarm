@@ -1837,6 +1837,14 @@ fn scip_reference_admits_owner_call(
     let Some(bindings) = context.scip_bindings else {
         return false;
     };
+    let Some(owner_range) = context
+        .index
+        .files()
+        .get(&owner.file)
+        .and_then(|facts| owner.body.range_in(&facts.data().source))
+    else {
+        return false;
+    };
     test.calls.iter().any(|call| {
         // CallFact.text is trimmed or synthesized deny-only text, not a source span.
         let Some(source_line) = context.index.files().get(&test.file).and_then(|facts| {
@@ -1855,6 +1863,7 @@ fn scip_reference_admits_owner_call(
                 callee,
                 &owner.file,
                 &owner.name,
+                owner_range.clone(),
                 same_line_same_name_call_count(test, callee, call.line),
             )
     })
@@ -7284,13 +7293,33 @@ fn free_function_call_start_in(text: &str, name: &str) -> Option<usize> {
 /// `text` is a call that can reach a free function (see
 /// [`test_calls_free_function`]).
 pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name: &str) -> bool {
+    name_may_denote_free_function_at(text, at, name) && {
+        let after = at + name.len();
+        call_paren_follows(text, after)
+    }
+}
+
+/// Whether the occurrence of `name` starting at byte `at` of `text` (masked
+/// source, or raw source when the caller also admits doctest and string
+/// mentions) is spelled so that it can denote a module-level free function:
+/// the name at an identifier boundary, not a `fn name` declaration, not a
+/// receiver-dot selection (`x.name`, which picks a method or field), and not
+/// qualified by a type (`Type::name`, `u64::name`, `<T as Tr>::name`). A bare
+/// `name`, a lowercase `module::name` path and a range operand (`0..name`)
+/// qualify. Unlike [`is_free_function_call_at`] it does not require a call
+/// paren, so a function-pointer use (`.map(name)`) still qualifies.
+pub(in crate::analysis) fn name_may_denote_free_function_at(
+    text: &str,
+    at: usize,
+    name: &str,
+) -> bool {
     let bytes = text.as_bytes();
     if name.is_empty() || text.get(at..).is_none_or(|rest| !rest.starts_with(name)) {
         return false;
     }
     {
         let after = at + name.len();
-        if !ident_boundary(text, at, after) || !call_paren_follows(text, after) {
+        if !ident_boundary(text, at, after) {
             return false;
         }
         let mut before = at;
@@ -7330,7 +7359,7 @@ pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name:
 /// cache) fails closed — an unestablished owner keeps the credit — and so
 /// does every method container, including trait declarations, which share
 /// the `None` self-type branch with free functions (#7006).
-fn is_established_free_function(owner: &FunctionSummary) -> bool {
+pub(in crate::analysis) fn is_established_free_function(owner: &FunctionSummary) -> bool {
     matches!(owner.item.container, FunctionContainer::Free) && !owner.item.has_self_param
 }
 
@@ -11162,14 +11191,23 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 ),
             )?;
         }
-        for duplicate in [false, true] {
-            let alpha_source = if duplicate {
+        for scenario in [0, 1, 2, 3] {
+            let duplicate = matches!(scenario, 1 | 3);
+            let alpha_source = if scenario == 2 {
+                "#[cfg(any())] mod inactive { pub fn f() -> u32 { 99 } }\nmod active { pub const f: fn() -> u32 = || 1; }\npub use active::f;\n"
+            } else if scenario == 3 {
+                "#[cfg(any())] mod inactive { pub fn f() -> u32 { 1 } } mod active { pub fn f() -> u32 { 1 } } pub use active::f;\n"
+            } else if duplicate {
                 "#[cfg(any())] mod inactive { pub fn r#f() -> u32 { 1 } }\nmod active { pub fn f() -> u32 { 1 } }\npub use active::f;\n"
             } else {
                 "pub fn f() -> u32 { 1 }\n"
             };
             let beta_source = "pub fn f() -> u32 { 7 }\n";
-            let alpha = "scip rust-analyzer cargo alpha 0.1.0 alpha/f().";
+            let alpha = if scenario == 2 {
+                "scip rust-analyzer cargo alpha 0.1.0 alpha/f."
+            } else {
+                "scip rust-analyzer cargo alpha 0.1.0 alpha/f()."
+            };
             let beta = "scip rust-analyzer cargo beta 0.1.0 beta/f().";
             for bom in [true, false] {
                 for targets_alpha in [false, true] {
@@ -11226,17 +11264,29 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                     );
                     let pointer = source.find("alpha::f").ok_or("pointer")? + "alpha::".len();
                     let call = source.find(", f()").ok_or("call")? + 2;
+                    let definition_byte = alpha_source
+                        .rfind(if scenario == 2 { "f:" } else { "f()" })
+                        .ok_or("alpha definition")?;
+                    let definition_line = alpha_source[..definition_byte]
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count();
+                    let definition_column = alpha_source[..definition_byte]
+                        .rfind('\n')
+                        .map_or(definition_byte, |last| definition_byte - last - 1);
                     let scip = Index {
                         documents: vec![
                             Document {
                                 relative_path: "alpha/src/lib.rs".into(),
+                                position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart
+                                    as i32,
                                 occurrences: vec![Occurrence {
                                     symbol: alpha.into(),
-                                    range: if duplicate {
-                                        vec![1, 20, 21]
-                                    } else {
-                                        vec![0, 7, 8]
-                                    },
+                                    range: vec![
+                                        definition_line as i32,
+                                        definition_column as i32,
+                                        (definition_column + 1) as i32,
+                                    ],
                                     symbol_roles: SymbolRole::Definition as i32,
                                     ..Occurrence::default()
                                 }],
@@ -11244,6 +11294,8 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                             },
                             Document {
                                 relative_path: "beta/src/lib.rs".into(),
+                                position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart
+                                    as i32,
                                 occurrences: vec![Occurrence {
                                     symbol: beta.into(),
                                     range: vec![0, 7, 8],
@@ -11297,12 +11349,46 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                     context.root = &root;
                     context.scip_bindings = Some(&bindings);
                     for owner in owners {
+                        let owner_facts = index.files().get(&owner.file).ok_or("owner source")?;
+                        let owner_range = owner.body.range_in(&owner_facts.data().source).ok_or(
+                            "actual indexed owner must share its retained source allocation",
+                        )?;
+                        let expected = !bom
+                            && targets_alpha
+                            && scenario != 2
+                            && Some(owner_range.start) == alpha_source.rfind("fn f");
                         assert_eq!(
                             scip_reference_admits_owner_call(Some(&context), owner, test, "f"),
-                            !bom && targets_alpha && !duplicate,
-                            "BOM={bom}, actual_alpha={targets_alpha}, same-file duplicate={duplicate}, owner={:?}",
+                            expected,
+                            "BOM={bom}, actual_alpha={targets_alpha}, definition scenario={scenario}, owner={:?}",
                             owner.id
                         );
+                        for owner_path in [owner.file.clone(), root.join(&owner.file)] {
+                            assert_eq!(
+                                bindings.call_resolves_to_owner(
+                                    &root,
+                                    &test.file,
+                                    1,
+                                    index
+                                        .files()
+                                        .get(&test.file)
+                                        .ok_or("test source")?
+                                        .data()
+                                        .source
+                                        .lines()
+                                        .next()
+                                        .ok_or("test source line")?,
+                                    "f",
+                                    &owner_path,
+                                    &owner.name,
+                                    owner_range.clone(),
+                                    1
+                                ),
+                                expected,
+                                "relative/absolute retained owner handoff: {}",
+                                owner_path.display()
+                            );
+                        }
                     }
                 }
             }

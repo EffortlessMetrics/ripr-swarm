@@ -420,6 +420,45 @@ fn declared_handwritten_source_under_an_excluded_directory_is_admitted() -> Resu
 }
 
 #[test]
+fn docs_site_source_is_disclosed_as_skipped_unless_declared_handwritten() -> Result<(), String> {
+    // #13088: repo mode shares the adapter exclusion, so a docs-site file must
+    // leave the production denominator and be counted as skipped (not silently
+    // dropped), while a declared hand-written path is analyzed again.
+    let root = ts_unique_tempdir("repo-docs-site")?;
+    ts_write_file(&root.join("docs/theme/index.ts"), TS_SRC)?;
+    ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
+    let declared = vec!["docs/theme/index.ts".to_string()];
+    let with_decl = repo::analyze_repo_with_limit(
+        &repo_options(&root),
+        800,
+        ts_workspace_file_limit(),
+        ts_file_read_limit(),
+        ts_workspace_read_budget(),
+        &crate::config::TypescriptLanguageConfig {
+            handwritten_files: declared,
+            ..crate::config::TypescriptLanguageConfig::default()
+        },
+    );
+    let without_decl = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let without_decl = without_decl?;
+    assert_eq!(without_decl.production_files, 1);
+    assert_eq!(without_decl.file_accounting.skipped, Some(1));
+    assert_eq!(without_decl.file_accounting.discovered, Some(2));
+    assert!(
+        without_decl
+            .findings
+            .iter()
+            .all(|f| f.probe.location.file != Path::new("docs/theme/index.ts")),
+        "a docs-site file must not seed findings"
+    );
+    let with_decl = with_decl?;
+    assert_eq!(with_decl.production_files, 2);
+    assert_eq!(with_decl.file_accounting.skipped, Some(0));
+    Ok(())
+}
+
+#[test]
 fn distinct_predicates_of_one_owner_both_survive() -> Result<(), String> {
     let root = ts_unique_tempdir("repo-two-predicates")?;
     ts_write_file(
