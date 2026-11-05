@@ -1457,6 +1457,41 @@ impl ClassifiedProbeEvidence {
             })?;
             pin_syntax.helper_loan(test, assertion, context.index)
         };
+        let entry_pin = std::cell::OnceCell::new();
+        let entry_admitted = |test: &TestSummary, assertion: &OracleFact| {
+            entry_pin
+                .get_or_init(|| {
+                    context
+                        .helper_chain
+                        .as_ref()
+                        .and_then(|chain| chain.hops.last())
+                        .and_then(|hop| {
+                            OwnerReturnPin::establish_forwarding_entry(
+                                context.probe,
+                                &hop.caller,
+                                context.index,
+                            )
+                        })
+                })
+                .as_ref()
+                .is_some_and(|pin| {
+                    pin.admits(
+                        test,
+                        assertion,
+                        context.index,
+                        &|file, name| {
+                            context.index.files().get(file).is_none_or(|facts| {
+                                context.test_file_imports_foreign_callee_name(
+                                    file,
+                                    &facts.source,
+                                    name,
+                                )
+                            })
+                        },
+                        pin_syntax,
+                    )
+                })
+        };
         let discriminate = if matches!(context.probe.family, ProbeFamily::Predicate)
             && infect.state == StageState::Yes
             && discriminate.state == StageState::Yes
@@ -1517,6 +1552,7 @@ impl ClassifiedProbeEvidence {
                     .map(|chain| WrapperEntryPairing {
                         chain,
                         test_activation: &one_test_activation,
+                        entry_admitted: &entry_admitted,
                         entry_loan: &entry_loan,
                     }),
                 context.index,

@@ -259,6 +259,13 @@ produce `weakly_gripped`; the seam classifies `activation_unknown` and keeps
 its missing-discriminator guidance. A seam with established activation and
 the same evidence stays `weakly_gripped`.
 
+A predicate boundary may be strongly gripped only when an admitted oracle is
+paired with a boundary call in the same test. An equality input in one test
+cannot borrow an exact assertion on an off-boundary call in another test, or
+on a different call in the same test. Full and compact grip evidence apply the
+same pairing rule; an unestablished pairing weakens discrimination. This is a
+static evidence rule, not a claim that a test was executed.
+
 Repository activation and equality pairing read a whole decimal integer
 argument with a primitive integer suffix (`100i32`, `-100i64`, `1_00u32`)
 through the same literal-value reader used by diff boundaries. The source

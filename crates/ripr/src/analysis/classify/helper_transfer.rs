@@ -1068,6 +1068,84 @@ pub(crate) fn resolve_chain(
     chain_through_caller(callers[0], callee_name, index, workspace_complete, visited)
 }
 
+/// Repo boundary pairing may independently inspect one wrapper even when a
+/// test also calls the owner directly. This does not change the global chain:
+/// the pairing consumer must still establish the test's wrapper binding,
+/// forwarded result and boundary row on the same assertion.
+pub(crate) fn resolve_repo_boundary_chain(callee_name: &str, index: &RustIndex) -> HelperChain {
+    let refused = || HelperChain {
+        hops: Vec::new(),
+        stop_above: Some("repo boundary wrapper identity is unestablished".into()),
+    };
+    if !callee_is_unique(callee_name, index) {
+        return refused();
+    }
+    let Some(owner) = index
+        .functions()
+        .iter()
+        .find(|function| function.name == callee_name)
+    else {
+        return refused();
+    };
+    let callers = chain_callers(callee_name, index);
+    let mut production = callers
+        .iter()
+        .copied()
+        .filter(|caller| !caller.source_role.registers_executable_test());
+    let (Some(caller), None) = (production.next(), production.next()) else {
+        return refused();
+    };
+    if caller.file != owner.file {
+        return refused();
+    }
+    // Prove the bare same-file edge with the parser-backed scope owner and
+    // its production-item/cfg and local-binding gates. No name-only fallback.
+    let synthetic = crate::analysis::rust_index::TestSummary {
+        name: caller.name.clone(),
+        file: caller.file.clone(),
+        start_line: caller.start_line,
+        end_line: caller.end_line,
+        body: caller.body.clone(),
+        calls: caller.calls.clone(),
+        assertions: Vec::new(),
+        literals: caller.literals.clone(),
+        attrs: caller.attrs.clone(),
+        nested_fn_names: caller.nested_fn_names.clone(),
+        let_bindings: caller.let_bindings.clone(),
+        generated: None,
+    };
+    let syntax = super::owner_pin::OwnerPinSyntax::default();
+    if !super::owner_pin::same_file_free_helper_call_reaches_owner(
+        &synthetic, owner, None, index, &syntax,
+    ) || !super::owner_pin::targeted_free_call_reaches_owner(
+        &synthetic, owner, None, index, &syntax,
+    ) {
+        return refused();
+    }
+    // Bind only this parser-proven edge. Do not ask the global resolver to
+    // infer uniqueness or higher callers from a partial workspace.
+    let Some(sites) = call_sites(caller, callee_name, index) else {
+        return refused();
+    };
+    let [(call_text, arguments)] = sites.as_slice() else {
+        return refused();
+    };
+    HelperChain {
+        hops: vec![HelperHop {
+            caller: caller.clone(),
+            call_text: call_text.clone(),
+            arguments: arguments.clone(),
+            receiver: None,
+            through_macro: false,
+            module_qualified: false,
+            crate_qualifier: None,
+            transparent_macros_rebound: transparent_macro_name_rebound(&caller.body, index),
+            diverging_handlers: diverging_handlers(caller, callee_name, index),
+        }],
+        stop_above: Some("repo pairing proves only this same-file edge".into()),
+    }
+}
+
 /// The most callers [`resolve_multi_caller`] binds one by one (#9329). A
 /// callee with more direct callers declines as before.
 const MAX_MULTI_CALLER_BINDINGS: usize = 8;
@@ -3373,25 +3451,31 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
 /// scan the trusted-assertion reading uses. An out-of-line module counts as
 /// unresolved, which only withholds forwarding credit. A caller with no
 /// `!` invokes no macro, so the index scan is skipped for it.
-fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool {
+pub(super) fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool {
     caller_body.contains('!')
-        && index.files().iter().any(|(path, file)| {
-            if file.macro_candidates.as_deref().is_some_and(|candidates| {
-                TRANSPARENT_STD_MACROS
-                    .iter()
-                    .all(|name| !candidates.may_bind(name))
-            }) {
-                return false;
-            }
-            !crate::analysis::syntax::trusted_macro_binding_sites(
-                &file.source,
-                index.macro_scope_crates(),
-                TRANSPARENT_STD_MACROS,
-                &|_, _| false,
-                &|krate| index.drop_in_manifests.verified_root(path, krate),
-            )
-            .is_empty()
-        })
+        && index
+            .call_identity_memos
+            .transparent_macro_rebound(index, || transparent_macro_name_rebound_uncached(index))
+}
+
+fn transparent_macro_name_rebound_uncached(index: &RustIndex) -> bool {
+    index.files().iter().any(|(path, file)| {
+        if file.macro_candidates.as_deref().is_some_and(|candidates| {
+            TRANSPARENT_STD_MACROS
+                .iter()
+                .all(|name| !candidates.may_bind(name))
+        }) {
+            return false;
+        }
+        !crate::analysis::syntax::trusted_macro_binding_sites(
+            &file.source,
+            index.macro_scope_crates(),
+            TRANSPARENT_STD_MACROS,
+            &|_, _| false,
+            &|krate| index.drop_in_manifests.verified_root(path, krate),
+        )
+        .is_empty()
+    })
 }
 
 /// Method-entry reach permits only evaluated assertion/collection macros.
@@ -3419,7 +3503,7 @@ pub(super) fn body_has_unresolved_macro_bindings(body: &str, index: &RustIndex) 
 /// is opaque even under `std::` or `tracing::`: a crate alias
 /// (`use crate as tracing;`) can route the path to an exported user macro,
 /// and ripr does not resolve path roots here (#10351).
-fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> bool {
+pub(super) fn caller_invokes_opaque_macro(body: &str, transparent_macros_rebound: bool) -> bool {
     macro_invocation_is_unestablished(body, transparent_macros_rebound, TRANSPARENT_STD_MACROS)
 }
 
@@ -5362,6 +5446,280 @@ mod tests {
         assert_eq!(macro_path_before("x; :: m"), (vec!["m"], true));
         assert_eq!(macro_path_before("let s = a"), (vec!["a"], false));
         assert_eq!(macro_path_before("(a) "), (Vec::<&str>::new(), false));
+    }
+
+    #[test]
+    fn transparent_macro_scan_reuses_index_authority_and_invalidates() {
+        let mut index = RustIndex::default();
+        let path = PathBuf::from("src/lib.rs");
+        let insert = |index: &mut RustIndex, source: &str| {
+            index.insert_file_only(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    source: source.into(),
+                    ..Default::default()
+                },
+            );
+        };
+        insert(&mut index, "pub fn safe() {}\n");
+        assert!(!transparent_macro_name_rebound("safe();", &index));
+        assert_eq!(
+            index
+                .call_identity_memos
+                .transparent_macro_scans
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        for _ in 0..8 {
+            assert!(!transparent_macro_name_rebound("println!(\"ok\");", &index));
+        }
+        assert_eq!(
+            index
+                .call_identity_memos
+                .transparent_macro_scans
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        let cloned = index.clone();
+        assert!(!transparent_macro_name_rebound(
+            "println!(\"ok\");",
+            &cloned
+        ));
+        assert_eq!(
+            cloned
+                .call_identity_memos
+                .transparent_macro_scans
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        insert(&mut index, "macro_rules! println { ($($t:tt)*) => {} }\n");
+        assert!(transparent_macro_name_rebound("println!(\"ok\");", &index));
+        assert_eq!(
+            index
+                .call_identity_memos
+                .transparent_macro_scans
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        let file = index.file_data_mut(&path);
+        assert!(file.is_some());
+        if let Some(file) = file {
+            file.source = "pub fn safe() {}\n".into();
+        }
+        assert!(!transparent_macro_name_rebound("println!(\"ok\");", &index));
+        assert_eq!(
+            index
+                .call_identity_memos
+                .transparent_macro_scans
+                .load(std::sync::atomic::Ordering::Relaxed),
+            2
+        );
+        insert(&mut index, "use foreign::*;\n");
+        assert!(transparent_macro_name_rebound("println!(\"ok\");", &index));
+        assert_eq!(
+            transparent_macro_name_rebound_uncached(&index),
+            transparent_macro_name_rebound("println!(\"ok\");", &index)
+        );
+        let before_scope = index
+            .call_identity_memos
+            .transparent_macro_scans
+            .load(std::sync::atomic::Ordering::Relaxed);
+        index.macro_owned_crates.insert("foreign".to_string());
+        assert_eq!(
+            transparent_macro_name_rebound_uncached(&index),
+            transparent_macro_name_rebound("println!(\"ok\");", &index)
+        );
+        assert!(!transparent_macro_name_rebound("println!(\"ok\");", &index));
+        assert_eq!(
+            index
+                .call_identity_memos
+                .transparent_macro_scans
+                .load(std::sync::atomic::Ordering::Relaxed),
+            before_scope + 1
+        );
+        let before_manifest = index
+            .call_identity_memos
+            .transparent_macro_scans
+            .load(std::sync::atomic::Ordering::Relaxed);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::default();
+        assert_eq!(
+            transparent_macro_name_rebound_uncached(&index),
+            transparent_macro_name_rebound("println!(\"ok\");", &index)
+        );
+        assert_eq!(
+            index
+                .call_identity_memos
+                .transparent_macro_scans
+                .load(std::sync::atomic::Ordering::Relaxed),
+            before_manifest + 1
+        );
+    }
+
+    #[test]
+    fn transparent_macro_scan_concurrent_calls_preserve_uncached_answer() {
+        let mut index = RustIndex::default();
+        let path = PathBuf::from("src/lib.rs");
+        index.insert_file_only(
+            path.clone(),
+            FileFacts {
+                path,
+                source: "macro_rules! println { ($($t:tt)*) => {} }\n".into(),
+                ..Default::default()
+            },
+        );
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..8 {
+                let index = &index;
+                handles.push(scope.spawn(move || {
+                    assert!(transparent_macro_name_rebound("println!(\"ok\");", index));
+                }));
+            }
+            for handle in handles {
+                assert!(handle.join().is_ok());
+            }
+        });
+        assert!(transparent_macro_name_rebound_uncached(&index));
+        let scans = index
+            .call_identity_memos
+            .transparent_macro_scans
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!((1..=8).contains(&scans));
+    }
+
+    #[test]
+    fn transparent_macro_scan_respects_replaced_and_poisoned_manifest_authority()
+    -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-transparent-macro-manifest-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        let manifest = root.join("Cargo.toml");
+        let plain = "[package]\nname='demo'\nversion='0.0.0'\n";
+        let shadow = "[package]\nname='demo'\nversion='0.0.0'\n[dependencies]\nstd='1'\n";
+        std::fs::write(&manifest, plain).map_err(|error| error.to_string())?;
+        let mut index = RustIndex::default();
+        let path = PathBuf::from("src/lib.rs");
+        index.insert_file_only(
+            path.clone(),
+            FileFacts {
+                path,
+                source: "use std::prelude::v1::*;\n".into(),
+                ..Default::default()
+            },
+        );
+        assert!(transparent_macro_name_rebound("println!(\"ok\");", &index));
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&root);
+        assert!(!transparent_macro_name_rebound("println!(\"ok\");", &index));
+        index.drop_in_manifests.poison_verdict_cache_for_test();
+        std::fs::write(&manifest, shadow).map_err(|error| error.to_string())?;
+        assert!(transparent_macro_name_rebound("println!(\"ok\");", &index));
+        assert_eq!(
+            transparent_macro_name_rebound_uncached(&index),
+            transparent_macro_name_rebound("println!(\"ok\");", &index)
+        );
+        std::fs::write(&manifest, plain).map_err(|error| error.to_string())?;
+        assert!(!transparent_macro_name_rebound("println!(\"ok\");", &index));
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn transparent_macro_scan_waits_for_concurrent_verifier_poison() -> Result<(), String> {
+        use std::sync::mpsc::{self, RecvTimeoutError};
+        use std::time::Duration;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-transparent-concurrent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        let manifest = root.join("Cargo.toml");
+        std::fs::write(&manifest, "[package]\nname='demo'\nversion='0.0.0'\n")
+            .map_err(|error| error.to_string())?;
+        let mut index = RustIndex::default();
+        let path = PathBuf::from("src/lib.rs");
+        index.insert_file_only(
+            path.clone(),
+            FileFacts {
+                path,
+                source: "use std::prelude::v1::*;\n".into(),
+                ..Default::default()
+            },
+        );
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&root);
+        assert!(!transparent_macro_name_rebound("println!(\"ok\");", &index));
+        std::thread::scope(|scope| -> Result<(), String> {
+            let (locked_tx, locked_rx) = mpsc::sync_channel(0);
+            let (release_tx, release_rx) = mpsc::sync_channel(0);
+            let authority = index.drop_in_manifests.clone();
+            let poisoner = scope.spawn(move || {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    authority.hold_and_poison_standard_root_for_test(locked_tx, release_rx);
+                }));
+            });
+            locked_rx
+                .recv_timeout(Duration::from_secs(5))
+                .map_err(|error| error.to_string())?;
+            let (attempt_tx, attempt_rx) = mpsc::sync_channel(0);
+            if !index
+                .drop_in_manifests
+                .notify_before_standard_lock_for_test(attempt_tx)
+            {
+                let _ = release_tx.send(());
+                return Err("could not arm verifier lock hook".to_string());
+            }
+            let (result_tx, result_rx) = mpsc::sync_channel(1);
+            let reader_index = &index;
+            let reader = scope.spawn(move || {
+                let _ = result_tx.send(transparent_macro_name_rebound(
+                    "println!(\"ok\");",
+                    reader_index,
+                ));
+            });
+            if let Err(error) = attempt_rx.recv_timeout(Duration::from_secs(5)) {
+                let _ = release_tx.send(());
+                return Err(error.to_string());
+            }
+            let early = result_rx.recv_timeout(Duration::from_millis(100));
+            let blocked = matches!(early, Err(RecvTimeoutError::Timeout));
+            let write_result = std::fs::write(
+                &manifest,
+                "[package]\nname='demo'\nversion='0.0.0'\n[dependencies]\nstd='1'\n",
+            );
+            let release_result = release_tx.send(());
+            write_result.map_err(|error| error.to_string())?;
+            release_result.map_err(|error| error.to_string())?;
+            let result = match early {
+                Ok(value) => value,
+                Err(RecvTimeoutError::Timeout) => result_rx
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|error| error.to_string())?,
+                Err(error) => return Err(error.to_string()),
+            };
+            assert!(poisoner.join().is_ok());
+            assert!(reader.join().is_ok());
+            assert!(
+                blocked,
+                "cached lookup returned while verifier lock was held"
+            );
+            assert!(
+                result,
+                "poisoned verifier must recompute the changed manifest verdict"
+            );
+            Ok(())
+        })?;
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     // #10357 item 3: literal/bool std macros (`cfg!`, `line!`, …) expand with

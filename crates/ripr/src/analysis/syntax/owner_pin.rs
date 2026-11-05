@@ -785,6 +785,7 @@ fn macro_binding_ambiguity_sets(
     };
     let tree = parse.tree();
     let binding_free = BindingFreeFileIndex::collect(tree.syntax());
+    let inline_globs = RootInlineGlobIndex::collect(tree.syntax(), packages);
     let scan = |names: &[&str]| {
         macro_binding_sites_in_tree(
             source,
@@ -794,6 +795,7 @@ fn macro_binding_ambiguity_sets(
             module_resolved,
             drop_in_verified,
             &binding_free,
+            &inline_globs,
         )
     };
     let union = scan(trusted);
@@ -814,6 +816,7 @@ fn macro_binding_sites_in_tree(
     module_resolved: &dyn Fn(usize, &str) -> bool,
     drop_in_verified: &dyn Fn(&str) -> bool,
     binding_free: &BindingFreeFileIndex,
+    inline_globs: &RootInlineGlobIndex,
 ) -> NamedMacroSites {
     let mut ambiguous = Vec::new();
     let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
@@ -1357,6 +1360,10 @@ fn macro_binding_sites_in_tree(
                 {
                     continue;
                 }
+                if item.star_token().is_some() && !own && inline_globs.permits(&import, &item, root)
+                {
+                    continue;
+                }
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
                     let line = line_of(node);
@@ -1544,6 +1551,149 @@ fn macro_binding_sites_in_tree(
         }
     }
     ambiguous
+}
+
+/// One file-level inventory for the narrow local-glob proof. The inventory
+/// walks each inline root module once, even when a file has many globs.
+#[derive(Default)]
+struct RootInlineGlobIndex {
+    safe_modules: BTreeSet<String>,
+    root_names: BTreeMap<String, usize>,
+    use_mentions: BTreeMap<String, usize>,
+    exact_globs: BTreeMap<String, usize>,
+    packages: BTreeSet<String>,
+    globally_safe: bool,
+}
+
+#[cfg(test)]
+thread_local! {
+    static ROOT_INLINE_GLOB_INDEX_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl RootInlineGlobIndex {
+    fn collect(file: &SyntaxNode, packages: &BTreeSet<String>) -> Self {
+        #[cfg(test)]
+        ROOT_INLINE_GLOB_INDEX_COUNT.with(|count| count.set(count.get() + 1));
+        let mut result = Self {
+            packages: packages.iter().map(|name| name.replace('-', "_")).collect(),
+            globally_safe: true,
+            ..Self::default()
+        };
+        if !ast::SourceFile::can_cast(file.kind()) {
+            result.globally_safe = false;
+            return result;
+        }
+        result.globally_safe = !file.descendants().any(|node| {
+            ast::MacroRules::can_cast(node.kind())
+                || ast::MacroDef::can_cast(node.kind())
+                || ast::ExternCrate::can_cast(node.kind())
+                || ast::Attr::cast(node.clone()).is_some_and(|attr| {
+                    attr.path().is_none_or(|path| {
+                        !matches!(
+                            path.syntax().text().to_string().as_str(),
+                            "test" | "allow" | "warn" | "deny" | "forbid"
+                        )
+                    })
+                })
+                || ast::MacroCall::cast(node).is_some_and(|call| {
+                    let bare_assert = call.path().is_some_and(|path| {
+                        path.syntax()
+                            .text()
+                            .to_string()
+                            .split_whitespace()
+                            .collect::<String>()
+                            == "assert_eq"
+                    });
+                    !bare_assert
+                        || !call
+                            .syntax()
+                            .ancestors()
+                            .any(|ancestor| ast::Fn::can_cast(ancestor.kind()))
+                })
+        });
+        for node in file.children() {
+            if let Some(named) = ast::AnyHasName::cast(node.clone())
+                && let Some(name) = named.name()
+            {
+                *result
+                    .root_names
+                    .entry(name.text().to_string())
+                    .or_default() += 1;
+            }
+            if let Some(import) = ast::Use::cast(node.clone()) {
+                let text = import.syntax().text().to_string();
+                let mentions: BTreeSet<_> = text
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .filter(|word| !word.is_empty())
+                    .map(str::to_string)
+                    .collect();
+                for word in mentions {
+                    *result.use_mentions.entry(word).or_default() += 1;
+                }
+                let compact = text.split_whitespace().collect::<String>();
+                let body = compact
+                    .strip_prefix("pubuse")
+                    .or_else(|| compact.strip_prefix("use"));
+                if let Some(name) = body.and_then(|body| body.strip_suffix("::*;"))
+                    && !name.is_empty()
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    *result.exact_globs.entry(name.to_string()).or_default() += 1;
+                }
+            }
+            if let Some(module) = ast::Module::cast(node) {
+                let Some(name) = module.name().map(|name| name.text().to_string()) else {
+                    continue;
+                };
+                if module.item_list().is_some()
+                    && module.attrs().next().is_none()
+                    && !module.syntax().descendants().any(|node| {
+                        ast::Use::can_cast(node.kind())
+                            || ast::MacroRules::can_cast(node.kind())
+                            || ast::MacroDef::can_cast(node.kind())
+                            || ast::MacroCall::can_cast(node.kind())
+                            || ast::Attr::can_cast(node.kind())
+                            || ast::Module::cast(node)
+                                .is_some_and(|nested| nested.item_list().is_none())
+                    })
+                {
+                    result.safe_modules.insert(name);
+                }
+            }
+        }
+        result
+    }
+
+    /// Suppress only this exact file-root glob; every other ambiguity remains.
+    fn permits(&self, import: &ast::Use, item: &ast::UseTree, root: &str) -> bool {
+        if !self.globally_safe
+            || root.is_empty()
+            || self.packages.contains(root)
+            || self.root_names.get(root) != Some(&1)
+            || !self.safe_modules.contains(root)
+            || self.use_mentions.get(root) != self.exact_globs.get(root)
+            || !import
+                .syntax()
+                .parent()
+                .is_some_and(|node| ast::SourceFile::can_cast(node.kind()))
+            || item
+                .syntax()
+                .text()
+                .to_string()
+                .split_whitespace()
+                .collect::<String>()
+                != format!("{root}::*")
+        {
+            return false;
+        }
+        let text = import
+            .syntax()
+            .text()
+            .to_string()
+            .split_whitespace()
+            .collect::<String>();
+        text == format!("use{root}::*;") || text == format!("pubuse{root}::*;")
+    }
 }
 
 /// The bare name of a macro call written as `name ! (..)` tokens directly
@@ -7182,6 +7332,114 @@ mod literal_macro_export_tests {
                 )),
                 selected,
                 "{source}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod root_inline_glob_tests {
+    use super::*;
+
+    fn has_foreign_glob(source: &str) -> bool {
+        trusted_macro_binding_sites(
+            source,
+            &BTreeSet::new(),
+            &["assert_eq"],
+            &|_, _| false,
+            &|_| false,
+        )
+        .iter()
+        .any(|(_, site)| matches!(site.kind, MacroBindingKind::ForeignGlob(_)))
+    }
+
+    #[test]
+    fn only_the_proven_inline_glob_site_is_removed() {
+        let safe = "mod unrelated { pub const OTHER:i32=1; }\nuse unrelated::*;\n#[test] fn checks() { assert_eq!(1,1); }\n";
+        assert!(!has_foreign_glob(safe));
+        for source in [
+            "mod unrelated; use unrelated::*;",
+            "mod unrelated { pub use external::assert_eq; } use unrelated::*;",
+            "mod unrelated { mod nested { pub use external::assert_eq; } } use unrelated::*;",
+            "mod unrelated { macro_rules! assert_eq { ($($t:tt)*) => {} } } use unrelated::*;",
+            "mod unrelated { generated::items!(); } use unrelated::*;",
+            "#[cfg(any())] mod unrelated { pub const OTHER:i32=1; } use unrelated::*;",
+            "mod unrelated { mod nested; } use unrelated::*;",
+            "mod unrelated { pub const OTHER:i32=1; } use unrelated::*; use foreign::*;",
+            "mod unrelated { pub const OTHER:i32=1; } use unrelated::*; macro_rules! assert_eq { ($($t:tt)*) => {} }",
+            "mod unrelated { pub const OTHER:i32=1; } use unrelated::*; use foreign as unrelated;",
+            "mod unrelated { pub const OTHER:i32=1; } use {unrelated::*, foreign as unrelated};",
+            "mod unrelated { pub const OTHER:i32=1; } use unrelated::{self, *};",
+            "mod unrelated { pub const OTHER:i32=1; } fn unrelated() {} use unrelated::*;",
+            "mod unrelated { pub const OTHER:i32=1; } type unrelated = (); use unrelated::*;",
+            "mod unrelated { pub const OTHER:i32=1; } mod unrelated {} use unrelated::*;",
+            "#[macro_use] extern crate foreign; mod unrelated { pub const OTHER:i32=1; } use unrelated::*;",
+            "mod unrelated { pub const OTHER:i32=1; } use ::unrelated::*;",
+        ] {
+            assert!(has_foreign_glob(source), "{source}");
+        }
+        let macro_2 = "mod unrelated { macro assert_eq($($t:tt)*) {} } use unrelated::*;";
+        assert!(
+            !trusted_macro_binding_sites(
+                macro_2,
+                &BTreeSet::new(),
+                &["assert_eq"],
+                &|_, _| false,
+                &|_| false
+            )
+            .is_empty()
+        );
+        let mixed = "mod unrelated { pub const OTHER:i32=1; } use unrelated::*; use foreign::*;";
+        let sites = trusted_macro_binding_sites(
+            mixed,
+            &BTreeSet::new(),
+            &["assert_eq"],
+            &|_, _| false,
+            &|_| false,
+        );
+        let globs = sites
+            .iter()
+            .filter_map(|(_, site)| match &site.kind {
+                MacroBindingKind::ForeignGlob(path) => Some(path.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(globs.len(), 1, "{globs:?}");
+        assert!(globs[0].contains("foreign"), "{globs:?}");
+    }
+
+    #[test]
+    fn many_distinct_inline_globs_are_scanned_with_one_file_inventory() {
+        for count in [1, 100, 1000] {
+            let mut source = String::new();
+            for n in 0..count {
+                source.push_str(&format!(
+                    "mod local{n} {{ pub const VALUE:i32={n}; }}\nuse local{n}::*;\n"
+                ));
+            }
+            source.push_str("#[test] fn checks() { assert_eq!(1,1); }\n");
+            ROOT_INLINE_GLOB_INDEX_COUNT.with(|counter| counter.set(0));
+            let start = std::time::Instant::now();
+            let sites = trusted_macro_binding_sites(
+                &source,
+                &BTreeSet::new(),
+                &["assert_eq"],
+                &|_, _| false,
+                &|_| false,
+            );
+            let elapsed = start.elapsed();
+            assert!(
+                sites.is_empty(),
+                "{count} inline globs left sites: {sites:?}"
+            );
+            assert_eq!(
+                ROOT_INLINE_GLOB_INDEX_COUNT.with(|counter| counter.get()),
+                1
+            );
+            eprintln!(
+                "inline-glob-inventory: globs={count} bytes={} elapsed_us={}",
+                source.len(),
+                elapsed.as_micros()
             );
         }
     }

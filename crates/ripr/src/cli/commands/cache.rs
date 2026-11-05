@@ -905,11 +905,7 @@ mod tests {
                 "--out".to_owned(),
                 output.to_string_lossy().into_owned(),
             ])?;
-            let exported = crate::analysis::seam_cache::inspect_cache_root(&output);
-            assert_eq!(
-                exported.entry_count, 2,
-                "one current classified entry and one current file fact, independent of history"
-            );
+            crate::analysis::seam_cache::verify_current_export_for_test(&root, &output)?;
             let source_after = crate::analysis::seam_cache::inspect_cache_root(&source_cache);
             assert_eq!(source_before.entry_count, source_after.entry_count);
             assert_eq!(
@@ -957,10 +953,7 @@ mod tests {
             refused_output.to_string_lossy().into_owned(),
         ])?;
         assert_eq!(source_bytes, cache_contents(&source_cache)?);
-        assert_eq!(
-            crate::analysis::seam_cache::inspect_cache_root(&refused_output).entry_count,
-            2
-        );
+        crate::analysis::seam_cache::verify_current_export_for_test(&root, &refused_output)?;
         let overlap = source_cache.join("nested-export");
         assert!(
             run(&[
@@ -1006,10 +999,7 @@ mod tests {
             "--out".to_owned(),
             output.to_string_lossy().into_owned(),
         ])?;
-        assert_eq!(
-            crate::analysis::seam_cache::inspect_cache_root(&output).entry_count,
-            2
-        );
+        crate::analysis::seam_cache::verify_current_export_for_test(&relative, &output)?;
         fs::remove_dir_all(root).map_err(|error| error.to_string())?;
         Ok(())
     }

@@ -1080,6 +1080,7 @@ impl RustIndex {
     }
     #[cfg(test)]
     pub fn file_data_mut(&mut self, path: &Path) -> Option<&mut FileData> {
+        self.call_identity_memos.invalidate_empty_macro_candidates();
         self.bump_membership_revision();
         self.files.get_mut(path).map(|file| &mut file.data)
     }

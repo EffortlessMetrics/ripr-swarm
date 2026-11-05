@@ -96,7 +96,10 @@ use crate::analysis::workspace::declared_crate_root_paths_from_manifest;
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
-    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
+    ast::{
+        self, HasArgList, HasAttrs, HasGenericArgs, HasGenericParams, HasModuleItem, HasName,
+        HasVisibility,
+    },
 };
 use rayon::prelude::*;
 use std::cell::{Cell, OnceCell};
@@ -1921,7 +1924,41 @@ impl OwnerPinSyntax {
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
-        let ambiguous = self.trusted_macro_ambiguities(index);
+        // The stored parser-backed candidates over-approximate every site
+        // the workspace scan can report. A complete all-empty inventory and
+        // no withheld sites prove that global, scoped, crate and module names
+        // are empty without parsing the workspace again. Unknown candidates
+        // must take the ordinary scan; explicit warming is unchanged.
+        let withheld = &self.withheld;
+        let no_withheld = !withheld.any_name
+            && !withheld.root_any_name
+            && withheld.trusted.is_empty()
+            && withheld.sites.is_empty()
+            && withheld.by_root.is_empty()
+            && withheld.root_sites.is_empty();
+        let no_sites = no_withheld
+            && *index
+                .call_identity_memos
+                .empty_macro_candidates
+                .get_or_init(|| {
+                    #[cfg(test)]
+                    index
+                        .call_identity_memos
+                        .empty_macro_candidate_scans
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    index.files().iter().all(|(_, facts)| {
+                        facts
+                            .data()
+                            .macro_candidates
+                            .as_deref()
+                            .is_some_and(|candidates| !candidates.may_bind_any_trusted())
+                    })
+                });
+        let ambiguous = if no_sites {
+            BTreeSet::new()
+        } else {
+            self.trusted_macro_ambiguities(index)
+        };
         let Some(facts) = index
             .files()
             .get(&test.file)
@@ -1966,9 +2003,11 @@ impl OwnerPinSyntax {
         {
             ambiguous.insert("json".to_string());
         }
-        ambiguous.extend(self.scoped_names_for(test, line, index));
-        ambiguous.extend(self.crate_names_for(test, index));
-        ambiguous.extend(self.module_names_for(test, index));
+        if !no_sites {
+            ambiguous.extend(self.scoped_names_for(test, line, index));
+            ambiguous.extend(self.crate_names_for(test, index));
+            ambiguous.extend(self.module_names_for(test, index));
+        }
         Ok(ambiguous)
     }
 
@@ -4532,6 +4571,40 @@ pub(in crate::analysis) fn returned_closure_pin_required(
 }
 
 impl OwnerReturnPin {
+    /// Establish a return pin from the actual tail expression of a
+    /// forwarding entry. The caller must separately prove that this entry
+    /// forwards the target owner's result and that its call resolves.
+    pub(in crate::analysis) fn establish_forwarding_entry(
+        probe: &Probe,
+        entry: &FunctionSummary,
+        index: &RustIndex,
+    ) -> Option<Self> {
+        let parse = parse_clean_source_file(&entry.body)?;
+        let function = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::Fn::cast)?;
+        let list = function.body()?.stmt_list()?;
+        let tail = list.tail_expr()?;
+        let offset: usize = tail.syntax().text_range().start().into();
+        let line = entry.start_line
+            + entry
+                .body
+                .get(..offset)?
+                .bytes()
+                .filter(|b| *b == b'\n')
+                .count();
+        let mut return_probe = probe.clone();
+        return_probe.family = ProbeFamily::ReturnValue;
+        return_probe.owner = Some(entry.id.clone());
+        return_probe.location = crate::domain::SourceLocation::new(entry.file.clone(), line, 1);
+        return_probe.expression = tail.syntax().text().to_string();
+        return_probe.before = None;
+        return_probe.after = Some(return_probe.expression.clone());
+        Self::establish(&return_probe, entry, index)
+    }
+
     /// The owner's changed value is its unconditional whole boolean tail.
     /// A wrapper pin may reuse boundary pairing only for this shape; the
     /// short-circuit and adaptor paths require their own pinned-input gates.
@@ -9751,6 +9824,439 @@ fn derived_equality<'a>(
     (!manual).then_some((facts, &*declaring_file.data().source))
 }
 
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub(super) struct MappedEnumDecisionKey {
+    entry_file: PathBuf,
+    test_file: PathBuf,
+    test_name: String,
+    test_start: usize,
+    test_body: crate::analysis::facts::SourceText,
+    assertion_line: usize,
+    assertion_text: String,
+    first: String,
+    second: String,
+    expected: String,
+    package_names: BTreeSet<String>,
+    root_library_name: Option<String>,
+    has_include_limitations: bool,
+}
+
+/// Prove a narrow enum-valued branch comparison in the library root and an
+/// integration test's direct import. Unknown scopes and generated items refuse.
+pub(super) fn mapped_unit_enum_expectation(
+    entry: &FunctionSummary,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    first: &str,
+    second: &str,
+    expected: &str,
+    index: &RustIndex,
+) -> bool {
+    let key = MappedEnumDecisionKey {
+        entry_file: entry.file.clone(),
+        test_file: test.file.clone(),
+        test_name: test.name.clone(),
+        test_start: test.start_line,
+        test_body: test.body.clone(),
+        assertion_line: assertion.line,
+        assertion_text: assertion.text.clone(),
+        first: first.to_string(),
+        second: second.to_string(),
+        expected: expected.to_string(),
+        package_names: index.package_names.clone(),
+        root_library_name: index.root_library_name.clone(),
+        has_include_limitations: !index.include_limitations.is_empty(),
+    };
+    *index
+        .call_identity_memos
+        .mapped_enum_decisions
+        .get_or_build(&key, || {
+            #[cfg(test)]
+            index
+                .call_identity_memos
+                .mapped_enum_decision_builds
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            mapped_unit_enum_expectation_uncached(
+                entry, test, assertion, first, second, expected, index,
+            )
+        })
+}
+
+fn mapped_unit_enum_expectation_uncached(
+    entry: &FunctionSummary,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    first: &str,
+    second: &str,
+    expected: &str,
+    index: &RustIndex,
+) -> bool {
+    let pair = |text: &str| {
+        let mut parts = text.trim().split("::");
+        let (Some(ty), Some(variant), None) = (parts.next(), parts.next(), parts.next()) else {
+            return None;
+        };
+        (is_plain_identifier(ty) && is_plain_identifier(variant))
+            .then(|| (ty.to_string(), variant.to_string()))
+    };
+    let (Some((ty, a)), Some((other_ty, b))) = (pair(first), pair(second)) else {
+        return false;
+    };
+    if ty != other_ty || a == b || !index.include_limitations.is_empty() {
+        return false;
+    }
+    let Some(source) = index
+        .files()
+        .get(&entry.file)
+        .filter(|facts| !facts.used_lexical_fallback)
+        .map(|facts| facts.source.clone())
+    else {
+        return false;
+    };
+    let Some(module_path) = super::call_identity::root_library_item_module_path(index, entry)
+    else {
+        return false;
+    };
+    if !super::call_identity::public_library_module_path_is_bound(index, entry, &module_path)
+        || target_root(&entry.file, index, &BTreeSet::new()).as_deref()
+            != Some(Path::new("src/lib.rs"))
+        || source.contains('!')
+        || source.contains("#[cfg")
+        || source.contains("#[path")
+    {
+        return false;
+    }
+    let Some((equality, _)) = derived_equality(&ty, index) else {
+        return false;
+    };
+    if !equality.fields.is_empty()
+        || !equality.variants.contains(&a)
+        || !equality.variants.contains(&b)
+        || !owner_file_names_enum(&ty, entry, index)
+    {
+        return false;
+    }
+    let Some(parsed) = parse_clean_source_file(&source) else {
+        return false;
+    };
+    if parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .any(|node| ast::Module::cast(node).is_some())
+    {
+        return false;
+    }
+    // The test's library path can only identify this entry across the crate
+    // boundary when the actual declaration is public. A same-named public
+    // re-export must not stand in for a private function in this file.
+    let mut entries = parsed
+        .tree()
+        .syntax()
+        .children()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text() == entry.name)
+        });
+    let (Some(declaration), None) = (entries.next(), entries.next()) else {
+        return false;
+    };
+    if declaration
+        .visibility()
+        .is_none_or(|visibility| visibility.syntax().text() != "pub")
+    {
+        return false;
+    }
+    let mut enums = parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Enum::cast)
+        .filter(|item| item.name().is_some_and(|name| name.text() == ty));
+    let (Some(item), None) = (enums.next(), enums.next()) else {
+        return false;
+    };
+    if item
+        .visibility()
+        .is_none_or(|visibility| visibility.syntax().text() != "pub")
+    {
+        return false;
+    }
+    let Some(variants) = item.variant_list() else {
+        return false;
+    };
+    if ![&a, &b].into_iter().all(|name| {
+        variants.variants().any(|variant| {
+            variant.name().is_some_and(|n| n.text() == name.as_str())
+                && variant.field_list().is_none()
+                && variant.attrs().next().is_none()
+        })
+    }) {
+        return false;
+    }
+    let Some(test_source) = index
+        .files()
+        .get(&test.file)
+        .filter(|facts| !facts.used_lexical_fallback)
+        .map(|facts| facts.source.clone())
+    else {
+        return false;
+    };
+    if test_source.contains("macro_rules!") {
+        return false;
+    }
+    let Some(root) = index.root_library_name.as_deref() else {
+        return false;
+    };
+    let root = root.replace('-', "_");
+    let library_path = if module_path.is_empty() {
+        root.clone()
+    } else {
+        format!("{root}::{}", module_path.join("::"))
+    };
+    // A bare library name may resolve to a test-local module or imported
+    // alias. Unknown item macros/attributes can introduce either binding.
+    let Some(test_parse) = parse_clean_source_file(&test_source) else {
+        return false;
+    };
+    let lines = LineIndex::new(&test_source);
+    let mut tests = test_parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function.name().is_some_and(|name| {
+                name.text() == test.name
+                    && lines.line(name.syntax().text_range().start()) == test.start_line
+            })
+        });
+    let (Some(test_function), None) = (tests.next(), tests.next()) else {
+        return false;
+    };
+    let mut assertions = test_function
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| {
+            lines.line(call.syntax().text_range().start()) == assertion.line
+                && assertion.text.contains(&call.syntax().text().to_string())
+        });
+    let (Some(assertion_call), None) = (assertions.next(), assertions.next()) else {
+        return false;
+    };
+    let block_scopes: Vec<_> = assertion_call
+        .syntax()
+        .ancestors()
+        .filter_map(ast::StmtList::cast)
+        .map(|block| block.syntax().text_range())
+        .collect();
+    let scopes: Vec<_> = test_function
+        .syntax()
+        .ancestors()
+        .filter_map(ast::Module::cast)
+        .map(|module| module.syntax().text_range())
+        .collect();
+    let imports: Vec<_> = test_parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Use::cast)
+        .filter_map(|item| {
+            let parent = item.syntax().parent()?;
+            if ast::SourceFile::can_cast(parent.kind()) {
+                return Some((item, block_scopes.len() + scopes.len()));
+            }
+            if !ast::ItemList::can_cast(parent.kind()) {
+                let block = item
+                    .syntax()
+                    .ancestors()
+                    .filter_map(ast::StmtList::cast)
+                    .next()?;
+                let rank = block_scopes
+                    .iter()
+                    .position(|scope| *scope == block.syntax().text_range())?;
+                return Some((item, rank));
+            }
+            let module = item
+                .syntax()
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .next()?;
+            let rank = scopes
+                .iter()
+                .position(|scope| *scope == module.syntax().text_range())?;
+            Some((item, block_scopes.len() + rank))
+        })
+        .flat_map(|(item, rank)| {
+            let text = item.syntax().text().to_string();
+            let text = text.trim_start();
+            let text = text.strip_prefix("pub ").unwrap_or(text);
+            super::reveal::flattened_use_paths(text)
+                .into_iter()
+                .map(move |import| (import, rank))
+        })
+        .collect();
+    let root_glob = format!("{library_path}::*");
+    if test_parse.tree().syntax().descendants().any(|node| {
+        ast::Module::cast(node.clone())
+            .is_some_and(|module| module.name().is_some_and(|name| name.text() == root))
+            || ast::ExternCrate::cast(node.clone()).is_some()
+            || ast::Attr::cast(node.clone()).is_some_and(|attr| {
+                let text = attr.syntax().text().to_string().replace(' ', "");
+                let inert_lint = attr.path().is_some_and(|path| {
+                    matches!(
+                        path.syntax().text().to_string().as_str(),
+                        "allow" | "warn" | "deny" | "forbid"
+                    )
+                });
+                text != "#[test]"
+                    && !inert_lint
+                    && !(text == "#[cfg(test)]"
+                        && attr
+                            .syntax()
+                            .parent()
+                            .is_some_and(|parent| ast::Module::can_cast(parent.kind())))
+            })
+            || ast::MacroCall::cast(node).is_some_and(|call| {
+                if call.syntax().text_range() == assertion_call.syntax().text_range() {
+                    return false;
+                }
+                !call
+                    .syntax()
+                    .ancestors()
+                    .filter_map(ast::Fn::cast)
+                    .next()
+                    .is_some_and(|function| {
+                        let body = function.syntax().text().to_string();
+                        function.syntax().text_range() != test_function.syntax().text_range()
+                            && !test_function.syntax().ancestors().any(|ancestor| {
+                                ancestor.text_range() == function.syntax().text_range()
+                            })
+                            && !super::helper_transfer::caller_invokes_opaque_macro(
+                                &body,
+                                super::helper_transfer::transparent_macro_name_rebound(
+                                    &body, index,
+                                ),
+                            )
+                    })
+            })
+    }) || declares_type(&mask_comments_and_strings(&test_source), &root)
+        || source_declares_value_name(&test.body, &root)
+        || imports.iter().any(|(import, _)| {
+            import
+                .alias
+                .as_deref()
+                .or_else(|| import.path.rsplit("::").next())
+                == Some(root.as_str())
+        })
+    {
+        return false;
+    }
+    let declared_in_test = |name: &str| {
+        test_parse.tree().syntax().descendants().any(|node| {
+            ast::Fn::cast(node.clone())
+                .is_some_and(|item| item.name().is_some_and(|n| n.text() == name))
+                || ast::Const::cast(node.clone())
+                    .is_some_and(|item| item.name().is_some_and(|n| n.text() == name))
+                || ast::Static::cast(node.clone())
+                    .is_some_and(|item| item.name().is_some_and(|n| n.text() == name))
+                || ast::IdentPat::cast(node)
+                    .is_some_and(|item| item.name().is_some_and(|n| n.text() == name))
+        })
+    };
+    let (binding, exact, alias, wanted) = if let Some((test_ty, wanted)) = pair(expected) {
+        if declared_in_test(&test_ty)
+            || file_aliases_type(&test_source, &test_ty)
+            || declares_type(&mask_comments_and_strings(&test_source), &test_ty)
+            || test_parse
+                .tree()
+                .syntax()
+                .descendants()
+                .filter_map(ast::Module::cast)
+                .any(|module| module.name().is_some_and(|name| name.text() == test_ty))
+        {
+            return false;
+        }
+        let alias = (test_ty != ty).then_some(test_ty.clone());
+        (test_ty, format!("{library_path}::{ty}"), alias, wanted)
+    } else {
+        let name = expected.trim();
+        if !is_plain_identifier(name) || declared_in_test(name) {
+            return false;
+        }
+        let mut constants = parsed
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Const::cast)
+            .filter(|item| item.name().is_some_and(|n| n.text() == name));
+        let (Some(item), None) = (constants.next(), constants.next()) else {
+            return false;
+        };
+        if item.attrs().next().is_some()
+            || item
+                .visibility()
+                .is_none_or(|visibility| visibility.syntax().text() != "pub")
+            || !item
+                .syntax()
+                .parent()
+                .is_some_and(|node| ast::SourceFile::can_cast(node.kind()))
+        {
+            return false;
+        }
+        let Some(ast::Expr::PathExpr(value)) = item.body() else {
+            return false;
+        };
+        let Some((constant_ty, wanted)) = pair(&value.syntax().text().to_string()) else {
+            return false;
+        };
+        if constant_ty != ty {
+            return false;
+        }
+        (
+            name.to_string(),
+            format!("{library_path}::{name}"),
+            None,
+            wanted,
+        )
+    };
+    if wanted != a && wanted != b {
+        return false;
+    }
+    let direct_rank = imports
+        .iter()
+        .filter(|(import, _)| import.path == exact && import.alias == alias)
+        .map(|(_, rank)| *rank)
+        .min();
+    let glob_rank = imports
+        .iter()
+        .filter(|(import, _)| import.path == root_glob && import.alias.is_none())
+        .map(|(_, rank)| *rank)
+        .min();
+    let (rank, explicit) = match (direct_rank, glob_rank) {
+        (Some(direct), Some(glob)) if glob < direct && alias.is_none() => (glob, false),
+        (Some(direct), Some(glob)) if glob < direct => return false,
+        (Some(direct), _) => (direct, true),
+        (None, Some(glob)) if alias.is_none() => (glob, false),
+        _ => return false,
+    };
+    !imports.iter().any(|(import, import_rank)| {
+        if import.path.ends_with("::*") && import.path != root_glob {
+            return *import_rank < rank || (!explicit && *import_rank == rank);
+        }
+        let bound = import
+            .alias
+            .as_deref()
+            .or_else(|| import.path.rsplit("::").next());
+        *import_rank <= rank
+            && bound == Some(binding.as_str())
+            && !(import.path == exact && import.alias == alias)
+    })
+}
+
 /// #7063: whether an early error-variant pin may read `qualifier` as the
 /// owner's own error enum and `variant` and `siblings` as its variants:
 /// - the owner's file names the one workspace declaration (no import or
@@ -14807,7 +15313,7 @@ fn is_numeric_literal(text: &str) -> bool {
     true
 }
 
-fn is_string_literal(text: &str) -> bool {
+pub(super) fn is_string_literal(text: &str) -> bool {
     let text = text.strip_prefix('b').unwrap_or(text);
     text.len() >= 2
         && text.starts_with('"')

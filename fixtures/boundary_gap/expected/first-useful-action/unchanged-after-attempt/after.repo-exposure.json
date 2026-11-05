@@ -20,7 +20,7 @@
       "worktree": "dirty"
     },
     "canonicalization": "raw_json_placeholder_v1",
-    "content_sha256": "sha256:f387bcb6c41fcc0a56388ad7ebdcefbfa13a2a90e7bcd4e60ca30fd3b5301799",
+    "content_sha256": "sha256:bcc39fe321814af998f679df227370f48db31f5a771118ab1a9de144691be4c6",
     "kind": "repo_exposure",
     "producer": {
       "tool": "ripr",
@@ -225,8 +225,8 @@
           },
           "discriminate": {
             "confidence": "medium",
-            "state": "yes",
-            "summary": "Strongest oracle for seam kind `predicate_boundary` is `strong` (kind-match true)"
+            "state": "weak",
+            "summary": "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"
           },
           "observe": {
             "confidence": "medium",
@@ -415,7 +415,7 @@
       "analyzed_production_files": [
         "src/lib.rs"
       ],
-      "cache_schema_version": "1.158",
+      "cache_schema_version": "1.159",
       "files_content_hash": "16ab297ea99e68bf",
       "scope": "rust_workspace"
     },

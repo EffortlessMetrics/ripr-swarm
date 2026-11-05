@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 /// lines while classifying every seam in a workspace.
 pub(crate) struct CompactGripContext<'a> {
     pub(in crate::analysis::test_grip_evidence) index: &'a RustIndex,
+    boundary_chains: Mutex<BTreeMap<String, Option<crate::analysis::classify::HelperChain>>>,
     pub(in crate::analysis::test_grip_evidence) tests: Vec<CompactTest<'a>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_call_name: BTreeMap<String, Vec<usize>>,
     pub(in crate::analysis::test_grip_evidence) tests_by_helper_owner_call_name:
@@ -309,6 +310,28 @@ impl<'a> CompactGripContext<'a> {
 
     pub(crate) fn try_new(index: &'a RustIndex) -> Result<Self, String> {
         Self::build(index, crate::analysis::cancellation::checkpoint)
+    }
+
+    pub(in crate::analysis::test_grip_evidence) fn boundary_chain(
+        &self,
+        owner: &crate::analysis::rust_index::FunctionSummary,
+    ) -> Option<crate::analysis::classify::HelperChain> {
+        let mut cache = memo(&self.boundary_chains);
+        cache
+            .entry(owner.id.0.clone())
+            .or_insert_with(|| {
+                let chain =
+                    crate::analysis::classify::resolve_repo_boundary_chain(&owner.name, self.index);
+                (!chain.hops.is_empty()
+                    && chain.hops.iter().all(|hop| {
+                        crate::analysis::classify::function_declaration_is_async(
+                            &hop.caller,
+                            self.index,
+                        ) == Some(false)
+                    }))
+                .then_some(chain)
+            })
+            .clone()
     }
 
     fn build<E>(
@@ -629,6 +652,7 @@ impl<'a> CompactGripContext<'a> {
         checkpoint()?;
         Ok(Self {
             index,
+            boundary_chains: Mutex::new(BTreeMap::new()),
             tests,
             tests_by_call_name,
             tests_by_helper_owner_call_name,
