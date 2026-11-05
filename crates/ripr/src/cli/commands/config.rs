@@ -1,6 +1,7 @@
 //! Repository configuration commands.
 
 use crate::cli::help;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::load_for_root;
 use crate::output::path::human_path;
@@ -39,6 +40,12 @@ fn parse_validate_root(args: &[String]) -> Result<PathBuf, String> {
             Err("missing value for --root; pass a value right after it".to_string())
         }
         [flag, value] if flag == "--root" => Ok(PathBuf::from(value)),
+        // #9008/#10542: a second `--root` with an identical value is
+        // absorbed for scripted double-root invocations; a conflicting one
+        // is a usage error naming both values.
+        [flag, value, flag2, value2] if flag == "--root" && flag2 == "--root" => {
+            reconcile_root(Path::new(value), true, value2, "config validate")
+        }
         [flag, _value, extra, ..] if flag == "--root" => {
             Err(unknown_argument("config validate", extra))
         }

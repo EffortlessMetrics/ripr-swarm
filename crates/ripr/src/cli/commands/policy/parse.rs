@@ -1,4 +1,5 @@
 use crate::cli::commands_options::*;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::PathBuf;
@@ -9,6 +10,7 @@ pub(crate) fn parse_policy_readiness_options(
     args: &[String],
 ) -> Result<PolicyReadinessOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut gate_decision = None;
     let mut baseline_delta = None;
     let mut recommendation_calibration = None;
@@ -25,7 +27,15 @@ pub(crate) fn parse_policy_readiness_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy readiness")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy readiness")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy readiness",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--gate-decision" => {
                 i += 1;
@@ -131,6 +141,7 @@ pub(crate) fn parse_policy_operations_options(
     args: &[String],
 ) -> Result<PolicyOperationsOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut policy_readiness = None;
     let mut waiver_aging = None;
     let mut suppression_health = None;
@@ -147,7 +158,15 @@ pub(crate) fn parse_policy_operations_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy operations")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy operations")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy operations",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--policy-readiness" => {
                 i += 1;
@@ -256,6 +275,7 @@ pub(crate) fn parse_policy_history_options(
     args: &[String],
 ) -> Result<PolicyHistoryOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut current = None;
     let mut history = None;
     let mut commit = None;
@@ -269,7 +289,15 @@ pub(crate) fn parse_policy_history_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy history")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy history")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy history",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--current" => {
                 i += 1;
@@ -345,6 +373,7 @@ pub(crate) fn parse_policy_promotion_options(
     args: &[String],
 ) -> Result<PolicyPromotionOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut target_mode = None;
     let mut operations = None;
     let mut history = None;
@@ -356,7 +385,15 @@ pub(crate) fn parse_policy_promotion_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy promote")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy promote")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy promote",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--to" => {
                 i += 1;
@@ -432,6 +469,7 @@ pub(crate) fn parse_policy_preview_promotion_options(
     args: &[String],
 ) -> Result<PolicyPreviewPromotionOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut language = None;
     let mut candidate_class = None;
     let mut evidence = None;
@@ -443,7 +481,15 @@ pub(crate) fn parse_policy_preview_promotion_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy preview-promote")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy preview-promote")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy preview-promote",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--language" => {
                 i += 1;
@@ -541,6 +587,7 @@ pub(crate) fn parse_policy_waiver_aging_options(
     args: &[String],
 ) -> Result<PolicyWaiverAgingOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut ledger = None;
     let mut history = None;
     let mut out = PathBuf::from(output::waiver_aging::DEFAULT_WAIVER_AGING_OUT);
@@ -551,7 +598,15 @@ pub(crate) fn parse_policy_waiver_aging_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "policy waiver-aging")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy waiver-aging")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "policy waiver-aging",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--ledger" => {
                 i += 1;
@@ -597,6 +652,7 @@ pub(crate) fn parse_policy_suppression_health_options(
     args: &[String],
 ) -> Result<PolicySuppressionHealthOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut manifest = PathBuf::from(output::suppressions::SUPPRESSIONS_PATH);
     let mut out = PathBuf::from(output::suppression_health::DEFAULT_SUPPRESSION_HEALTH_OUT);
     let mut out_md = PathBuf::from(output::suppression_health::DEFAULT_SUPPRESSION_HEALTH_MD_OUT);
@@ -606,7 +662,11 @@ pub(crate) fn parse_policy_suppression_health_options(
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_path_arg(args, i, "--root", "policy suppression-health")?;
+                let value = non_empty_string_arg(args, i, "--root", "policy suppression-health")?;
+                let reconciled =
+                    reconcile_root(&root, root_explicit, &value, "policy suppression-health")?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--manifest" => {
                 i += 1;

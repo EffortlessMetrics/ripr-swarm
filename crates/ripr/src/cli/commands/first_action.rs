@@ -3,6 +3,7 @@
 use crate::cli::commands_options::*;
 use crate::cli::commands_timestamps::generated_at_unix_ms;
 use crate::cli::help;
+use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::unknown_argument;
 use crate::output;
 use std::path::PathBuf;
@@ -120,6 +121,7 @@ pub(in crate::cli) fn first_action(args: &[String]) -> Result<(), String> {
 
 fn parse_first_action_options(args: &[String]) -> Result<FirstActionOptions, String> {
     let mut root = ".".to_string();
+    let mut root_explicit = false;
     let mut pr_guidance = None;
     let mut assistant_proof = None;
     let mut gap_ledger = None;
@@ -137,7 +139,15 @@ fn parse_first_action_options(args: &[String]) -> Result<FirstActionOptions, Str
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                root = non_empty_string_arg(args, i, "--root", "first-action")?;
+                let value = non_empty_string_arg(args, i, "--root", "first-action")?;
+                let reconciled = reconcile_root(
+                    std::path::Path::new(&root),
+                    root_explicit,
+                    &value,
+                    "first-action",
+                )?;
+                root = reconciled.display().to_string();
+                root_explicit = true;
             }
             "--pr-guidance" => {
                 i += 1;
