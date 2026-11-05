@@ -100,6 +100,36 @@ pub(crate) fn plain_default_missing(text: &str) -> String {
     text.replace(STRONG_DISCRIMINATOR_ENTRY, STRONG_ASSERTION_ENTRY)
 }
 
+/// The next-step phrases `exact_oracle_gap_next_step` uses when a related test
+/// already carries an admitted exact assertion.
+const EXACT_ASSERTION_PRESENT_PHRASES: [&str; 2] = [
+    "already has an exact assertion",
+    "already asserts an exact value",
+];
+
+/// #13037: [`plain_default_missing`] for one finding. When the finding's own
+/// next step says a related test already has an exact assertion, "No strong
+/// assertion was detected" would contradict it, so the default line says what
+/// is actually missing: the link from that assertion to the changed value.
+/// JSON `missing` and `human-full` keep the classifier wording byte-for-byte.
+pub(crate) fn plain_default_missing_for(finding: &crate::domain::Finding, text: &str) -> String {
+    let exact_assertion_present = finding
+        .recommended_next_step
+        .as_deref()
+        .is_some_and(|step| {
+            EXACT_ASSERTION_PRESENT_PHRASES
+                .iter()
+                .any(|phrase| step.contains(phrase))
+        });
+    if exact_assertion_present && text.contains(STRONG_DISCRIMINATOR_ENTRY) {
+        return text.replace(
+            STRONG_DISCRIMINATOR_ENTRY,
+            "No assertion was tied to the changed value",
+        );
+    }
+    plain_default_missing(text)
+}
+
 /// The change-type token the default human lists print after `kind:`. Every
 /// family keeps its stable snake_case spelling except the catch-all, whose
 /// raw token is the banned state word; JSON and `human-full` keep it.

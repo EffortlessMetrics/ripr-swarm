@@ -145,6 +145,19 @@ Updated:
 ## Pending — boundary_pairing_sibling_owner (12)
 
 Reason:
+RIPR-SPEC-0083: #13037 default missing-check line says no assertion was tied to the changed value when the next step says an exact assertion exists
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_pairing_sibling_owner (13)
+
+Reason:
 RIPR-SPEC-0001: evidence-first human output now states a repeated related-test miss sentence once per test and the explain verdict block references the Evidence row instead of re-listing the assertion and reason; every fact remains exactly once (agent-efficiency study, Nov 2-4)
 
 Command:
