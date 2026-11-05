@@ -1,0 +1,22 @@
+# Specific exception identity and exact changed-raise activation (#12952).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_credits_the_changed_raise",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_preserves_the_selected_context",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_declines_non_discriminating_types",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_changed_raise_activation",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_import_and_binding_identity",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_a_type_only_single_line_edit",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_credits_the_changed_raise",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_preserves_the_selected_context",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_declines_non_discriminating_types",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_changed_raise_activation",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_import_and_binding_identity",
+  "crates/ripr/src/analysis/language/python/exception_variant_tests.rs::specific_exception_variant_requires_a_type_only_single_line_edit",
+]

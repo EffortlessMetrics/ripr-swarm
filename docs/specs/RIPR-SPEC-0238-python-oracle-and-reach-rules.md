@@ -211,6 +211,8 @@ the changes (rule 15 changes row 5 for `and`).
 Rule 13 changes relations and, for pytest's callable form, reads `match=`
 as `broad_error`. Rule 17 reads a mock assertion
 as strong for one credit branch only; its table row is unchanged.
+Rule 6 likewise reads a proven class-only exception assertion as strong for
+one changed raise only (#12952); the general class-only table row stays weak.
 
 ### Oracle admission rules
 
@@ -354,6 +356,57 @@ as strong for one credit branch only; its table row is unchanged.
    exists and the finding has a strong oracle, it reads `weakly_exposed`
    with the strong-but-orthogonal stage states. The gate no longer reads
    the single `strongest_kind`.
+
+   Finding-specific class identity (#12952): a sole-line replacement from
+   `raise OldError(...)` to `raise NewError(...)`, with identical indentation
+   and literal constructor arguments and no cause or keywords, can read
+   `with pytest.raises(NewError): owner(<literal arguments>)` as
+   `exact_error_variant` / strong for that finding. `OldError` and `NewError`
+   must be distinct, single-bound top-level classes in the owner's module,
+   each directly extending the unshadowed builtin `Exception` with only
+   `pass` or literal-string body statements. Bases, decorators, metaclasses,
+   class hooks and visible rebinding cannot stand in for this identity proof.
+   The plain synchronous free-function owner is also single-bound and
+   undecorated, and neither class name is shadowed in its scope.
+   The shared scope scan conservatively refuses a lambda anywhere in this
+   module and includes whole-module walrus targets among possible local
+   bindings; this reading does not promise to resolve those wider scopes.
+
+   The plain argument-free pytest test imports `pytest` canonically and the
+   owner and new class directly, without aliases, from the exact owner module.
+   Its selected context has one item, no `raises` keywords, and exactly one
+   body statement: that owner call with positional literal arguments. It must
+   be the first context reached after docstrings, `pass` or assertions the
+   shared literal evaluator proves true. An earlier unproved assertion,
+   context, early exit or conditional test path supplies no activation.
+   Decorators, fixtures, parametrization, deferred bodies, dynamic namespace
+   access, visible class/framework/builtin writes and unresolved identity
+   refuse this reading.
+
+   The function path to the edited statement is read through bounded `if`
+   arms over literal arguments, literal values, `not`, comparisons and the
+   unshadowed builtin `len` of a known string. String lengths count Unicode
+   code points. The walk permits only these branches, inert statements,
+   raises and returns; it stops at the first raise or return. Reaching an
+   unchanged expected-class raise, taking another arm, encountering unknown
+   code, exceeding 16 nested arms or 128 visited statements, or lacking old
+   text proves no credit. The literal guard reader is separately depth-bound
+   to 16. In particular, `parse('abcdefghijklmnop')` reaches a
+   `len(s) > 10` raise, but an empty string, short string, eight `é` code
+   points or a prior return does not.
+
+   This reading retains the original assertion and its own context as the
+   observed sink. The related-test row reports `exact_error_variant` /
+   strong, alignment is `direct` with reason
+   `strong_oracle_observes_changed_exception_variant`, and
+   `exception_variant_read` evidence names the rejected old and accepted new
+   classes. Another strong assertion cannot donate its call or hide this
+   context. A broad base class, old/wrong class, tuple, alias, reexport,
+   subclass relation, unresolved class, unchanged class or message-only edit
+   receives no such credit. Callable-form assertions, `unittest`, builtin
+   exception swaps and arbitrary class hierarchies remain outside this
+   bounded reading. Static limits and the shared repair validator remain
+   authoritative; no support-tier or schema change follows from this credit.
 
 ### Reach order
 
@@ -1418,13 +1471,15 @@ rejected alternative. Any can be reversed later without touching the rest.
    assertion that itself credits. Rejected: port RIPR-SPEC-0107's Rust
    variant-token requirement, because the Python credit branches already
    need the owner name or a changed-line token in that assertion.
-   Rejected: credit a class-only `pytest.raises(KeyError)` when the
+   Rejected in general: credit a class-only `pytest.raises(KeyError)` when the
    changed line swaps the exception class, as for `ValueError` to
    `KeyError`. Whether that discriminates depends on the class
    hierarchy: a change from `KeyError` to `LookupError` with
    `raises(LookupError)` passes on both versions, and static evidence
-   does not resolve the hierarchy. It can follow rule 12's route when a
-   corpus case shows the cost.
+   does not resolve that hierarchy. Adopted for #12952: rule 6's bounded
+   sibling-class proof resolves both identities and the exact changed-raise
+   activation, while subtype/base and unknown-identity controls keep the
+   general reading weak.
 4. **`raises(...) as exc` with a value assertion on `exc.value`.**
    Adopted (amended 2026-10-04, #6603): rule 14 promotes the bound
    `with` item to `exact_error_variant` / strong when the test compares
@@ -1559,6 +1614,12 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 ## Required Evidence
 
+- The six `specific_exception_variant_*` classifier tests in
+  `crates/ripr/src/analysis/language/python/exception_variant_tests.rs` pin
+  rule 6's class-only credit and refusal cases: exact context retention,
+  sibling versus subtype/base identity, import/rebinding custody, builtin
+  shadowing, Unicode length boundaries, prior raises/returns and the sole
+  type-only replacement requirement.
 - Each Problem row reads the class the rules give, through
   `classify_change_with_old` and in `ripr check --json` for a fixture.
 - Swapping two assertions in a test, or two test names, never changes a
@@ -2093,6 +2154,9 @@ strong assertions is retained.
   error-path gate (rule 6), rules 9 to 11 and the rule 17 credit branch.
 - `crates/ripr/src/analysis/language/python/classify.rs`: the verdict
   ladder.
+- `crates/ripr/src/analysis/language/python/exception_variant.rs`: rule 6's
+  finding-specific class identity and changed-raise activation, applied by
+  `classify.rs` with the original assertion's context and selected row.
 - `crates/ripr/src/analysis/language/python/probe_shape.rs`: error-path
   family (rule 5), unchanged.
 - `crates/ripr/src/analysis/language/python/static_limits.rs`: limit

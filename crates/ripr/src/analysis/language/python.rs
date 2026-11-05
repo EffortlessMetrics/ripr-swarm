@@ -399,6 +399,9 @@ mod discriminators;
 mod effect_alignment;
 #[cfg(test)]
 mod effect_order_tests;
+mod exception_variant;
+#[cfg(test)]
+mod exception_variant_tests;
 mod hypothesis;
 mod module_constants;
 mod nested_result;

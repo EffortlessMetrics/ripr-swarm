@@ -297,6 +297,17 @@ mock expectations, and custom `assert_*` helpers.
   side-effect/call oracle
 - `unittest.mock` patches recognised syntactically as call-context only
 
+A class-only `pytest.raises(NewError)` can supply finding-specific
+`exact_error_variant` / strong evidence for a sole-line change from
+`raise OldError(...)` to `raise NewError(...)` (#12952). Both classes must be
+inert, distinct direct subclasses of the unshadowed builtin `Exception` in
+the owner's module. The test must import the new class and owner directly
+without aliases, and its own context must call the owner with literal inputs
+that provably reach the exact changed raise. The bounded reading and its
+refusals are specified in RIPR-SPEC-0238 rule 6. It preserves that assertion's
+context in sink alignment, including when another strong assertion exists in
+the test; it does not change the global grade of class-only exception tests.
+
 Related-test heuristics mirror the Rust and TypeScript adapters: changed
 owner name match, import-reference match, file-path proximity, and
 syntactic call proximity. Direct owner calls must be token-aware. Module
@@ -1252,6 +1263,11 @@ can show:
 - fixtures proving broad `pytest.raises` / `self.assertRaises` are recognised
   as weak error-path oracles while `pytest.raises(..., match=...)` /
   `self.assertRaisesRegex(...)` are recognised as exact exception observers
+- classifier regressions proving a specific sibling exception class can
+  distinguish a type-only raise edit, while a base class, wrong class,
+  alias, foreign or rebound class, unreachable changed raise and message-only
+  edit receive no finding-specific class credit; Unicode string lengths use
+  code points, and unrelated assertions cannot replace the selected context
 - a fixture proving unittest assertion argument shapes can identify field,
   output, and status-code oracles
 - a fixture proving pytest and unittest related tests produce
@@ -1468,6 +1484,14 @@ can show:
      registration.
 
 ## Test Mapping
+
+Finding-specific exception-variant credit (#12952) is covered by the six
+`specific_exception_variant_*` tests in
+`crates/ripr/src/analysis/language/python/exception_variant_tests.rs`.
+They exercise the public classifier through real owner/test extraction,
+including exact selected-context alignment, passing literal prefixes and
+blocked paths, import and class identity, builtin shadowing, Unicode length
+boundaries and the sole type-only edit requirement.
 
 Default-prefix regression cases live in
 `crates/ripr/src/analysis/language/python/owners_tests/tests.rs`. They exercise
