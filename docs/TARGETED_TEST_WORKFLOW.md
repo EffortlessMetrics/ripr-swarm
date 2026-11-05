@@ -35,7 +35,8 @@ The workflow uses these artifacts:
 | LSP seam diagnostics and hovers | Editor path for inspecting evidence and copying briefs. |
 | `ripr outcome` receipt | Advisory receipt comparing before and after snapshots. |
 | `agent-verify.json` | Agent-facing before/after comparison generated from the same snapshots. |
-| `agent-receipt.json` | Focused receipt for one seam, suitable for review handoff. |
+| `analysis-outcome.json` | Producer check JSON placed beside the verify file; the receipt validates its root, completeness and applicable current input identity. |
+| `agent-receipt.json` | Focused static receipt for one seam; inspect its status and binding before review handoff. |
 | `repo-sarif` / `sarif-policy` | Optional CI/code-scanning projection with the same seam semantics. |
 | repo badge artifacts | Optional public count projection under badge policy. |
 | `mutation-calibration.{json,md}` | Optional runtime calibration join when cargo-mutants data exists. |
@@ -222,6 +223,18 @@ brief to the agent. It should use:
 The agent must still derive expected values from code or product behavior. RIPR
 does not invent expected outcomes.
 
+If you need a resumable attempt with retained evidence, prepare it **before**
+editing. For an eligible Rust seam, use the producer's printed start command;
+the ordinary form is:
+
+```bash
+ripr agent repair --root . --seam-id <seam_id> --phase before
+```
+
+Save the exact `--attempt ... --phase after` command it prints. The transaction
+captures its own before evidence. A manual snapshot or a CI packet alone does
+not prepare that attempt. See [Repair attempt identity](REPAIR_ATTEMPT.md).
+
 ## 4. Add One Focused Test
 
 Keep the code change narrow:
@@ -238,9 +251,17 @@ without a legitimate testability seam change. If production code changes too,
 the before/after receipt may report new or removed seam IDs instead of a simple
 movement for the original seam.
 
+Run the project's focused test or output check separately and retain its actual
+command and result. The static comparison below does not execute that test.
+
 ## 5. Capture the After Snapshot
 
-After saving the new test, rerun the same repo exposure command:
+If you prepared an attempt in step 3, run its exact after-phase command after
+the edit and project check. It writes the after, verify and receipt artifacts;
+inspect the attempt's status and retained result. Do not overwrite its retained
+files with the manual commands below.
+
+For a manual snapshot comparison, after saving the new test, rerun the same repo exposure command:
 
 ```bash
 ripr check --root . --mode ready --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json
@@ -256,7 +277,12 @@ cargo run -p ripr -- check --root . --mode ready --format repo-exposure-md > tar
 
 ## 6. Generate the Receipt
 
-Compare before and after:
+For a prepared attempt, inspect `ripr agent status --root . --attempt
+<repair-attempt-id> --json` and its retained result, whether the after phase
+completed or refused. Keep the whole attempt directory. The command blocks
+below apply to the separate manual snapshot route.
+
+For that manual route, compare before and after:
 
 ```bash
 ripr outcome \
@@ -274,15 +300,78 @@ ripr outcome \
   --out target/ripr/workflow/targeted-test-outcome.json
 ```
 
-For agent or review handoff, generate the matching verification artifacts:
+### Manual agent verification and receipts
+
+Use this route for an ordinary seam and snapshots deliberately captured around
+the test edit. Keep the same repository, RIPR version, mode, configuration and
+intended scope. A pilot snapshot may be limited or lack the identity required
+by the consumer; do not assume that parseable JSON is a comparable baseline.
+If the before snapshot is missing or refused, retain the limitation. A fresh
+post-edit snapshot cannot stand in for the original before evidence.
+
+For static verification without a receipt:
 
 ```bash
-mkdir -p target/ripr/agent
+mkdir -p target/ripr/agent &&
 ripr agent verify \
   --root . \
   --before target/ripr/workflow/before.repo-exposure.json \
   --after target/ripr/workflow/after.repo-exposure.json \
   --json > target/ripr/agent/agent-verify.json
+```
+
+Inspect the command's native exit and JSON before consuming the file. This
+compares saved static evidence; it does not execute the project test. Gap-bound
+Python or TypeScript subjects have a separate `--gap-id` verification and
+closure contract; follow the gap's printed route instead of substituting its
+ID into this ordinary-seam recipe.
+
+An optional manual compatibility receipt also reads a producer check document
+named **`analysis-outcome.json` in the verify file's directory**. Repo-exposure
+JSON is a different document; copying or renaming it does not supply this
+input. From the same unchanged post-edit workspace, produce it with:
+
+```bash
+mkdir -p target/ripr/agent &&
+RIPR_CHECK_FINDINGS_BYTES=0 ripr check --root . --mode ready --format json \
+  > target/ripr/agent/analysis-outcome.json
+```
+
+This is a Bash example. The environment setting disables findings-document
+truncation; it does not remove analysis limitations. Preserve any explicit
+`--base REF` and configuration used for the intended comparison. Use the live
+input selection that the producer records; an arbitrary saved diff is not a
+substitute for the current input the receipt revalidates. Do not change source,
+Git state or configuration between this capture and receipt generation.
+
+Before continuing, require a successful producer exit, a complete
+`analysis_outcome`, and the intended outcome kind and counts. If
+`document_complete` is present it must be `true`; a
+`limited_findings_bound` limitation is not a full downstream input.
+`no_scope`, `no_changed_lines` and `no_behavioral_candidates` can be complete
+outcomes without the behavior you intended to inspect. Read them as reported,
+not as a successful repair. Follow any emitted analysis recovery before
+retrying; do not edit the JSON to change its status or identity.
+
+The manual unbound receipt below is available only when the default workflow
+packet `target/ripr/workflow/agent-packet.json` and default attempt directory
+`target/ripr/repair-attempts/` are both absent. When either exists, receipt
+issuance enters attempt binding: a missing compatibility packet, no matching
+attempt, more than one match, or an attempt without a current eligible after
+verdict refuses. Inspect
+`ripr agent status` and follow its recovery. For regeneration of an already
+eligible attempt, select its exact `--attempt` and retained inputs as described
+in the [operator guide](LLM_OPERATOR_GUIDE.md). Do not delete evidence to force
+an unbound receipt or create a post-edit before phase to imply an earlier one.
+
+Once those conditions hold, regenerate verify and issue the manual receipt:
+
+```bash
+ripr agent verify \
+  --root . \
+  --before target/ripr/workflow/before.repo-exposure.json \
+  --after target/ripr/workflow/after.repo-exposure.json \
+  --json > target/ripr/agent/agent-verify.json &&
 ripr agent receipt \
   --root . \
   --verify-json target/ripr/agent/agent-verify.json \
@@ -291,14 +380,32 @@ ripr agent receipt \
   --out target/ripr/agent/agent-receipt.json
 ```
 
+Read the receipt itself even when the process exits 0:
+
+| Observation | Meaning and next action |
+| --- | --- |
+| `status: advisory`, `analysis_outcome_status: complete` | Valid complete static producer outcome. Inspect the selected seam, movement and limitations; retain the inputs with the receipt. This is not a project test result or a durable attempt receipt. |
+| `status: incomplete`, `analysis_outcome_status: missing` | The sibling `analysis-outcome.json` is absent. Produce it at the exact path above; a file under `target/ripr/workflow/` does not satisfy a verify file under `target/ripr/agent/`. |
+| `status: incomplete`, `analysis_outcome_status: incomplete` | The producer did not complete. Resolve its named limitation and rerun the affected producer, verification and receipt. |
+| `status: invalid` | Inspect `analysis_outcome_error`: malformed, wrong-root, incompatible, findings-bounded or stale-input evidence must be replaced by an authentic matching producer result. |
+| Nonzero exit before a receipt is written | Resolve the named path, snapshot, seam or attempt-binding failure. File presence or a previous receipt is not evidence that this invocation succeeded. |
+
+Only an advisory receipt with the intended subject can accompany the manual
+static evidence in review. Keep the original before/after files and the
+producer outcome together; the compatibility output under `target/ripr/agent/`
+does not replace an attempt's retained terminal evidence. For durable work,
+prefer preparing the attempt before editing, as in step 3.
+
 The generated CI workflow prepares the before side of this loop only: it seeds
 `target/ripr/workflow/before.repo-exposure.json` from the pilot snapshot and
 writes the workflow, brief, and packet, with compatibility copies of the packet
 and brief under `target/ripr/agent/`. There is no test edit between two
 snapshots of one CI checkout, so it writes no after snapshot, verify JSON, or
-receipt; run the after side locally once the test edit exists.
+receipt. An uploaded CI packet is not a prepared local attempt: establish the
+local source identity and prepare before the local test edit when you need a
+durable attempt. Otherwise retain the manual comparison with its limitations.
 
-For one named gap, `ripr agent repair --seam-id <seam-id> --phase before` and
+For one eligible Rust seam, `ripr agent repair --seam-id <seam-id> --phase before` and
 `ripr agent repair --attempt <repair-attempt-id> --phase after` run this whole
 before/verify/receipt sequence as one transaction; see
 [Repair attempt identity](REPAIR_ATTEMPT.md).
