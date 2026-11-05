@@ -1,0 +1,376 @@
+diff --git a/crates/ripr/src/analysis/classifier/evidence.rs b/crates/ripr/src/analysis/classifier/evidence.rs
+index 552115e4a..dc49f94e9 100644
+--- a/crates/ripr/src/analysis/classifier/evidence.rs
++++ b/crates/ripr/src/analysis/classifier/evidence.rs
+@@ -1236,6 +1236,7 @@ impl ClassifiedProbeEvidence {
+                             context.index,
+                             test,
+                             assertion,
++                            pin_syntax,
+                         )
+                 },
+                 setter_writes_field: &|impl_type, setter, field| {
+diff --git a/crates/ripr/src/analysis/classify/builder_override.rs b/crates/ripr/src/analysis/classify/builder_override.rs
+index 00d2f50ee..0a8d0f567 100644
+--- a/crates/ripr/src/analysis/classify/builder_override.rs
++++ b/crates/ripr/src/analysis/classify/builder_override.rs
+@@ -307,17 +307,24 @@ pub(in crate::analysis) fn owner_field_read_identity(
+     index: &RustIndex,
+     test: &TestSummary,
+     assertion: &OracleFact,
++    syntax: &super::OwnerPinSyntax,
+ ) -> bool {
+-    field_identity(probe, index, test, assertion).is_some()
++    field_identity(probe, index, test, assertion, syntax).is_some()
+ }
+ fn field_identity(
+     probe: &crate::domain::Probe,
+     index: &RustIndex,
+     test: &TestSummary,
+     assertion: &OracleFact,
++    syntax: &super::OwnerPinSyntax,
+ ) -> Option<()> {
+     use crate::domain::ProbeFamily;
+-    let owner = OwnerCall::from_symbol(&probe.owner.as_ref()?.0)?;
++    let owner_id = probe.owner.as_ref()?;
++    let function = index
++        .functions()
++        .iter()
++        .find(|function| function.id == *owner_id)?;
++    let owner = OwnerCall::from_symbol(&owner_id.0)?;
+     let fields = match probe.family {
+         ProbeFamily::FieldConstruction => {
+             vec![super::reveal::constructed_field_name(&probe.expression)?.to_string()]
+@@ -347,10 +354,15 @@ fn field_identity(
+             && field_origin(
+                 &read.expr()?,
+                 &visible,
+-                owner,
+                 &field,
+-                index,
+                 MAX_BINDING_HOPS,
++                &FieldOrigin {
++                    owner,
++                    function,
++                    index,
++                    test,
++                    syntax,
++                },
+             )
+         {
+             return Some(());
+@@ -367,14 +379,28 @@ fn parsed_operand(text: &str) -> Option<ast::Expr> {
+     };
+     statement.expr()
+ }
++struct FieldOrigin<'a> {
++    owner: OwnerCall<'a>,
++    function: &'a super::super::rust_index::FunctionSummary,
++    index: &'a RustIndex,
++    test: &'a TestSummary,
++    syntax: &'a super::OwnerPinSyntax,
++}
++
+ fn field_origin(
+     expression: &ast::Expr,
+     visible: &[ast::Stmt],
+-    owner: OwnerCall<'_>,
+     field: &str,
+-    index: &RustIndex,
+     hops: usize,
++    context: &FieldOrigin<'_>,
+ ) -> bool {
++    let FieldOrigin {
++        owner,
++        function,
++        index,
++        test,
++        syntax,
++    } = context;
+     if hops == 0 {
+         return false;
+     }
+@@ -404,7 +430,13 @@ fn field_origin(
+         root = next;
+     }
+     match &root {
+-        ast::Expr::CallExpr(call) => owner.is_called_by(call),
++        ast::Expr::CallExpr(call) => super::OwnerReturnPin::field_call_binds_owner(
++            function,
++            index,
++            test,
++            &call.syntax().text().to_string(),
++            syntax,
++        ),
+         ast::Expr::PathExpr(path) => {
+             let Some(binding) = single_identifier(path) else {
+                 return false;
+@@ -418,10 +450,9 @@ fn field_origin(
+             if !field_origin(
+                 &initializer,
+                 &visible_statements_before(definition.syntax()),
+-                owner,
+                 field,
+-                index,
+                 hops - 1,
++                context,
+             ) {
+                 return false;
+             }
+diff --git a/crates/ripr/src/analysis/classify/call_identity.rs b/crates/ripr/src/analysis/classify/call_identity.rs
+index 1e5179105..8f20ce986 100644
+--- a/crates/ripr/src/analysis/classify/call_identity.rs
++++ b/crates/ripr/src/analysis/classify/call_identity.rs
+@@ -2324,7 +2324,7 @@ fn file_module_segments(file: &Path) -> Option<Vec<String>> {
+ /// for a bare call, `Some([a, b])` for `a::b::name(..)`, `None` for a
+ /// qualifier this scan cannot read (`<T as Tr>::name`, a generic segment).
+ /// Method calls (`x.name(..)`) and the `fn name` definition are skipped.
+-fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
++pub(super) fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
+     call_sites(body, name, false)
+         .into_iter()
+         .map(|(qualifier, _)| qualifier)
+@@ -2397,6 +2397,26 @@ fn anchored_rest<'a>(
+     anchored.then_some(rest)
+ }
+ 
++/// An explicitly crate-rooted associated call names this owner's module
++/// and self type. Unlike reach's no-rival fallback, identity requires the
++/// namespace to settle even when no rival definition is indexed.
++pub(super) fn rooted_associated_call_names_owner(
++    index: &RustIndex,
++    owner: &FunctionSummary,
++    test: &TestSummary,
++    qualifier: &[String],
++) -> bool {
++    let FunctionImplContext::Impl { self_type } = &owner.impl_context else {
++        return false;
++    };
++    let Some((named, module)) = qualifier.split_last() else {
++        return false;
++    };
++    named == self_type
++        && module_path_of(owner, true)
++            .is_some_and(|path| anchored_rest(index, owner, test, module) == Some(path.as_slice()))
++}
++
+ /// Whether the test's file defines a rival `fn <owner name>` (any scope).
+ fn test_file_defines_fn(index: &RustIndex, test: &TestSummary, owner: &FunctionSummary) -> bool {
+     index.files().get(&test.file).is_none_or(|facts| {
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 2ee9aa5e5..f770033ca 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -6420,6 +6420,81 @@ impl OwnerReturnPin {
+         test_source: &str,
+         index: &RustIndex,
+         syntax: &OwnerPinSyntax,
++    ) -> bool {
++        Self::associated_type_binding_reaches_owner(
++            self.binding(),
++            type_name,
++            test,
++            test_source,
++            index,
++            syntax,
++        )
++    }
++
++    pub(in crate::analysis) fn field_call_binds_owner(
++        owner: &FunctionSummary,
++        index: &RustIndex,
++        test: &TestSummary,
++        text: &str,
++        syntax: &OwnerPinSyntax,
++    ) -> bool {
++        if owner.item.container == FunctionContainer::Free {
++            return super::call_identity::bound_free_owner_calls(index, owner, test, text, syntax);
++        }
++        let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
++            return false;
++        };
++        if owner.item.has_self_param
++            || !indexed_item_nesting(index, &owner.file, &owner.name, owner.start_line, true)
++                .is_some_and(|item| !item.cfg_gated)
++            || syntax.file_cfg_gated(index, &owner.file)
++        {
++            return false;
++        }
++        let Some(mut paths) = super::call_identity::call_qualifiers(text, &owner.name)
++            .into_iter()
++            .next()
++            .flatten()
++        else {
++            return false;
++        };
++        if paths.len() > 1 {
++            if test_crate_binds_root(test, &paths[0], index, syntax) {
++                return false;
++            }
++            return super::call_identity::rooted_associated_call_names_owner(
++                index, owner, test, &paths,
++            );
++        }
++        if paths.pop().as_deref() != Some(self_ty.as_str())
++            || associated_owner_type(self_ty, index).is_none()
++        {
++            return false;
++        }
++        let Some(source) = index.files().get(&test.file) else {
++            return false;
++        };
++        Self::associated_type_binding_reaches_owner(
++            FreeOwnerBinding {
++                name: &owner.name,
++                owner_file: &owner.file,
++                owner_start_line: owner.start_line,
++            },
++            self_ty,
++            test,
++            &source.source,
++            index,
++            syntax,
++        )
++    }
++
++    fn associated_type_binding_reaches_owner(
++        binding: FreeOwnerBinding<'_>,
++        type_name: &str,
++        test: &TestSummary,
++        test_source: &str,
++        index: &RustIndex,
++        syntax: &OwnerPinSyntax,
+     ) -> bool {
+         // Only file-level imports reach a test at the file's top level.
+         if syntax
+@@ -6451,7 +6526,6 @@ impl OwnerReturnPin {
+         {
+             return false;
+         }
+-        let binding = self.binding();
+         let imports_owner_type = |statement: &String| {
+             let Some(path) = statement.trim_start().strip_prefix("use") else {
+                 return false;
+@@ -6482,7 +6556,7 @@ impl OwnerReturnPin {
+         }
+         syntax
+             .target_roots(index)
+-            .root(&self.owner_file, index)
++            .root(binding.owner_file, index)
+             .is_some_and(|owner_root| !library_may_export_other(index, &owner_root, type_name))
+     }
+ 
+diff --git a/crates/ripr/src/analysis/classify/reveal.rs b/crates/ripr/src/analysis/classify/reveal.rs
+index 44269338d..b527d21d7 100644
+--- a/crates/ripr/src/analysis/classify/reveal.rs
++++ b/crates/ripr/src/analysis/classify/reveal.rs
+@@ -8548,8 +8548,11 @@ mod tests {
+                 OracleStrength::Strong,
+             )],
+         );
+-        if reveal(&deletion, &names_method).state != StageState::Yes {
+-            return Err("the target's method token must still confirm".to_string());
++        let method = reveal(&deletion, &names_method);
++        if method.state != StageState::Weak || !method.summary.contains("identity_unresolved") {
++            return Err(format!(
++                "a method token without bound identity stays weak: {method:?}"
++            ));
+         }
+         let parameter = probe(ProbeFamily::CallDeletion, "cache.insert(\"k\", value);");
+         let parameter_observer = test_with_assertions(
+@@ -8560,8 +8563,12 @@ mod tests {
+                 OracleStrength::Strong,
+             )],
+         );
+-        if reveal(&parameter, &parameter_observer).state != StageState::Yes {
+-            return Err("a receiver that is not an owner local must still confirm".to_string());
++        let parameter = reveal(&parameter, &parameter_observer);
++        if parameter.state != StageState::Weak || !parameter.summary.contains("identity_unresolved")
++        {
++            return Err(format!(
++                "a parameter token without bound identity stays weak: {parameter:?}"
++            ));
+         }
+         Ok(())
+     }
+@@ -11614,23 +11621,28 @@ return Err(\"typed pin\".into());
+     ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
+         let source = "#[derive(Clone)] pub struct RetryBuilder { attempts: u32, delay_ms: u64 }
+ impl RetryBuilder { pub fn new()->Self { Self { attempts: 4, delay_ms: 100 } } pub fn build(self)->Self { self } pub fn attempts(mut self, n:u32)->Self { self.attempts=n; self } pub fn delay_ms(mut self,n:u64)->Self { self.delay_ms=n; self } pub fn with_attempts(&self,n:u32)->Self { Self { attempts:n, ..self.clone() } } pub fn with_other(self,_other:Self)->Self { self } }";
+-        let path = PathBuf::from("src/settings.rs");
++        let path = PathBuf::from("src/lib.rs");
+         let facts = crate::analysis::rust_index::summarize_file(path.clone(), source.to_string());
+         let mut index = crate::analysis::rust_index::RustIndex::default();
+         index.extend_functions(facts.functions.iter().cloned());
+         index.insert_file_only(path, facts);
++        index.package_names.insert("fixture".to_string());
++        for (test, _) in related {
++            let source = format!("use fixture::RetryBuilder; {}", test.body);
++            let facts = crate::analysis::rust_index::summarize_file(test.file.clone(), source);
++            index.insert_file_only(test.file.clone(), facts);
++        }
++        let syntax = super::OwnerPinSyntax::default();
+         reveal_evidence_with_value_identity(probe, related, &|test, assertion| {
+             crate::analysis::classify::builder_override::owner_field_read_identity(
+-                probe, &index, test, assertion,
++                probe, &index, test, assertion, &syntax,
+             )
+         })
+     }
+ 
+     fn builder_override_probe(family: ProbeFamily, expression: &str) -> Probe {
+         Probe {
+-            owner: Some(SymbolId(
+-                "src/settings.rs::impl RetryBuilder::new".to_string(),
+-            )),
++            owner: Some(SymbolId("src/lib.rs::impl RetryBuilder::new".to_string())),
+             ..probe(family, expression)
+         }
+     }
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index 8c3a32bea..70276ef87 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -442,8 +442,15 @@ fn returned_fields_and_builders_keep_real_identity_and_reject_replaced_values()
+         let diff = format!(
+             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-{previous}\n+{actual}\n"
+         );
++        let imports = if source.contains("struct Builder") {
++            "Builder"
++        } else if source.contains("make_item") {
++            "{make_item, Item}"
++        } else {
++            "tax"
++        };
+         let test = format!(
+-            "use rust_catalog_description_structural_oracle::*;\n#[test]\nfn observes() {{\n    {body}\n}}\n"
++            "use rust_catalog_description_structural_oracle::{imports};\n#[test]\nfn observes() {{\n    {body}\n}}\n"
+         );
+         let report = check_report(source, &test, MANIFEST, &diff)?;
+         let findings = report["findings"].as_array().ok_or("findings missing")?;
+@@ -458,3 +465,25 @@ fn returned_fields_and_builders_keep_real_identity_and_reject_replaced_values()
+     }
+     Ok(())
+ }
++
++#[test]
++fn returned_field_constructor_identity_respects_namespace() -> Result<(), String> {
++    let source = "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n}\n";
++    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,1 +4,1 @@\n-  Self { attempts:3 }\n+  Self { attempts:4 }\n";
++    let foreign = "mod foreign { pub struct Builder { pub attempts:u32 } impl Builder { pub fn new()->Self { Self { attempts:4 } } } }";
++    for (constructor, exposed) in [
++        ("rust_catalog_description_structural_oracle::Builder", true),
++        ("foreign::Builder", false),
++    ] {
++        let test = format!(
++            "{foreign}\n#[test]\nfn observes() {{\n let _=rust_catalog_description_structural_oracle::Builder::new();\n let item={constructor}::new();\n assert_eq!(item.attempts,4);\n}}\n"
++        );
++        let report = check_report(source, &test, MANIFEST, diff)?;
++        let findings = report["findings"].as_array().ok_or("findings missing")?;
++        assert!(!findings.is_empty(), "{report}");
++        for finding in findings {
++            assert_eq!(finding["classification"] == "exposed", exposed, "{report}");
++        }
++    }
++    Ok(())
++}

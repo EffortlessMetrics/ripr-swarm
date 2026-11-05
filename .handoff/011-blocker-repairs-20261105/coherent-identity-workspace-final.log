@@ -1,0 +1,15 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-12010-successor/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 3m 24s
+     Running tests/return_diagnostic_confirmation.rs (/workspace/12010-proof/target/debug/deps/return_diagnostic_confirmation-f88ac163747e464e)
+
+running 7 tests
+test diagnostic_only_token_cannot_confirm_return ... ok
+test direct_wording_observer_remains_exposed ... ok
+test discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle ... ok
+test established_effect_carrier_binds_the_called_instance_only ... ok
+test native_mutants_separate_structural_and_value_observers ... ok
+test persisted_effect_observer_retains_identity_without_lending_it_to_another_instance ... ok
+test returned_fields_and_builders_keep_real_identity_and_reject_replaced_values ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.15s
+
