@@ -1790,18 +1790,25 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
 
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
+    let empty_scope = empty_scope_hint(session).is_some();
     let snapshot = session.last_good.as_ref().map(|snapshot| {
-        tag_source(
-            json!({
-                "snapshot_id": snapshot.snapshot_id,
-                "outcome_kind": snapshot.outcome.kind.as_str(),
-                "finding_count": snapshot.outcome.counts.finding_count,
-                "total_items": snapshot.selection.total_canonical_items,
-                "list_route": "ripr_list_gaps",
-                "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
-            }),
-            snapshot,
-        )
+        let mut summary = json!({
+            "snapshot_id": snapshot.snapshot_id,
+            "outcome_kind": snapshot.outcome.kind.as_str(),
+            "finding_count": snapshot.outcome.counts.finding_count,
+            "total_items": snapshot.selection.total_canonical_items,
+            "list_route": "ripr_list_gaps",
+            "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
+        });
+        // #13096: an empty-scope snapshot completed without examining any
+        // behavior. Say so in the primary fields an agent reads first, not
+        // only in the later `empty_scope_hint`, so zero findings never read
+        // as a clean result.
+        if empty_scope {
+            summary["analysis_status"] = json!("not_analyzed");
+            summary["clean"] = json!(false);
+        }
+        tag_source(summary, snapshot)
     });
     // `requested_base` appears only when the request named one, so a base-less
     // refresh keeps the unchanged v1 shape.
@@ -5339,6 +5346,14 @@ mod tests {
             {
                 return Err(format!("hint must name why, base and source: {text}"));
             }
+            // #13096: the primary snapshot fields disclose the empty scope.
+            if document["snapshot"]["analysis_status"] != json!("not_analyzed")
+                || document["snapshot"]["clean"] != json!(false)
+            {
+                return Err(format!(
+                    "{kind:?} snapshot must say not_analyzed and not clean: {document}"
+                ));
+            }
             let default_why = document["empty_scope_hint"]["why"].to_string();
             if (kind == AnalysisOutcomeKind::NoBehavioralCandidates)
                 == default_why.contains("the diff is empty")
@@ -5391,6 +5406,11 @@ mod tests {
             (AnalysisOutcomeKind::CompleteWithFindings, 1),
         ] {
             let document = refresh_document(&session_with(kind, findings)?);
+            if document["snapshot"].get("analysis_status").is_some() {
+                return Err(format!(
+                    "{kind:?} must not carry analysis_status: {document}"
+                ));
+            }
             if document.get("empty_scope_hint").is_some() {
                 return Err(format!("{kind:?} must not carry a hint: {document}"));
             }
