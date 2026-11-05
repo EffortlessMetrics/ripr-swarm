@@ -1217,6 +1217,28 @@ fn invalid_argument_failure(error: &ErrorData) -> workspace::AttemptFailure {
     .with_data(data)
 }
 
+/// An unknown method can fit the input cap while its diagnostic exceeds the
+/// response cap. Bound only the echo, after routing the complete method name.
+fn unknown_method_error(method: &str) -> ErrorData {
+    const MAX_METHOD_NAME_PREVIEW_CHARS: usize = 128;
+    let mut chars = method.chars();
+    let preview: String = chars.by_ref().take(MAX_METHOD_NAME_PREVIEW_CHARS).collect();
+    let truncated = chars.next().is_some();
+    let (message, data) = if truncated {
+        (
+            format!("Method not found: {preview} (name truncated)"),
+            Some(serde_json::json!({
+                "method": preview,
+                "method_truncated": true,
+                "method_bytes": method.len(),
+            })),
+        )
+    } else {
+        (format!("Method not found: {preview}"), None)
+    };
+    ErrorData::new(ErrorCode::METHOD_NOT_FOUND, message, data)
+}
+
 /// Failure schema version of each tool whose handler panics are contained at
 /// the call boundary, `ripr_refresh` included: its `InFlightAttempt` guard
 /// clears `in_flight` on unwind, so a glue panic leaves the session usable.
@@ -1331,11 +1353,7 @@ impl ServerHandler for McpServer {
                 Some(serde_json::json!({ "method": request.method })),
             ));
         }
-        Err(ErrorData::new(
-            ErrorCode::METHOD_NOT_FOUND,
-            format!("Method not found: {}", request.method),
-            None,
-        ))
+        Err(unknown_method_error(&request.method))
     }
     async fn list_tools(
         &self,
