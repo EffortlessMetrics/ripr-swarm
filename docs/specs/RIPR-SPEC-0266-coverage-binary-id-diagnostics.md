@@ -144,10 +144,15 @@ unknown, compressed or lookalike debug name. The compiler's loader metadata
 is not a DWARF table; use the emitted native section evidence to identify an
 actual remaining section instead of inferring it from this permitted case.
 
-Traverse the complete GNU section-header table, requiring numeric unique
-indices for its data rows. Decode and record type/size/flags only for
-debug-prefixed rows, converting hexadecimal sizes to byte counts, handling
-optional empty flags and requiring unique names among those debug subjects.
+Require exactly one literal `[Nr]` column header before any numeric row, with
+whitespace-separated tokens `Name Type Address Off Size ES Flg Lk Inf Al` in
+that order. Reject missing, malformed, duplicate or late column headers and
+require numeric unique indices for data rows. Decode and record type/size/flags
+only for debug-prefixed rows, converting hexadecimal sizes to byte counts and
+requiring unique debug names. Optional empty flags remain valid; nonempty
+flags contain only unique bytes from `WAXMSILOGTCERlyopx`, as emitted by the
+[pinned LLVM GNU section printer](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/llvm/tools/llvm-readobj/ELFDumper.cpp).
+Check this lexical flag grammar before applying the retained section policy.
 The unnamed `NULL` row is not a debug subject; ordinary section field layouts
 and ordinary section-name uniqueness are outside this control's validation.
 Reject malformed debug fields and missing, truncated or excessive table
@@ -255,9 +260,11 @@ The strip compatibility controls are:
   actual Cargo compilation, exact acknowledged execution, strict matching LLVM
   merge/export, source/counter equivalence, own-image IDs and active stripping.
 - `tools/repo-policy/src/coverage_diagnostics/strip_tests.rs::debug_sections_require_dwarf_removal_and_exact_allocated_loader_marker`:
-  complete GNU table parsing, unnamed/optional-field handling, exact loader
+  one exact GNU column header before data, numeric indexed rows,
+  unnamed/optional-field handling, unique producer flag bytes, exact loader
   identity/type/flags and nonempty baseline DWARF, with allocated-DWARF,
-  wrong-name/type/size/flag, malformed and duplicate-subject refusals.
+  wrong-name/type/size/flag, missing/misplaced/duplicate header, malformed and
+  duplicate-subject refusals.
 - `tools/repo-policy/src/workflow_tests.rs::coverage_strip_is_generate_only_and_requires_native_controls`:
   mandatory preflight, exact Generate-only setting and full Cargo command,
   with global/other-step, missing, duplicate, stronger-strip, skipped-control

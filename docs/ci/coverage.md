@@ -144,13 +144,20 @@ excludes allocated sections. This permits only the named loader metadata in
 the control; allocation alone never admits another debug section. Actual
 retained sections must come from the native receipt, not this source rule.
 
-The GNU ELF parser requires a complete indexed section table and records each
-debug-prefixed section's name, type, byte size and flags, parsing sizes from
-the tool's hexadecimal fields. It requires numeric unique indices for all
-data rows, and rejects malformed fields or duplicate names among debug
-subjects and exhausted row/text bounds. Ordinary section fields and name
-uniqueness are outside its validation; the unnamed `NULL` section is not a
-debug subject. Each compiler/section diagnostic
+The GNU ELF parser requires one literal `[Nr]` column header before any
+numeric data row, with the whitespace-separated tokens `Name Type Address Off
+Size ES Flg Lk Inf Al` in that order. Missing, malformed, duplicate or late
+column headers are errors. Numeric row indices remain unique. For each
+debug-prefixed section it records the name, type, hexadecimal byte size and
+flags. Flag bytes must be unique members of `WAXMSILOGTCERlyopx`; optional
+empty flags remain valid. The
+[pinned LLVM GNU section printer](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/llvm/tools/llvm-readobj/ELFDumper.cpp)
+defines this column order and flag alphabet. This lexical validation precedes
+the existing section policy; it does not admit arbitrary allocated DWARF.
+Malformed debug fields, duplicate debug names and exhausted row/text bounds
+remain errors. Ordinary section fields and name uniqueness are outside this
+control's validation; the unnamed `NULL` section is not a debug subject.
+Each compiler/section diagnostic
 record is at most 4 KiB. Compiler text and raw context for parse failures are
 bounded to eight 512-character chunks with explicit remaining/truncated
 markers. At most 32 debug sections from at most 256 indexed rows are admitted.

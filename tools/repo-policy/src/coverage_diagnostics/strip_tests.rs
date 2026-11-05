@@ -448,6 +448,7 @@ fn parse_debug_sections(text: &str) -> Result<Vec<DebugSection>> {
     let mut rows = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut sections = Vec::new();
+    let mut column_header_seen = false;
     let mut ended = false;
     for line in lines.map(str::trim).filter(|line| !line.is_empty()) {
         if line == "Key to Flags:" {
@@ -458,13 +459,23 @@ fn parse_debug_sections(text: &str) -> Result<Vec<DebugSection>> {
             .strip_prefix('[')
             .and_then(|line| line.split_once(']'))
             .ok_or("malformed GNU ELF section row")?;
-        if index.trim() == "Nr" {
+        if index == "Nr" {
+            let columns = [
+                "Name", "Type", "Address", "Off", "Size", "ES", "Flg", "Lk", "Inf", "Al",
+            ];
+            if column_header_seen || !rows.is_empty() || !row.split_whitespace().eq(columns) {
+                return Err("malformed, duplicate or late GNU ELF column header".into());
+            }
+            column_header_seen = true;
             continue;
         }
         let index = index
             .trim()
             .parse::<u32>()
             .map_err(|error| error.to_string())?;
+        if !column_header_seen {
+            return Err("GNU ELF column header must precede section rows".into());
+        }
         if !rows.insert(index) || rows.len() > 256 {
             return Err("duplicate or excessive GNU ELF section rows".into());
         }
@@ -483,6 +494,13 @@ fn parse_debug_sections(text: &str) -> Result<Vec<DebugSection>> {
         if name.len() > 128 || fields[1].len() > 32 || flags.len() > 16 {
             return Err("GNU ELF debug section text exceeds bounds".into());
         }
+        let mut seen_flags = BTreeSet::new();
+        if flags
+            .bytes()
+            .any(|flag| !b"WAXMSILOGTCERlyopx".contains(&flag) || !seen_flags.insert(flag))
+        {
+            return Err("malformed GNU ELF debug section flags".into());
+        }
         if !names.insert((*name).to_owned()) || sections.len() == 32 {
             return Err("duplicate or excessive GNU ELF debug sections".into());
         }
@@ -499,7 +517,7 @@ fn parse_debug_sections(text: &str) -> Result<Vec<DebugSection>> {
             flags: flags.to_owned(),
         });
     }
-    if !ended || rows.is_empty() {
+    if !ended || !column_header_seen || rows.is_empty() {
         return Err("incomplete or empty GNU ELF section table".into());
     }
     Ok(sections)
@@ -538,7 +556,8 @@ fn debug_sections_require_dwarf_removal_and_exact_allocated_loader_marker() -> R
     assert!(!permitted_debug_loader(&sections[0]));
     assert!(permitted_debug_loader(&sections[1]));
     assert!(!nonempty_dwarf_line_table(&sections[1]));
-    let no_debug = parse_debug_sections(&format!("Section Headers:\n{null}Key to Flags:\n"))?;
+    let no_debug =
+        parse_debug_sections(&format!("Section Headers:\n{header}{null}Key to Flags:\n"))?;
     assert!(
         no_debug.is_empty(),
         "the unnamed NULL row is not a debug section"
@@ -547,6 +566,12 @@ fn debug_sections_require_dwarf_removal_and_exact_allocated_loader_marker() -> R
         parse_debug_sections(&table.replace(".debug_gdb_scripts", ".debug_gdb_scripts_extra"))?;
     assert_eq!(lookalike[1].name, ".debug_gdb_scripts_extra");
     assert!(!permitted_debug_loader(&lookalike[1]));
+
+    for flags in ["AR", "Al", "Ay", "Aopx"] {
+        let valid = parse_debug_sections(&table.replace("AMS", flags))?;
+        assert_eq!(valid.len(), 2, "{flags}");
+        assert!(permitted_debug_loader(&valid[1]), "{flags}");
+    }
 
     let mut allocated_dwarf = sections[0].clone();
     allocated_dwarf.flags = "A".into();
@@ -579,6 +604,18 @@ fn debug_sections_require_dwarf_removal_and_exact_allocated_loader_marker() -> R
     for broken in [
         table.replace("Section Headers:\n", ""),
         table.replace("Key to Flags:\n", ""),
+        table.replace(header, ""),
+        table.replace(header, &format!("{header}{header}")),
+        table.replace(" Flg ", " Flags "),
+        table.replace("Address Off", "Off Address"),
+        table.replace("[Nr]", "[ Nr ]"),
+        table.replace(&format!("{header}{null}"), &format!("{null}{header}")),
+        table.replace("[ 2]", "[Nr]"),
+        table.replace("AMS", "A!"),
+        table.replace("AMS", "A1"),
+        table.replace("AMS", "Aq"),
+        table.replace("AMS", "AAM"),
+        format!("Section Headers:\n{header}Key to Flags:\n"),
         table.replace("000020", "invalid"),
         table.replace(" 0 0 1", " 0 0"),
         table.replace("[ 2]", "[invalid]"),
