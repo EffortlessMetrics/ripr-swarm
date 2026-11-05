@@ -33,14 +33,25 @@ fn workspace_from_manifest(manifest: &Path, expected: &str) -> Result<PathBuf, S
         .and_then(Path::parent)
         .ok_or_else(|| resource_root_error(&"no workspace above the manifest"))?
         .to_path_buf();
-    if root
+    let expected_manifest = root
         .join("tools/repo-policy")
         .canonicalize()
-        .map_err(|e| e.to_string())?
-        != manifest
-        || source_identity::source_identity(&root)? != expected
-    {
-        return Err("policy test resource source identity differs from the built harness".into());
+        .map_err(|e| format!("policy test resource root {}: {e}", root.display()))?;
+    if expected_manifest != manifest {
+        return Err(format!(
+            "policy test resource manifest mismatch: manifest {}, root {}, expected manifest {}",
+            manifest.display(),
+            root.display(),
+            expected_manifest.display()
+        ));
+    }
+    let observed = source_identity::source_identity(&root)?;
+    if observed != expected {
+        return Err(format!(
+            "policy test resource source digest mismatch: manifest {}, root {}, expected {expected}, observed {observed}",
+            manifest.display(),
+            root.display()
+        ));
     }
     Ok(root)
 }
@@ -144,13 +155,12 @@ mod tests {
             )?,
             root
         );
-        assert_eq!(
-            refusal(workspace_from_manifest(
-                &root.join("tools/repo-policy"),
-                "wrong-source"
-            ))?,
-            "policy test resource source identity differs from the built harness"
-        );
+        let wrong_source = refusal(workspace_from_manifest(
+            &root.join("tools/repo-policy"),
+            "wrong-source",
+        ))?;
+        assert!(wrong_source.contains("policy test resource source digest mismatch:"));
+        assert!(wrong_source.contains("expected wrong-source"));
         assert!(
             refusal(workspace_from_manifest(
                 &root.join("missing"),
@@ -186,6 +196,54 @@ mod tests {
         );
         std::fs::remove_dir(&first).map_err(|e| e.to_string())?;
         std::fs::remove_dir(&second).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn custody_distinguishes_manifest_and_source_digest_mismatches() -> Result<(), String> {
+        let root = scratch("policy-source-custody")?;
+        let manifest = root.join("tools/repo-policy");
+        let other_manifest = root.join("other/repo-policy");
+        std::fs::create_dir_all(&manifest).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&other_manifest).map_err(|e| e.to_string())?;
+        for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"] {
+            std::fs::write(root.join(name), name).map_err(|e| e.to_string())?;
+        }
+        let source = manifest.join("fixture.rs");
+        std::fs::write(&source, "original").map_err(|e| e.to_string())?;
+        let expected = source_identity::source_identity(&root)?;
+        let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
+        assert_eq!(
+            workspace_from_manifest(&manifest, &expected)?,
+            canonical_root
+        );
+
+        let path_error = refusal(workspace_from_manifest(&other_manifest, &expected))?;
+        let actual_manifest = other_manifest.canonicalize().map_err(|e| e.to_string())?;
+        let expected_manifest = manifest.canonicalize().map_err(|e| e.to_string())?;
+        assert_eq!(
+            path_error,
+            format!(
+                "policy test resource manifest mismatch: manifest {}, root {}, expected manifest {}",
+                actual_manifest.display(),
+                canonical_root.display(),
+                expected_manifest.display()
+            )
+        );
+
+        std::fs::write(&source, "changed").map_err(|e| e.to_string())?;
+        let observed = source_identity::source_identity(&root)?;
+        assert_ne!(expected, observed);
+        let digest_error = refusal(workspace_from_manifest(&manifest, &expected))?;
+        assert_eq!(
+            digest_error,
+            format!(
+                "policy test resource source digest mismatch: manifest {}, root {}, expected {expected}, observed {observed}",
+                expected_manifest.display(),
+                canonical_root.display()
+            )
+        );
+        std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
         Ok(())
     }
 }

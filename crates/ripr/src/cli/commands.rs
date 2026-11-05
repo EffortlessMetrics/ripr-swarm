@@ -297,6 +297,10 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
+    println!(
+        "{}",
+        output::evidence_health::render_evidence_health_headline(&report)
+    );
     if let Some(progress) = &progress {
         progress.commit_success();
     }
