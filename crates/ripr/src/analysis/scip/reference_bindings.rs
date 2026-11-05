@@ -19,23 +19,27 @@ pub(crate) struct ScipReferenceBindings {
 }
 
 impl ScipReferenceBindings {
-    pub(crate) fn from_admitted_index(
+    pub(crate) fn from_admitted_index<'a>(
         workspace_root: &Path,
         index_path: &Path,
         manifest_path: &Path,
         consumed: &crate::analysis::consumed_source::ConsumedRustSources,
+        retained_sources: impl IntoIterator<Item = (&'a Path, &'a str)>,
     ) -> Result<Self, ScipAdmissionError> {
         Self::from_admitted_snapshot(
             admit_scip_snapshot(workspace_root, index_path, manifest_path)?,
             consumed,
+            retained_sources,
         )
     }
 
-    fn from_admitted_snapshot(
+    fn from_admitted_snapshot<'a>(
         snapshot: AdmittedScipSnapshot,
         consumed: &crate::analysis::consumed_source::ConsumedRustSources,
+        retained_sources: impl IntoIterator<Item = (&'a Path, &'a str)>,
     ) -> Result<Self, ScipAdmissionError> {
-        let (index, project_root_relative) = snapshot.into_index_for_consumed_sources(consumed)?;
+        let (index, project_root_relative) =
+            snapshot.into_index_for_consumed_sources(consumed, retained_sources)?;
         Ok(Self::from_index(&project_root_relative, &index))
     }
 
@@ -448,6 +452,10 @@ mod tests {
         let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
         consumed.record(Path::new("owner.rs"), Some(b"pub fn score() -> u32 { 1 }"));
         consumed.record(Path::new("test.rs"), Some(source.as_bytes()));
+        let retained_sources = [
+            (Path::new("owner.rs"), "pub fn score() -> u32 { 1 }"),
+            (Path::new("test.rs"), source),
+        ];
         let resolves = |index: &Index| -> Result<bool, String> {
             use sha2::{Digest, Sha256};
             let bytes = index.encode_to_vec();
@@ -470,6 +478,7 @@ mod tests {
                 &index_path,
                 &manifest_path,
                 &consumed,
+                retained_sources,
             )
             .map_err(|error| error.reason())?;
             Ok(bindings
@@ -554,8 +563,10 @@ mod tests {
         replacement_manifest["project_root_relative"] = serde_json::json!("..");
         std::fs::write(&manifest_path, replacement_manifest.to_string())
             .map_err(|e| e.to_string())?;
-        let bindings = ScipReferenceBindings::from_admitted_snapshot(snapshot, &consumed)
-            .map_err(|error| error.reason())?;
+        let retained_sources = [(Path::new("owner.rs"), source)];
+        let bindings =
+            ScipReferenceBindings::from_admitted_snapshot(snapshot, &consumed, retained_sources)
+                .map_err(|error| error.reason())?;
         assert!(
             bindings.call_resolves_to_owner(&project, &file, 2, line, "score", &file, "score", 1),
             "retained validated index/root must survive file replacement"
@@ -565,7 +576,8 @@ mod tests {
                 &project,
                 &index_path,
                 &manifest_path,
-                &consumed
+                &consumed,
+                retained_sources,
             )
             .is_err(),
             "fresh admission must reject replaced manifest/index"
@@ -645,12 +657,17 @@ mod tests {
             ]
         });
         std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
+        let retained_sources = [
+            (Path::new("owner.rs"), owner),
+            (Path::new("test.rs"), current.as_str()),
+        ];
         let admit = |consumed: &ConsumedRustSources| {
             ScipReferenceBindings::from_admitted_index(
                 &project,
                 &index_path,
                 &manifest_path,
                 consumed,
+                retained_sources,
             )
         };
         assert!(
@@ -711,6 +728,141 @@ mod tests {
             resolves(&bindings),
             "later mutation does not replace matching retained capture"
         );
+        std::fs::remove_dir_all(project).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn normalized_coordinate_documents_cannot_supply_raw_scip_authority() -> Result<(), String> {
+        use crate::analysis::consumed_source::ConsumedRustSources;
+        use sha2::{Digest, Sha256};
+        let project = tempfile_dir("coordinate-source")?;
+        let owner = "pub fn f() -> u32 { 1 }\n";
+        let plain = "use beta::f; #[test] fn unrelated() { let (_, value) = (alpha::f, f()); assert_eq!(value, 7); }";
+        let alpha = "scip rust-analyzer cargo alpha 0.1.0 alpha/f().";
+        let beta = "scip rust-analyzer cargo beta 0.1.0 beta/f().";
+        let index_path = project.join("index.scip");
+        let manifest_path = project.join("manifest.json");
+        std::fs::write(project.join("owner.rs"), owner).map_err(|e| e.to_string())?;
+        for encoding in [
+            PositionEncoding::Utf8CodeUnitOffsetFromLineStart,
+            PositionEncoding::Utf16CodeUnitOffsetFromLineStart,
+            PositionEncoding::Utf32CodeUnitOffsetFromLineStart,
+        ] {
+            for bom in [true, false] {
+                let raw = format!("{}{plain}", if bom { "\u{feff}" } else { "" });
+                let pointer = raw.find("alpha::f").ok_or("missing pointer")? + "alpha::".len();
+                let call = raw.find(", f()").ok_or("missing call")? + 2;
+                let column = |byte: usize| -> i32 {
+                    match encoding {
+                        PositionEncoding::Utf8CodeUnitOffsetFromLineStart => byte as i32,
+                        PositionEncoding::Utf16CodeUnitOffsetFromLineStart => {
+                            raw[..byte].encode_utf16().count() as i32
+                        }
+                        _ => raw[..byte].chars().count() as i32,
+                    }
+                };
+                let mut index = Index {
+                    documents: vec![
+                        Document {
+                            relative_path: "owner.rs".into(),
+                            occurrences: vec![Occurrence {
+                                symbol: alpha.into(),
+                                range: vec![0, 7, 8],
+                                symbol_roles: SymbolRole::Definition as i32,
+                                ..Occurrence::default()
+                            }],
+                            ..Document::default()
+                        },
+                        Document {
+                            relative_path: "test.rs".into(),
+                            position_encoding: encoding as i32,
+                            occurrences: vec![
+                                Occurrence {
+                                    symbol: alpha.into(),
+                                    range: vec![0, column(pointer), column(pointer + 1)],
+                                    ..Occurrence::default()
+                                },
+                                Occurrence {
+                                    symbol: beta.into(),
+                                    range: vec![0, column(call), column(call + 1)],
+                                    ..Occurrence::default()
+                                },
+                            ],
+                            ..Document::default()
+                        },
+                    ],
+                    ..Index::default()
+                };
+                std::fs::write(project.join("test.rs"), &raw).map_err(|e| e.to_string())?;
+                let mut consumed = ConsumedRustSources::default();
+                consumed.record(Path::new("owner.rs"), Some(owner.as_bytes()));
+                consumed.record(Path::new("test.rs"), Some(raw.as_bytes()));
+                let admit = |index: &Index,
+                             coordinate_owner: &str,
+                             coordinate_test: &str|
+                 -> Result<ScipReferenceBindings, String> {
+                    let bytes = index.encode_to_vec();
+                    std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
+                    let manifest = serde_json::json!({"schema_version":"ripr-scip-admission-manifest-v1",
+                        "index_sha256":format!("{:x}",Sha256::digest(&bytes)),
+                        "producer":{"name":"coordinate-regression","version":"1"},"project_root_relative":".",
+                        "source_files":[{"relative_path":"owner.rs","source_sha256":format!("{:x}",Sha256::digest(owner.as_bytes()))},
+                            {"relative_path":"test.rs","source_sha256":format!("{:x}",Sha256::digest(raw.as_bytes()))}]});
+                    std::fs::write(&manifest_path, manifest.to_string())
+                        .map_err(|e| e.to_string())?;
+                    ScipReferenceBindings::from_admitted_index(
+                        &project,
+                        &index_path,
+                        &manifest_path,
+                        &consumed,
+                        [
+                            (Path::new("owner.rs"), coordinate_owner),
+                            (Path::new("test.rs"), coordinate_test),
+                        ],
+                    )
+                    .map_err(|e| e.reason())
+                };
+                let resolves = |bindings: &ScipReferenceBindings, line: &str| {
+                    bindings.call_resolves_to_owner(
+                        &project,
+                        &project.join("test.rs"),
+                        1,
+                        line,
+                        "f",
+                        &project.join("owner.rs"),
+                        "f",
+                        1,
+                    )
+                };
+                assert!(
+                    !resolves(&admit(&index, owner, plain)?, plain),
+                    "a pointer cannot supply a different call's identity; BOM={bom}, encoding={encoding:?}"
+                );
+                index.documents[1].occurrences[1].symbol = alpha.into();
+                let matching = admit(&index, owner, &raw)?;
+                assert!(
+                    resolves(&matching, &raw),
+                    "exact coordinate bytes preserve the actual-call positive"
+                );
+                if bom {
+                    assert!(
+                        !resolves(&admit(&index, owner, plain)?, plain),
+                        "normalized test document contributes no authority"
+                    );
+                }
+                assert!(
+                    !resolves(&admit(&index, &format!("\u{feff}{owner}"), &raw)?, &raw),
+                    "a mismatching definition document contributes no authority"
+                );
+                std::fs::write(project.join("test.rs"), "// later edit\n")
+                    .map_err(|e| e.to_string())?;
+                assert!(
+                    resolves(&matching, &raw),
+                    "later live edits cannot replace matching retained coordinate bytes"
+                );
+            }
+        }
         std::fs::remove_dir_all(project).map_err(|e| e.to_string())?;
         Ok(())
     }

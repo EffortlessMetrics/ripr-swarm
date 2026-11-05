@@ -5,7 +5,7 @@ use super::generated::scip::{Document, Index, TextEncoding};
 use prost::Message;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Maximum bytes read from a caller-supplied SCIP index file.
@@ -75,10 +75,15 @@ pub(crate) struct AdmittedScipSnapshot {
 }
 
 impl AdmittedScipSnapshot {
-    pub(crate) fn into_index_for_consumed_sources(
+    pub(crate) fn into_index_for_consumed_sources<'a>(
         mut self,
         consumed: &crate::analysis::consumed_source::ConsumedRustSources,
+        retained_sources: impl IntoIterator<Item = (&'a Path, &'a str)>,
     ) -> Result<(Index, String), ScipAdmissionError> {
+        let coordinate_digests = retained_sources
+            .into_iter()
+            .map(|(path, source)| (path.to_path_buf(), hex_sha256(source.as_bytes())))
+            .collect::<BTreeMap<_, _>>();
         let mut captured_documents = BTreeSet::new();
         for source in &self.source_files {
             // Manifest/root paths already passed admission. Normalize the
@@ -97,6 +102,12 @@ impl AdmittedScipSnapshot {
                 return Err(ScipAdmissionError::SourceDigestMismatch {
                     path: source.relative_path.clone(),
                 });
+            }
+            // Raw capture agreement does not prove coordinate agreement:
+            // FileFacts may have normalized BOMs or other source bytes. Both
+            // reference and definition documents need the exact retained text.
+            if coordinate_digests.get(&relative) != Some(&source.source_sha256) {
+                continue;
             }
             captured_documents.insert(source.relative_path.as_str());
         }

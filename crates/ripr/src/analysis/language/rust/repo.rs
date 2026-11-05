@@ -148,6 +148,10 @@ impl RustAdapter {
                     index_path,
                     manifest_path,
                     &rust_consumed_sources,
+                    index
+                        .files()
+                        .iter()
+                        .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
                 )
                 .map_err(|error| format!("scip reference bindings: {}", error.reason()))?,
             )),

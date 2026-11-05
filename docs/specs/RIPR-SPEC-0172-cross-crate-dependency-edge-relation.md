@@ -391,3 +391,11 @@ a broader valid SCIP index need not force unrelated source capture. Both the
 call document and definition document must remain in the matched subset. Later
 live edits cannot replace a matching retained capture. The facts-only admission
 API retains its original scope independently of this analysis binding contract.
+
+Binding authority additionally requires the exact coordinate text retained in
+FileFacts to match the committed raw source digest. A document whose index text
+was normalized (including UTF-8 BOM stripping) is excluded from reference and
+definition authority until a source-coordinate mapping is owned. Matching raw
+capture alone does not establish coordinate identity. Both adapters supply the
+actual retained source iterator; no live reread can replace it. Ordinary matching
+UTF-8/16/32 position controls and post-admission mutation behavior remain intact.

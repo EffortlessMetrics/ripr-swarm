@@ -11135,6 +11135,161 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
     }
 
     #[test]
+    fn scip_consumer_refuses_bom_normalized_coordinate_authority() -> Result<(), String> {
+        use crate::analysis::scip::{
+            ScipReferenceBindings,
+            generated::scip::{Document, Index, Occurrence, PositionEncoding, SymbolRole},
+        };
+        use prost::Message;
+        use sha2::{Digest, Sha256};
+        let root = temp_dir("scip-bom-coordinate")?;
+        write(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers=['alpha','beta','consumer']\nresolver='2'\n",
+        )?;
+        for package in ["alpha", "beta", "consumer"] {
+            let dependencies = if package == "consumer" {
+                "\n[dependencies]\nalpha={path='../alpha'}\nbeta={path='../beta'}\n"
+            } else {
+                ""
+            };
+            write(
+                &root,
+                &format!("{package}/Cargo.toml"),
+                &format!(
+                    "[package]\nname='{package}'\nversion='0.0.0'\nedition='2024'\n{dependencies}"
+                ),
+            )?;
+        }
+        let alpha_source = "pub fn f() -> u32 { 1 }\n";
+        let beta_source = "pub fn f() -> u32 { 7 }\n";
+        let alpha = "scip rust-analyzer cargo alpha 0.1.0 alpha/f().";
+        let beta = "scip rust-analyzer cargo beta 0.1.0 beta/f().";
+        for bom in [true, false] {
+            for targets_alpha in [false, true] {
+                let import = if targets_alpha { "alpha" } else { "beta" };
+                let expected = if targets_alpha { 1 } else { 7 };
+                let source = format!(
+                    "{}use {import}::f; #[test] fn unrelated() {{ let (_, value) = (alpha::f, f()); assert_eq!(value, {expected}); }}",
+                    if bom { "\u{feff}" } else { "" }
+                );
+                let loaded = vec![
+                    (
+                        write(&root, "alpha/src/lib.rs", alpha_source)?,
+                        alpha_source.as_bytes().to_vec(),
+                    ),
+                    (
+                        write(&root, "beta/src/lib.rs", beta_source)?,
+                        beta_source.as_bytes().to_vec(),
+                    ),
+                    (
+                        write(&root, "consumer/src/lib.rs", &source)?,
+                        source.as_bytes().to_vec(),
+                    ),
+                ];
+                let mut consumed = crate::analysis::consumed_source::ConsumedRustSources::default();
+                for (path, bytes) in &loaded {
+                    consumed.record(path, Some(bytes));
+                }
+                let index = crate::analysis::facts::build_analysis_index_from_loaded_files(
+                    &root,
+                    &loaded,
+                    &[],
+                )?
+                .index;
+                let owner = index
+                    .functions()
+                    .iter()
+                    .find(|function| {
+                        function.name == "f" && function.file.ends_with("alpha/src/lib.rs")
+                    })
+                    .ok_or("missing alpha owner")?;
+                let test = index.tests().first().ok_or("missing test")?;
+                let retained = index.files().get(&test.file).ok_or("missing test facts")?;
+                assert_eq!(
+                    retained.data().source.as_ref(),
+                    source.trim_start_matches('\u{feff}'),
+                    "actual coordinate normalization premise"
+                );
+                let pointer = source.find("alpha::f").ok_or("pointer")? + "alpha::".len();
+                let call = source.find(", f()").ok_or("call")? + 2;
+                let scip = Index {
+                    documents: vec![
+                        Document {
+                            relative_path: "alpha/src/lib.rs".into(),
+                            occurrences: vec![Occurrence {
+                                symbol: alpha.into(),
+                                range: vec![0, 7, 8],
+                                symbol_roles: SymbolRole::Definition as i32,
+                                ..Occurrence::default()
+                            }],
+                            ..Document::default()
+                        },
+                        Document {
+                            relative_path: "beta/src/lib.rs".into(),
+                            occurrences: vec![Occurrence {
+                                symbol: beta.into(),
+                                range: vec![0, 7, 8],
+                                symbol_roles: SymbolRole::Definition as i32,
+                                ..Occurrence::default()
+                            }],
+                            ..Document::default()
+                        },
+                        Document {
+                            relative_path: "consumer/src/lib.rs".into(),
+                            position_encoding: PositionEncoding::Utf8CodeUnitOffsetFromLineStart
+                                as i32,
+                            occurrences: vec![
+                                Occurrence {
+                                    symbol: alpha.into(),
+                                    range: vec![0, pointer as i32, (pointer + 1) as i32],
+                                    ..Occurrence::default()
+                                },
+                                Occurrence {
+                                    symbol: if targets_alpha { alpha } else { beta }.into(),
+                                    range: vec![0, call as i32, (call + 1) as i32],
+                                    ..Occurrence::default()
+                                },
+                            ],
+                            ..Document::default()
+                        },
+                    ],
+                    ..Index::default()
+                };
+                let bytes = scip.encode_to_vec();
+                let index_path = root.join("index.scip");
+                let manifest_path = root.join("manifest.json");
+                std::fs::write(&index_path, &bytes).map_err(|e| e.to_string())?;
+                let sources=loaded.iter().map(|(path,bytes)|serde_json::json!({"relative_path":crate::analysis::workspace::normalize_path(path),"source_sha256":format!("{:x}",Sha256::digest(bytes))})).collect::<Vec<_>>();
+                let manifest = serde_json::json!({"schema_version":"ripr-scip-admission-manifest-v1","index_sha256":format!("{:x}",Sha256::digest(&bytes)),"producer":{"name":"retained-coordinate-consumer","version":"1"},"project_root_relative":".","source_files":sources});
+                std::fs::write(&manifest_path, manifest.to_string()).map_err(|e| e.to_string())?;
+                let bindings = ScipReferenceBindings::from_admitted_index(
+                    &root,
+                    &index_path,
+                    &manifest_path,
+                    &consumed,
+                    index
+                        .files()
+                        .iter()
+                        .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
+                )
+                .map_err(|e| e.reason())?;
+                let (adjacency, prefixes) = crate_a_dependency_context();
+                let mut context = edge_context(&adjacency, &prefixes, &index);
+                context.root = &root;
+                context.scip_bindings = Some(&bindings);
+                assert_eq!(
+                    scip_reference_admits_owner_call(Some(&context), owner, test, "f"),
+                    !bom && targets_alpha,
+                    "BOM={bom}, actual_alpha={targets_alpha}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn scip_consumer_uses_retained_source_columns_with_indentation_and_unicode()
     -> Result<(), String> {
         use crate::analysis::scip::{
@@ -11216,6 +11371,10 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 &index_path,
                 &manifest_path,
                 &consumed,
+                index
+                    .files()
+                    .iter()
+                    .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
             )
             .map_err(|e| e.reason())
         };
