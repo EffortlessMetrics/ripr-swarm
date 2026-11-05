@@ -84,7 +84,9 @@ fn parsed_index(source: &str) -> Result<ParsedIndex, String> {
             .drop_in_manifests
             .unbound_standard_root(Path::new("src/lib.rs"), root)
         {
-            return Err(format!("owner fixture did not establish its {root} manifest binding"));
+            return Err(format!(
+                "owner fixture did not establish its {root} manifest binding"
+            ));
         }
     }
     Ok(fixture)
