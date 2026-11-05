@@ -1826,6 +1826,24 @@ fn mcp_doc_error_table_matches_vocabulary_and_resource_failure_mapping() -> Resu
 /// next request, and the refresh after the failure analyzes normally, so a
 /// contained failure never ends the MCP process or leaves a half-committed
 /// snapshot behind.
+/// The one test-side Git launch in this file (shared by every fixture so the
+/// process-spawn allowance stays a single site).
+fn git_in(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("git {args:?}: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
 async fn worktree_refresh(
     server: &McpServer,
 ) -> Result<rmcp::model::CallToolResponse, rmcp::model::ErrorData> {
@@ -1857,21 +1875,7 @@ async fn refresh_contains_a_language_adapter_panic() -> Result<(), String> {
         "pub fn gate_state(flag: bool) -> bool { flag }\n",
     )
     .map_err(|error| error.to_string())?;
-    let run_git = |args: &[&str]| -> Result<(), String> {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(&root)
-            .output()
-            .map_err(|error| format!("git {args:?}: {error}"))?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "git {args:?}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
-    };
+    let run_git = |args: &[&str]| git_in(&root, args);
     run_git(&["init"])?;
     run_git(&["config", "user.email", "ripr@example.invalid"])?;
     run_git(&["config", "user.name", "RIPR Test"])?;
@@ -2122,13 +2126,15 @@ fn typed_failure_carries_the_remedy_its_recovery_prose_states() {
 /// A throwaway Git repository with one committed Rust file and an uncommitted
 /// edit, so a worktree refresh has something to analyze (#13196).
 fn verify_route_fixture(label: &str) -> Result<PathBuf, String> {
+    static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
-        "ripr-mcp-{label}-{}-{}",
+        "ripr-mcp-{label}-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| error.to_string())?
-            .as_nanos()
+            .as_nanos(),
+        NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
     std::fs::write(
@@ -2141,21 +2147,7 @@ fn verify_route_fixture(label: &str) -> Result<PathBuf, String> {
         "pub fn gate_state(flag: bool) -> bool { flag }\n",
     )
     .map_err(|error| error.to_string())?;
-    let run_git = |args: &[&str]| -> Result<(), String> {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(&root)
-            .output()
-            .map_err(|error| format!("git {args:?}: {error}"))?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "git {args:?}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
-    };
+    let run_git = |args: &[&str]| git_in(&root, args);
     run_git(&["init"])?;
     run_git(&["config", "user.email", "ripr@example.invalid"])?;
     run_git(&["config", "user.name", "RIPR Test"])?;
