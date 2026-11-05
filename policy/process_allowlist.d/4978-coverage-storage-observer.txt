@@ -1,2 +1,0 @@
-tools/repo-policy/src/coverage_diagnostics/storage.rs|Command::new|1|coverage/4978|Fixed full coverage command, inherited environment and streams, isolated group with non-reaping PID custody; observations never stop Cargo or reduce profiling.
-tools/repo-policy/src/coverage_diagnostics/storage_tests.rs|Command::new|6|coverage/4978|Linux custody controls and a fixed offline Cargo/LLVM strip-equivalence fixture; native commands use bounded file captures and the non-reaping owner, with exact compiler artifacts and acknowledged test selection.

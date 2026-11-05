@@ -263,8 +263,8 @@ pub(crate) enum RepairPacketIneligibility {
     /// selected target.
     RouteNotReady,
     /// The seam's evidence names a static limitation `check` reports as a
-    /// limitation rather than a gap (today: a `#[should_panic]` test whose
-    /// panic outcome is unresolved, #10703), so there is no gap to repair.
+    /// limitation rather than a gap: an unresolved expected panic (#10703)
+    /// or owner-bound field snapshot (#13278), so there is no gap to repair.
     NamedStaticLimitation,
 }
 
@@ -302,6 +302,9 @@ pub(crate) fn repair_packet_eligibility(entry: &ClassifiedSeam) -> RepairPacketE
     } else if entry
         .evidence
         .names_static_limit(crate::domain::StaticLimitKind::RustPanicOutcomeUnresolved)
+        || entry
+            .evidence
+            .names_static_limit(crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved)
     {
         Some(RepairPacketIneligibility::NamedStaticLimitation)
     } else if !readiness.is_repair_ready() {

@@ -106,6 +106,29 @@ coverage failure.
 
 ## Required Evidence
 
+### Coverage command ownership
+
+One private Linux owner retains the primary child's PID with non-reaping
+observation until owned-group cleanup, then reaps it exactly once. Lost
+custody disarms numeric signalling. Native success, failure and signal status
+remain observable; an exhausted observation budget never stops the command.
+The fixed full-workspace/all-features LCOV builder inherits all streams and
+environment variables. Controls require its exact arguments, a confirmed
+separate descendant, loss-of-custody refusal and cleanup on owner drop.
+The environment control seeds a dedicated variable only in an isolated exact
+libtest child. The observed command must inherit that variable without an
+explicit override; the parent environment is never changed. Absence of
+ambient HOME is exercised in that child. Require its successful native
+status, exact nonempty test selection and a fresh acknowledgement written
+only after the original exit, phase, stream and profiling assertions pass.
+Require the inner final receipt to explicitly confirm successful cleanup.
+The parent bounds the child to 30 seconds and each captured stream to 16 KiB.
+All witnesses remain under its owned root; errors or panics retain them,
+and deletion requires confirmed cleanup and completed validation.
+Bounded records use one write of at most 4 KiB and flush immediately; a short
+write is an error. Native controls and the production storage observer
+use this same owner; neither adds a separate process-launch authority.
+
 ### During-run storage evidence
 
 The Linux coverage owner also supplies bounded, metadata-only storage
@@ -179,10 +202,15 @@ unknown, compressed or lookalike debug name. The compiler's loader metadata
 is not a DWARF table; use the emitted native section evidence to identify an
 actual remaining section instead of inferring it from this permitted case.
 
-Traverse the complete GNU section-header table, requiring numeric unique
-indices for its data rows. Decode and record type/size/flags only for
-debug-prefixed rows, converting hexadecimal sizes to byte counts, handling
-optional empty flags and requiring unique names among those debug subjects.
+Require exactly one literal `[Nr]` column header before any numeric row, with
+whitespace-separated tokens `Name Type Address Off Size ES Flg Lk Inf Al` in
+that order. Reject missing, malformed, duplicate or late column headers and
+require numeric unique indices for data rows. Decode and record type/size/flags
+only for debug-prefixed rows, converting hexadecimal sizes to byte counts and
+requiring unique debug names. Optional empty flags remain valid; nonempty
+flags contain only unique bytes from `WAXMSILOGTCERlyopx`, as emitted by the
+[pinned LLVM GNU section printer](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/llvm/tools/llvm-readobj/ELFDumper.cpp).
+Check this lexical flag grammar before applying the retained section policy.
 The unnamed `NULL` row is not a debug subject; ordinary section field layouts
 and ordinary section-name uniqueness are outside this control's validation.
 Reject malformed debug fields and missing, truncated or excessive table
@@ -200,10 +228,14 @@ passed and one post-assertion acknowledgement per invocation, plus a fresh,
 nonempty bounded raw profile. The matching compiler-sysroot LLVM tools must
 merge both profiles without warnings, match the merged profile ID to that
 mode's own executable and export both JSON and LCOV for the exact source.
-Require nonempty source regions, the known function count of two, a hot-line
-count of two and a cold-line count of zero, plus equality of source mapping
-and all owned line counts between modes. Different image IDs across modes
-remain valid. Missing tools, malformed records, duplicate/absent subjects and
+Require nonempty source regions and an execution count of two for each
+authored fixture function, a hot-line count of two and a cold-line count of
+zero. Compare the complete owned JSON file record, both authored function
+records after removing only their mangled names, and all owned LCOV line
+counts between modes. Other exported files and unrelated functions are
+outside this compatibility probe; it does not qualify the LLVM exporter or
+require whole-export equality. Different image IDs across modes remain valid.
+Missing tools, malformed records, duplicate/absent subjects and
 zero test selection are errors, not skipped proof. Existing genuine malformed
 profile refusal and diagnostic size limits remain exercised.
 
@@ -288,13 +320,15 @@ and does not establish the producer of later, unobserved ENOSPC growth.
 
 The strip compatibility controls are:
 
-- `tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::native_test_profile_strip_preserves_coverage_and_reduces_fixture_size`:
+- `tools/repo-policy/src/coverage_diagnostics/strip_tests.rs::native_test_profile_strip_preserves_coverage_and_reduces_fixture_size`:
   actual Cargo compilation, exact acknowledged execution, strict matching LLVM
   merge/export, source/counter equivalence, own-image IDs and active stripping.
-- `tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::debug_sections_require_dwarf_removal_and_exact_allocated_loader_marker`:
-  complete GNU table parsing, unnamed/optional-field handling, exact loader
+- `tools/repo-policy/src/coverage_diagnostics/strip_tests.rs::debug_sections_require_dwarf_removal_and_exact_allocated_loader_marker`:
+  one exact GNU column header before data, numeric indexed rows,
+  unnamed/optional-field handling, unique producer flag bytes, exact loader
   identity/type/flags and nonempty baseline DWARF, with allocated-DWARF,
-  wrong-name/type/size/flag, malformed and duplicate-subject refusals.
+  wrong-name/type/size/flag, missing/misplaced/duplicate header, malformed and
+  duplicate-subject refusals.
 - `tools/repo-policy/src/workflow_tests.rs::coverage_strip_is_generate_only_and_requires_native_controls`:
   mandatory preflight, exact Generate-only setting and full-command wrapper,
   with global/other-step, missing, duplicate, stronger-strip, skipped-control
@@ -367,13 +401,19 @@ These shell fixtures do not substitute for genuine compiler/LLVM execution.
 
 ## Implementation Mapping
 
-- tools/repo-policy/src/coverage_diagnostics/storage.rs owns the fixed coverage
-  command, metadata accounting, bounded records and child custody.
-- tools/repo-policy/src/coverage_diagnostics/storage_tests.rs owns the storage,
-  command-fidelity, emission and process-lifetime controls registered in
-  .ripr/traceability.d/4978-coverage-storage-observer.toml.
-- The existing Coverage workflow invokes the prebuilt adapter; its command
-  inventory and workflow controls preserve the existing failure paths.
+- `tools/repo-policy/src/coverage_diagnostics/process.rs` owns command fidelity,
+  process custody and bounded record writes; `process_tests.rs` retains their
+  real status, descendant and lost-custody controls.
+- `tools/repo-policy/src/coverage_diagnostics/strip_tests.rs` owns the native
+  strip comparison and ELF-section parser controls, registered alongside the
+  process/workflow controls in `.ripr/traceability.d/4978-coverage-strip.toml`.
+
+- `tools/repo-policy/src/coverage_diagnostics/storage.rs` owns metadata
+  accounting and storage receipts through the shared command owner. Its six
+  accounting/capacity/emission controls in `storage_tests.rs` are registered in
+  `.ripr/traceability.d/4978-coverage-storage-observer.toml`.
+- The Coverage workflow invokes the prebuilt adapter; its command inventory
+  and workflow controls preserve the existing failure paths.
 
 - `tools/repo-policy/src/coverage_diagnostics/binary_ids.rs` owns bounded
   profile-ID parsing and executable association.

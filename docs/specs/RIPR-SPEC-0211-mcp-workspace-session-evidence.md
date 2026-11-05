@@ -615,8 +615,8 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   and complete a valid pinned read after the refusals. It also pins the
   #9895 trailing-slash tolerance: one appended slash on
   the snapshot, gap, and repair-card URIs returns the identical document,
-  while a second slash fails closed. Resource payloads are pretty-printed
-  while tool payloads are compact by design, so the control compares
+  while a second slash fails closed. Resource payloads and tool payloads
+  both serialize compact for LLM-facing text, and the control compares
   parsed documents, not serialized bytes.
 - `cargo test -p ripr --lib mcp::transport` — bounded framing, typed-shape
   recovery, and the #5267 control: repeated pre-initialize violations each

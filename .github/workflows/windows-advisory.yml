@@ -579,10 +579,11 @@ jobs:
                   diff = root + r'\fixture change.diff'
                   expected = f'ripr check --root "{drive}/synthetic-selector-fixture literal" --diff "{drive}/synthetic-selector-fixture literal/fixture change.diff" --json'
                   self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
-                  stderr = ('No finding. Retry `' + expected + '`.').encode()
-                  self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), expected)
-                  with self.assertRaisesRegex(RuntimeError, 'frozen root/diff/JSON scope'):
-                      self.ns['printed_recovery'](stderr.replace(b'"', b"'"), root, diff, windows=True)
+                  for command in (expected, expected.removesuffix(' --json') + ' --format json'):
+                      stderr = ('No finding. Retry `' + command + '`.').encode()
+                      self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), command)
+                      with self.assertRaisesRegex(RuntimeError, 'frozen root/diff/JSON scope'):
+                          self.ns['printed_recovery'](stderr.replace(b'"', b"'"), root, diff, windows=True)
 
               def test_windows_recovery_keeps_single_quotes_for_dollar_paths(self):
                   drive = 'Q' + ':'
@@ -605,18 +606,65 @@ jobs:
                   diff = root + '/fixture change.diff'
                   expected = "ripr check --root '/synthetic-selector-fixture literal' --diff '/synthetic-selector-fixture literal/fixture change.diff' --json"
                   self.assertEqual(self.ns['recovery_command'](root, diff, windows=False), expected)
-                  self.assertEqual(self.ns['printed_recovery'](('`' + expected + '`').encode(), root, diff, windows=False), expected)
+                  for command in (expected, expected.removesuffix(' --json') + ' --format json'):
+                      self.assertEqual(self.ns['printed_recovery'](('`' + command + '`').encode(), root, diff, windows=False), command)
 
               def test_recovery_refuses_changed_scope_or_literal(self):
                   for windows in (False, True):
-                      command = self.ns['recovery_command'](self.root, self.out, windows=windows)
-                      for wrong in (self.ns['recovery_command'](self.stock, self.out, windows=windows),
-                                    self.ns['recovery_command'](self.root, self.binary, windows=windows),
-                                    command.replace(' --json', ''), command + ' --no-cache'):
-                          with self.subTest(windows=windows, command=wrong), self.assertRaises(RuntimeError):
-                              self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out, windows=windows)
-                      with self.assertRaises(RuntimeError):
-                          self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out, windows=windows)
+                      for suffix in (' --json', ' --format json'):
+                          commands = [self.ns['recovery_command'](root, diff, windows=windows).removesuffix(' --json') + suffix
+                                      for root, diff in ((self.root, self.out), (self.stock, self.out), (self.root, self.binary))]
+                          command, wrong_root, wrong_diff = commands
+                          for wrong in (wrong_root, wrong_diff, command.removesuffix(suffix),
+                                        command + ' --no-cache', command + '; Write-Output injected',
+                                        command.replace('"', "'") if windows else command.replace("'", '"')):
+                              with self.subTest(windows=windows, command=wrong), self.assertRaises(RuntimeError):
+                                  self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out, windows=windows)
+                          with self.assertRaises(RuntimeError):
+                              self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out, windows=windows)
+
+              def test_sibling_journeys_replay_each_actual_json_spelling(self):
+                  # Execute the real journey statements with controlled process results.
+                  # Actual PowerShell execution remains the later native consumer's proof.
+                  body = next(n for n in self.tree.body if isinstance(n, ast.Try)).body
+                  start = next(i for i, n in enumerate(body) if isinstance(n, ast.Assign)
+                               and any(isinstance(t, ast.Name) and t.id == 'commands' for t in n.targets))
+                  end = next(i for i in range(start, len(body)) if isinstance(body[i], ast.Expr)
+                             and isinstance(body[i].value, ast.Call)
+                             and ast.unparse(body[i].value.func) == 'receipt.update')
+                  alias = self.ns['recovery_command'](self.root, self.out)
+                  printed = {'explain': alias.removesuffix(' --json') + ' --format json', 'context': alias}
+                  selected = 'repo-probe:fixture:predicate:actual'
+                  receipt, replays, frozen = {'cases': []}, [], []
+                  listing = json.dumps(self.listing()).encode()
+                  def invoke(label, args):
+                      sibling = label.split('-')[0]
+                      if label.endswith('-malformed'):
+                          return 2, b'', ('file:line with a nonempty path; run `' + printed[sibling] + '`').encode()
+                      if label.endswith('-actual-id'):
+                          value = json.dumps({'probe': {'id': selected}}) if sibling == 'context' else selected
+                          return 0, value.encode(), b''
+                      self.assertTrue(label.endswith('-opaque-negative'))
+                      return 2, b'', b'no finding matched opaque ID'
+                  def run(label, argv, cwd):
+                      expected = printed['context' if label.startswith('context-') else 'explain']
+                      self.assertEqual(argv, ['controlled-pwsh', '-NoProfile', '-NonInteractive', '-Command', expected])
+                      self.assertEqual(cwd, self.stock)
+                      replays.append((label, argv[-1]))
+                      receipt['cases'].append({'label': label, 'exit': 0, 'stop': None})
+                      return 0, listing, b''
+                  ns = dict(self.ns, fixture=self.root, diff=self.out, source=self.root / 'src/lib.rs',
+                            shell='controlled-pwsh', foreign=self.stock, out=self.out, actual_id=selected,
+                            receipt=receipt, invoke=invoke, run=run, frozen_inputs=lambda: frozen.append(True))
+                  exec(compile(ast.Module(body[start:end + 1], []), str(WORKFLOW), 'exec'), ns)
+                  self.assertEqual(replays, [('explain-literal-replay', printed['explain']),
+                                            ('context-literal-replay', printed['context']), ('literal-repeat', printed['explain'])])
+                  self.assertEqual(receipt['state'], 'PASS')
+                  self.assertEqual(receipt['actual_listed_id'], selected)
+                  self.assertEqual(receipt['siblings_retried'], ['explain', 'context'])
+                  self.assertEqual(len(frozen), 6)
+                  for sibling in ('explain', 'context'):
+                      self.assertEqual((self.out / (sibling + '-literal-command.txt')).read_text(), printed[sibling])
 
               def test_cache_target_is_owned_before_restore_and_all_subset_builds(self):
                   text = WORKFLOW.read_text()
@@ -1001,6 +1049,7 @@ jobs:
 
       # #13175: full-transcript and descendant cleanup proof uses the same
       # native Windows owner as the producer, without launching an editor host.
+      # #13201 adds literal argv, read-only diagnosis and host-adapter cleanup.
       - name: Run fixture producer process controls (advisory, #13175)
         shell: bash
         working-directory: editors/vscode
@@ -1011,7 +1060,7 @@ jobs:
             printf '%s\n' 1 > ../../target/subset-vscode-fixture-producer.status
             exit 0
           fi
-          npx mocha --ui tdd --reporter json out/test/suite/fixture_producer.test.js 2>&1 | tee ../../target/subset-vscode-fixture-producer.log
+          npx mocha --ui tdd --reporter json out/test/suite/fixture_producer.test.js out/test/suite/developer_setup.test.js 2>&1 | tee ../../target/subset-vscode-fixture-producer.log
           pipe_status=("${PIPESTATUS[@]}")
           printf '%s\n' "${pipe_status[0]}" > ../../target/subset-vscode-fixture-producer.status
           if [ "${pipe_status[1]}" != "0" ]; then echo 'fixture producer evidence capture failed' >&2; exit 1; fi
@@ -1285,7 +1334,8 @@ jobs:
               matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())
               require(len(matches) == 1, "one printed recovery command required")
               command = matches[0]
-              require(command == recovery_command(fixture, diff, windows), "printed command lost frozen root/diff/JSON scope")
+              alias = recovery_command(fixture, diff, windows)
+              require(command in (alias, alias.removesuffix(" --json") + " --format json"), "printed command lost frozen root/diff/JSON scope")
               return command
 
           def rejected(name, operation):
@@ -1448,7 +1498,6 @@ jobs:
                   status, stdout, stderr = invoke(sibling + "-opaque-negative", [sibling, "--root", str(fixture), "--diff", str(diff)]
                                                   + (["--at"] if sibling == "context" else []) + ["repo-probe:src_lib.rs:error_path:3bf8c64c"])
                   require(status == 2 and not stdout and b"file:line with a nonempty path" not in stderr, "opaque ID miss got syntax guidance")
-              require(commands[0] == commands[1], "siblings advertised different recovery scope")
               frozen_inputs()
               status, stdout, _ = run("literal-repeat", [shell, "-NoProfile", "-NonInteractive", "-Command", commands[0]], foreign)
               frozen_inputs()
@@ -1557,6 +1606,7 @@ jobs:
               report = json.loads(log_path.read_text(encoding='utf-8-sig'))
               expected = {
                   "Genuine fixture producer process boundary runs asynchronously with the explicit child cwd/env and visible progress",
+                  "Genuine fixture producer process boundary preserves literal native arguments including spaces quotes empty values and trailing backslashes",
                   "Genuine fixture producer process boundary retains native status and both streams for a failed process",
                   "Genuine fixture producer process boundary retains the final transcript before accepting native success",
                   "Genuine fixture producer process boundary reports the actual missing executable as a spawn failure",
@@ -1565,14 +1615,35 @@ jobs:
                   "Genuine fixture producer process boundary timeout-after-primary-exit terminates an owned descendant that ignores SIGTERM and inherits pipes",
                   "Genuine fixture producer process boundary cancel-active-tree terminates an owned descendant that ignores SIGTERM and inherits pipes",
                   "Genuine fixture producer process boundary validates the deadline instead of silently disabling or overflowing it",
+                  "Developer setup capability boundary reads changed source requirements and leaves execution capabilities unclaimed",
+                  "Developer setup capability boundary human guidance preserves every instruction alongside its command",
+                  "Developer setup capability boundary reports Cargo target paths relative to the invoking directory",
+                  "Developer setup capability boundary missing display and unsupported or oversized authorities fail visibly before downstream work",
+                  "Developer setup capability boundary source frontdoor succeeds when writes network and subprocess APIs are forbidden",
+                  "Developer setup capability boundary display check distinguishes absent Linux display from other platforms without launching anything",
+                  "Developer setup capability boundary report bounds observed text and never renders proxy or CA values",
+                  "Developer setup capability boundary public verification clears prior success before report refusal",
+                  "Developer setup capability boundary public verification clears prior success before installed compiler failure",
+                  "Developer setup capability boundary public verification clears prior success before missing installed compiler",
+                  "Developer setup capability boundary direct verification clears prior success before display refusal",
+                  "Developer setup capability boundary direct verification clears prior success before acquisition refusal",
+                  "Developer setup capability boundary a native spawn refusal retains its useful reason in the pointed setup log",
+                  "Developer setup capability boundary a refused diagnostic write preserves the original native failure and cleanup",
+                  "Developer setup capability boundary requires native success and one current host sentinel and preserves the observed version",
+                  "Developer setup capability boundary refuses absent host evidence and removes an earlier success receipt",
+                  "Developer setup capability boundary refuses wrong_nonce host evidence and removes an earlier success receipt",
+                  "Developer setup capability boundary refuses native_failure host evidence and removes an earlier success receipt",
+                  "Developer setup capability boundary bounds redacted Unicode native failure logs by bytes",
+                  "Developer setup capability boundary timeout of the public host prerequisite terminates its actual owned descendant",
+                  "Developer setup capability boundary cancel of the public host prerequisite terminates its actual owned descendant",
               }
               observed = [row['fullTitle'] for row in report.get('passes', [])]
               stats = report.get('stats', {})
               if len(observed) != len(expected) or set(observed) != expected:
                   raise SystemExit('fixture producer PASS is missing native process controls')
-              if any(stats.get(key) != value for key, value in {'tests': 12, 'passes': 9, 'failures': 0, 'pending': 3}.items()):
+              if any(stats.get(key) != value for key, value in {'tests': 34, 'passes': 31, 'failures': 0, 'pending': 3}.items()):
                   raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
-              print('Verified nine native process controls; three POSIX-only adapter controls are pending.')
+              print('Verified 31 native process/setup controls; three POSIX-only adapter controls are pending.')
           PY
 
       - name: Require selector consumer receipt, log and native status

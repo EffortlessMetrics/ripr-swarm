@@ -104,6 +104,7 @@ map is:
 | --- | --- | --- |
 | `ripr check --format json` | `schema_version` | `0.2` |
 | `ripr check --format json-compact` | `schema_version` | `0.2` (the `json` document minified; parsed values identical, #13103) |
+| `ripr check --format json-terse` | `schema_version` | `0.2` (the `json` findings with repeated evidence prose coded against an `evidence_legend`; see "json-terse" below) |
 | `ripr context --json` (`context_packet`; versions via top-level `version` key) | `version` | `1.1` |
 | `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
 | `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
@@ -180,6 +181,51 @@ records that distinction.
 
 Bump rules below apply per contract: a breaking change to one family bumps
 that family's version only.
+
+### `json-terse`: semantically compacted check JSON
+
+`ripr check --format json-terse` renders the same findings as `json` for
+token-priced machine consumers (LLM agents parsing findings). It is a
+documented rendering profile over the `0.2` check document, not a schema
+bump; `schema_version` stays `0.2`. Unlike `json-compact` (#13103), whose
+parsed value is identical to `json` and differs only in whitespace, the
+terse document rewrites repeated content. Exactly what differs:
+
+| Difference | Full (`json`/`json-compact`) | Terse |
+| --- | --- | --- |
+| Document head | no rendering marker | `"rendering": "terse"` names the profile |
+| `evidence_path`, `evidence`, `missing` entries | full prose sentences | strings of 24+ bytes replaced by stable codes (`E0001`, ...); prose under 24 bytes stays verbatim |
+| `assertion_texts` values | assertion source lines | long values coded the same way |
+| `evidence_legend` | absent | code → full template, emitted once at the document head in first-appearance order |
+| Same-value alias fields | both keys emitted | a later finding field whose string value is byte-identical to an earlier field in the same finding object is omitted; the removed key is listed in `dropped_aliases` |
+
+Guarantees and limits, stated precisely:
+
+- No finding is dropped; no verdict changes. Finding `id`,
+  `classification`, `severity`, `confidence`, `probe` and `ripr` blocks
+  move verbatim, and identity/verdict fields are exempt from alias removal
+  even when values coincide.
+- Expanding every code through `evidence_legend` reconstructs the exact
+  original strings in the original order, so the prose is recoverable from
+  the terse document alone. Alias-removed values survive in the earlier
+  same-value field.
+- What terse does *not* code: `ripr` stage summaries, related-test oracle
+  lines, flow-sink text and repair cards stay inline. Those are the
+  remaining cross-finding duplication; coding them is follow-up work if
+  measurements justify it.
+- The transform runs on the stamped `json` document (including the CLI's
+  canonical next-action member when present) and fails closed: an
+  unparseable producer document aborts the run instead of emitting an
+  unmarked full document.
+
+Measured on the committed 11-finding fixture
+`fixtures/returned_closure_arithmetic_masking/expected/check.json`
+(see `json_terse_round_trips_fixture_prose_and_beats_compact_in_size`):
+terse is smaller than `json-compact` on the same document, and
+`json-compact` in turn is smaller than `json`. The exact byte counts are
+pinned by that test's assertion messages on failure; the ordering
+invariant (terse < compact < json on multi-finding documents) is the
+contract.
 
 ## Imported Kani observation (`ripr_kani_report.v1`)
 
@@ -3583,10 +3629,32 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
   reason, category `rust_panic_outcome_unresolved`, and repair route
   `analysis/oracle-semantics-audit-fixes`. The row is analyzer work and provides
   no focused repair command. Ordinary gaps without the limitation remain
-  eligible for selection (#12977).
+  eligible for selection (#12977). The full and compact producers reserve the
+  `rust_panic_outcome_unresolved: ` prefix of the discrimination summary.
+  Selection, repair admission and static-limitation projection require that
+  producer prefix; a test name or incidental source mention cannot create a
+  panic limitation (#13291). The explanation retains the deciding tests and
+  original discrimination summary. An established panic marker takes priority
+  over the field-snapshot adapter, so its reason cannot be hidden by a later
+  framework marker.
 - `rust_debug_assertion_profile_unresolved` -- (RIPR-SPEC-0240, additive, #8051) A related, non-ignored test calls the owner directly and pins its result with a bare `debug_assert_eq!` that the owner-return pin admits under every gate it applies to `assert_eq!`. Debug assertions run under the default `cargo test` profile and are compiled out under `--release`, and ripr does not resolve which profile runs the tests, so the `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
 - `rust_call_fact_budget` -- (#8600, additive) A related test has a source line holding 256 distinct callees, the per-line call-fact budget, so further calls on that line may have been omitted (exactly 256 is treated as possibly truncated, not as proof a call was dropped). A negative claim that depends on the test's calls (`reachable_unrevealed` or `weakly_exposed`) is withheld as `static_unknown` with stop reason `gap_evidence_unresolved`; an already-unknown finding keeps its class, gains the named reason, and drops its call-derived absence lines, missing discriminators and next-step prescription. Saturation is read over every matched related test before the eight-row render cap, and a saturated test's `no_call_path`, `no_assertion`, `missing_input` and `assertion_not_observing` row misses read `observation_unconfirmed`. Findings with no related saturated test are unchanged, and the reason never raises a class. The `repo-exposure-json` and `repo-exposure-summary-json` seam readings apply the same decision to their stage evidence: a stage that read `no` or `weak` becomes `unknown`, the seam's missing boundary values are dropped, and the evidence record carries a `static_limitations[]` row whose `category` is `rust_call_fact_budget`, a `static_limitation` actionability and a `limitation` canonical item with no repair command; an already-unknown seam keeps its class and gains the reason. A named limitation, not a missing-test, coverage, or repair claim.
 - `rust_framework_oracle_unresolved` -- (RIPR-SPEC-0240, additive) A related test checks the owner through an environment variable it sets or removes, a mockall `returning` closure that reads its arguments, an expect-test `assert_debug_eq` literal, an insta snapshot whose redactions do not name the changed field, a literal pin on a receiver a test helper builds under a changed closure tail, or a field of a hand-written recording double the test passes as `&mut`. ripr does not evaluate that oracle, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
+  For owner-bound field snapshots, full and compact repository evidence also
+  carry this marker when the existing reader cannot evaluate the snapshot or
+  its settings (#13278). The original grip class and all stage values remain
+  intact. Pilot and agent brief withhold the field seam, even with concrete
+  stages, and brief explains that the framework oracle may notice the changed
+  field. Repair admission honors the same typed limitation. The evidence
+  record retains its original stage, state and reason with category
+  `rust_framework_oracle_unresolved` and repair route
+  `analysis/oracle-semantics-audit-fixes`. The marker requires the reserved
+  `rust_framework_oracle_unresolved: ` prefix in the discrimination summary;
+  mentioning its code in a test name or another stage does not create a row
+  or withhold a recommendation. Literal redactions that name the changed
+  field remain gaps; independent exact assertions retain their credit.
+  This repository-seam rule does not extend to return-value recommendations or
+  other framework idioms, and supplies no snapshot-byte or projection proof.
 - `rust_pinned_shape_unresolved` -- (RIPR-SPEC-0240, additive, #9440) A related, non-ignored test calls the owner directly and pins its whole result with an exact `assert_eq!`, but the changed code sits in a closure the call runs, a statement acting on the value the owner returns, the `else` exit of a `let ... else`, or the update of a zero-initialized loop accumulator the owner returns whose pin ripr cannot read as a non-empty literal input with a nonzero total (RIPR-SPEC-0360), none of which the owner-return pin reads. ripr does not resolve whether the pinned input runs the changed code, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
 - `rust_implicit_call_unresolved` -- (RIPR-SPEC-0240, additive, #9441) A test names the self type of a changed trait-impl method that the language calls from syntax (an operator trait, `Drop`, an iterator trait, `Deref`, `Index`, `PartialOrd`), or calls a same-named method on a receiver ripr does not type (`dyn Trait`, a second impl of the trait). ripr does not follow that call to the changed method, so a `weakly_exposed` or `reachable_unrevealed` gap whose reach rests on a shared file or name token is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `rust_indirect_owner_call_unresolved` -- (RIPR-SPEC-0240, additive, #9442, #9443) A test reaches the changed owner without a call ripr can pair with its assertion: it passes the owner as a function value (`.map(owner)`, an untyped `let f = owner;` binding; a typed `fn` pointer binding is left to the typed function-pointer reading), the changed line is an item-position macro invocation that generates the owner, or the owner call is the only argument of `block_on` or a local helper polling a `Future`. A verified polling helper whose call and standard primitives resolve under RIPR-SPEC-0197 supplies an owner-return pin instead; unsupported or shadowed wrappers receive no polling-helper pin and remain subject to the existing unresolved-executor limitations. A `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
@@ -5243,6 +5311,12 @@ Field contract:
   `activation_overlap` is a static tie-breaker from already observed call
   values, such as a predicate-boundary equality call. `related_tests_total` is
   unaffected by ranking.
+- On applicable returned-value seams, an assertion on an established
+  same-named function of the opposite call kind supplies no oracle credit only
+  when its complete value is closed: literal invocation inputs, an independent
+  primitive/enum body, and established comparison/drop behavior. Unresolved
+  receivers, wrappers, global/local/field values, rewriting attributes and
+  unsupported assertion expressions preserve their prior evidence (#12234).
 - A related test whose only assertion on a returned-value seam is an exact
   error-variant pin that does not name the `Err(..)` that seam constructs (this
   includes a seam that constructs no `Err` at all, such as an `Ok(n)` arm
@@ -15324,6 +15398,12 @@ Field contract:
   order: before snapshot, packet, brief, after snapshot, analysis outcome,
   verify, receipt. If no
   seam can be recovered, packet, brief, and receipt commands use `<seam-id>`.
+  Such a command is a template, not a runnable command, and the entry then
+  carries `requires_substitution: true` (additive, no `schema_version` bump,
+  #13244) so a machine consumer can filter non-executable entries without
+  parsing angle brackets out of the command string. The key is absent on
+  ready-to-run entries; the command string is unchanged either way and stays
+  useful to humans.
 - `repair_attempts[]` - every repair attempt under
   `target/ripr/repair-attempts/`, validated by the attempt authority and
   ordered by attempt ID (not by age): `attempt_id`, `seam_id`, `state` (the
@@ -15450,7 +15530,10 @@ Field contract:
   hand step (add or strengthen a test, then rerun that check) for an enabled
   route, the enable step (add the language to `[languages] enabled` in
   `ripr.toml`) for a route with `enabled: false`, and says to rerun pilot if
-  the workspace changed since that run.
+  the workspace changed since that run. `next_command` uses the same
+  `requires_substitution` marker as `missing_commands[]` when its command
+  embeds the unresolved `<seam-id>` placeholder (#13244); status never selects
+  such a template as the next command, so the key is normally absent here.
 - `warnings[]` - stale-looking or unreadable-artifact hints. Timestamp warnings
   are emitted when `agent verify` is older than a before/after snapshot or
   `agent receipt` is older than `agent verify`. For a seam with no attempt
@@ -19465,8 +19548,10 @@ Python static-limit findings with `static_limit_kind` become report-only
 `StaticLimitation` records with `repairability = "analyzer_limitation"` and no
 agent-packet projection. Visibility-unknown presentation text and Python static
 limits remain limitations and do not become generic `static_unknown` repair
-instructions. A TypeScript preview finding whose repair packet the shared
-validator kept closed becomes a report-only `StaticLimitation` record with
+instructions. A TypeScript or JavaScript preview finding classified as
+`weakly_exposed` or `static_unknown`, with an explicitly closed repair packet
+and nonempty producer explanation, becomes a report-only `StaticLimitation`
+record preserving its language and reason, with
 `static_limit_kind = "typescript_repair_packet_not_delegatable"`, and a weakly
 exposed Python preview finding without a `python_repair_card` becomes one with
 `static_limit_kind = "python_repair_card_unavailable"`; neither carries a repair
@@ -19694,7 +19779,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.158",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.161",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20479,7 +20564,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.158",
+      "schema_version": "1.161",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

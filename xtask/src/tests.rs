@@ -6578,6 +6578,44 @@ fn non_rust_programming_policy_requires_retention_rule() {
 }
 
 #[test]
+fn editor_setup_node_bootstrap_retention_is_exact() -> Result<(), String> {
+    let path = "editors/vscode/test/developerSetup.cjs";
+    assert!(is_non_rust_programming_candidate(path));
+    assert!(non_rust_programming_retention_reason(path).is_some());
+    let Some(bootstrap) = super::non_rust_source_conversion_candidate(path) else {
+        return Err("Node setup entrypoint should be assessed".to_string());
+    };
+    assert_eq!(bootstrap.priority, "retained");
+    assert_eq!(bootstrap.kind, "retained_external_runtime");
+
+    for path in [
+        "editors/vscode/test/developerSetup-extra.cjs",
+        "editors/vscode/test/developerSetup.cjs.extra.cjs",
+        "editors/vscode/test/other.cjs",
+        "editors/vscode/src/developerSetup.cjs",
+        "editors/vscode/test/developerSetup.js",
+        "tools/developerSetup.cjs",
+    ] {
+        assert!(is_non_rust_programming_candidate(path), "{path}");
+        assert!(
+            non_rust_programming_retention_reason(path).is_none(),
+            "{path}"
+        );
+        let Some(candidate) = super::non_rust_source_conversion_candidate(path) else {
+            return Err(format!(
+                "Unapproved neighboring path should be assessed: {path}"
+            ));
+        };
+        assert_eq!(candidate.priority, "high", "{path}");
+        assert_eq!(
+            candidate.kind, "non_rust_programming_without_retention_rule",
+            "{path}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn rust_conversion_candidates_classify_unretained_non_rust_source() -> Result<(), String> {
     let Some(candidate) = super::non_rust_source_conversion_candidate("scripts/check.py") else {
         return Err("unretained non-Rust source should be a candidate".to_string());
@@ -52806,7 +52844,7 @@ does_not_prove = "It does not demonstrate compiled analyzer behavior."
 [[pack]]
 id = "release-package"
 paths = ["Cargo.toml", "Cargo.lock", "crates/ripr/Cargo.toml", "CHANGELOG.md", "editors/vscode/package.json", "editors/vscode/package-lock.json", ".github/workflows/publish-extension.yml", ".github/workflows/release-server-binaries.yml"]
-required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo publish -p ripr --dry-run", "cargo xtask release-readiness"]
+required_commands = ["cargo test --workspace", "cargo clippy --workspace --all-targets -- -D warnings", "cargo xtask check-pr", "cargo package -p ripr --list", "cargo xtask publish-dry-run", "cargo xtask release-readiness"]
 advisory_commands = []
 ci_lane = "release-readiness-proof"
 proves = "Release surfaces pay the full release proof."

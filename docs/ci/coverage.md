@@ -199,13 +199,20 @@ excludes allocated sections. This permits only the named loader metadata in
 the control; allocation alone never admits another debug section. Actual
 retained sections must come from the native receipt, not this source rule.
 
-The GNU ELF parser requires a complete indexed section table and records each
-debug-prefixed section's name, type, byte size and flags, parsing sizes from
-the tool's hexadecimal fields. It requires numeric unique indices for all
-data rows, and rejects malformed fields or duplicate names among debug
-subjects and exhausted row/text bounds. Ordinary section fields and name
-uniqueness are outside its validation; the unnamed `NULL` section is not a
-debug subject. Each compiler/section diagnostic
+The GNU ELF parser requires one literal `[Nr]` column header before any
+numeric data row, with the whitespace-separated tokens `Name Type Address Off
+Size ES Flg Lk Inf Al` in that order. Missing, malformed, duplicate or late
+column headers are errors. Numeric row indices remain unique. For each
+debug-prefixed section it records the name, type, hexadecimal byte size and
+flags. Flag bytes must be unique members of `WAXMSILOGTCERlyopx`; optional
+empty flags remain valid. The
+[pinned LLVM GNU section printer](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/llvm/tools/llvm-readobj/ELFDumper.cpp)
+defines this column order and flag alphabet. This lexical validation precedes
+the existing section policy; it does not admit arbitrary allocated DWARF.
+Malformed debug fields, duplicate debug names and exhausted row/text bounds
+remain errors. Ordinary section fields and name uniqueness are outside this
+control's validation; the unnamed `NULL` section is not a debug subject.
+Each compiler/section diagnostic
 record is at most 4 KiB. Compiler text and raw context for parse failures are
 bounded to eight 512-character chunks with explicit remaining/truncated
 markers. At most 32 debug sections from at most 256 indexed rows are admitted.
@@ -216,14 +223,27 @@ Each variant runs the exact test twice, with a post-assertion acknowledgement,
 one-test success and a fresh nonempty profile per invocation. Matching-sysroot
 LLVM tools must merge both profiles without warnings, match each merged
 profile's ID to its own executable, and export usable JSON and LCOV. The
-control requires identical owned source regions and line counts, the known
-function count of two, a hot return count of two and a cold return count of
-zero. IDs may differ between the two binaries. Tool absence, malformed output,
+control compares the complete owned JSON file record, both authored function
+records after removing only their mangled names, and all owned LCOV line
+counts. Each authored function must execute twice, with a hot return count
+of two and a cold return count of zero. Other exported files and unrelated
+functions are outside this fixture control; it does not qualify the LLVM
+exporter or require whole-export equality.
+IDs may differ between the two binaries. Tool absence, malformed output,
 zero selection, warning-only partial merging and missing source evidence fail
 the Linux control. Existing malformed-profile and size-bound controls remain
 selected by the same preflight.
 
-The finite native commands use the observer's non-reaping process owner,
+The command-environment control re-enters its exact libtest identity in an
+isolated child with a dedicated inherited variable and no HOME. The observed
+coverage command receives no explicit override for that variable. A successful
+native status, nonempty exact selection, explicit successful inner cleanup
+receipt and fresh post-assertion acknowledgement are required. The parent
+bounds the child to 30 seconds and each captured stream to 16 KiB. All witnesses
+share its retained root; deletion follows confirmed cleanup and completed
+validation. The parent's environment stays unchanged.
+
+The finite native commands use the private non-reaping process owner,
 30-second per-command deadlines and 256 KiB per-stream capture limits. Fixture
 outputs and captures stay under the owned root; the commands preserve the
 parent environment and clean their owned groups before reaping. A compact

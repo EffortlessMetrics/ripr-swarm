@@ -13,7 +13,7 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 fn production_shell() -> TestResult<String> {
-    let marker = "      - name: Unlocked install resolution (release surface)\n";
+    let marker = "      - name: Publish dry-run (release surface)\n";
     assert_eq!(WORKFLOW.matches(marker).count(), 1);
     let (_, step) = WORKFLOW.split_once(marker).ok_or("production step")?;
     let (step, _) = step.split_once("      - name:").ok_or("next step")?;
@@ -69,7 +69,7 @@ impl Fixture {
                 r#"#!/bin/bash
 printf '%s|%s|%s\n' "$1" "$PWD" "$*" >> "$TRACE"
 case "$1" in
-  package)
+  xtask)
     [ "$CASE" != package_failure ] || exit 17
     if [ "$CASE" = timeout ]; then exec /bin/sleep 30; fi
     ;;
@@ -169,8 +169,9 @@ fn unlocked_success_resolves_identity_once_and_checks_only_regenerated_package()
         assert_eq!(
             commands,
             [
-                Some("package"),
+                Some("xtask"),
                 Some("pkgid"),
+                Some("tar"),
                 Some("tar"),
                 Some("generate-lockfile"),
                 Some("check")
@@ -179,7 +180,7 @@ fn unlocked_success_resolves_identity_once_and_checks_only_regenerated_package()
         let checkout = fixture.root.join("checkout");
         assert_eq!(
             trace[0],
-            format!("package|{}|package -p ripr --no-verify", checkout.display())
+            format!("xtask|{}|xtask publish-dry-run", checkout.display())
         );
         assert_eq!(
             trace[1],
@@ -188,7 +189,7 @@ fn unlocked_success_resolves_identity_once_and_checks_only_regenerated_package()
         assert_eq!(
             trace[2],
             format!(
-                "tar|{}|xzf target/package/ripr-0.11.0.crate -C {}",
+                "tar|{}|xzf target/package/ripr-contract-0.11.0.crate -C {}",
                 checkout.display(),
                 fixture.package.parent().ok_or("package parent")?.display()
             )
@@ -196,12 +197,20 @@ fn unlocked_success_resolves_identity_once_and_checks_only_regenerated_package()
         assert_eq!(
             trace[3],
             format!(
+                "tar|{}|xzf target/package/ripr-0.11.0.crate -C {}",
+                checkout.display(),
+                fixture.package.parent().ok_or("package parent")?.display()
+            )
+        );
+        assert_eq!(
+            trace[4],
+            format!(
                 "generate-lockfile|{}|generate-lockfile",
                 fixture.package.display()
             )
         );
         assert_eq!(
-            trace[4],
+            trace[5],
             format!(
                 "check|{}|check --target-dir {}/unlocked-target",
                 fixture.package.display(),
@@ -226,24 +235,24 @@ fn unlocked_prerequisite_failure_unavailable_and_timeout_never_reach_later_comma
     let script = production_shell()?;
     for pipefail in [false, true] {
         for (case, exit, expected) in [
-            ("package_failure", 17, vec!["package"]),
-            ("identity_failure", 19, vec!["package", "pkgid"]),
-            ("empty_identity", 1, vec!["package", "pkgid"]),
-            ("extraction_failure", 23, vec!["package", "pkgid", "tar"]),
-            ("missing_package", 1, vec!["package", "pkgid", "tar"]),
-            ("lock_failure", 1, vec!["package", "pkgid", "tar"]),
+            ("package_failure", 17, vec!["xtask"]),
+            ("identity_failure", 19, vec!["xtask", "pkgid"]),
+            ("empty_identity", 1, vec!["xtask", "pkgid"]),
+            ("extraction_failure", 23, vec!["xtask", "pkgid", "tar"]),
+            ("missing_package", 1, vec!["xtask", "pkgid", "tar", "tar"]),
+            ("lock_failure", 1, vec!["xtask", "pkgid", "tar", "tar"]),
             (
                 "resolution_failure",
                 29,
-                vec!["package", "pkgid", "tar", "generate-lockfile"],
+                vec!["xtask", "pkgid", "tar", "tar", "generate-lockfile"],
             ),
             (
                 "check_failure",
                 37,
-                vec!["package", "pkgid", "tar", "generate-lockfile", "check"],
+                vec!["xtask", "pkgid", "tar", "tar", "generate-lockfile", "check"],
             ),
             ("unavailable", 127, vec![]),
-            ("timeout", 124, vec!["package"]),
+            ("timeout", 124, vec!["xtask"]),
         ] {
             let fixture = Fixture::new(case)?;
             let output = fixture.run(&script, case, pipefail)?;

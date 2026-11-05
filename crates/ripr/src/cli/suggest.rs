@@ -14,10 +14,15 @@
 use crate::accepted_value::closest;
 use crate::cli::help;
 
-/// The help route an unknown-argument error points at. `check`'s default help
-/// is a one-screen summary that omits advanced flags, so a mistyped option
-/// there is sent to the exhaustive reference.
-fn help_pointer(command: &str) -> String {
+/// The help route an argument error for `command` points at. `check`'s
+/// default help is a one-screen summary that omits advanced flags, so a
+/// mistyped option there is sent to the exhaustive reference.
+///
+/// Shared owner for every CLI pointer: hand-written argument errors route
+/// through this too (#13237), so a command can never name `ripr help` (the
+/// top-level overview) where its own options live behind
+/// `ripr <command> --help`.
+pub(crate) fn help_pointer(command: &str) -> String {
     if command == "check" {
         "ripr check --help --all".to_string()
     } else {

@@ -17,6 +17,12 @@ fn supported_profile_platform(platform: &str) -> bool {
 mod linux;
 
 #[cfg(target_os = "linux")]
+mod process;
+
+#[cfg(all(test, target_os = "linux"))]
+mod strip_tests;
+
+#[cfg(target_os = "linux")]
 mod storage;
 
 /// Run the fixed coverage command with bounded, metadata-only storage receipts.

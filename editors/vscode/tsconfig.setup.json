@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["test/verifySetup.ts", "test/setupHostSmoke.ts"],
+  "compilerOptions": { "sourceMap": false }
+}
