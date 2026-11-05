@@ -236,11 +236,11 @@ struct Expected {
     gaps: std::collections::BTreeSet<usize>,
 }
 
-/// Git writes the new-side start of a hunk with no new-side lines (`+S,0`) as
-/// the line before the gap, while the parser takes it as the next-line
-/// counter, so `new_side_line` of a removal in such a hunk is one low (zero
-/// when the new file is empty). Tracked as #13098.
-
+/// Expected changed lines for one edit. Git writes the new-side start of a
+/// hunk with no new-side lines (`+S,0`) as the line before the gap, while the
+/// parser takes it as the next-line counter, so `new_side_line` of a removal
+/// in such a hunk is one low (zero when the new file is empty). Tracked as
+/// #13098.
 fn expected_for(rows: &[Row], context: u8) -> Expected {
     let mut expected = Expected::default();
     let new_count = rows.iter().filter(|r| r.event != Event::Del).count();
@@ -263,12 +263,10 @@ fn expected_for(rows: &[Row], context: u8) -> Expected {
         }
         block_start = end;
     }
-    let mut row_index = 0;
     let mut old_line = 0;
     let mut new_line = 0;
-    for row in rows {
+    for (row_index, row) in rows.iter().enumerate() {
         let gap = gap_rows[row_index];
-        row_index += 1;
         match row.event {
             Event::Keep => {
                 old_line += 1;
@@ -919,7 +917,8 @@ fn seed_corpus_is_nonempty_and_parses() {
     assert!(!generated.is_empty(), "generator produced no real diffs");
     for seed in fixtures.iter().chain(generated.iter()) {
         let files = parse_unified_diff(seed);
-        assert!(check_invariants(&files).is_ok());
+        let outcome = check_invariants(&files);
+        assert_eq!(outcome, Ok(()));
     }
     let with_lines = fixtures
         .iter()
