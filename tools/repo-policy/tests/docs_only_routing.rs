@@ -593,6 +593,37 @@ fn stale_event_base_and_synthetic_merge_checkout_use_pr_head() -> TestResult {
 }
 
 #[test]
+fn spec_registration_surfaces_classify_as_docs_only() -> TestResult {
+    let production = shell("detect-docs-only")?;
+    for path in [
+        "docs/spec-index.d/RIPR-SPEC-9999.md",
+        "policy/doc-artifacts.d/RIPR-SPEC-9999.toml",
+        ".ripr/traceability.d/9999-issue.toml",
+        "changelog.d/9999-issue.md",
+        "fixtures/rust-verdict-corpus/spec-scopes/RIPR-SPEC-9999.toml",
+    ] {
+        let fixture = Fixture::new()?;
+        let base = fixture.git(&["rev-parse", "HEAD"])?;
+        fixture.write(path, "registration\n")?;
+        let head = fixture.commit()?;
+        assert!(
+            fixture.detect(&production, "pull_request", &base, &head, None)?,
+            "expected docs_only for {path:?}"
+        );
+    }
+    let fixture = Fixture::new()?;
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    fixture.write("docs/spec-index.d/RIPR-SPEC-9999.md", "index\n")?;
+    fixture.write("src/mixed.rs", "fn mixed() {}\n")?;
+    let head = fixture.commit()?;
+    assert!(
+        !fixture.detect(&production, "pull_request", &base, &head, None)?,
+        "mixed spec registration and product code must stay on full proof"
+    );
+    Ok(())
+}
+
+#[test]
 fn filename_records_deletions_and_both_sides_of_renames_are_classified() -> TestResult {
     let production = shell("detect-docs-only")?;
     for (path, expected) in [

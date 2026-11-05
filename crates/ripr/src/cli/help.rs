@@ -1034,6 +1034,10 @@ mod tests {
         assert!(PILOT_HELP.contains("Usage: ripr pilot"));
         assert!(PILOT_HELP.contains("pilot-summary.json"));
         assert!(PILOT_HELP.contains("--timeout-ms MS"));
+        assert!(
+            PILOT_HELP.contains("270000 ms total from start"),
+            "pilot help must disclose the default-plus-extension wall budget (#5322)"
+        );
         assert!(PILOT_HELP.contains("--format FORMAT"));
         assert!(PILOT_HELP.contains("--format json"));
         // #9368: every env var pilot honors appears in its help.
@@ -1465,7 +1469,7 @@ mod tests {
     const PR_EVIDENCE_PARSER_RS: &str = include_str!("../app/pr_evidence.rs");
     const IMPACTED_EVIDENCE_PARSER_RS: &str = include_str!("../app/impacted_evidence.rs");
     const RIPR_PLUS_PARSER_RS: &str = include_str!("../app/ripr_plus.rs");
-    const FIRST_PR_PARSER_RS: &str = include_str!("../output/first_pr/options.rs");
+    const FIRST_PR_PARSER_RS: &str = include_str!("commands/first_pr.rs");
     const ASSISTANT_LOOP_PARSER_RS: &str = include_str!("commands/assistant_loop.rs");
     const FIRST_ACTION_PARSER_RS: &str = include_str!("commands/first_action.rs");
     const REPORTS_NAV_PARSER_RS: &str = include_str!("commands/reports.rs");
@@ -2355,6 +2359,8 @@ fn parse_demo<'a>(xs: &'a str) {
                 EXPLAIN_HELP,
                 &[
                     "--from",
+                    "--path",
+                    "--exclude",
                     "--mode",
                     "--no-unchanged-tests",
                     "--perl-facts",
@@ -2366,6 +2372,8 @@ fn parse_demo<'a>(xs: &'a str) {
                 CONTEXT_HELP,
                 &[
                     "--from",
+                    "--path",
+                    "--exclude",
                     "--at",
                     "--mode",
                     "--perl-facts",

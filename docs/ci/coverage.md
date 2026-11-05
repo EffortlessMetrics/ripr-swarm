@@ -56,6 +56,20 @@ Expected artifacts after a coverage run:
   The required Linux LLVM replay test fails if Rust or matching LLVM discovery
   fails; unsupported platforms exercise the adapter refusal control.
 
+The failure manifest accepts LLVM raw64 little-endian profile versions 10 and
+11 for binary-ID extraction. Version 10 has a 128-byte header; version 11 has a
+152-byte header. The ID block starts after that version's complete header, and
+available or partial ID results report `llvm_raw64_le_v10` or
+`llvm_raw64_le_v11`. Other versions, variant flags and magic values remain
+explicitly unsupported; accepting an ID does not validate the rest of a profile.
+
+Replaying an older profile with newer LLVM can report a raw profile version
+mismatch. The manifest retains that warned profile's bounded prefix as
+`raw_profile_version_mismatch` only when the warning names an exact validated
+snapshot input. Unknown warnings and unrelated paths remain unclassified.
+This retains diagnostic evidence without converting the profile or changing
+the failed coverage result.
+
 The failure manifest also associates supported raw-profile binary IDs with GNU
 build IDs in instrumented Linux ELF files found only as direct entries in the
 coverage target's `debug`, `debug/deps`, `release`, and `release/deps`
@@ -85,6 +99,106 @@ generate `lcov.info` and upload the `rust-lcov` artifact, but skip Codecov
 upload because repository secrets are unavailable.
 
 ### Validate locally
+
+On Linux, before adopting a newer Rust toolchain, run the small diagnostics package with
+both the repository pin and stable. Install matching LLVM tools for each
+selected compiler; a system `llvm-profdata` from another LLVM release is not a
+substitute for the tool in that compiler's sysroot.
+
+<!-- ripr:coverage-upgrade:start -->
+```bash
+(
+    set -e
+    rustup toolchain install 1.95.0 --profile minimal --component clippy --component llvm-tools-preview
+    rustup update stable
+    rustup component add --toolchain stable clippy llvm-tools-preview
+
+    ripr_cargo_for() (
+        if (( $# < 2 )); then
+            printf '%s\n' 'usage: ripr_cargo_for TOOLCHAIN CARGO_ARGUMENTS...' >&2
+            exit 2
+        fi
+        ripr_channel=$1
+        shift
+        export RUSTUP_AUTO_INSTALL=0
+        ripr_rustc=$(command rustup which --toolchain "$ripr_channel" rustc) || exit $?
+        ripr_cargo=$(command rustup which --toolchain "$ripr_channel" cargo) || exit $?
+        if [[ $ripr_rustc != /* || $ripr_cargo != /* || ! -x $ripr_rustc || ! -x $ripr_cargo ]]; then
+            printf '%s\n' 'The selected toolchain must provide executable absolute rustc and cargo paths.' >&2
+            exit 1
+        fi
+        if [[ $1 == clippy ]]; then
+            ripr_clippy=$(command rustup which --toolchain "$ripr_channel" cargo-clippy) || exit $?
+            if [[ $ripr_clippy != "${ripr_rustc%/*}/cargo-clippy" || ! -x $ripr_clippy ]]; then
+                printf '%s\n' 'The selected compiler directory must provide executable cargo-clippy.' >&2
+                exit 1
+            fi
+        fi
+        ripr_identity=$("$ripr_rustc" -vV) || exit $?
+        ripr_sysroot=$("$ripr_rustc" --print sysroot) || exit $?
+        ripr_host=$(printf '%s\n' "$ripr_identity" | sed -n 's/^host: //p') || exit $?
+        if [[ $ripr_sysroot != /* || -z $ripr_host ]]; then
+            printf '%s\n' 'The selected rustc did not identify its sysroot and host.' >&2
+            exit 1
+        fi
+        ripr_llvm_bin=$ripr_sysroot/lib/rustlib/$ripr_host/bin
+        export RUSTUP_TOOLCHAIN="$ripr_channel" RUSTC="$ripr_rustc" \
+            PATH="${ripr_rustc%/*}:$ripr_llvm_bin:$PATH" \
+            LLVM_COV="$ripr_llvm_bin/llvm-cov" LLVM_PROFDATA="$ripr_llvm_bin/llvm-profdata"
+        printf 'Selected toolchain: %s\n%s\n' "$ripr_channel" "$ripr_identity"
+        "$LLVM_COV" --version >/dev/null || exit $?
+        "$LLVM_PROFDATA" --version || exit $?
+        "$ripr_cargo" "$@" || exit $?
+        printf -v ripr_command ' %q' "$@"
+        printf 'Completed: %s cargo%s\n' "$ripr_channel" "$ripr_command"
+    )
+
+    ripr_cargo_for 1.95.0 test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
+    ripr_cargo_for stable test --locked -p repo-policy --lib coverage_diagnostics -- --nocapture
+    ripr_cargo_for stable test --locked -p repo-policy --test frontdoor
+    ripr_cargo_for stable clippy --locked -p repo-policy --all-targets -- -D warnings
+)
+```
+<!-- ripr:coverage-upgrade:end -->
+
+The explicit pin installation also works when activation disabled automatic
+installation. `rustup update stable` deliberately refreshes the stable channel;
+adding components alone does not establish that its compiler is current. Retain
+the compiler and LLVM identities and the test's reported raw version/layout with
+the results.
+The subshell resolves the requested compiler and Cargo with `rustup which`, invokes
+Cargo by its absolute path, and selects the same compiler for both `RUSTC` and
+literal `rustc` subprocesses through `PATH`. The LLVM paths come from that compiler's
+sysroot. This supports a shell that already activated either the pin or stable,
+including activation that prepends SDK binaries and exports an absolute `RUSTC`.
+Each command leaves the caller's activation unchanged. Missing tools and failed
+version probes stop before Cargo runs; Cargo failures keep their original status
+and stop the remaining checks. A `Completed:` line follows each successful Cargo
+command; a missing check cannot be inferred from another command's success.
+
+`RUSTUP_TOOLCHAIN` also follows subprocesses into temporary fixture repositories,
+where a directory-local override alone does not apply. Setting it alone does not
+replace an explicit `RUSTC` or a direct SDK binary already ahead of the Rustup
+proxies on `PATH`; see [Rustup toolchain overrides](https://rust-lang.github.io/rustup/overrides.html)
+and [Cargo's environment variables](https://doc.rust-lang.org/cargo/reference/environment-variables.html).
+Selecting these together keeps the policy helper's build-time and runtime compiler
+identities aligned. The checks retain their compiler-identity refusals.
+
+The `stable-repo-policy` job in the existing advisory Future Clippy workflow
+executes this marked recipe with genuine pin/stable toolchains and matching
+`llvm-tools-preview`, starting with the stable SDK first on `PATH` and an absolute
+`RUSTC`. It first runs the workflow controls, then requires all four ordered
+completion records, nonempty successful test runs, genuine LLVM association
+observations for both diagnostics checks, and successful Clippy completion.
+Missing, ambiguous or malformed recipe boundaries, partial execution and stale
+run evidence fail the job. Native compiler, LLVM and profile observations stay
+in the job output. This route replaces the duplicate stable Cargo commands. It
+follows that workflow's existing main-push, manual-dispatch and
+`clippy-future`/`full-ci` plus `merge-ready` PR routing. A failure stays visible;
+the job does not become a required merge gate or run full workspace coverage.
+The existing future-Clippy job continues to inspect deferred lints on Rust
+1.95.0. This stable compatibility check does not change the repository pin or
+MSRV.
 
 To generate coverage and inspect artifacts locally:
 

@@ -728,9 +728,29 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     // discriminator reads the predicate lens's gap, never a better reading:
     // Weak or unresolved boundary evidence also applies to the returned
     // comparison (#9094, #10046).
-    if let Some(mut predicate) = returned_comparison_view(probe)
-        && (!activation.missing_discriminators.is_empty() || unresolved_boundary.is_some())
-    {
+    // #13040: an unseen input (a plain identifier bound to an env var or a
+    // local helper call) yields neither a missing discriminator nor an
+    // unresolved boundary, because the argument is not a computed
+    // expression ripr flags as unreadable. The predicate lens still reads
+    // `Unknown` there (no comparable literal input), so an `Unknown`
+    // predicate reading applies when no owner input is readable at all
+    // (`owner_input_values` empty: a visible input, even one the literal
+    // reading cannot compare, keeps the return-value reading); a `Weak`
+    // reading (a visible input that merely misses the boundary, including
+    // an intermediate input that separates a multi-value move) keeps the
+    // existing resolved-gap gate, so the return-value lens can still
+    // credit separation the literal reading cannot see. The `Unknown`
+    // delegation only applies when related tests reach the owner
+    // (`related_tests` non-empty): with no related tests the return-value
+    // summary stands, not the predicate one. The empty-input `Unknown`
+    // arm is further scoped to a related test that directly calls the
+    // owner (`test.calls` naming `owner`): a test linked only by a name
+    // token or an unexpanded macro invocation (for example `check_small!`
+    // mentioning `bulk`) does not delegate on that arm, and when the
+    // owner is unknown (`owner` is `None`) that arm does not delegate at
+    // all. The missing-discriminator and unresolved-boundary arms keep
+    // their prior scope.
+    if let Some(mut predicate) = returned_comparison_view(probe) {
         predicate.family = ProbeFamily::Predicate;
         let evidence = infection_evidence_for_owner(
             &predicate,
@@ -741,7 +761,19 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
             owner_has_other_callers,
             assertion_macros_rebound,
         );
-        if matches!(evidence.state, StageState::Weak | StageState::Unknown) {
+        let directly_calls_owner = owner.is_some_and(|owner| {
+            related_tests
+                .iter()
+                .any(|test| test.calls.iter().any(|call| call.name == owner.name))
+        });
+        if (evidence.state == StageState::Unknown
+            && !related_tests.is_empty()
+            && ((owner_input_values(activation).is_empty() && directly_calls_owner)
+                || !activation.missing_discriminators.is_empty()
+                || unresolved_boundary.is_some()))
+            || (matches!(evidence.state, StageState::Weak)
+                && (!activation.missing_discriminators.is_empty() || unresolved_boundary.is_some()))
+        {
             return evidence;
         }
     }
@@ -824,7 +856,7 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
                 StageEvidence::new(
                     StageState::Weak,
                     Confidence::Medium,
-                    "Related tests contain input values, but the equality-boundary discriminator is missing",
+                    "Related tests contain input values, but the equality-boundary check is missing",
                 )
             } else if !owner_has_other_callers
                 && owner.is_some_and(|owner| {
@@ -1540,6 +1572,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

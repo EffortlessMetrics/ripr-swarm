@@ -30,7 +30,7 @@ Support-tier impact:
 Policy impact:
 
 - Register this spec in `policy/doc-artifacts.toml`.
-- Register `PythonTransitiveReachUnresolved` in `crates/ripr/src/domain/language.rs`.
+- Register `PythonTransitiveReachUnresolved` in `crates/ripr-contract/src/domain/language.rs`.
 - No new crates, binaries, dependencies, parsers, runtime executors, or LSP
   servers introduced.
 
@@ -125,7 +125,7 @@ read as written below.
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/python/transitive_reach.rs`
-- `crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
+- `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
 - `fixtures/python_transitive_reach_positive/`
 - `fixtures/python_transitive_reach_negative/`
 
@@ -133,7 +133,7 @@ read as written below.
 
 | Component | Location |
 |---|---|
-| `StaticLimitKind::PythonTransitiveReachUnresolved` | `crates/ripr/src/domain/language.rs` |
+| `StaticLimitKind::PythonTransitiveReachUnresolved` | `crates/ripr-contract/src/domain/language.rs` |
 | Same-class callee facts | `crates/ripr/src/analysis/language/python/same_class_callees.rs` |
 | BFS + post-classify attach | `crates/ripr/src/analysis/language/python/transitive_reach.rs` |
 | Classifier wiring | `crates/ripr/src/analysis/language/python/classify.rs` |

@@ -907,7 +907,7 @@ fn capture_repository_state(
                 .allowed_edit_surface
                 .iter()
                 .any(|rule| rule.matches(&path));
-        let exact_ignored = expected_write
+        let exact_ignored = (expected_write && !is_bulk_attempt_artifact(&root, &path))
             || policy.selected_target.matches(&path)
             || policy
                 .allowed_edit_surface
@@ -1014,10 +1014,11 @@ fn capture_repository_state(
             &mut remaining_work_bytes,
             ignored_paths.contains(path.as_str()),
             ignored_paths.contains(path.as_str())
-                && (policy
-                    .expected_operational_writes
-                    .iter()
-                    .any(|rule| rule.matches(path))
+                && ((!is_bulk_attempt_artifact(&root, path)
+                    && policy
+                        .expected_operational_writes
+                        .iter()
+                        .any(|rule| rule.matches(path)))
                     || policy.selected_target.matches(path)
                     || policy
                         .allowed_edit_surface
@@ -1845,12 +1846,128 @@ fn writable_path_components_are_safe(root: &Path, relative: &str) -> Result<bool
         #[cfg(unix)]
         if metadata.is_file() {
             use std::os::unix::fs::MetadataExt as _;
-            if metadata.nlink() != 1 {
+            if metadata.nlink() != 1 && !links_are_staged_publication_pair(&current, &metadata)? {
                 return Ok(false);
             }
         }
     }
     Ok(true)
+}
+
+/// True when every hard link of `metadata`'s file lives in its own directory
+/// and is the immutable destination plus the `<stem>.tmp-<pid>-<nonce>` staging
+/// name that `write_bytes_atomic` links into place before removing. A process
+/// stopped or terminated between the link and the removal leaves exactly this pair
+/// behind, and it aliases nothing outside the governed directory. Any other
+/// link (another directory, another name, an extra count) stays refused.
+#[cfg(unix)]
+fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Result<bool, String> {
+    use std::os::unix::fs::MetadataExt as _;
+    let Some(parent) = path.parent() else {
+        return Ok(false);
+    };
+    let mut names = Vec::new();
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(false),
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return Ok(false);
+        };
+        let Ok(candidate) = fs::symlink_metadata(entry.path()) else {
+            // Removed between listing and inspection: the pair is changing.
+            continue;
+        };
+        if candidate.is_file()
+            && candidate.dev() == metadata.dev()
+            && candidate.ino() == metadata.ino()
+        {
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                return Ok(false);
+            };
+            names.push(name);
+        }
+    }
+    if u64::try_from(names.len()).ok() != Some(metadata.nlink()) || names.len() != 2 {
+        return Ok(false);
+    }
+    let (Some(destination), Some(staging)) = (
+        names.iter().find(|name| !is_staging_name(name)),
+        names.iter().find(|name| is_staging_name(name)),
+    ) else {
+        return Ok(false);
+    };
+    let stem = Path::new(destination)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(destination);
+    Ok(staging.strip_prefix(stem).is_some_and(is_staging_suffix))
+}
+
+/// True when `directory` holds a `<name>.tmp-<pid>-<nonce>` staging name, the
+/// residue of a publication stopped between its link and its removal. A
+/// directory that cannot be read counts as having residue: currentness fails
+/// closed.
+pub(crate) fn directory_has_staged_publication_residue(directory: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        match fs::read_dir(directory) {
+            Ok(entries) => entries.into_iter().any(|entry| match entry {
+                Ok(entry) => entry.file_name().to_str().is_none_or(is_staging_name),
+                Err(_) => true,
+            }),
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        false
+    }
+}
+
+/// The `<name>.tmp-<pid>-<nonce>` staging names in `directory`, sorted, so a
+/// refusal can name the file whose removal restores currentness. A directory
+/// that cannot be read yields none: the caller already failed closed on it.
+pub(crate) fn staged_publication_residue_names(directory: &Path) -> Vec<String> {
+    #[cfg(unix)]
+    {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+            .filter(|name| is_staging_name(name))
+            .collect();
+        names.sort();
+        names
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        Vec::new()
+    }
+}
+
+#[cfg(unix)]
+fn is_staging_name(name: &str) -> bool {
+    name.rsplit_once(".tmp-")
+        .is_some_and(|(_, tail)| is_staging_suffix(&format!(".tmp-{tail}")))
+}
+
+/// `.tmp-<pid>-<nonce>` with decimal digits only.
+#[cfg(unix)]
+fn is_staging_suffix(rest: &str) -> bool {
+    rest.strip_prefix(".tmp-")
+        .and_then(|tail| tail.split_once('-'))
+        .is_some_and(|(pid, nonce)| {
+            !pid.is_empty()
+                && !nonce.is_empty()
+                && pid.bytes().all(|byte| byte.is_ascii_digit())
+                && nonce.bytes().all(|byte| byte.is_ascii_digit())
+        })
 }
 
 pub(crate) fn workflow_path_components_are_safe(
@@ -1970,6 +2087,26 @@ fn eol_normalized_file_digest(bytes: &[u8]) -> Option<String> {
     }
     normalized.extend_from_slice(rest);
     Some(format!("{:x}", Sha256::digest(&normalized)))
+}
+
+/// Largest retained attempt-store file still hashed exactly. Manifests,
+/// receipts and packets stay under it; sibling attempts bind their exact bytes.
+const ATTEMPT_STORE_EXACT_MAX_BYTES: u64 = 1024 * 1024;
+
+/// A large retained repair-attempt artifact (`target/ripr/repair-attempts/**`,
+/// such as a `before.repo-exposure.json` snapshot). Each attempt retains about
+/// 9 MB of these on a ~1000-seam repository; hashing every retained byte
+/// exactly spent the shared capture budget, so after a handful of attempts
+/// every new baseline came back ambiguous and the attempt could not be scored.
+/// They get the same bounded identity as other ignored files. The rule reads
+/// only the path and the file length, so baseline and after captures treat
+/// an unchanged file identically; a file crossing the size threshold between
+/// captures changes identity and fails closed.
+fn is_bulk_attempt_artifact(root: &Path, path: &str) -> bool {
+    path.starts_with("target/ripr/repair-attempts/")
+        && fs::symlink_metadata(root.join(path)).is_ok_and(|metadata| {
+            metadata.is_file() && metadata.len() > ATTEMPT_STORE_EXACT_MAX_BYTES
+        })
 }
 
 fn worktree_identity(
@@ -4969,6 +5106,127 @@ mod tests {
             fs::read_to_string(&external_file)
                 .map_err(|err| format!("read external hardlink target: {err}"))?,
             "outside-after\n"
+        );
+        Ok(())
+    }
+
+    /// Retained repair-attempt artifacts accumulate (about 9 MB per attempt on
+    /// a ~1000-seam repository). Their total size must not spend the exact
+    /// content budget and make every later baseline ambiguous.
+    #[test]
+    fn retained_attempt_store_larger_than_the_capture_budget_is_not_ambiguous() -> Result<(), String>
+    {
+        let fixture = git_fixture("retained-attempt-store-budget")?;
+        commit_target_ignore(&fixture)?;
+        let store = fixture
+            .root
+            .join("target/ripr/repair-attempts/repair-attempt-old/artifacts");
+        fs::create_dir_all(&store).map_err(|err| format!("create attempt store: {err}"))?;
+        let chunk = vec![b'x'; (MAX_CAPTURE_FILE_BYTES / 2) as usize];
+        let files = (MAX_CAPTURE_TOTAL_FILE_BYTES / chunk.len() as u64) + 2;
+        for index in 0..files {
+            fs::write(store.join(format!("before.{index}.json")), &chunk)
+                .map_err(|err| format!("write retained artifact: {err}"))?;
+        }
+        let baseline = capture_attempt_baseline(&fixture.root, &policy()?)?;
+        assert!(
+            !baseline.is_ambiguous(),
+            "retained attempt artifacts beyond the exact-capture budget must not make the baseline ambiguous"
+        );
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn repaired() {}\n")
+            .map_err(|err| format!("write selected test: {err}"))?;
+        assert_eq!(
+            evaluate_repository_edit_cage(&baseline)?.status,
+            EditCageVerdictStatus::Compliant
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_pair_left_by_an_interrupted_writer_is_not_ambiguous() -> Result<(), String>
+    {
+        let fixture = git_fixture("staged-publication-pair")?;
+        commit_target_ignore(&fixture)?;
+        let dir = fixture.root.join("target/ripr/artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-441-3"))
+            .map_err(|err| format!("link staging name: {err}"))?;
+
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/artifacts/after.check-findings.json"
+        )?);
+        assert!(writable_path_components_are_safe(
+            &fixture.root,
+            "target/ripr/artifacts/after.check-findings.tmp-441-3"
+        )?);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_publication_residue_is_reported_for_currentness() -> Result<(), String> {
+        let fixture = git_fixture("staged-publication-residue")?;
+        let dir = fixture.root.join("target/ripr/artifacts");
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::write(dir.join("notes.tmp-x-1"), "{}\n").map_err(|err| format!("write: {err}"))?;
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-441-3"))
+            .map_err(|err| format!("link staging name: {err}"))?;
+        assert!(directory_has_staged_publication_residue(&dir));
+        assert_eq!(
+            staged_publication_residue_names(&dir),
+            vec!["after.check-findings.tmp-441-3".to_string()]
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hard_links_that_are_not_a_staged_publication_pair_stay_unsafe() -> Result<(), String> {
+        let fixture = git_fixture("unstaged-hardlinks")?;
+        let external = external_fixture("unstaged-hardlinks")?;
+        commit_target_ignore(&fixture)?;
+        let dir = fixture.root.join("target/ripr/artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create artifacts dir: {err}"))?;
+        let destination = dir.join("after.check-findings.json");
+        fs::write(&destination, "{}\n").map_err(|err| format!("write destination: {err}"))?;
+
+        // A staging-shaped name for another stem, a non-numeric suffix, a third
+        // link, and a link outside the directory each keep the path unsafe.
+        for (label, extra) in [
+            ("other stem", dir.join("receipt.tmp-1-1")),
+            ("non-numeric", dir.join("after.check-findings.tmp-x-1")),
+            ("plain alias", dir.join("alias.json")),
+            ("external", external.root.join("outside.json")),
+        ] {
+            fs::hard_link(&destination, &extra).map_err(|err| format!("link {label}: {err}"))?;
+            assert!(
+                !writable_path_components_are_safe(
+                    &fixture.root,
+                    "target/ripr/artifacts/after.check-findings.json"
+                )?,
+                "{label} link must stay unsafe"
+            );
+            fs::remove_file(&extra).map_err(|err| format!("unlink {label}: {err}"))?;
+        }
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-1-1"))
+            .map_err(|err| format!("link first staging name: {err}"))?;
+        fs::hard_link(&destination, dir.join("after.check-findings.tmp-2-1"))
+            .map_err(|err| format!("link second staging name: {err}"))?;
+        assert!(
+            !writable_path_components_are_safe(
+                &fixture.root,
+                "target/ripr/artifacts/after.check-findings.json"
+            )?,
+            "a third link must stay unsafe"
         );
         Ok(())
     }

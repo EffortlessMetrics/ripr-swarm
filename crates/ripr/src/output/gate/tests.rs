@@ -213,6 +213,20 @@ fn gate_visible_only_records_pr_guidance_without_blocking() -> Result<(), String
 }
 
 #[test]
+fn gate_unknown_status_fails_closed() -> Result<(), String> {
+    // Fail closed: an unknown producer status must never read as a pass.
+    let (_fixture_input, input) = fixture_input(GateMode::VisibleOnly)?;
+    let mut report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "advisory");
+    assert!(!gate_decision_should_fail(&report));
+    report.status = "future_unknown_status".to_string();
+    assert!(gate_decision_should_fail(&report));
+    report.status = "pass".to_string();
+    assert!(!gate_decision_should_fail(&report));
+    Ok(())
+}
+
+#[test]
 fn gate_acknowledgeable_blocks_policy_candidate_without_label() -> Result<(), String> {
     let (_fixture_input, input) = fixture_input(GateMode::Acknowledgeable)?;
     let report = build_gate_decision_report(&input)?;

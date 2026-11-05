@@ -108,8 +108,10 @@ pub(super) fn measure(
     let scratch = std::env::current_dir()
         .map_err(|err| format!("current dir: {err}"))?
         .join("target/ripr/dx-scoreboard")
-        .join(format!("run-{stamp}"));
-    fs::create_dir_all(&scratch)
+        .join(format!("run-{}-{stamp}", std::process::id()));
+    fs::create_dir_all(scratch.parent().ok_or("scoreboard scratch has no parent")?)
+        .map_err(|err| format!("create scoreboard scratch parent: {err}"))?;
+    fs::create_dir(&scratch)
         .map_err(|err| format!("create scoreboard scratch {}: {err}", scratch.display()))?;
     let result = measure_in(config, options, &binary, &scratch, samples, &mut context);
     let _ = fs::remove_dir_all(&scratch);
@@ -127,8 +129,9 @@ fn measure_in(
     let wants = |board: &str| options.boards.iter().any(|b| b == board);
     let timeout = Duration::from_millis(options.timeout_ms);
     if wants("speed") || wants("trust") {
-        for entry in selected_corpus(config, options)? {
-            let corpus = measure_corpus_entry(entry, options, binary, scratch, timeout, samples);
+        for (index, entry) in selected_corpus(config, options)?.into_iter().enumerate() {
+            let corpus =
+                measure_corpus_entry(entry, options, binary, scratch, index, timeout, samples);
             context.corpus.push(corpus);
         }
     }
@@ -169,11 +172,12 @@ fn selected_corpus<'a>(
 
 // ------------------------------------------------------------- corpus ----
 
-fn measure_corpus_entry(
+pub(super) fn measure_corpus_entry(
     entry: &CorpusEntry,
     options: &Options,
     binary: &Path,
     scratch: &Path,
+    index: usize,
     timeout: Duration,
     samples: &mut Vec<Sample>,
 ) -> Value {
@@ -188,6 +192,8 @@ fn measure_corpus_entry(
         "speed.cold_pilot_ms",
         "speed.cold_pilot_peak_rss_mb",
         "speed.warm_check_ms",
+        "speed.warm_check_p50_ms",
+        "speed.warm_check_p95_ms",
         "speed.warm_check_peak_rss_mb",
         "speed.editor_refresh_ms",
         "speed.editor_refresh_unanswered_progress_ms",
@@ -195,16 +201,14 @@ fn measure_corpus_entry(
         "trust.editor_resilience_failures",
         "trust.self_contradictions",
     ];
-    let checkout = match prepare_checkout(entry, options) {
+    let destination = scratch.join(format!("checkout-{index}"));
+    let checkout = match prepare_measured_checkout(entry, options, &destination) {
         Ok(path) => path,
-        Err(reason) => {
-            // With --clone the run promised a checkout, so losing it is a
-            // broken instrument the gate must see; without it, the corpus
-            // was simply not fetched.
-            let (outcome, status) = if options.clone {
-                (SampleOutcome::Failed, "failed")
-            } else {
+        Err((missing, reason)) => {
+            let (outcome, status) = if missing {
                 (SampleOutcome::NotMeasured, "not_measured")
+            } else {
+                (SampleOutcome::Failed, "failed")
             };
             for metric in corpus_metrics {
                 samples.push(sample(metric, outcome.clone(), reason.clone()));
@@ -213,6 +217,7 @@ fn measure_corpus_entry(
                 "id": entry.id,
                 "sha": entry.sha,
                 "language": entry.language(),
+                "size_tier": entry.size_tier,
                 "status": status,
                 "reason": reason,
             });
@@ -230,6 +235,7 @@ fn measure_corpus_entry(
             "sha": entry.sha,
             "url": entry.url,
             "language": entry.language(),
+                "size_tier": entry.size_tier,
             "status": "failed",
             "reason": reason,
         });
@@ -344,17 +350,38 @@ fn measure_corpus_entry(
         timeout,
         "dx-scoreboard warm-up check",
     );
-    let measured = match &warmup {
-        Ok(warmup) if !warmup.output.timed_out => capture_output_measured(
-            &binary.display().to_string(),
-            &check_args,
-            None,
-            &check_envs,
-            timeout,
-            "dx-scoreboard warm check",
-        )
-        .map(Some),
-        Ok(_) | Err(_) => Ok(None),
+    // N measured runs follow the warm-up. The first run that is not an
+    // admitted success ends the series: the rest would only repeat a failure,
+    // and `record_warm_check` reports the series as incomplete.
+    let mut measured_runs = Vec::new();
+    let mut measured_error = None;
+    if matches!(&warmup, Ok(warmup) if !warmup.output.timed_out) {
+        for _ in 0..options.samples.max(1) {
+            match capture_output_measured(
+                &binary.display().to_string(),
+                &check_args,
+                None,
+                &check_envs,
+                timeout,
+                "dx-scoreboard warm check",
+            ) {
+                Ok(run) => {
+                    let stop = run.output.timed_out || !exited_zero(&run);
+                    measured_runs.push(run);
+                    if stop {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    measured_error = Some(err);
+                    break;
+                }
+            }
+        }
+    }
+    let measured = match measured_error {
+        Some(err) => Err(err),
+        None => Ok(measured_runs),
     };
     record_warm_check(
         &sample,
@@ -486,6 +513,7 @@ fn measure_corpus_entry(
         "sha": entry.sha,
         "url": entry.url,
         "language": entry.language(),
+                "size_tier": entry.size_tier,
         "status": "measured",
     })
 }
@@ -539,16 +567,55 @@ pub(crate) fn check_args_without_explicit_mode(root: &str, base: &str) -> Vec<St
     ]
 }
 
-/// Admit a warm-up plus measured check pair. Incomplete children keep raw
-/// duration/RSS; a measured capture error after warm-up is `Failed` on both
-/// warm-check metrics so `--gate` sees a broken instrument. Only a
-/// successful warm-up and a completed intended-subject analysis may enter
-/// the comparable complete-work population.
+/// Warm-check speed metrics that share one duration series: `speed.warm_check_ms`
+/// (the p50, kept so ceilings and baselines written for the single-sample
+/// metric keep their meaning), then the explicit p50 and p95.
+const WARM_MS_METRICS: [&str; 3] = [
+    "speed.warm_check_ms",
+    "speed.warm_check_p50_ms",
+    "speed.warm_check_p95_ms",
+];
+const WARM_RSS_METRIC: &str = "speed.warm_check_peak_rss_mb";
+/// Below this many samples the nearest-rank p95 is the maximum.
+pub(crate) const P95_DISTINCT_FROM_MAX_AT: usize = 20;
+
+/// Nearest-rank percentile of an ascending series: the value at 1-based rank
+/// `ceil(pct / 100 * n)`. With fewer than 20 samples the p95 rank is `n`, so
+/// p95 is the maximum; this is stated in the report rather than interpolated.
+pub(crate) fn nearest_rank(sorted: &[f64], pct: usize) -> Option<f64> {
+    if sorted.is_empty() {
+        return None;
+    }
+    let rank = (pct * sorted.len()).div_ceil(100);
+    sorted.get(rank.clamp(1, sorted.len()) - 1).copied()
+}
+
+fn push_warm_ms(
+    sample: &dyn Fn(&str, SampleOutcome, String) -> Sample,
+    samples: &mut Vec<Sample>,
+    outcome: impl Fn(&str) -> SampleOutcome,
+    detail: impl Fn(&str) -> String,
+) {
+    for metric in WARM_MS_METRICS {
+        samples.push(sample(metric, outcome(metric), detail(metric)));
+    }
+}
+
+/// Admit a warm-up plus a series of measured check runs. Incomplete children
+/// keep raw duration/RSS; a measured capture error after warm-up is `Failed`
+/// on every warm-check metric so `--gate` sees a broken instrument. Only a
+/// successful warm-up and a series in which every run completed the intended
+/// subject may enter the comparable complete-work population. An empty
+/// series means the measured runs were not taken.
+///
+/// The series yields `speed.warm_check_p50_ms`, `speed.warm_check_p95_ms`
+/// (nearest rank; the maximum below 20 samples), `speed.warm_check_ms` (the
+/// p50) and `speed.warm_check_peak_rss_mb` (the maximum over the series).
 pub(crate) fn record_warm_check(
     sample: &dyn Fn(&str, SampleOutcome, String) -> Sample,
     subject: &CheckSubject,
     warmup: Result<MeasuredOutput, String>,
-    measured: Result<Option<MeasuredOutput>, String>,
+    measured: Result<Vec<MeasuredOutput>, String>,
     samples: &mut Vec<Sample>,
     contradictions: &mut Option<(usize, Vec<String>)>,
     missing_sources: &mut Vec<&str>,
@@ -563,63 +630,66 @@ pub(crate) fn record_warm_check(
     match (warmup, measured) {
         (Err(err), _) => {
             missing_sources.push("warm check JSON");
-            samples.push(sample(
-                "speed.warm_check_ms",
-                SampleOutcome::Failed,
-                format!("warm-up capture failed: {err}"),
-            ));
-            samples.push(sample(
-                "speed.warm_check_peak_rss_mb",
-                SampleOutcome::Failed,
-                err,
-            ));
+            push_warm_ms(
+                sample,
+                samples,
+                |_| SampleOutcome::Failed,
+                |_| format!("warm-up capture failed: {err}"),
+            );
+            samples.push(sample(WARM_RSS_METRIC, SampleOutcome::Failed, err));
         }
         (Ok(_), Err(err)) => {
             missing_sources.push("warm check JSON");
-            samples.push(sample(
-                "speed.warm_check_ms",
-                SampleOutcome::Failed,
-                format!(
-                    "warm-up {}; measured capture failed: {err}",
-                    warmup_admission.reason()
-                ),
-            ));
-            samples.push(sample(
-                "speed.warm_check_peak_rss_mb",
-                SampleOutcome::Failed,
-                err,
-            ));
+            push_warm_ms(
+                sample,
+                samples,
+                |_| SampleOutcome::Failed,
+                |_| {
+                    format!(
+                        "warm-up {}; measured capture failed: {err}",
+                        warmup_admission.reason()
+                    )
+                },
+            );
+            samples.push(sample(WARM_RSS_METRIC, SampleOutcome::Failed, err));
         }
-        (Ok(warmup), Ok(None)) => {
+        (Ok(warmup), Ok(runs)) if runs.is_empty() => {
             missing_sources.push("warm check JSON");
             let ms = duration_ms(&warmup);
-            samples.push(sample(
-                "speed.warm_check_ms",
-                SampleOutcome::Incomplete(ms),
-                format!(
-                    "exit {}, warm-up {}; measured run not taken",
-                    exit_label(&warmup),
-                    warmup_admission.reason()
-                ),
-            ));
-            samples.push(rss_sample(
+            push_warm_ms(
                 sample,
-                "speed.warm_check_peak_rss_mb",
-                &warmup,
-                false,
-            ));
+                samples,
+                |_| SampleOutcome::Incomplete(ms),
+                |_| {
+                    format!(
+                        "exit {}, warm-up {}; measured run not taken",
+                        exit_label(&warmup),
+                        warmup_admission.reason()
+                    )
+                },
+            );
+            samples.push(rss_sample(sample, WARM_RSS_METRIC, &warmup, false));
         }
-        (Ok(_warmup), Ok(Some(measured))) => {
-            let admission = admit_measured(&measured, subject);
-            let complete = warmup_ok && admission.is_admitted();
-            let ms = duration_ms(&measured);
+        (Ok(_warmup), Ok(runs)) => {
+            let admissions: Vec<CheckAdmission> = runs
+                .iter()
+                .map(|run| admit_measured(run, subject))
+                .collect();
+            let first = &runs[0];
+            let admission = &admissions[0];
+            let all_admitted = admissions.iter().all(CheckAdmission::is_admitted);
+            let complete = warmup_ok && all_admitted;
+            let mut durations: Vec<f64> = runs.iter().map(duration_ms).collect();
+            durations.sort_by(f64::total_cmp);
+            let p50 = nearest_rank(&durations, 50).unwrap_or_default();
+            let p95 = nearest_rank(&durations, 95).unwrap_or_default();
             let findings = admission
                 .findings()
                 .map(|count| count.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
             let mut detail = format!(
                 "exit {}, {findings} finding(s) on {}..HEAD",
-                exit_label(&measured),
+                exit_label(first),
                 subject.base
             );
             if !warmup_ok {
@@ -628,34 +698,69 @@ pub(crate) fn record_warm_check(
                     warmup_admission.reason()
                 ));
             }
-            if !admission.is_complete() {
+            if !all_admitted {
+                for (index, run_admission) in admissions.iter().enumerate() {
+                    if !run_admission.is_admitted() {
+                        detail.push_str(&format!(
+                            "; sample {} of {} was not admitted ({})",
+                            index + 1,
+                            runs.len(),
+                            run_admission.reason()
+                        ));
+                    }
+                }
+            } else if !admission.is_complete() {
                 // An expected partial outcome is admitted but stays visibly
                 // partial: its reason names the limit it stopped at.
                 detail.push_str(&format!("; {}", admission.reason()));
             }
-            if admission.rendering_truncated() {
+            if admissions.iter().any(CheckAdmission::rendering_truncated) {
                 detail.push_str("; findings array rendering was truncated");
             }
-            samples.push(sample(
-                "speed.warm_check_ms",
+            let series = durations
+                .iter()
+                .map(|ms| format!("{ms:.0}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let rank_note = if durations.len() < P95_DISTINCT_FROM_MAX_AT {
+                format!("; p95 is the maximum with fewer than {P95_DISTINCT_FROM_MAX_AT} samples")
+            } else {
+                String::new()
+            };
+            detail.push_str(&format!(
+                "; {} warm sample(s) ms sorted [{series}], nearest-rank p50 {p50:.0}, p95 {p95:.0}{rank_note}",
+                durations.len()
+            ));
+            let value_of = |metric: &str| {
+                let ms = if metric == "speed.warm_check_p95_ms" {
+                    p95
+                } else {
+                    p50
+                };
                 if complete {
                     SampleOutcome::Value(ms)
                 } else {
                     SampleOutcome::Incomplete(ms)
-                },
-                detail,
-            ));
-            samples.push(rss_sample(
-                sample,
-                "speed.warm_check_peak_rss_mb",
-                &measured,
-                complete,
-            ));
+                }
+            };
+            push_warm_ms(sample, samples, value_of, |_| detail.clone());
+            // The peak is the worst run: a ceiling on memory is a ceiling on
+            // every run, not on the typical one.
+            let peak_run = runs
+                .iter()
+                .max_by_key(|run| run.peak_rss_bytes)
+                .unwrap_or(first);
+            let mut rss = rss_sample(sample, WARM_RSS_METRIC, peak_run, complete);
+            if runs.len() > 1 {
+                rss.detail
+                    .push_str(&format!("; maximum over {} warm samples", runs.len()));
+            }
+            samples.push(rss);
             // Trust may scan only an admitted complete document. A rejected
             // subject, an incomplete analysis or an expected partial outcome
             // cannot contribute a clean zero.
             if admission.is_complete() {
-                match serde_json::from_str::<Value>(&measured.output.stdout) {
+                match serde_json::from_str::<Value>(&first.output.stdout) {
                     Ok(json) => match check_contradictions(&json) {
                         Ok(found) => {
                             *contradictions =
@@ -733,33 +838,12 @@ pub(crate) fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result
             .map_err(|err| format!("create {}: {err}", options.corpus_dir.display()))?;
         git(
             None,
-            &[
-                "clone",
-                "--quiet",
-                "--filter=blob:none",
-                &entry.url,
-                &dir.display().to_string(),
-            ],
+            &["clone", "--quiet", &entry.url, &dir.display().to_string()],
         )?;
     }
     let dir = fs::canonicalize(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
     verify_own_checkout(&dir)?;
-    let head = git(Some(&dir), &["rev-parse", "HEAD"])?;
-    if head.trim() != entry.sha {
-        let checkout = git(Some(&dir), &["checkout", "--quiet", "--detach", &entry.sha]);
-        if checkout.is_err() {
-            if !options.clone {
-                return Err(format!(
-                    "{} lacks pin {}; rerun with --clone to fetch it",
-                    dir.display(),
-                    entry.sha
-                ));
-            }
-            git(Some(&dir), &["fetch", "--quiet", "origin", &entry.sha])?;
-            git(Some(&dir), &["checkout", "--quiet", "--detach", &entry.sha])?;
-        }
-    }
-    let dirty = git(
+    let dirty = git_no_lazy(
         Some(&dir),
         &["status", "--porcelain", "--untracked-files=no"],
     )?;
@@ -769,14 +853,124 @@ pub(crate) fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result
             dir.display()
         ));
     }
+    if git_no_lazy(
+        Some(&dir),
+        &["cat-file", "-e", &format!("{}^{{commit}}", entry.sha)],
+    )
+    .is_err()
+    {
+        if !options.clone {
+            return Err(format!(
+                "{} lacks pin {}; rerun with --clone to fetch it",
+                dir.display(),
+                entry.sha
+            ));
+        }
+        git(Some(&dir), &["fetch", "--quiet", "origin", &entry.sha])?;
+    }
+    let default_base = format!("{}~1", entry.sha);
+    let base = entry.base_sha.as_deref().unwrap_or(&default_base);
+    if let Err(reason) = verify_objects(&dir, &entry.sha, base) {
+        if !options.clone {
+            return Err(reason);
+        }
+        let mut args = vec![
+            "fetch",
+            "--quiet",
+            "--refetch",
+            "--no-filter",
+            "origin",
+            &entry.sha,
+        ];
+        if let Some(base_sha) = entry.base_sha.as_deref() {
+            args.push(base_sha);
+        }
+        git(Some(&dir), &args)?;
+        verify_objects(&dir, &entry.sha, base)?;
+    }
     Ok(dir)
+}
+
+/// The producer and tests share this boundary; only an absent optional source
+/// is not measured. Every failure after finding a source is an instrument failure.
+pub(crate) fn prepare_measured_checkout(
+    entry: &CorpusEntry,
+    options: &Options,
+    destination: &Path,
+) -> Result<PathBuf, (bool, String)> {
+    let source = prepare_checkout(entry, options).map_err(|reason| {
+        let missing = !options.clone
+            && matches!(
+                fs::symlink_metadata(options.corpus_dir.join(&entry.id)),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound
+            );
+        (missing, reason)
+    })?;
+    isolated_checkout(&source, &entry.sha, entry.base_sha.as_deref(), destination)
+        .map_err(|reason| (false, reason))
+}
+
+fn verify_objects(dir: &Path, sha: &str, base: &str) -> Result<(), String> {
+    git_no_lazy(
+        Some(dir),
+        &["rev-parse", "--verify", &format!("{base}^{{commit}}")],
+    )
+    .map_err(|err| format!("cannot resolve base {base}: {err}"))?;
+    let objects = git_no_lazy(
+        Some(dir),
+        &[
+            "rev-list",
+            "--objects",
+            "--no-walk",
+            "--missing=print",
+            sha,
+            base,
+        ],
+    )?;
+    if objects.lines().any(|line| line.starts_with('?')) {
+        return Err("checkout is missing objects required by its pin or base".to_string());
+    }
+    Ok(())
+}
+
+/// Copy Git objects and materialize only the pinned tree in run-owned scratch.
+/// No worktree registration or shared checkout mutation survives this run.
+fn isolated_checkout(
+    source: &Path,
+    sha: &str,
+    base: Option<&str>,
+    destination: &Path,
+) -> Result<PathBuf, String> {
+    git_no_lazy(
+        None,
+        &[
+            "clone",
+            "--quiet",
+            "--no-checkout",
+            "--dissociate",
+            "--",
+            &source.display().to_string(),
+            &destination.display().to_string(),
+        ],
+    )?;
+    if destination.join(".git/objects/info/alternates").exists() {
+        return Err("isolated checkout retains an external object store".to_string());
+    }
+    git_no_lazy(Some(destination), &["checkout", "--quiet", "--detach", sha])?;
+    if !git_no_lazy(Some(destination), &["rev-parse", "HEAD"])?
+        .trim()
+        .eq_ignore_ascii_case(sha)
+    {
+        return Err(format!("isolated checkout did not resolve to pin {sha}"));
+    }
+    verify_objects(destination, sha, base.unwrap_or("HEAD~1"))?;
+    fs::canonicalize(destination).map_err(|err| format!("{}: {err}", destination.display()))
 }
 
 /// Refuse a corpus directory that is not the root of its own repository.
 /// A `.git` left empty or partial (an interrupted clone, or a CI cache that
 /// restored `target/` without the object store) makes git walk up to the
-/// enclosing repository, and the pin checkout below would then detach the
-/// caller's own working tree.
+/// enclosing repository and use it as the corpus object source.
 pub(crate) fn verify_own_checkout(dir: &Path) -> Result<(), String> {
     let output = git(Some(dir), &["rev-parse", "--show-toplevel"])?;
     // Strip only git's line ending; a directory name may end in spaces.
@@ -832,6 +1026,13 @@ pub(crate) fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ))
     }
+}
+
+fn git_no_lazy(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
+    let mut guarded = Vec::with_capacity(args.len() + 1);
+    guarded.push("--no-lazy-fetch");
+    guarded.extend_from_slice(args);
+    git(cwd, &guarded)
 }
 
 /// Self-contradiction rules over one pilot `repo-exposure.json`:

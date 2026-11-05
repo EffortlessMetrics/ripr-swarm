@@ -12,8 +12,8 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | --- | --- | --- | --- |
 | `metrics/public-proof/dx-scoreboard.json` | Speed, memory, CI adoption, pasted-command safety, self-contradictions | ripr 0.11.0 (10e5637) | runner `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor` |
 | `metrics/dx-scoreboard/corpus-full-baseline.json` | Corpus lane, used when the scoreboard receipt did not ingest corpus | 10e5637 | runner `github-hosted-linux-x86_64-4cpu-intel-r-xeon-r-platinum-8370c-cpu-2-80ghz` |
-| `metrics/dx-scoreboard/pilot-ranking-baseline.json` | Pilot ranking lane, used when the scoreboard receipt did not ingest ranking | ac01337 | runner `github-hosted-linux-x86_64-4cpu-intel-r-xeon-r-platinum-8370c-cpu-2-80ghz` |
-| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | 842 cases | RIPR-SPEC-0219 |
+| `metrics/dx-scoreboard/pilot-ranking-baseline.json` | Pilot ranking lane, used when the scoreboard receipt did not ingest ranking | d971210 | runner `local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-10ghz` |
+| `metrics/public-proof/verdict-corpus.json` | Hand-labeled verdict corpus | 846 cases | RIPR-SPEC-0219 |
 | `metrics/public-proof/mutation-spot-check.json` | Agreement with real mutation runs | 5 repositories at pinned revisions | cargo-mutants 27.1.0 |
 | `metrics/public-proof/first-run-previous.json` | New-developer walk, earlier release | ripr 0.10.0 | 3 crates |
 | `metrics/public-proof/first-run-current.json` | New-developer walk, later build | ripr 0.11.0 (a7a089e) | 3 crates |
@@ -23,7 +23,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-54 bars. ripr meets 26, is below the bar on 23, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them. First-run bars are recomputed by this page from the raw walk receipts; an ingested scoreboard value owns its bar once one lands.
+54 bars. ripr meets 28, is below the bar on 21, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them. First-run bars are recomputed by this page from the raw walk receipts; an ingested scoreboard value owns its bar once one lands.
 
 By board, so the weak areas show before the full table:
 
@@ -35,7 +35,7 @@ By board, so the weak areas show before the full table:
 | Pasted commands | 2 | 0 | 0 | 0 |
 | First run | 3 | 3 | 2 | 0 |
 | corpus | 2 | 0 | 0 | 0 |
-| ranking | 0 | 9 | 0 | 0 |
+| ranking | 2 | 7 | 0 | 0 |
 
 | Board | Bar | Now | Target | Status | Trend |
 | --- | --- | --- | --- | --- | --- |
@@ -49,7 +49,7 @@ By board, so the weak areas show before the full table:
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | 0.0% | <= 5.0% | meets the bar | first receipt (verdict corpus, upstream cases only; all 842 cases: 0.0%) |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | 0.0% | <= 5.0% | meets the bar | first receipt (verdict corpus, upstream cases only; all 846 cases: 0.0%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **11.0%** | <= 5.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits where ripr gives no specific verdict | **37.1%** | <= 20.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 2af3f38) |
@@ -83,15 +83,15 @@ By board, so the weak areas show before the full table:
 | First run | Seconds for the scripted walk on one crate, setup excluded | 3.56 s | <= 10 s | meets the bar | was 0.58 in ripr 0.10.0 |
 | corpus | Pinned repository whose diff-scoped `ripr check` did not reach `analyzed` | 0 repos | <= 0 repos | meets the bar | -1 repo since adf4e63 (was 1 repo) |
 | corpus | Diff-scoped `ripr check` on a pinned real change | 3.5 s | <= 5.0 s | meets the bar | earlier receipt on another runner class `local-linux-x86_64-4cpu` (was 13.2 s) |
-| ranking | Pilot's top 5 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **17.6%** | >= 60.0% | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **28.0%** | >= 60.0% | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks a labeled mutant can judge (precision can rise by making picks unjudgeable) | **64.1%** | >= 80.0% | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks that land in a function no higher pick named | **71.8%** | >= 90.0% | below the bar | no earlier measurement |
-| ranking | Picks in pilot's top 10 across the pinned crates (precision and shares can rise by ranking fewer seams) | **39 picks** | >= 50 picks | below the bar | no earlier measurement |
-| ranking | Pilot's top 5 picks per crate a missed mutant confirms (pooled count) | **3 picks** | >= 12 picks | below the bar | no earlier measurement |
-| ranking | Pilot's top 5 picks per crate where every judging mutant was caught (pooled count) | **14 picks** | <= 8 picks | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks per crate a missed mutant confirms (pooled count) | **7 picks** | >= 24 picks | below the bar | no earlier measurement |
-| ranking | Pilot's top 10 picks per crate where every judging mutant was caught (pooled count) | **18 picks** | <= 16 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 5 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **22.2%** | >= 60.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks per crate where a mutant at the seam, its line or its function was missed (of picks a label can judge) | **37.5%** | >= 60.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks a labeled mutant can judge (precision can rise by making picks unjudgeable) | **53.3%** | >= 80.0% | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks that land in a function no higher pick named | **63.3%** | >= 90.0% | below the bar | no earlier measurement |
+| ranking | Picks in pilot's top 10 across the pinned crates (precision and shares can rise by ranking fewer seams) | **30 picks** | >= 50 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 5 picks per crate a missed mutant confirms (pooled count) | **2 picks** | >= 12 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 5 picks per crate where every judging mutant was caught (pooled count) | 7 picks | <= 8 picks | meets the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks per crate a missed mutant confirms (pooled count) | **6 picks** | >= 24 picks | below the bar | no earlier measurement |
+| ranking | Pilot's top 10 picks per crate where every judging mutant was caught (pooled count) | 10 picks | <= 16 picks | meets the bar | no earlier measurement |
 | First run | Generated CI workflows over their line budget | **3 workflows** | <= 0 workflows | below the bar | unchanged from ripr 0.10.0 (3) |
 
 Not measured, and why:
@@ -106,8 +106,8 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): no case recorded. On the authored cases, which were written to fill empty corpus cells, it did so on 0 of 409 (0.0%).
-- **Mostly unsure.** On real-repository changes it abstained on 36 of 41 cases (87.8%); on the authored cases, 286 of 801 (35.7%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Wrong gaps.** On changes from real repositories ripr reported a gap on 0 of 22 whose tests caught every listed mutant (0.0%): no case recorded. On the authored cases, which were written to fill empty corpus cells, it did so on 0 of 411 (0.0%).
+- **Mostly unsure.** On real-repository changes it abstained on 36 of 41 cases (87.8%); on the authored cases, 285 of 805 (35.4%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
 - **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -154,7 +154,7 @@ Overclaim examples, as recorded:
 
 ## Verdict corpus
 
-842 hand-labeled changes (RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
+846 hand-labeled changes (RIPR-SPEC-0219). Each has a ground-truth label from real mutants and an ideal verdict; ripr's observed verdict is compared against it. A false actionable verdict is a reported gap on a change whose tests caught every listed mutant. That is the failure that costs a developer's trust, so it is tracked on its own.
 
 This receipt does not record which ripr build produced the observed verdicts, only the corpus state. The rates below cannot be tied to a specific analyzer revision, and they may not describe the current build.
 
@@ -162,13 +162,13 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 0/842 (0.0%) | 0/41 (0.0%) | 0/801 (0.0%) |
-| False actionable (of discriminated) | 0/431 (0.0%) | 0/22 (0.0%) | 0/409 (0.0%) |
-| False exposed (of not fully discriminated) | 0/411 (0.0%) | 0/19 (0.0%) | 0/392 (0.0%) |
-| False silent (of not fully discriminated) | 0/411 (0.0%) | 0/19 (0.0%) | 0/392 (0.0%) |
-| Ideal verdict | 520/842 (61.8%) | 5/41 (12.2%) | 515/801 (64.3%) |
-| Abstained (limited or silent where acceptable) | 322/842 (38.2%) | 36/41 (87.8%) | 286/801 (35.7%) |
-| Findings with a contradiction | 0/1031 (0.0%) | not split by origin | not split by origin |
+| False verdicts (all cases) | 0/846 (0.0%) | 0/41 (0.0%) | 0/805 (0.0%) |
+| False actionable (of discriminated) | 0/433 (0.0%) | 0/22 (0.0%) | 0/411 (0.0%) |
+| False exposed (of not fully discriminated) | 0/413 (0.0%) | 0/19 (0.0%) | 0/394 (0.0%) |
+| False silent (of not fully discriminated) | 0/413 (0.0%) | 0/19 (0.0%) | 0/394 (0.0%) |
+| Ideal verdict | 525/846 (62.1%) | 5/41 (12.2%) | 520/805 (64.6%) |
+| Abstained (limited or silent where acceptable) | 321/846 (37.9%) | 36/41 (87.8%) | 285/805 (35.4%) |
+| Findings with a contradiction | 0/1035 (0.0%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -375,6 +375,10 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `idiom-should-panic-message-guard` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `idiom-table-driven-boundaries` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `idiom-table-driven-missing-boundary` | authored | partially_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `issue7117-f64-impl-import` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `issue7117-f64-impl-shadow` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
+| `issue7117-f64-parent-import` | authored | discriminated | credited | credited | exposed | ideal | none |
+| `issue7117-f64-parent-shadow` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `itoa-four-digit-loop` | upstream | not_discriminated | gap | limited | no_static_path | abstained | none |
 | `itoa-two-digit-tail` | upstream | not_discriminated | gap | limited | static_unknown | abstained | none |
 | `ledger-insufficient-available` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
@@ -938,7 +942,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `spec0360-ex08a-one-element-call-term` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
 | `spec0360-ex08b-call-term-statement-body-callee` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `spec0360-ex09-call-term-second-argument` | authored | discriminated | credited | limited | static_unknown | abstained | none |
-| `spot-cap-generic-via-wrapper` | authored | discriminated | credited | limited | propagation_unknown | abstained | none |
+| `spot-cap-generic-via-wrapper` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spot-code-digit-helper-ok-or` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spot-code-length-guard-query` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `spot-initials-computed-local-boundary` | authored | discriminated | credited | credited | exposed | ideal | none |

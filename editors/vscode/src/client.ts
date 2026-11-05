@@ -635,6 +635,7 @@ export class RiprClientController {
       getServer: () => this.server,
       getWorkspaceRoot: () => this.workspaceRoot,
       getStartGeneration: () => this.startGeneration,
+      sessionRootBlocker: () => this.sessionRootBlocker(),
       getStatusKind: () => this.status.kind,
       getSetupStatus: () => this.setupStatus,
       statusContext: () => this.statusContext(),
@@ -1609,7 +1610,8 @@ export class RiprClientController {
     }
     const generation = this.startGeneration;
     const redirectRoots = await workspaceRedirectRoots(this.workspaceRoot);
-    if (!validatedAgentLoopCommand(loopTarget, redirectRoots)) {
+    const beforeCommand = validatedAgentLoopCommand(loopTarget, redirectRoots);
+    if (!beforeCommand) {
       return false;
     }
     const seamId = seamIdFromAgentRepairTarget(rawTarget);
@@ -1677,6 +1679,18 @@ export class RiprClientController {
     this.rememberAttempt(root, started.attemptId);
     for (const line of started.summaryLines) {
       this.output.appendLine(line);
+    }
+    if (started.baselineAmbiguous) {
+      // The published attempt remains inspectable, but its next_command is
+      // still the after phase. Preserve the validated before route for recovery
+      // instead of opening a test or re-advertising after through generic status.
+      this.clearAttemptStatusBar();
+      this.output.appendLine(`Restart from a clean state: ${beforeCommand}`);
+      this.runtime.showInformationMessage(
+        `ripr repair attempt ${started.attemptId} has an ambiguous baseline and cannot be scored. Resolve the workspace condition and rerun the before command from a clean state; see ripr output.`
+      );
+      this.showOutput();
+      return true;
     }
     this.runtime.showInformationMessage(
       `ripr repair attempt ${started.attemptId} is awaiting an external test edit (not complete).`
@@ -3333,7 +3347,17 @@ function statusContextLines(status: RiprStatusState, context: RiprStatusContext)
   } else {
     lines.push('Enabled languages: not reported yet; read from ripr.toml by the server refresh.');
   }
-  lines.push('Available languages: not reported by server; editor selectors can route enabled stable and preview languages.');
+  if (status.unavailableLanguages && status.unavailableLanguages.length > 0) {
+    for (const row of status.unavailableLanguages) {
+      const state = row.availability_state ?? 'unknown';
+      const steps = row.remediation && row.remediation.length > 0
+        ? row.remediation.join('; ')
+        : (row.recovery ?? 'see server recovery');
+      lines.push(`Language availability (${row.language}): ${state}; ${steps}`);
+    }
+  } else {
+    lines.push('Available languages: not reported by server; editor selectors can route enabled stable and preview languages.');
+  }
   lines.push(`Editor selectors: ${context.documentLanguages.join(', ')}`);
   lines.push(`Evidence freshness: ${evidenceFreshnessSummary(status.kind)}`);
   for (const artifact of context.setupStatus.artifacts) {
@@ -4157,11 +4181,13 @@ interface RiprAnalysisStatusPayload {
   unavailable_languages?: AnalysisStatusUnavailableLanguage[];
 }
 
-/** One typed `unavailable_languages` row from `ripr/analysisStatus` (#8585). */
+/** One typed `unavailable_languages` row from `ripr/analysisStatus` (#8585, #2962). */
 export interface AnalysisStatusUnavailableLanguage {
   language: string;
   file_count?: number;
   recovery?: string | null;
+  availability_state?: string | null;
+  remediation?: string[];
 }
 
 function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | undefined {
@@ -4355,6 +4381,31 @@ export function statusForRunStatus(
     unavailableLanguages?: readonly AnalysisStatusUnavailableLanguage[];
   } = {}
 ): RiprStatusState {
+  const status = presentRunStatus(runStatus, input);
+  // #2962: the validated unavailable-language rows ride on every status, not
+  // only the `languageNotEnabled` presentation, so Diagnose Setup still prints
+  // their availability state and remediation when a stale, deferred, cache,
+  // limited or partition state keeps the primary presentation and next step.
+  if (status.unavailableLanguages) {
+    return status;
+  }
+  const rows = validUnavailableLanguages(input.unavailableLanguages);
+  return rows.length > 0
+    ? { ...status, unavailableLanguages: rows.map((row) => ({ ...row })) }
+    : status;
+}
+
+function presentRunStatus(
+  runStatus: string | undefined,
+  input: {
+    detail?: string;
+    retryCommand?: string;
+    retryRecovery?: string;
+    dirtyRoutedDocuments?: readonly string[];
+    components?: readonly AnalysisStatusComponent[];
+    unavailableLanguages?: readonly AnalysisStatusUnavailableLanguage[];
+  }
+): RiprStatusState {
   const dirty = input.dirtyRoutedDocuments ?? [];
   if (dirty.length > 0) {
     return {
@@ -4400,7 +4451,7 @@ export function statusForRunStatus(
   ) {
     // Compose with the presentation the run would otherwise get, so degraded
     // component recoveries and the untrustworthy-findings warning survive.
-    const base = statusForRunStatus(runStatus, { ...input, unavailableLanguages: undefined });
+    const base = presentRunStatus(runStatus, { ...input, unavailableLanguages: undefined });
     return statusForUnavailableLanguages(unavailable, base);
   }
   const limited = LIMITED_RUN_STATUS_PRESENTATIONS[runStatus ?? ''];
@@ -4460,7 +4511,15 @@ function validUnavailableLanguages(
   }
   return rows.filter(
     (row) => typeof row?.language === 'string' && row.language.trim().length > 0
-  );
+  ).map((row) => ({
+    language: row.language,
+    file_count: row.file_count,
+    recovery: row.recovery,
+    availability_state: typeof row.availability_state === 'string' ? row.availability_state : null,
+    remediation: Array.isArray(row.remediation)
+      ? row.remediation.filter((step: unknown): step is string => typeof step === 'string' && step.trim().length > 0)
+      : undefined
+  }));
 }
 
 function statusForUnavailableLanguages(
@@ -4473,9 +4532,15 @@ function statusForUnavailableLanguages(
       : row.language
   );
   const recoveries = uniqueStrings(
-    rows
-      .map((row) => row.recovery)
-      .filter((recovery): recovery is string => typeof recovery === 'string' && recovery.trim().length > 0)
+    rows.flatMap((row) => {
+      const fromRecovery = typeof row.recovery === 'string' && row.recovery.trim().length > 0
+        ? [row.recovery]
+        : [];
+      if (fromRecovery.length > 0) {
+        return fromRecovery;
+      }
+      return Array.isArray(row.remediation) ? row.remediation : [];
+    })
   );
   const languageStep = recoveries.length > 0
     ? recoveries.map(capitalizeFirst).join('; ')
@@ -4486,6 +4551,7 @@ function statusForUnavailableLanguages(
   return {
     kind: 'languageNotEnabled',
     summary: `ripr did not analyze changed ${described.join(', ')}: the language adapter is not enabled.`,
+    unavailableLanguages: rows.map((row) => ({ ...row })),
     detail: [
       base.detail,
       'Changed files of these languages produce no diagnostics, so a quiet editor is not an all-clear for them.'

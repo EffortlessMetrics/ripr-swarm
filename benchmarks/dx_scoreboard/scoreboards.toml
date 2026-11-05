@@ -26,6 +26,40 @@ schema_version = "ripr-dx-scoreboards-v1"
 #   corpus_manifest = "benchmarks/rust_corpus/manifest.json"
 # Its `fast` tier then runs by default and `full` with --include-heavy.
 
+# Repository-size tiers for warm-check peak memory. `peak_rss_mb` is the
+# release-ladder bar (docs/METRICS.md, R1) for that size; an entry naming a
+# tier is held to it as a hard `speed.warm_check_peak_rss_mb` ceiling unless
+# it sets a different one. A ceiling looser than the bar is a ratchet and
+# must carry a dated `memory_ratchet` note (current ceiling, ladder bar,
+# date); the README lists every ratchet. The ladder sets a tight bar only
+# for 100 to 800 Rust files (150 MB) and for 3,000-file Python/TypeScript
+# repositories (512 MB), plus a 1 GiB hard cap, so the two middle Rust tiers
+# use the hard cap until a tighter bar is accepted. File counts are
+# approximate and describe the pinned tree, not a measured gate.
+[[size_tier]]
+id = "small"
+description = "Rust, up to 800 files (100 to 800 is the ladder range)"
+peak_rss_mb = 150
+bar_source = "ladder"
+
+[[size_tier]]
+id = "medium"
+description = "Rust, about 800 to 3,000 files; no tighter ladder bar than the hard cap"
+peak_rss_mb = 1024
+bar_source = "ladder_hard_cap"
+
+[[size_tier]]
+id = "large"
+description = "Rust, more than 3,000 files; no tighter ladder bar than the hard cap"
+peak_rss_mb = 1024
+bar_source = "ladder_hard_cap"
+
+[[size_tier]]
+id = "python_ts"
+description = "Python or TypeScript, up to about 3,000 files and beyond; the ladder names 3,000-file repositories"
+peak_rss_mb = 512
+bar_source = "ladder"
+
 # Fixed corpus of real repositories. Pins are exact commits so a moving
 # upstream cannot move the measurement; only the analyzer under test changes.
 # Each pin is a commit whose own change touches production code in the entry's
@@ -38,18 +72,21 @@ id = "serde"
 url = "https://github.com/serde-rs/serde"
 sha = "dd18663450ec3ee38e35e3a4ee141932614e662c"
 note = "small library workspace, macro-heavy tests"
+size_tier = "small"
 
 [[corpus]]
 id = "ripgrep"
 url = "https://github.com/BurntSushi/ripgrep"
 sha = "020687a77d13146923333f0beb274eeabd54a270"
 note = "multi-crate CLI workspace"
+size_tier = "small"
 
 [[corpus]]
 id = "regex"
 url = "https://github.com/rust-lang/regex"
 sha = "72d650cb0a880a01ab6dc2137c0888e8f89740f7"
 note = "large library workspace with generated test suites"
+size_tier = "small"
 
 [[corpus]]
 id = "ripr-swarm"
@@ -57,6 +94,11 @@ url = "https://github.com/EffortlessMetrics/ripr-swarm"
 sha = "7c64b9c8d0778cc7a6aeaab0deb0452d9e521663"
 note = "large workspace (~900 files); pinned, not the checkout under test"
 heavy = true
+# Ratchet ceilings (smaller-size control): just above the hosted run of
+# 2026-11-04 (8.2 s / 551 MB warm) with about 30% headroom for runner noise.
+# Hold this row where it is.
+ceilings = { "speed.warm_check_ms" = 11000, "speed.warm_check_peak_rss_mb" = 720 }
+size_tier = "medium"
 
 # Larger workspaces, where the inner loop is judged. Warm checks on small
 # libraries meet the 2 s bar easily; these rows are the ones that can miss it.
@@ -73,6 +115,7 @@ sha = "f3865b2a4d1acc5276f6b3c67d0e057f4dab3928"
 base_sha = "0c38e943f4640efe8ade36f1034fdd8d87c26dcb"
 note = "large long-lived binary workspace (~1400 .rs files); shared corpus pin"
 heavy = true
+size_tier = "medium"
 
 [[corpus]]
 id = "rust-analyzer"
@@ -80,6 +123,7 @@ url = "https://github.com/rust-lang/rust-analyzer"
 sha = "8399dcb353388061755fad89b0eadb7f74ca34cb"
 note = "large IDE workspace (~100 crates); the pinned change edits crates/hir and crates/ide-diagnostics"
 heavy = true
+size_tier = "medium"
 
 [[corpus]]
 id = "tokio"
@@ -87,6 +131,7 @@ url = "https://github.com/tokio-rs/tokio"
 sha = "6470b5e4b8e943ad014383a5bf6a93ba415678a3"
 note = "async runtime workspace, cfg- and macro-heavy; the pinned change edits tokio/src/sync/barrier.rs and its test"
 heavy = true
+size_tier = "medium"
 
 [[corpus]]
 id = "servo"
@@ -94,6 +139,7 @@ url = "https://github.com/servo/servo"
 sha = "e10d0a00ebd8a62a89ee51f4cff31ae7ed0aff28"
 note = "browser engine workspace (several thousand .rs files); the pinned change adds the devtools getFavicon message, a behavioral edit the warm check reports a finding for (the earlier pin was a type-level refactor with no behavioral candidates, #12203)"
 heavy = true
+size_tier = "large"
 
 [[corpus]]
 id = "ripr-swarm-2026-10"
@@ -101,6 +147,15 @@ url = "https://github.com/EffortlessMetrics/ripr-swarm"
 sha = "8fbe8bd1598e0b11752c6c989aa54198a0510a2f"
 note = "this repository at its 2026-10 size (~2100 .rs files), a fixed pin that will stop being current; the commit edits product Rust under crates/ripr, so the warm check pays for the macro-binding scan"
 heavy = true
+# Ratchet ceilings, not goals. Set just above what main measures today so the
+# row stops creeping: warm check 49.8 s / 1,275 MB and cold pilot 269 s /
+# 1,446 MB hosted (run 41750179854); 35.5 s warm / 59.6 s cold / 1.3 GB local
+# on a 3,280-file checkout. Ratchet goals for this repository (not the global metric targets
+# below): warm check 10 s / 768 MB, cold pilot 60 s (RSS 1,024 MB). Lower these in the PR that earns the gain; never
+# raise them.
+ceilings = { "speed.warm_check_ms" = 60000, "speed.warm_check_peak_rss_mb" = 1536, "speed.cold_pilot_ms" = 300000, "speed.cold_pilot_peak_rss_mb" = 2048 }
+size_tier = "medium"
+memory_ratchet = "2026-11-04: ceiling 1536 MB, ladder bar 1024 MB (hard cap); hosted warm check measured 1,275 MB (run 41750179854); ratchet goal 768 MB"
 
 # No-Rust diffs. The pinned change touches no `.rs` file, so the warm check
 # should finish without analyzing the workspace. `cargo xtask dx-scoreboard`
@@ -111,6 +166,7 @@ id = "serde-no-rust"
 url = "https://github.com/serde-rs/serde"
 sha = "576e2ef9d8b985cb9399fa3a35913ef86503bad4"
 note = "serde commit that changes only .github/workflows/ci.yml (no Rust)"
+size_tier = "small"
 
 [[corpus]]
 id = "cargo-no-rust"
@@ -119,6 +175,7 @@ sha = "523e530d77cce92813eebbf6ac009a04f2df2ac2"
 base_sha = "04d22dbe795476cf89d1dc2599cec98e4b227bc3"
 note = "cargo merge commit whose diff against its first parent changes only doc/book/src/CHANGELOG.md (no Rust); ~1400 .rs files stay untouched"
 heavy = true
+size_tier = "medium"
 
 # Python diffs. The warm check on a Python edit runs the Python analyzer, which
 # has its own hot spots (#10017), so these rows are a separate population from
@@ -132,6 +189,7 @@ url = "https://github.com/pallets/click"
 sha = "f67c2bb6c2f055c1c7a57cd46c3697fc26a7742e"
 language = "python"
 note = "small Python library; commit edits src/click/utils.py and its test"
+size_tier = "python_ts"
 
 [[corpus]]
 id = "poetry-python"
@@ -140,6 +198,7 @@ sha = "a416efd1be6b6787019e751e7c4f6fa1a0911050"
 language = "python"
 note = "larger Python application (~450 .py files); commit edits src/poetry/utils/authenticator.py and its test"
 heavy = true
+size_tier = "python_ts"
 
 # A large Python workspace under the file cap (#10750). Before #10735 and
 # #10750 this two-file edit took about 290 s on 4 cores, because every changed
@@ -155,6 +214,7 @@ heavy = true
 # whatever the baseline holds (hosted nightly at 9b059708: pandas 1617 ms /
 # 415 MiB, Django 1592 ms / 271 MiB).
 ceilings = { "speed.warm_check_ms" = 2000, "speed.warm_check_peak_rss_mb" = 512 }
+size_tier = "python_ts"
 
 # The largest real Python workspace pinned (#10785): Django's own tree, a
 # 27-file edit across django/ and tests/ (14.4 s, 390 MiB peak on 4 cores).
@@ -169,6 +229,7 @@ heavy = true
 # whatever the baseline holds (hosted nightly at 9b059708: pandas 1617 ms /
 # 415 MiB, Django 1592 ms / 271 MiB).
 ceilings = { "speed.warm_check_ms" = 2000, "speed.warm_check_peak_rss_mb" = 512 }
+size_tier = "python_ts"
 
 # TypeScript diffs. `defu`, `ky`, `h3`, `execa`, `destr` and `zod` complete under `--mode draft` for their
 # pinned diffs. Partial-extraction gaps (#10436) are omitted only when their test
@@ -182,6 +243,7 @@ url = "https://github.com/unjs/defu"
 sha = "11ba02213d4b1c6b02dd686041f75edc479c98e9"
 language = "typescript"
 note = "small TypeScript library; commit edits src/defu.ts and its test"
+size_tier = "python_ts"
 
 [[corpus]]
 id = "ky-typescript"
@@ -189,6 +251,7 @@ url = "https://github.com/sindresorhus/ky"
 sha = "33462fcbf8f9001fc3d7a08576992098e571c5ff"
 language = "typescript"
 note = "mid-size TypeScript library (~100 files); commit edits source/utils/merge.ts, source/types/options.ts and test/hooks.ts"
+size_tier = "python_ts"
 
 [[corpus]]
 id = "h3-typescript"
@@ -196,6 +259,7 @@ url = "https://github.com/h3js/h3"
 sha = "3444ff78970e95c65e481ed2ff9a7d43c880ab1c"
 language = "typescript"
 note = "HTTP server framework with Vitest suites; commit edits src/tracing.ts and test/tracing.test.ts"
+size_tier = "python_ts"
 
 [[corpus]]
 id = "execa-typescript"
@@ -203,6 +267,7 @@ url = "https://github.com/sindresorhus/execa"
 sha = "ed80079bc4e21a259fdc521c5a4b27126b308c9a"
 language = "typescript"
 note = "process-execution library tested with ava; the commit edits JavaScript (lib/transform/generator.js and test/transform/encoding-multibyte.js) through the same TypeScript/JavaScript adapter"
+size_tier = "python_ts"
 
 [[corpus]]
 id = "destr-typescript"
@@ -210,6 +275,7 @@ url = "https://github.com/unjs/destr"
 sha = "f9c78d402556aba3e50f94d46176f36a0570acbd"
 language = "typescript"
 note = "JSON-ish parser with Vitest tests; the commit edits src/index.ts and test/index.test.ts to skip the fast path when the input may contain escape characters"
+size_tier = "python_ts"
 
 [[corpus]]
 id = "zod-typescript"
@@ -217,6 +283,7 @@ url = "https://github.com/colinhacks/zod"
 sha = "680d19f7d1e042e55934209caeb79bc843b94f44"
 language = "typescript"
 note = "schema-validation library tested with Vitest; the commit edits packages/zod/src/v4/core/schemas.ts and its union test, and the repository tracks a tooling directory alias that a link-aware walk must not report as skipped"
+size_tier = "python_ts"
 
 [[corpus]]
 id = "valibot-typescript"
@@ -224,6 +291,7 @@ url = "https://github.com/open-circle/valibot"
 sha = "e6b538386cfa4ccf8be6122f7f457ea7d4020325"
 language = "typescript"
 note = "schema library whose sources live in library/ rather than the root; the commit edits six object-schema sources and no test, so the row measures a TypeScript workspace with a large package table (#10943) and nested detection (#10941)"
+size_tier = "python_ts"
 
 [[corpus]]
 id = "remeda-typescript"
@@ -231,6 +299,7 @@ url = "https://github.com/remeda/remeda"
 sha = "d02c3bdb5e18cfa53e76f33f4ae525adce515379"
 language = "typescript"
 note = "pnpm monorepo whose package is packages/remeda; the commit edits packages/remeda/src/funnel.ts and its test, and only nested detection (#10941) selects the TypeScript adapter without a ripr.toml"
+size_tier = "python_ts"
 
 # The largest TypeScript workspace pinned (#11676): VS Code's own tree, a
 # three-file edit in src/vs/platform/agentHost (5,328 files). Before the
@@ -240,10 +309,19 @@ note = "pnpm monorepo whose package is packages/remeda; the commit edits package
 # measured second run (48.6 s, 457 MiB on 4 cores), not the 2 s target; tighten
 # them as the steady-state costs come down.
 #
-# The 2026-11-01 hosted nightly recorded this row's warm check as `incomplete`
-# (`partial_with_limitations`), so its 4.7 s / 345 MiB are not admissible values
-# and the ceilings stay at their local calibration until the row completes
-# (#12052; workspace-walk accounting is #11984).
+# The hosted nightlies recorded this row's warm check as `incomplete`
+# (`partial_with_limitations`), so its 4.7 s / 345 MiB were not admissible
+# values. A release build of main on the pinned commit shows why (#12743): the
+# outcome is `partial_with_limitations` from ten typed `language_scope_unsupported`
+# limitations only (47 test files with unindexed shapes, 9,459 workspace files
+# refused by the TypeScript read caps, and per-file read-budget exhaustion), with
+# 26 `no_static_path` findings. The row declares that typed partial result, as
+# `typescript-compiler` does, so the ceilings below are measured on the outcome
+# the default caps produce; a complete result or any other limitation beside it
+# fails the row (#12052). The ceilings stay at their local calibration. The
+# route to a complete result is the read-cap cost work in #11676 and #11767
+# (raising the caps to 2 GiB did not finish in 500 s); the DI-factory
+# receiver miss behind the 26 `no_static_path` findings is #12755.
 [[corpus]]
 id = "vscode-typescript"
 url = "https://github.com/microsoft/vscode"
@@ -252,6 +330,9 @@ language = "typescript"
 note = "very large TypeScript application (5,328 files); commit edits agentHostChangesetCoordinator.ts, agentHostChangesetFileMonitorCoordinator.ts and the coordinator test"
 heavy = true
 ceilings = { "speed.warm_check_ms" = 90000, "speed.warm_check_peak_rss_mb" = 1024 }
+expected_partial = "language_scope_unsupported"
+size_tier = "python_ts"
+memory_ratchet = "2026-11-04: ceiling 1024 MB, ladder bar 512 MB; measured 457 MiB on 4 cores (second run); tighten to 512 MB once the persisted-facts steady state is re-measured"
 
 # The TypeScript compiler's own repository: the workspace walk stops at the
 # 20,000-entry cap, so the row pins the refusal rather than a verdict (#11794).
@@ -284,6 +365,7 @@ note = "TypeScript compiler repository; commit fixes declaration emit for nested
 heavy = true
 ceilings = { "speed.warm_check_ms" = 5000, "speed.warm_check_peak_rss_mb" = 256 }
 expected_partial = "language_scope_unsupported"
+size_tier = "python_ts"
 
 [[corpus]]
 id = "hono-typescript"
@@ -291,6 +373,7 @@ url = "https://github.com/honojs/hono"
 sha = "d54720da80134a180f5fe2dd98a7676cfc8f08b4"
 language = "typescript"
 note = "web framework with Vitest suites; the commit edits src/middleware/serve-static/index.ts and its test, and the repository declares tsconfig references and extends in nested packages, a vite config naming a lint rule with `alias`, and a self-import of its own package name, which each used to switch off reach scoping of the test-extraction disclosure (#10954)"
+size_tier = "python_ts"
 
 # ---------------------------------------------------------------- speed ----
 
@@ -323,7 +406,7 @@ per_repo = true
 [[metric]]
 id = "speed.warm_check_ms"
 board = "speed"
-title = "Warm `ripr check` on the last commit"
+title = "Warm `ripr check` on the last commit (p50, alias of speed.warm_check_p50_ms)"
 unit = "ms"
 direction = "lower_is_better"
 target = 2000
@@ -333,10 +416,42 @@ runner_dependent = true
 source = "measured"
 per_repo = true
 
+# The release-ladder latency bars (docs/METRICS.md, R1) are 1 s p50 and 3 s
+# p95 up to about 1,000 Rust files. Both are nearest-rank over the
+# `--samples` warm runs (default 3) that follow the warm-up; below 20 samples
+# the p95 is the maximum. `speed.warm_check_ms` above is the same p50 under
+# its original id, so existing ceilings and baselines keep their meaning;
+# its 2 s target is the earlier proposal and stays until a baseline refresh.
+[[metric]]
+id = "speed.warm_check_p50_ms"
+board = "speed"
+title = "Warm `ripr check` p50 over repeated samples"
+unit = "ms"
+direction = "lower_is_better"
+target = 1000
+regression_pct = 25
+regression_floor = 500
+runner_dependent = true
+source = "measured"
+per_repo = true
+
+[[metric]]
+id = "speed.warm_check_p95_ms"
+board = "speed"
+title = "Warm `ripr check` p95 over repeated samples (maximum below 20 samples)"
+unit = "ms"
+direction = "lower_is_better"
+target = 3000
+regression_pct = 25
+regression_floor = 500
+runner_dependent = true
+source = "measured"
+per_repo = true
+
 [[metric]]
 id = "speed.warm_check_peak_rss_mb"
 board = "speed"
-title = "Warm `ripr check` peak memory"
+title = "Warm `ripr check` peak memory (maximum over the warm samples)"
 unit = "MB"
 direction = "lower_is_better"
 target = 512

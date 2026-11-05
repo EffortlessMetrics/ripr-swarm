@@ -4268,6 +4268,286 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
         && pushed_collection_compared_whole(owner, path, test, assertion, index)
 }
 
+/// #11870: the one start policy for a changed field write that a related test
+/// reads but does not check exactly. True only when, over `tests` (the
+/// owner's related tests):
+/// - the owner borrows its receiver (a by-value `self` writes a moved copy,
+///   so no read of the test's binding can see the write);
+/// - the owner and the changed `expression` name no type with a non-plain
+///   `Drop` impl (a failed assertion may exit while unwinding, so an exact
+///   assertion would not be a repair);
+/// - no test is `#[ignore]`d or `#[should_panic]` (a strengthened one would
+///   not run, or would pass by panicking before its read);
+/// - no assertion confirms the write ([`assigned_field_read_confirms`]); a
+///   confirmed write is already checked and has nothing to repair;
+/// - a test that calls the owner directly has an assertion that reads the
+///   written field from the binding it ran the owner on, as one side of a
+///   relational check (`>`, `<`, `>=`, `<=`, `!=`) or `assert_ne!`, under
+///   the confirming rule's binding guards ([`weak_assigned_field_read`]); and
+/// - nothing else in any related test body can be the exact check these rules
+///   do not place ([`test_body_may_check_field_elsewhere`]): any statement,
+///   not only an assertion, that names the field or uses a weakly read
+///   binding other than as the owner call or its declaration (a `let` alias,
+///   a destructure, a helper call, a move, an `if`/`panic!` check).
+///
+/// `check` (the finding's class) and the seam's missing-discriminator fact
+/// both ask this, so `ripr check` and `ripr repair` start the same gap. A
+/// read the policy cannot place (a sibling field, another binding, a later
+/// write, a getter, an equality or a bare boolean) starts nothing.
+pub(in crate::analysis) fn assigned_field_weak_read_start(
+    owner: &FunctionSummary,
+    expression: &str,
+    path: &str,
+    tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    if !owner_borrows_receiver(&owner.body)
+        || path.is_empty()
+        || tests.iter().any(|test| {
+            super::gap_admission::is_ignored(test)
+                || test.attrs.iter().any(|attr| attr.contains("should_panic"))
+        })
+        || macro_names_rebound(index, &["assert", "assert_ne"])
+        // The test's binding is the impl's `Self` type, which a `&mut self`
+        // signature never names: ask about it explicitly (an owner with no
+        // established impl type withholds).
+        || crate::analysis::test_grip_evidence::names_non_plain_drop_type(
+            owner,
+            &format!("{expression} Self"),
+            index,
+        )
+    {
+        return false;
+    }
+    let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
+        return false;
+    };
+    let mut weak = false;
+    for test in tests {
+        let direct = super::related_tests::owner_call_is_direct(test, owner, index);
+        // Pass one: the weak reads, as (assertion index, binding).
+        let mut weak_reads: Vec<(usize, String)> = Vec::new();
+        for (at, assertion) in test.assertions.iter().enumerate() {
+            if assigned_field_read_confirms(owner, path, test, assertion, index) {
+                return false;
+            }
+            if direct && let Some(binding) = weak_assigned_field_read(owner, path, test, assertion)
+            {
+                weak_reads.push((at, binding));
+            }
+        }
+        // Pass two: any other assertion that reads the written field or names
+        // a binding it was weakly read from may be the exact check the rules
+        // above do not place (`assert_eq!(c.count, 2)` after a relational
+        // read, a getter, a compound condition), so it withholds the start.
+        for (at, assertion) in test.assertions.iter().enumerate() {
+            if weak_reads.iter().any(|(weak_at, _)| *weak_at == at) {
+                continue;
+            }
+            let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+            if names_field_access(&masked, path)
+                || weak_reads.iter().any(|(_, binding)| {
+                    names_whole_ident(&masked, binding)
+                        || names_format_capture(&assertion.text, binding)
+                })
+            {
+                return false;
+            }
+        }
+        // Pass three: the rest of the body, assertions or not.
+        if test_body_may_check_field_elsewhere(test, &weak_reads, call.name(), path) {
+            return false;
+        }
+        weak = weak || !weak_reads.is_empty();
+    }
+    weak
+}
+
+/// Whether `test`'s body, with the weak-read assertions (`weak_reads`) cut
+/// out, still names the written field `path` or uses a weakly read binding
+/// anywhere but as the owner call `<binding>.<owner>(` or its declaration
+/// `let [mut] <binding>`. Such a statement may check the field exactly
+/// without being an assertion fact (`let n = c.count; assert_eq!(n, 2)`,
+/// `verify(&c)`, `let Counter { count, .. } = c`, `let r = &c.count`,
+/// `if c.count != 2 { panic!() }`). A weak assertion whose text cannot be
+/// found in the body withholds (fail closed).
+fn test_body_may_check_field_elsewhere(
+    test: &TestSummary,
+    weak_reads: &[(usize, String)],
+    owner_name: &str,
+    path: &str,
+) -> bool {
+    let mut rest = crate::analysis::extract::mask_comments_and_strings(test.body.as_ref());
+    for (at, _) in weak_reads {
+        let Some(assertion) = test.assertions.get(*at) else {
+            return true;
+        };
+        let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+        let text = masked.trim();
+        let text = text.strip_suffix(';').unwrap_or(text).trim_end();
+        if text.is_empty() || !rest.contains(text) {
+            return true;
+        }
+        rest = rest.replacen(text, " ", 1);
+    }
+    if names_field_access(&rest, path) {
+        return true;
+    }
+    let mut bindings: Vec<&str> = weak_reads.iter().map(|(_, b)| b.as_str()).collect();
+    bindings.sort_unstable();
+    bindings.dedup();
+    bindings.into_iter().any(|binding| {
+        let mut rest = rest.replace(&format!("{binding}.{owner_name}("), " (");
+        for head in [format!("let mut {binding}"), format!("let {binding}")] {
+            while let Some(at) = rest.find(&head) {
+                let end = at + head.len();
+                let boundary = rest[end..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+                if boundary {
+                    rest.replace_range(at..end, " ");
+                } else {
+                    break;
+                }
+            }
+        }
+        names_whole_ident(&rest, binding) || names_format_capture(test.body.as_ref(), binding)
+    })
+}
+
+/// Whether `masked` names `ident` as a whole identifier.
+fn names_whole_ident(masked: &str, ident: &str) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices(ident).any(|(at, name)| {
+        !masked[..at].chars().next_back().is_some_and(is_ident)
+            && !masked[at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_ident)
+    })
+}
+
+/// Whether `masked` accesses a field named `path` (`<expr>.path`, not a
+/// longer name); whitespace after the dot (`c. count`, a line break) counts.
+fn names_field_access(masked: &str, path: &str) -> bool {
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices('.').any(|(at, _)| {
+        let after = masked[at + 1..].trim_start();
+        after
+            .strip_prefix(path)
+            .is_some_and(|tail| !tail.chars().next().is_some_and(is_ident))
+    })
+}
+
+/// Whether the unmasked `raw` text may capture `ident` inline in a format
+/// string (`{c}`, `{c:?}`, `{c :?}`, `{c }`, `{c:>10}`, `{c.field}`, or a
+/// `\`-newline continuation inside the string), which masking removes. Fails
+/// closed: `{` + `ident` followed by anything but an identifier character
+/// counts, comments included.
+fn names_format_capture(raw: &str, ident: &str) -> bool {
+    let needle = format!("{{{ident}");
+    raw.match_indices(&needle).any(|(at, name)| {
+        raw[at + name.len()..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+    })
+}
+
+/// The binding `assertion` reads `<binding>.<path>` from as one whole side of a
+/// relational check or an `assert_ne!`, against a side that does not name the
+/// binding, after the test ran the owner on that binding and under the same
+/// binding guards the confirming read uses.
+fn weak_assigned_field_read(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+) -> Option<String> {
+    let call = super::builder_override::OwnerCall::from_symbol(&owner.id.0)?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+    let (binding, other) = weak_read_sides(masked.trim(), path)?;
+    (!names_whole_ident(other, &binding)
+        && !super::reveal::owner_called_on_other_receiver(&test.body, &binding, call.name())
+        && super::reveal::owner_call_precedes_read(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+        )
+        && super::reveal::binding_untouched_after_owner_call(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+        ))
+    .then_some(binding)
+}
+
+/// The binding whose field `path` the masked assertion reads as one whole
+/// side of a relational check, and the other side's text.
+fn weak_read_sides<'a>(masked: &'a str, path: &str) -> Option<(String, &'a str)> {
+    let side_binding = |side: &str| -> Option<String> {
+        let (binding, field) = side.trim().split_once('.')?;
+        let bare = !binding.is_empty()
+            && binding
+                .chars()
+                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+            && !binding.starts_with(|ch: char| ch.is_ascii_digit());
+        (bare && field == path).then(|| binding.to_string())
+    };
+    let (name, rest) = masked.split_once('!')?;
+    let call = rest.trim();
+    let call = call.strip_suffix(';').unwrap_or(call);
+    let args = super::reveal::macro_arguments(call);
+    match name.trim() {
+        "assert_ne" => {
+            let [left, right, ..] = args.as_slice() else {
+                return None;
+            };
+            side_binding(left)
+                .map(|binding| (binding, *right))
+                .or_else(|| side_binding(right).map(|binding| (binding, *left)))
+        }
+        "assert" => {
+            let subject = *args.first()?;
+            if ["&&", "||", "==", "=>", "->", "::<", "|", "?", "{", "["]
+                .iter()
+                .any(|token| subject.contains(token))
+            {
+                return None;
+            }
+            let mut operator = None;
+            let bytes = subject.as_bytes();
+            let mut at = 0;
+            while at < bytes.len() {
+                let two = subject.get(at..at + 2);
+                let (len, found) = match (two, bytes[at]) {
+                    (Some(">=" | "<=" | "!="), _) => (2, true),
+                    (_, b'>' | b'<') => (1, true),
+                    _ => (1, false),
+                };
+                if found {
+                    if operator.is_some() {
+                        return None;
+                    }
+                    operator = Some((at, len));
+                }
+                at += len;
+            }
+            let (at, len) = operator?;
+            let (left, right) = (&subject[..at], &subject[at + len..]);
+            side_binding(left)
+                .map(|binding| (binding, right))
+                .or_else(|| side_binding(right).map(|binding| (binding, left)))
+        }
+        _ => None,
+    }
+}
+
 /// Whether the method whose source starts `body` takes its receiver by
 /// reference: `&self`, `&mut self`, `&'a mut self`, `self: &Self` or
 /// `self: &mut Self`. Anything else, including a signature that cannot be
@@ -6374,15 +6654,20 @@ pub(in crate::analysis) fn returned_comparison_view(probe: &Probe) -> Option<Pro
     if !matches!(probe.family, ProbeFamily::ReturnValue) {
         return None;
     }
-    let (expression, explicit) = strip_explicit_return(&probe.expression);
-    if explicit && !is_top_level_comparison(&expression) {
+    let (expression, _) = strip_explicit_return(&probe.expression);
+    // A genuine returned comparison only: the operator must sit at the top
+    // level of both texts, explicit `return` or implicit tail alike. A
+    // turbofish `sum::<u64>() + 25 * 2`, a call/index-nested comparison or
+    // any other arithmetic rewrite contains comparison-shaped tokens
+    // without being one, and keeps the return-value reading.
+    if !is_top_level_comparison(&expression) {
         return None;
     }
     let before = probe.before.as_deref().map(|before| {
         let (before, before_explicit) = strip_explicit_return(before);
         (before, before_explicit)
     });
-    if let Some((before, true)) = &before
+    if let Some((before, _)) = &before
         && !is_top_level_comparison(before)
     {
         return None;
@@ -8656,6 +8941,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let probe = Probe {
             id: ProbeId("probe:src_lib.rs:predicate:eval".to_string()),
@@ -9033,6 +9319,7 @@ mod tests {
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -9654,6 +9941,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9702,6 +9990,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9739,6 +10028,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9791,6 +10081,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
 
         let facts = value_facts_for_test(
@@ -9834,6 +10125,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
         let index = crate::analysis::rust_index::RustIndex::from_owned(
             crate::analysis::facts::OwnedRustIndex {
@@ -10253,6 +10545,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         };
 
         assert!(
@@ -10605,6 +10898,19 @@ assert_eq!(input.amount, 100);"#
         );
         assert_eq!(view("return x > 1 && y", "return x > 2 && y"), None);
         assert_eq!(view("return x == 100", "return x > 101"), None);
+        // Implicit tails need the same top-level operator: a turbofish
+        // arithmetic rewrite (`sum::<u64>() + 50` -> `.. + 25 * 2`) or a
+        // nested comparison is not a returned bare comparison.
+        assert_eq!(
+            view(
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 50",
+                "lines.iter().map(|l| l.cents).sum::<u64>() + 25 * 2"
+            ),
+            None
+        );
+        assert_eq!(view("f(x > 100)", "f(x > 101)"), None);
+        assert_eq!(view("v[x > 1]", "v[x > 2]"), None);
+        assert_eq!(view("x.parse::<i32>() > 5", "x.parse::<i32>() > 6"), None);
     }
 
     /// #9145 keyword boundary: `return` is stripped before any whitespace, never
@@ -10834,6 +11140,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -10850,6 +11157,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 
@@ -10911,6 +11219,7 @@ assert_eq!(input.amount, 100);"#
             attrs: Vec::new(),
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
+            generated: None,
         }
     }
 

@@ -981,6 +981,9 @@ mod tests {
     fn export_preserves_relative_analysis_root_identity() -> Result<(), String> {
         // Cargo's package cwd and the workspace TMPDIR need not coincide.
         // Put this owned fixture under the actual cwd to retain a relative root.
+        // Hold the cwd lock for the whole test: other tests `chdir` while it
+        // runs, which made the relative root vanish (#12989).
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
         let current = std::env::current_dir().map_err(|error| error.to_string())?;
         let unique = temp_dir("export-relative-root");
         let name = unique

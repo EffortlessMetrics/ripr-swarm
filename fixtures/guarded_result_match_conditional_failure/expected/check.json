@@ -34,7 +34,7 @@
         {"kind":"error_variant","text":"Result::Err(ParseError::InvalidData)","line":18}
       ],
       "evidence": ["No assertion can discriminate the changed behavior without a reachable test", "No complete owner-bound propagation witness found for error variant: Result::Err(ParseError::InvalidData)", "No reachable test oracle found", "No reachable tests were found, so infection cannot be established", "No static test path found for the changed owner"],
-      "missing": ["Missing discriminator value: ParseError::InvalidData", "No exact error variant discriminator was detected", "No relevant oracle was detected", "No static test path reaches the changed owner"],
+      "missing": ["Missing check value: ParseError::InvalidData", "No exact error variant discriminator was detected", "No relevant oracle was detected", "No static test path reaches the changed owner"],
       "assertion_texts": {
       },
       "activation": {
@@ -93,7 +93,7 @@
         {"kind":"error_variant","text":"Result::Err(ParseError::InvalidData)","line":18}
       ],
       "evidence": ["No assertion can discriminate the changed behavior without a reachable test", "No complete owner-bound propagation witness found for error variant: Result::Err(ParseError::InvalidData)", "No reachable test oracle found", "No reachable tests were found, so infection cannot be established", "No static test path found for the changed owner"],
-      "missing": ["Missing discriminator value: ParseError::InvalidData", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
+      "missing": ["Missing check value: ParseError::InvalidData", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
       },
       "activation": {

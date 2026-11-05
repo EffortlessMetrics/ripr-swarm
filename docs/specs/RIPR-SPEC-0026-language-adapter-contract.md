@@ -23,6 +23,8 @@ specs:
 
 - [RIPR-SPEC-0027: TypeScript preview static facts](RIPR-SPEC-0027-typescript-preview-static-facts.md)
 - [RIPR-SPEC-0028: Python preview static facts](RIPR-SPEC-0028-python-preview-static-facts.md)
+- [RIPR-SPEC-0391: Ruby preview static facts](RIPR-SPEC-0391-ruby-preview-static-facts.md) (proposed contract; no adapter yet)
+- [RIPR-SPEC-0414: Go preview static facts](RIPR-SPEC-0414-go-preview-static-facts.md) (proposed contract; no adapter yet)
 - [RIPR-SPEC-0405: Julia preview package, dispatch, Test, numerical, array, and native boundaries](RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md) (proposed contract; no adapter yet)
 
 The proposal context is in
@@ -78,7 +80,7 @@ fork is permitted.
 
 Additive optional fields:
 
-- `language`: one of `rust`, `typescript`, `javascript`, `python`, `perl`, `julia`.
+- `language`: one of `rust`, `typescript`, `javascript`, `python`, `perl`, `julia`, `go`.
   Omitted when unknown.
 - `language_status`: `stable` or `preview`. Omitted when `rust`.
 - `probe.owner`: stable owner identifier when a preview adapter can map the
@@ -137,6 +139,9 @@ Routing rules:
 - `*.jl` → Julia adapter (preview, opt-in) when enabled and the binary was
   built with `lang-julia`; routes production and test Julia sources only after
   project role classification (see RIPR-SPEC-0405).
+- `*.go` → Go adapter (preview, opt-in) when enabled and the binary was built
+  with `lang-go`; `*_test.go` is test source (see RIPR-SPEC-0414). Until the
+  adapter lands `.go` stays an unanalyzed source language with a typed limitation.
 - Perl fact-packet preview is a producer/consumer path, not a live Perl parser
   route in this contract slice. A configured Perl language value must fail
   closed unless the binary was built with `lang-perl`, and `ripr check` must not
@@ -149,7 +154,7 @@ Repo configuration adds a `[languages]` section to `ripr.toml`:
 ```toml
 [languages]
 enabled = ["rust"]
-# Preview adapters are opt-in. Adding "typescript", "python", "perl", or "julia" enables
+# Preview adapters are opt-in. Adding "typescript", "python", "perl", "julia", or "go" enables
 # the corresponding preview surface when the binary supports it.
 ```
 
@@ -183,7 +188,7 @@ default build may include preview adapter support, but Rust-only binaries
 are allowed. If `languages.enabled` names a preview language that was not
 compiled into the current binary, config validation must fail closed with
 an actionable message naming the missing Cargo feature, such as
-`lang-typescript`, `lang-python`, `lang-perl`, or `lang-julia`. The editor and other projection
+`lang-typescript`, `lang-python`, `lang-perl`, `lang-julia`, or `lang-go`. The editor and other projection
 surfaces must treat that as unavailable adapter state, not as a reason to
 invent diagnostics.
 
@@ -303,6 +308,9 @@ Follow-up fixtures and tests cover:
   when the current binary lacks the Perl preview feature.
 - Repo configuration parsing rejects `julia` with a clear `lang-julia` message
   when the current binary lacks the Julia preview feature.
+- Repo configuration parsing rejects `go` with a clear `lang-go` message when the
+  current binary lacks the Go preview feature (planned with RIPR-SPEC-0414; the
+  `go` value is rejected as unknown until the scaffold lands).
 - Generated CI fixtures for Rust-default and language-grouped advisory
   summaries.
 - Rust discovery floor (#8547): under Instant, Draft and Fast a diff with no
