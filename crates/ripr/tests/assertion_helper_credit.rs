@@ -712,7 +712,11 @@ fn callback_findings(helper: &str, calls: &str) -> Result<Vec<Finding>, String> 
         include_unchanged_tests: true,
         ..CheckInput::default()
     })?;
-    assert_eq!(output.findings.len(), 2, "premise: both changed gate probes");
+    assert_eq!(
+        output.findings.len(),
+        2,
+        "premise: both changed gate probes"
+    );
     for family in [ProbeFamily::Predicate, ProbeFamily::ReturnValue] {
         assert_eq!(
             output

@@ -12,7 +12,11 @@ fn cloned_call_making_callbacks_do_not_lend_plain_helper_assertions() -> Result<
     ] {
         let index = index_for(&callback_source(UNUSED_CLOSURE_HELPER, body))?;
         let test = test_named(&index, "boundary")?;
-        assert!(calls(test).contains(&"run_test"), "{body}: {:?}", calls(test));
+        assert!(
+            calls(test).contains(&"run_test"),
+            "{body}: {:?}",
+            calls(test)
+        );
         assert!(
             test.assertions.is_empty(),
             "the helper never invokes the callback: {body}: {:?}",
@@ -30,7 +34,8 @@ fn cloned_call_making_callbacks_do_not_lend_plain_helper_assertions() -> Result<
 
 #[test]
 fn ordinary_value_clones_keep_plain_helper_assertions() -> Result<(), Box<dyn Error>> {
-    let helper = "    fn run_test(want: bool, got: bool) {\n        assert_eq!(got, want);\n    }\n";
+    let helper =
+        "    fn run_test(want: bool, got: bool) {\n        assert_eq!(got, want);\n    }\n";
     for body in [
         "        run_test(true, gate(11).clone());\n",
         "        let c = gate(11);\n        run_test(true, c.clone());\n",
@@ -41,7 +46,11 @@ fn ordinary_value_clones_keep_plain_helper_assertions() -> Result<(), Box<dyn Er
     ] {
         let index = index_for(&callback_source(helper, body))?;
         let test = test_named(&index, "boundary")?;
-        assert_eq!(assertion_texts(test), vec!["assert_eq!(got, want);"], "{body}");
+        assert_eq!(
+            assertion_texts(test),
+            vec!["assert_eq!(got, want);"],
+            "{body}"
+        );
     }
     Ok(())
 }
