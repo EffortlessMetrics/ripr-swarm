@@ -252,7 +252,8 @@ esac
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
-        fs::set_permissions(&sleep, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+        fs::set_permissions(&sleep, fs::Permissions::from_mode(0o700))
+            .map_err(|e| e.to_string())?;
     }
     let paths = std::iter::once(scratch.0.clone())
         .chain(std::env::split_paths(
@@ -869,7 +870,10 @@ fn assert_read_counts(report: &str, prs: usize, graphs: usize, backoffs: usize) 
         ("BACKOFF 1", backoffs),
     ] {
         assert_eq!(
-            report.lines().filter(|line| line.starts_with(prefix)).count(),
+            report
+                .lines()
+                .filter(|line| line.starts_with(prefix))
+                .count(),
             expected,
             "wrong count for {prefix}: {report}"
         );
@@ -935,7 +939,10 @@ fn second_pr_read_retry_discards_reviews_threads_queue_and_pagination() -> Resul
             read_response(&changed, 200, 0),
         ];
         let (success, report) = with_read_responses(&source, event, &prs, &graphs, &[])?;
-        assert!(!success, "state changed during second-read backoff: {report}");
+        assert!(
+            !success,
+            "state changed during second-read backoff: {report}"
+        );
         assert_read_counts(&report, 3, 3, 1);
         let cursors = report
             .lines()
@@ -1018,8 +1025,8 @@ fn recovered_pr_read_still_refuses_changed_semantics_and_succession() -> Result<
 }
 
 #[test]
-fn freshly_admitted_attempt_two_can_recover_without_adopting_another_request()
--> Result<(), String> {
+fn freshly_admitted_attempt_two_can_recover_without_adopting_another_request() -> Result<(), String>
+{
     let source = workflow()?;
     for event in ["pull_request", "merge_group"] {
         let own = run_entry(event, 100, 7, 2);
@@ -1041,7 +1048,10 @@ fn freshly_admitted_attempt_two_can_recover_without_adopting_another_request()
                 ("MOCK_RUNS_1", &page),
             ],
         )?;
-        assert!(success, "a matching fresh admission remains valid: {report}");
+        assert!(
+            success,
+            "a matching fresh admission remains valid: {report}"
+        );
         assert_read_counts(&report, 3, 1, 1);
         assert!(report.contains("admission 100-2 is unchanged"));
     }
@@ -1080,7 +1090,10 @@ fn only_framed_transient_pr_failures_are_retried() -> Result<(), String> {
     for response in terminal {
         let prs = [response.clone(), read_response(LIVE_PR, 200, 0)];
         let (success, report) = with_read_responses(&source, "pull_request", &prs, &[], &[])?;
-        assert!(!success, "terminal response {response} must refuse: {report}");
+        assert!(
+            !success,
+            "terminal response {response} must refuse: {report}"
+        );
         assert_read_counts(&report, 1, 0, 0);
     }
     // A valid-looking body from a failed call cannot supply the next read.
