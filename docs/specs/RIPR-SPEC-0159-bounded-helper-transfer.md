@@ -901,7 +901,13 @@ Ordinary and macro-generated owner/helper/primitive shadowing refuse admission;
 non-local defining macros and nested macro expansion remain outside the profile.
 A source commitment plus semantic and validation digests retain this binding.
 The receipt is reconstructed from current indexed source, never inferred from a
-name, copied oracle strength, raw value fact, or test pass.
+name, copied oracle strength, raw value fact, or test pass. Generic extraction
+may retain no oracle for this table; only after the closed source/row/execution
+proof may the producer supply the exact parsed standard assertion to the
+owner-bound credited view. The raw `TestFact` and generic loop grammar remain
+unchanged. Sibling custom attributes and derives, macro-emitted imports or
+unknown attributes, and imports/shadows of the permitted builtin derive names
+refuse this profile.
 
 Diff evidence and repository grip evidence consume the same receipt for the
 matching whole-return source identity. Existing activation/discrimination limits

@@ -9,7 +9,7 @@ use crate::analysis::facts::{
     FunctionContainer, FunctionSourceRole, FunctionSummary, OracleFact, RustIndex, TestSummary,
 };
 use crate::analysis::syntax::parse_clean_source_file;
-use crate::domain::{Probe, ProbeFamily, SymbolId, ValueContext};
+use crate::domain::{OracleKind, OracleStrength, Probe, ProbeFamily, SymbolId, ValueContext};
 use crate::value_origins::LocatedValueFact;
 use ra_ap_syntax::{
     AstNode,
@@ -104,6 +104,23 @@ impl BooleanComparisonReceipt {
             && self.assertion == assertion.text
     }
 
+    pub(in crate::analysis) fn for_test(&self, test: &TestSummary) -> bool {
+        self.file == test.file && self.test == test.name && self.test_line == test.start_line
+    }
+
+    /// A source-derived observation supplied only by this receipt's closed
+    /// execution proof. Raw extractor facts remain untouched.
+    pub(in crate::analysis) fn oracle(&self) -> OracleFact {
+        OracleFact {
+            line: self.assertion_line,
+            text: self.assertion.clone(),
+            kind: OracleKind::RelationalCheck,
+            strength: OracleStrength::Weak,
+            observed_tokens: crate::analysis::extract::extract_identifier_tokens(&self.assertion),
+            ok_value_observed: None,
+        }
+    }
+
     pub(in crate::analysis) fn inputs(&self) -> Vec<LocatedValueFact> {
         self.samples
             .iter()
@@ -155,14 +172,50 @@ pub(in crate::analysis) fn boolean_comparison_receipt(
     }
     let parse = parse_clean_source_file(&facts.source)?;
     let file = parse.tree();
+    // Sibling custom derives/attributes can emit a shadowing value item.
+    // Only closed builtin attributes and no macro imports are admitted.
+    if file
+        .items()
+        .any(|item| matches!(item, ast::Item::ExternCrate(_)))
+        || file
+            .syntax()
+            .descendants()
+            .filter_map(ast::Attr::cast)
+            .any(|attr| !closed_attribute(&attr))
+    {
+        return None;
+    }
     let macro_sites = super::super::macro_item_names::MacroSites::scan(&facts.source);
     if macro_sites.has_non_local_defining_invocation()
-        || [owner.name.as_str(), "u32", "u8", "bool"].iter().any(|name| macro_sites.may_define(name))
+        || [owner.name.as_str(), "u32", "u8", "bool", "Debug", "PartialEq", "Eq"].iter().any(|name| macro_sites.may_define(name))
         // Nested macro expansion is outside the shared item-name scanner.
         // Refuse that unresolved producer rather than guessing its bindings.
         || file.syntax().descendants().filter_map(ast::MacroRules::cast).any(|rules| {
             rules.token_tree().is_none_or(|tree| tree.syntax().descendants_with_tokens()
-                .filter_map(|element| element.into_token()).any(|token| token.text() == "!"))
+                .filter_map(|element| element.into_token()).any(|token| matches!(token.text(), "!" | "use" | "extern")))
+        })
+    {
+        return None;
+    }
+    if file
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroRules::cast)
+        .any(|rules| {
+            rules.token_tree().is_none_or(|tree| {
+                let tokens: Vec<_> = tree
+                    .syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .filter(|token| !token.kind().is_trivia())
+                    .map(|token| token.text().to_string())
+                    .collect();
+                tokens.iter().enumerate().any(|(at, token)| {
+                    token == "#"
+                        && tokens.get(at + 1..at + 4)
+                            != Some(&["[".to_owned(), "test".to_owned(), "]".to_owned()][..])
+                })
+            })
         })
     {
         return None;
@@ -229,13 +282,16 @@ pub(in crate::analysis) fn boolean_comparison_receipt(
                 ast::Item::Use(item) => Some(item),
                 _ => None,
             })
-            .any(|item| {
-                normalize_semantic_text(&item.syntax().text().to_string()) != "usesuper::*;"
-            })
+            .any(|item| !parent_glob(&item))
         {
             continue;
         }
-        if !items.items().any(|item| matches!(item, ast::Item::Use(item) if normalize_semantic_text(&item.syntax().text().to_string()) == "usesuper::*;")) { continue; }
+        if !items
+            .items()
+            .any(|item| matches!(item, ast::Item::Use(item) if parent_glob(&item)))
+        {
+            continue;
+        }
         let test_fn = items
             .items()
             .filter_map(|item| match item {
@@ -287,8 +343,16 @@ pub(in crate::analysis) fn boolean_comparison_receipt(
         if samples.is_empty() {
             return None;
         }
-        let ast::Expr::MacroExpr(assertion_expr) = one_expression(table.loop_body()?.stmt_list()?)?
-        else {
+        let assertion_list = table.loop_body()?.stmt_list()?;
+        let assertion_text = match (
+            assertion_list.statements().next(),
+            assertion_list.tail_expr(),
+        ) {
+            (Some(statement), None) => statement.syntax().text().to_string(),
+            (None, Some(tail)) => tail.syntax().text().to_string(),
+            _ => return None,
+        };
+        let ast::Expr::MacroExpr(assertion_expr) = one_expression(assertion_list)? else {
             return None;
         };
         let assertion_call = assertion_expr.macro_call()?;
@@ -296,11 +360,15 @@ pub(in crate::analysis) fn boolean_comparison_receipt(
             return None;
         }
         let assertion_line = source_line(&facts.source, assertion_call.syntax());
-        let assertion = test
-            .assertions
-            .iter()
-            .find(|assertion| assertion.line == assertion_line)?;
-        if !syntax.admits_assertion_context(test, assertion, index) {
+        let assertion = OracleFact {
+            line: assertion_line,
+            text: assertion_text,
+            kind: OracleKind::RelationalCheck,
+            strength: OracleStrength::Weak,
+            observed_tokens: Vec::new(),
+            ok_value_observed: None,
+        };
+        if !syntax.admits_assertion_context(test, &assertion, index) {
             return None;
         }
         let condition = crate::analysis::extract::outer_assertion_condition(&assertion.text)?;
@@ -535,4 +603,40 @@ fn function_line(source: &str, function: &ast::Fn) -> Option<usize> {
             .filter(|byte| *byte == b'\n')
             .count(),
     )
+}
+
+fn parent_glob(item: &ast::Use) -> bool {
+    item.attrs().next().is_none()
+        && item.use_tree().is_some_and(|tree| {
+            tree.star_token().is_some()
+                && tree.rename().is_none()
+                && tree.use_tree_list().is_none()
+                && tree
+                    .path()
+                    .is_some_and(|path| path.syntax().text() == "super")
+        })
+}
+
+fn closed_attribute(attribute: &ast::Attr) -> bool {
+    let compact: String = attribute
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    if matches!(compact.as_str(), "#[test]" | "#[cfg(test)]") {
+        return true;
+    }
+    let Some(derive) = compact
+        .strip_prefix("#[derive(")
+        .and_then(|text| text.strip_suffix(")]"))
+    else {
+        return false;
+    };
+    !derive.is_empty()
+        && derive
+            .split(',')
+            .filter(|name| !name.is_empty())
+            .all(|name| matches!(name, "Debug" | "PartialEq" | "Eq"))
 }

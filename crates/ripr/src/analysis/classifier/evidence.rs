@@ -1130,6 +1130,7 @@ impl ClassifiedProbeEvidence {
                             owner,
                         )
                     }),
+                helper_comparisons: &boolean_comparisons,
                 owner_return_pin: &owner_pin_admits,
                 fixture_receiver_pin: &fixture_receiver_pin_admits,
                 owner_return_pin_required: map_callback_pin_required,

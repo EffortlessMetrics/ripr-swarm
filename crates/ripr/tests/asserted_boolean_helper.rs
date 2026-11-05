@@ -40,8 +40,26 @@ fn postimage(source: &str) -> Result<String, String> {
     Ok(source.replacen(OWNER, &format!("{OWNER} | 0"), 1))
 }
 fn finding(source: &str, repo: bool) -> Result<Value, String> {
+    finding_with_proc_macro(source, repo, false)
+}
+
+fn finding_with_proc_macro(source: &str, repo: bool, local_macro: bool) -> Result<Value, String> {
     let scratch = Scratch::new()?;
-    std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
+    let mut manifest = MANIFEST.to_owned();
+    if local_macro {
+        manifest.push_str("\n[dev-dependencies]\nshadow={path=\"shadow\"}\n[workspace]\nmembers=[\"shadow\"]\nresolver=\"2\"\n");
+        std::fs::create_dir_all(scratch.0.join("shadow/src")).map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("shadow/Cargo.toml"), "[package]\nname=\"shadow\"\nversion=\"0.1.0\"\nedition=\"2021\"\n[lib]\nproc-macro=true\n").map_err(|error| error.to_string())?;
+        std::fs::write(scratch.0.join("shadow/src/lib.rs"), r#"extern crate proc_macro;
+use proc_macro::TokenStream;
+fn expansion() -> TokenStream {
+    "const read_u32: fn(&[u8]) -> u32 = |b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]);".parse().unwrap_or_else(|_| TokenStream::new())
+}
+#[proc_macro_derive(Shadow)] pub fn shadow(_: TokenStream) -> TokenStream { expansion() }
+#[proc_macro_derive(Debug)] pub fn debug(_: TokenStream) -> TokenStream { expansion() }
+"#).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(scratch.0.join("Cargo.toml"), manifest).map_err(|error| error.to_string())?;
     std::fs::write(scratch.0.join("src/lib.rs"), postimage(source)?)
         .map_err(|error| error.to_string())?;
     let diff = scratch.0.join("case.diff");
@@ -255,5 +273,30 @@ fn comparison_of_another_converter_supplies_no_owner_authority() -> Result<(), S
             .contains("asserted_u32_helper_comparison"),
         "{finding}"
     );
+    Ok(())
+}
+
+#[test]
+fn sibling_proc_macro_expansions_cannot_supply_owner_identity() -> Result<(), String> {
+    for inserted in [
+        "#[derive(shadow::Shadow)] struct ShadowOwner;",
+        "macro_rules! import_derive { () => { use shadow::Debug; }; } import_derive!(); #[derive(Debug)] struct ShadowOwner;",
+    ] {
+        let source = ORIGINAL.replacen(
+            "    use super::*;",
+            &format!("    use super::*; {inserted}"),
+            1,
+        );
+        for repo in [false, true] {
+            let finding = finding_with_proc_macro(&source, repo, true)?;
+            assert!(
+                !finding
+                    .to_string()
+                    .contains("asserted_u32_helper_comparison"),
+                "{finding}"
+            );
+            assert_ne!(finding["classification"], "exposed", "{finding}");
+        }
+    }
     Ok(())
 }

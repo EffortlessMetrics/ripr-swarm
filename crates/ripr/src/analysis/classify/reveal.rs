@@ -36,6 +36,8 @@ use crate::domain::*;
 /// execution/macro decision also gates predicate boundary pairing; it applies
 /// before token, strength, observation, or owner-pin confirmation.
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
+    /// Source-bound helper observers reconstructed after the closed execution proof.
+    pub(in crate::analysis) helper_comparisons: &'a [super::BooleanComparisonReceipt],
     /// #9766: the trait double demonstrably retains this call's argument in
     /// the exact subsequently asserted field. It grants neither reach nor strength.
     pub(in crate::analysis) recording_double_observed:
@@ -177,6 +179,7 @@ fn reveal_evidence(
             recording_double_observed: &|_, _| false,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
+            helper_comparisons: &[],
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
@@ -227,6 +230,7 @@ fn reveal_evidence_with_exit(
             assertion_has_known_implicit_observer: &|_, _| None,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
+            helper_comparisons: &[],
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
@@ -295,6 +299,7 @@ fn reveal_evidence_proximity_reach_pinning(
             recording_double_observed: &|_, _| false,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
+            helper_comparisons: &[],
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
@@ -2508,13 +2513,31 @@ fn analyze_related_assertions(
         } else {
             Vec::new()
         };
+        let helper_candidates: Vec<OracleFact> = return_admission
+            .helper_comparisons
+            .iter()
+            .filter(|receipt| receipt.valid_for(probe) && receipt.for_test(test))
+            .map(|receipt| receipt.oracle())
+            .filter(|oracle| {
+                !test
+                    .assertions
+                    .iter()
+                    .any(|raw| raw.line == oracle.line && raw.text == oracle.text)
+            })
+            .collect();
         let assertions: Vec<_> = test
             .assertions
             .iter()
             .filter(|assertion| (return_admission.assertion_admitted)(test, assertion))
             .chain(claims_candidates.iter())
+            .chain(
+                helper_candidates
+                    .iter()
+                    .filter(|assertion| (return_admission.assertion_admitted)(test, assertion)),
+            )
             .collect();
-        let refused_here = assertions.len() != test.assertions.len() + claims_candidates.len();
+        let refused_here = assertions.len()
+            != test.assertions.len() + claims_candidates.len() + helper_candidates.len();
         refused_context |= refused_here;
         if assertions.is_empty() {
             related.push(RelatedTest {
@@ -6545,6 +6568,7 @@ mod tests {
             assertion_has_known_implicit_observer: &|_, _| None,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
+            helper_comparisons: &[],
             owner_return_pin: &|_, _| false,
             fixture_receiver_pin: &|_, _| false,
             wrapper_return_pin: &|_, _| false,
@@ -8024,6 +8048,7 @@ mod tests {
                 assertion_has_known_implicit_observer: &|_, _| None,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &pin,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -8124,6 +8149,7 @@ mod tests {
                     assertion_has_known_implicit_observer: &|_, _| None,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
+                    helper_comparisons: &[],
                     owner_return_pin: &pin,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
@@ -8310,6 +8336,7 @@ mod tests {
                     recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
+                    helper_comparisons: &[],
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
@@ -8424,6 +8451,7 @@ mod tests {
                     recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
+                    helper_comparisons: &[],
                     owner_return_pin: &pin,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
@@ -8851,6 +8879,7 @@ mod tests {
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -8947,6 +8976,7 @@ mod tests {
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -10759,6 +10789,7 @@ return Err(\"typed pin\".into());
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -10834,6 +10865,7 @@ return Err(\"typed pin\".into());
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -10880,6 +10912,7 @@ return Err(\"typed pin\".into());
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -10945,6 +10978,7 @@ return Err(\"typed pin\".into());
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -11012,6 +11046,7 @@ return Err(\"typed pin\".into());
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -11259,6 +11294,7 @@ return Err(\"typed pin\".into());
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -11308,6 +11344,7 @@ return Err(\"typed pin\".into());
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -11786,6 +11823,7 @@ return Err(\"typed pin\".into());
                         assertion_has_known_implicit_observer: &|_, _| Some(false),
                         owner_return_pin_required: false,
                         returned_closure_pin_required: false,
+                        helper_comparisons: &[],
                         owner_return_pin: &|_, _| false,
                         fixture_receiver_pin: &|_, _| false,
                         wrapper_return_pin: &|_, _| false,
@@ -11869,6 +11907,7 @@ return Err(\"typed pin\".into());
                     returned_closure_pin_required: false,
                     out_parameter_read: &|_, _| None,
                     owner_return_pin_required: false,
+                    helper_comparisons: &[],
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
@@ -11961,6 +12000,7 @@ return Err(\"typed pin\".into());
                     recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
+                    helper_comparisons: &[],
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
@@ -12301,6 +12341,7 @@ return Err(\"typed pin\".into());
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -12411,6 +12452,7 @@ return Err(\"typed pin\".into());
                     recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
+                    helper_comparisons: &[],
                     owner_return_pin: &|_, _| false,
                     fixture_receiver_pin: &|_, _| false,
                     wrapper_return_pin: &|_, _| false,
@@ -12464,6 +12506,7 @@ return Err(\"typed pin\".into());
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -12968,6 +13011,7 @@ return Err(\"typed pin\".into());
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,
@@ -13520,6 +13564,7 @@ return Err(\"typed pin\".into());
                 recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
+                helper_comparisons: &[],
                 owner_return_pin: &|_, _| false,
                 fixture_receiver_pin: &|_, _| false,
                 wrapper_return_pin: &|_, _| false,

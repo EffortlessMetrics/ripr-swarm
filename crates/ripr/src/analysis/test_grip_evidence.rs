@@ -633,6 +633,7 @@ fn refuses_other_function_oracle(
 /// once per call and pass the whole related set: ranking must not rebuild it
 /// with a one-element slice per related test (#12478).
 fn credited_related_tests<'a>(
+    seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
     related: &[(&'a TestSummary, RelationReason)],
@@ -672,9 +673,40 @@ fn credited_related_tests<'a>(
                     view.to_mut().assertions.extend(admitted);
                 }
             }
+            if let Some(receipt) = comparison_receipt_for_seam(
+                seam,
+                owner_fn,
+                test,
+                context.index,
+                context.pin_syntax(),
+            ) {
+                let oracle = receipt.oracle();
+                if !view
+                    .assertions
+                    .iter()
+                    .any(|raw| raw.line == oracle.line && raw.text == oracle.text)
+                {
+                    view.to_mut().assertions.push(oracle);
+                }
+            }
             view
         })
         .collect()
+}
+
+pub(super) fn comparison_receipt_for_seam(
+    seam: &RepoSeam,
+    owner: Option<&FunctionSummary>,
+    test: &TestSummary,
+    index: &RustIndex,
+    syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> Option<crate::analysis::classify::BooleanComparisonReceipt> {
+    if seam.kind() != SeamKind::ReturnValue {
+        return None;
+    }
+    crate::analysis::classify::boolean_comparison_receipt(owner?, test, index, syntax).filter(
+        |receipt| receipt.matches_source(seam.file(), seam.display_line(), seam.expression()),
+    )
 }
 
 fn evidence_for_seam_with_context(
@@ -712,6 +744,7 @@ fn evidence_for_seam_with_context(
         related_reasons.iter().map(|(test, _)| *test),
     );
     let credited_views = credited_related_tests(
+        seam,
         context,
         owner_fn,
         &related_reasons,
@@ -720,23 +753,12 @@ fn evidence_for_seam_with_context(
     );
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let mut propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
-    // The same source producer supplies the diff and repository lenses. Its
-    // exact full-return identity prevents a receipt for another seam borrowing
-    // this assertion's strength or activation rows.
-    if seam.kind() == SeamKind::ReturnValue && reach.state == StageState::Yes {
+    // The same source producer supplies both lenses, including the exact
+    // owner input rows that generic helper extraction cannot transfer.
+    if reach.state == StageState::Yes {
         for test in &related {
-            if let Some(receipt) = owner_fn
-                .and_then(|owner| {
-                    crate::analysis::classify::boolean_comparison_receipt(
-                        owner,
-                        test,
-                        context.index,
-                        pin_syntax,
-                    )
-                })
-                .filter(|receipt| {
-                    receipt.matches_source(seam.file(), seam.display_line(), seam.expression())
-                })
+            if let Some(receipt) =
+                comparison_receipt_for_seam(seam, owner_fn, test, context.index, pin_syntax)
             {
                 observed_values.extend(receipt.inputs());
                 activate = StageEvidence::new(StageState::Yes, Confidence::High, receipt.summary());
@@ -2562,6 +2584,7 @@ pub(crate) fn compact_evidence_for_seam(
         limited_reasons.iter().map(|(test, _)| *test),
     );
     let credited_views = credited_related_tests(
+        seam,
         context,
         owner_fn,
         &limited_reasons,
@@ -2590,6 +2613,18 @@ pub(crate) fn compact_evidence_for_seam(
         statically_contradicted_related_tests,
         new_test_target: None,
     };
+    if evidence.reach.state == StageState::Yes {
+        for (test, _) in &limited_reasons {
+            if let Some(receipt) =
+                comparison_receipt_for_seam(seam, owner_fn, test, context.index, pin_syntax)
+            {
+                evidence.activate =
+                    StageEvidence::new(StageState::Yes, Confidence::High, receipt.summary());
+                evidence.propagate =
+                    StageEvidence::new(StageState::Yes, Confidence::High, receipt.summary());
+            }
+        }
+    }
     // #8600: read over every ranked related test, before the compact cap.
     let saturated = call_budget::any_saturated(ranked.iter().map(|(indexed, _)| indexed.test));
     call_budget::withhold(&mut evidence, saturated);

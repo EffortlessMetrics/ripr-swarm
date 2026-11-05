@@ -103,6 +103,26 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
         });
     }
 
+    // The closed comparison receipt establishes this exact test -> helper ->
+    // owner path even when generic extraction retained only file proximity.
+    if seam.kind() == SeamKind::ReturnValue {
+        let owner_fn = context.owner_function(seam.file(), seam.display_line());
+        for (test_index, reason) in &mut candidates {
+            if context.tests.get(*test_index).is_some_and(|indexed| {
+                super::comparison_receipt_for_seam(
+                    seam,
+                    owner_fn,
+                    indexed.test,
+                    context.index,
+                    context.pin_syntax(),
+                )
+                .is_some()
+            }) {
+                *reason = RelationReason::HelperOwnerCall;
+            }
+        }
+    }
+
     // Newly registered property facts carry assertion interpretation, not
     // authority to call any owner with the same spelling. Bind them before
     // every evidence stage, including value-insensitive direct-call credit.
@@ -785,6 +805,7 @@ pub(super) fn sort_related_tests_for_seam<'a>(
             .map(|&(indexed, reason)| (indexed.test, reason))
             .collect();
         super::credited_related_tests(
+            seam,
             context,
             owner_fn,
             &related_pairs,

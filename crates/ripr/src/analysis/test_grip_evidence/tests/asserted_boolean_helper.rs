@@ -42,6 +42,16 @@ fn same_asserted_helper_receipt_owns_repository_return_evidence() -> Result<(), 
         .filter(|fact| fact.value.starts_with("bytes = "))
         .collect();
     assert_eq!(inputs.len(), 4, "{inputs:?}");
+    let compact_context = CompactGripContext::new(&index);
+    let compact = compact_evidence_for_seam(seam, &compact_context);
+    assert_eq!(compact.reach.state, evidence.reach.state);
+    assert_eq!(compact.activate.state, evidence.activate.state);
+    assert_eq!(compact.propagate.state, evidence.propagate.state);
+    assert_eq!(compact.discriminate.state, evidence.discriminate.state);
+    assert!(
+        compact.observed_values.is_empty(),
+        "compact output deliberately omits input payloads"
+    );
     Ok(())
 }
 
@@ -62,8 +72,17 @@ fn comparison_receipt_requires_live_source_owner_and_exact_asserted_identity() -
     let syntax = OwnerPinSyntax::default();
     let receipt =
         boolean_comparison_receipt(owner, test, &index, &syntax).ok_or("source receipt")?;
-    let assertion = test.assertions.first().ok_or("assertion")?;
-    assert!(receipt.admits(test, assertion));
+    let assertion = receipt.oracle();
+    assert!(receipt.matches_source(
+        &owner.file,
+        26,
+        "u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])"
+    ));
+    assert!(receipt.admits(test, &assertion));
+    assert!(
+        test.assertions.is_empty(),
+        "source receipt must not mutate raw parser facts"
+    );
     let mut wrong_assertion = assertion.clone();
     wrong_assertion.line += 1;
     assert!(!receipt.admits(test, &wrong_assertion));
