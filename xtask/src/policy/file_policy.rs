@@ -892,7 +892,8 @@ mod tests {
                                 &packet_commands(),
                                 host,
                                 |args| {
-                                    let native = args.iter().any(|arg| arg == "portable_consumer_packet");
+                                    let native =
+                                        args.iter().any(|arg| arg == "portable_consumer_packet");
                                     let listing = packet_listing(native);
                                     let listing = if native == changed_native {
                                         listing
@@ -998,7 +999,8 @@ mod tests {
                             &packet_commands(),
                             host,
                             |args| {
-                                let native = args.iter().any(|arg| arg == "portable_consumer_packet");
+                                let native =
+                                    args.iter().any(|arg| arg == "portable_consumer_packet");
                                 let mut listing = packet_listing(native);
                                 if native == changed_native {
                                     listing.push_str(&format!("{extra}: test\n"));
@@ -1007,7 +1009,10 @@ mod tests {
                             },
                         )
                     });
-                    assert!(result.is_err(), "accepted malformed extra identity {extra:?}");
+                    assert!(
+                        result.is_err(),
+                        "accepted malformed extra identity {extra:?}"
+                    );
                 }
             }
         }
