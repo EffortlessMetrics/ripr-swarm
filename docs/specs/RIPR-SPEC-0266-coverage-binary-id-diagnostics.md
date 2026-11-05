@@ -11,9 +11,9 @@ Linked issues: #4978, #13116, #13221
 Linked PRs: #7579, #13121
 
 Standalone reason: #4978 records failed coverage diagnostics from the CI
-coverage adapter. This contract governs only the additive diagnostic evidence;
-it does not classify coverage as successful or identify a test, process, or
-cause.
+coverage adapter. This contract governs diagnostic evidence and the bounded
+compatibility control for stripping coverage-build debug information; it does
+not classify coverage as successful or identify a test, process, or cause.
 
 Support-tier impact:
 
@@ -32,6 +32,10 @@ Policy impact:
   through the documented pinned/stable upgrade recipe, without running workspace
   coverage or adding a required check. Its existing 15-minute budget and routing
   remain unchanged.
+- Only Coverage's Generate step sets `CARGO_PROFILE_TEST_STRIP=debuginfo`.
+  Its mandatory native diagnostics preflight checks coverage equivalence;
+  ordinary builds, full test selection, profiles and report failure semantics
+  retain their existing contracts.
 
 ## Problem
 
@@ -150,6 +154,49 @@ escaped largest-entry names; emitted/omitted counters must match retained
 data. These controls do not identify the historical storage producer or
 replace a native full-coverage measurement.
 
+### Coverage-build strip compatibility
+
+The Generate step may remove linked debug information with the literal Cargo
+test-profile setting `CARGO_PROFILE_TEST_STRIP=debuginfo`. The setting must not
+move to workflow/job scope, apply to plain prebuilds, become `symbols` or
+replace the fixed full-workspace/all-features LCOV command. The selected
+control must execute in the mandatory diagnostics preflight before Generate,
+without a conditional, ignored result or narrower test filter.
+
+The native Linux control builds one dependency-free source fixture in separate
+Cargo targets with explicit baseline `none` and candidate `debuginfo` modes.
+Both builds use the same compiler and explicit coverage/link-ID arguments;
+child-only wrapper and encoded-flag overrides remove outer llvm-cov compiler
+interposition without mutating the parent environment. Require exactly one
+intended Cargo test artifact and actual test compiler invocation per mode.
+The candidate invocation must request `strip=debuginfo`; do not require Cargo
+to emit its default `strip=none`. Require baseline line tables, no candidate
+debug sections and a smaller candidate executable.
+
+Each executable runs the same exact libtest identity twice. Require one test
+passed and one post-assertion acknowledgement per invocation, plus a fresh,
+nonempty bounded raw profile. The matching compiler-sysroot LLVM tools must
+merge both profiles without warnings, match the merged profile ID to that
+mode's own executable and export both JSON and LCOV for the exact source.
+Require nonempty source regions, the known function count of two, a hot-line
+count of two and a cold-line count of zero, plus equality of source mapping
+and all owned line counts between modes. Different image IDs across modes
+remain valid. Missing tools, malformed records, duplicate/absent subjects and
+zero test selection are errors, not skipped proof. Existing genuine malformed
+profile refusal and diagnostic size limits remain exercised.
+
+Native control commands use owned process groups with non-reaping custody,
+30-second command bounds and 256 KiB per-stream capture limits. The bounded
+receipt identifies actual tools, both executable sizes, IDs and counts. These
+control bounds do not shorten the workload timeout. Before explicit success
+cleanup, the native fixture retains and reports its root on any error or
+panic. Removal requires all commands and assertions to finish successfully
+and precedes the passed receipt. Fixture shrinkage proves
+that stripping took effect; full-workspace allocation savings and capacity
+acceptance require the complete native coverage workload and retained report.
+The observed instrumented-build bucket is not a measurement of debug bytes
+and does not establish the producer of later, unobserved ENOSPC growth.
+
 ### Profile and compiler evidence
 
 - Exercise the genuine retained 160-byte header/ID from run 38613901957 with the
@@ -216,6 +263,17 @@ replace a native full-coverage measurement.
   a mapping failure preserves the original profile manifest and failed result.
 
 ## Test Mapping
+
+The strip compatibility controls are:
+
+- `tools/repo-policy/src/coverage_diagnostics/storage_tests.rs::native_test_profile_strip_preserves_coverage_and_reduces_fixture_size`:
+  actual Cargo compilation, exact acknowledged execution, strict matching LLVM
+  merge/export, source/counter equivalence, own-image IDs and active stripping.
+- `tools/repo-policy/src/workflow_tests.rs::coverage_strip_is_generate_only_and_requires_native_controls`:
+  mandatory preflight, exact Generate-only setting and full-command wrapper,
+  with global/other-step, missing, duplicate, stronger-strip, skipped-control
+  and reduced-command counterexamples. The selected fixed-command control
+  independently pins every workspace/all-features/LCOV argument.
 
 The committed controls in
 `tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs` include:

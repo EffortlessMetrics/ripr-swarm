@@ -5,11 +5,88 @@ fn coverage_failure_capture_preserves_original_command_and_failure() -> Result<(
     let root = crate::test_support::workspace_root()?;
     let text = fs::read_to_string(root.join(".github/workflows/coverage.yml"))
         .map_err(|error| error.to_string())?;
-    assert!(text.contains("id: generate-coverage\n        run: target/debug/repo-policy run-coverage"));
+    assert!(text.contains("id: generate-coverage"));
+    assert!(text.contains("run: target/debug/repo-policy run-coverage"));
     assert!(!text.contains("continue-on-error:"));
     assert!(text.contains("failure() && steps.generate-coverage.outcome == 'failure'"));
     assert!(text.contains("always() && steps.generate-coverage.outcome == 'failure'"));
     assert!(text.contains("name: coverage-failure-diagnostics"));
+    Ok(())
+}
+
+#[test]
+fn coverage_strip_is_generate_only_and_requires_native_controls() -> Result<(), String> {
+    let root = crate::test_support::workspace_root()?;
+    let text = fs::read_to_string(root.join(".github/workflows/coverage.yml"))
+        .map_err(|error| error.to_string())?;
+    let generate = concat!(
+        "name: Generate coverage\n",
+        "        id: generate-coverage\n",
+        "        env:\n",
+        "          CARGO_PROFILE_TEST_STRIP: debuginfo\n",
+        "        run: target/debug/repo-policy run-coverage"
+    );
+    let controls = concat!(
+        "name: Check diagnostic capture controls\n",
+        "        run: cargo test -p repo-policy --lib coverage_diagnostics"
+    );
+    let retained = |workflow: &str| {
+        let exact_step = |name: &str, expected: &str| {
+            let mut steps = workflow
+                .split("\n      - ")
+                .filter(|step| step.lines().next() == Some(name))
+                .map(str::trim_end);
+            steps.next() == Some(expected) && steps.next().is_none()
+        };
+        workflow.matches("CARGO_PROFILE_TEST_STRIP").count() == 1
+            && !workflow.contains("continue-on-error:")
+            && exact_step("name: Generate coverage", generate)
+            && exact_step("name: Check diagnostic capture controls", controls)
+            && workflow.find(controls) < workflow.find(generate)
+    };
+    assert!(retained(&text));
+    for replacement in ["symbols", "true", "none"] {
+        assert!(!retained(&text.replace(
+            "CARGO_PROFILE_TEST_STRIP: debuginfo",
+            &format!("CARGO_PROFILE_TEST_STRIP: {replacement}"),
+        )));
+    }
+    let setting = "        env:\n          CARGO_PROFILE_TEST_STRIP: debuginfo\n";
+    let omitted = text.replace(setting, "");
+    assert!(!retained(&omitted));
+    assert!(!retained(&format!(
+        "env:\n  CARGO_PROFILE_TEST_STRIP: debuginfo\n{omitted}"
+    )));
+    assert!(!retained(&format!(
+        "env:\n  CARGO_PROFILE_TEST_STRIP: debuginfo\n{text}"
+    )));
+    assert!(!retained(&omitted.replace(
+        "name: Pre-build spawned binaries\n",
+        &format!("name: Pre-build spawned binaries\n{setting}"),
+    )));
+    for step in ["Generate coverage", "Check diagnostic capture controls"] {
+        assert!(!retained(&text.replace(
+            &format!("name: {step}\n"),
+            &format!("name: {step}\n        if: false\n"),
+        )));
+    }
+    for command in [
+        "cargo llvm-cov -p ripr --lcov --output-path lcov.info",
+        "cargo llvm-cov --workspace --lcov --output-path lcov.info",
+        "true",
+    ] {
+        assert!(!retained(
+            &text.replace("target/debug/repo-policy run-coverage", command)
+        ));
+    }
+    assert!(!retained(&text.replace(
+        "--lib coverage_diagnostics",
+        "--lib coverage_diagnostics::storage::tests::receipts_flush",
+    )));
+    assert!(!retained(&text.replace(
+        controls,
+        &format!("{controls} -- --skip native_test_profile_strip"),
+    )));
     Ok(())
 }
 

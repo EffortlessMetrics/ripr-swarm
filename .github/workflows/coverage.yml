@@ -64,6 +64,8 @@ jobs:
 
       - name: Generate coverage
         id: generate-coverage
+        env:
+          CARGO_PROFILE_TEST_STRIP: debuginfo
         run: target/debug/repo-policy run-coverage
 
       - name: Retain bounded failed-profile diagnostics
