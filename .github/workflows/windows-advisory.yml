@@ -1595,7 +1595,7 @@ jobs:
                   raise SystemExit('fixture producer PASS is missing native process controls')
               if any(stats.get(key) != value for key, value in {'tests': 34, 'passes': 31, 'failures': 0, 'pending': 3}.items()):
                   raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
-              print('Verified 30 native process/setup controls; three POSIX-only adapter controls are pending.')
+              print('Verified 31 native process/setup controls; three POSIX-only adapter controls are pending.')
           PY
 
       - name: Require selector consumer receipt, log and native status
