@@ -166,7 +166,7 @@ fn credits<'a>(
         }
         for statement in &test_function.body {
             let Stmt::With(context) = statement else {
-                // Only a proven passing assertion or inert prefix can precede
+                // Only a demonstrated passing assertion or inert prefix can precede
                 // the context. An earlier failing assertion prevents its call.
                 if inert_prefix(statement) {
                     continue;

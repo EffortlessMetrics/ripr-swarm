@@ -6,9 +6,29 @@ use crate::output::python_repair_card::python_repair_card;
 use std::fs;
 use std::path::Path;
 
-const SOURCE: &str = "class EmptyError(Exception): pass\nclass TooLongError(Exception): pass\n\ndef parse(s):\n    if not s:\n        raise EmptyError()\n    if len(s) > 10:\n        raise TooLongError()\n    return len(s)\n";
+const SOURCE: &str = r"class EmptyError(Exception): pass
+class TooLongError(Exception): pass
+
+def parse(s):
+    if not s:
+        raise EmptyError()
+    if len(s) > 10:
+        raise TooLongError()
+    return len(s)
+";
 const TEST: &str = "import pytest\nfrom fx.core import parse, TooLongError\n\ndef test_parse():\n    with pytest.raises(TooLongError):\n        parse('abcdefghijklmnop')\n";
-const DIFF: &str = "diff --git a/fx/core.py b/fx/core.py\nindex 1111111..2222222 100644\n--- a/fx/core.py\n+++ b/fx/core.py\n@@ -5,5 +5,5 @@ def parse(s):\n     if not s:\n         raise EmptyError()\n     if len(s) > 10:\n-        raise EmptyError()\n+        raise TooLongError()\n     return len(s)\n";
+const DIFF: &str = r"diff --git a/fx/core.py b/fx/core.py
+index 1111111..2222222 100644
+--- a/fx/core.py
++++ b/fx/core.py
+@@ -5,5 +5,5 @@ def parse(s):
+     if not s:
+         raise EmptyError()
+     if len(s) > 10:
+-        raise EmptyError()
++        raise TooLongError()
+     return len(s)
+";
 const OWN_PATH: &str = "[tool.pytest.ini_options]\npythonpath = [\".\"]\n";
 const OTHER_PATH: &str = "[tool.pytest.ini_options]\npythonpath = [\"src\"]\n";
 const FAKE_PYTEST: &str = "class _Raises:\n    def __enter__(self): return self\n    def __exit__(self, exc_type, exc, traceback): return True\n\ndef raises(expected):\n    return _Raises()\n";

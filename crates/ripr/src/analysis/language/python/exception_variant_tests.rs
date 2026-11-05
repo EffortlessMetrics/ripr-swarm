@@ -7,7 +7,16 @@ use std::path::Path;
 
 type Check = Result<(), String>;
 
-const SOURCE: &str = "class EmptyError(Exception): pass\nclass TooLongError(Exception): pass\n\ndef parse(s):\n    if not s:\n        raise EmptyError()\n    if len(s) > 10:\n        raise TooLongError()\n    return len(s)\n";
+const SOURCE: &str = r"class EmptyError(Exception): pass
+class TooLongError(Exception): pass
+
+def parse(s):
+    if not s:
+        raise EmptyError()
+    if len(s) > 10:
+        raise TooLongError()
+    return len(s)
+";
 const OLD: &str = "        raise EmptyError()";
 const NEW: &str = "        raise TooLongError()";
 const IMPORTS: &str = "import pytest\nfrom fx.core import parse, EmptyError, TooLongError\n";
@@ -223,8 +232,14 @@ fn specific_exception_variant_requires_changed_raise_activation() -> Check {
     for before in [
         "    raise TooLongError()\n",
         "    return 0\n",
-        "    if s:\n        raise TooLongError()\n",
-        "    if not s:\n        pass\n    else:\n        return 0\n",
+        r"    if s:
+        raise TooLongError()
+",
+        r"    if not s:
+        pass
+    else:
+        return 0
+",
         "    unknown()\n",
     ] {
         let source = SOURCE.replace("def parse(s):\n", &format!("def parse(s):\n{before}"));
