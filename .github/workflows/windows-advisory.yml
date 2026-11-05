@@ -579,10 +579,11 @@ jobs:
                   diff = root + r'\fixture change.diff'
                   expected = f'ripr check --root "{drive}/synthetic-selector-fixture literal" --diff "{drive}/synthetic-selector-fixture literal/fixture change.diff" --json'
                   self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
-                  stderr = ('No finding. Retry `' + expected + '`.').encode()
-                  self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), expected)
-                  with self.assertRaisesRegex(RuntimeError, 'frozen root/diff/JSON scope'):
-                      self.ns['printed_recovery'](stderr.replace(b'"', b"'"), root, diff, windows=True)
+                  for command in (expected, expected.removesuffix(' --json') + ' --format json'):
+                      stderr = ('No finding. Retry `' + command + '`.').encode()
+                      self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), command)
+                      with self.assertRaisesRegex(RuntimeError, 'frozen root/diff/JSON scope'):
+                          self.ns['printed_recovery'](stderr.replace(b'"', b"'"), root, diff, windows=True)
 
               def test_windows_recovery_keeps_single_quotes_for_dollar_paths(self):
                   drive = 'Q' + ':'
@@ -605,18 +606,65 @@ jobs:
                   diff = root + '/fixture change.diff'
                   expected = "ripr check --root '/synthetic-selector-fixture literal' --diff '/synthetic-selector-fixture literal/fixture change.diff' --json"
                   self.assertEqual(self.ns['recovery_command'](root, diff, windows=False), expected)
-                  self.assertEqual(self.ns['printed_recovery'](('`' + expected + '`').encode(), root, diff, windows=False), expected)
+                  for command in (expected, expected.removesuffix(' --json') + ' --format json'):
+                      self.assertEqual(self.ns['printed_recovery'](('`' + command + '`').encode(), root, diff, windows=False), command)
 
               def test_recovery_refuses_changed_scope_or_literal(self):
                   for windows in (False, True):
-                      command = self.ns['recovery_command'](self.root, self.out, windows=windows)
-                      for wrong in (self.ns['recovery_command'](self.stock, self.out, windows=windows),
-                                    self.ns['recovery_command'](self.root, self.binary, windows=windows),
-                                    command.replace(' --json', ''), command + ' --no-cache'):
-                          with self.subTest(windows=windows, command=wrong), self.assertRaises(RuntimeError):
-                              self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out, windows=windows)
-                      with self.assertRaises(RuntimeError):
-                          self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out, windows=windows)
+                      for suffix in (' --json', ' --format json'):
+                          commands = [self.ns['recovery_command'](root, diff, windows=windows).removesuffix(' --json') + suffix
+                                      for root, diff in ((self.root, self.out), (self.stock, self.out), (self.root, self.binary))]
+                          command, wrong_root, wrong_diff = commands
+                          for wrong in (wrong_root, wrong_diff, command.removesuffix(suffix),
+                                        command + ' --no-cache', command + '; Write-Output injected',
+                                        command.replace('"', "'") if windows else command.replace("'", '"')):
+                              with self.subTest(windows=windows, command=wrong), self.assertRaises(RuntimeError):
+                                  self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out, windows=windows)
+                          with self.assertRaises(RuntimeError):
+                              self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out, windows=windows)
+
+              def test_sibling_journeys_replay_each_actual_json_spelling(self):
+                  # Execute the real journey statements with controlled process results.
+                  # Actual PowerShell execution remains the later native consumer's proof.
+                  body = next(n for n in self.tree.body if isinstance(n, ast.Try)).body
+                  start = next(i for i, n in enumerate(body) if isinstance(n, ast.Assign)
+                               and any(isinstance(t, ast.Name) and t.id == 'commands' for t in n.targets))
+                  end = next(i for i in range(start, len(body)) if isinstance(body[i], ast.Expr)
+                             and isinstance(body[i].value, ast.Call)
+                             and ast.unparse(body[i].value.func) == 'receipt.update')
+                  alias = self.ns['recovery_command'](self.root, self.out)
+                  printed = {'explain': alias.removesuffix(' --json') + ' --format json', 'context': alias}
+                  selected = 'repo-probe:fixture:predicate:actual'
+                  receipt, replays, frozen = {'cases': []}, [], []
+                  listing = json.dumps(self.listing()).encode()
+                  def invoke(label, args):
+                      sibling = label.split('-')[0]
+                      if label.endswith('-malformed'):
+                          return 2, b'', ('file:line with a nonempty path; run `' + printed[sibling] + '`').encode()
+                      if label.endswith('-actual-id'):
+                          value = json.dumps({'probe': {'id': selected}}) if sibling == 'context' else selected
+                          return 0, value.encode(), b''
+                      self.assertTrue(label.endswith('-opaque-negative'))
+                      return 2, b'', b'no finding matched opaque ID'
+                  def run(label, argv, cwd):
+                      expected = printed['context' if label.startswith('context-') else 'explain']
+                      self.assertEqual(argv, ['controlled-pwsh', '-NoProfile', '-NonInteractive', '-Command', expected])
+                      self.assertEqual(cwd, self.stock)
+                      replays.append((label, argv[-1]))
+                      receipt['cases'].append({'label': label, 'exit': 0, 'stop': None})
+                      return 0, listing, b''
+                  ns = dict(self.ns, fixture=self.root, diff=self.out, source=self.root / 'src/lib.rs',
+                            shell='controlled-pwsh', foreign=self.stock, out=self.out, actual_id=selected,
+                            receipt=receipt, invoke=invoke, run=run, frozen_inputs=lambda: frozen.append(True))
+                  exec(compile(ast.Module(body[start:end + 1], []), str(WORKFLOW), 'exec'), ns)
+                  self.assertEqual(replays, [('explain-literal-replay', printed['explain']),
+                                            ('context-literal-replay', printed['context']), ('literal-repeat', printed['explain'])])
+                  self.assertEqual(receipt['state'], 'PASS')
+                  self.assertEqual(receipt['actual_listed_id'], selected)
+                  self.assertEqual(receipt['siblings_retried'], ['explain', 'context'])
+                  self.assertEqual(len(frozen), 6)
+                  for sibling in ('explain', 'context'):
+                      self.assertEqual((self.out / (sibling + '-literal-command.txt')).read_text(), printed[sibling])
 
               def test_cache_target_is_owned_before_restore_and_all_subset_builds(self):
                   text = WORKFLOW.read_text()
@@ -1285,7 +1333,8 @@ jobs:
               matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())
               require(len(matches) == 1, "one printed recovery command required")
               command = matches[0]
-              require(command == recovery_command(fixture, diff, windows), "printed command lost frozen root/diff/JSON scope")
+              alias = recovery_command(fixture, diff, windows)
+              require(command in (alias, alias.removesuffix(" --json") + " --format json"), "printed command lost frozen root/diff/JSON scope")
               return command
 
           def rejected(name, operation):
@@ -1448,7 +1497,6 @@ jobs:
                   status, stdout, stderr = invoke(sibling + "-opaque-negative", [sibling, "--root", str(fixture), "--diff", str(diff)]
                                                   + (["--at"] if sibling == "context" else []) + ["repo-probe:src_lib.rs:error_path:3bf8c64c"])
                   require(status == 2 and not stdout and b"file:line with a nonempty path" not in stderr, "opaque ID miss got syntax guidance")
-              require(commands[0] == commands[1], "siblings advertised different recovery scope")
               frozen_inputs()
               status, stdout, _ = run("literal-repeat", [shell, "-NoProfile", "-NonInteractive", "-Command", commands[0]], foreign)
               frozen_inputs()
