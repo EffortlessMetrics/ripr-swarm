@@ -2633,8 +2633,7 @@ mod tests {
     }
 
     #[test]
-    fn gap_list_output_schema_admits_only_the_explicit_not_analyzed_pair()
-    -> Result<(), String> {
+    fn gap_list_output_schema_admits_only_the_explicit_not_analyzed_pair() -> Result<(), String> {
         let schema = gap_list_output_schema();
         let outcome = schema
             .pointer("/oneOf/0/properties/outcome")
