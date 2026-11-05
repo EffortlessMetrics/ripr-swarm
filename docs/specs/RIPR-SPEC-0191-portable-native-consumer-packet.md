@@ -139,6 +139,18 @@ A packet directory contains `manifest.json`, the native payload
 - The worktree binary inside a packet reports the Rust `boundary_gap`
   finding while Cargo is absent from PATH.
 
+Packet coverage is accepted by `check-file-policy` from its fresh typed Cargo
+inventory before the policy report is rendered. The common selector must retain
+both pinned packet subjects on every host; the Unix-native selector must retain
+both native subjects on Unix and remain explicitly not enumerated on Windows.
+Malformed selected identities and nonzero neighboring selections fail acceptance.
+This reuses the existing inventory and adds no Cargo invocation. The rendered
+report controls remain separate checks of the disclosure contract.
+
+The live-repository policy facade remains on native Windows for retained-evidence
+admission (#5044/#13012). On other hosts, `ci-policy` is the blocking producer of
+those same policy checks; nextest does not repeat the whole repository scan.
+
 ## Test Mapping
 
 - `xtask/src/tests.rs::file_policy_allowlist_accepts_host_scoped_coverage`
@@ -150,6 +162,15 @@ A packet directory contains `manifest.json`, the native payload
 - `xtask/src/tests.rs::file_policy_allowlist_toml_preserves_value_admission_for_ignored_metadata`
 - `xtask/src/tests.rs::file_policy_allowlist_toml_keeps_governed_field_refusals`
 - `xtask/src/tests.rs::policy_checker_facade_runs_current_repo_checks`
+- `xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_uses_fresh_host_scoped_inventory`
+- `xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_rejects_nonzero_neighbor_inventory`
+- `xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_rejects_selector_and_host_drift`
+- `xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_rejects_malformed_extra_identities`
+- `xtask/src/policy/file_policy.rs::tests::packet_coverage_acceptance_preserves_enumerator_failure`
+- `xtask/src/tests.rs::packet_coverage_report_accepts_exact_selected_names`
+- `xtask/src/tests.rs::packet_coverage_report_rejects_unpinned_or_wrong_common_binary`
+- `xtask/src/tests.rs::packet_coverage_report_rejects_neighboring_selected_names`
+- `xtask/src/tests.rs::packet_coverage_report_rejects_invalid_selected_fields`
 - `xtask/src/policy/file_policy.rs::tests::test_covered_by_host_selection_retains_common_and_discloses_inapplicable`
 - `xtask/src/policy/file_policy.rs::tests::test_covered_by_empty_applicable_host_selector_is_rejected`
 - `xtask/src/policy/file_policy.rs::tests::test_covered_by_unknown_host_family_is_rejected`
