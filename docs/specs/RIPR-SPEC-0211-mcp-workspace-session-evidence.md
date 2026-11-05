@@ -823,6 +823,15 @@ unknown route into a recognized one.
 
 ## Source-preserving recovery follow-up (#10799)
 
+The top-limitation document retains the source-custody owner's recovery (#13127) for
+`worktree_source_not_committed`. This code can describe committed input over
+dirty Rust files as well as an unsettled saved-worktree snapshot; it must not
+choose a default committed refresh solely from the shared refusal code.
+`mcp::gaps::tests::limitation_custody_recovery_preserves_the_source_owner_remedy`
+checks producer-owned remedies for dirty committed input, saved-file movement
+and head movement, their refusal state and restart identity. Recovery keeps an
+explicit base in the next refresh request and requires a read of the new snapshot.
+
 Single-gap overflow recovery is captured with its evidence snapshot and reused
 at the raw-document, tool-envelope and resource-envelope boundaries. The CLI
 renderer binds the captured root, effective base and explicit source; a newer
