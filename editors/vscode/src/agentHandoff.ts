@@ -41,6 +41,7 @@ export interface AgentHandoffHost {
   getServer(): ResolvedServer | undefined;
   getWorkspaceRoot(): string | undefined;
   getStartGeneration(): number;
+  sessionRootBlocker(): string | undefined;
   getStatusKind(): string;
   getSetupStatus(): RiprSetupStatus;
   statusContext(): RiprStatusContext;
@@ -73,6 +74,12 @@ interface StartRepairAction {
   command: vscode.Command;
   priority: number;
 }
+
+type WorkspaceCommandResponse = CockpitRequestAbsence | {
+  kind: 'response';
+  result: CockpitRequestResult<Record<string, unknown>>;
+  isCurrent(): boolean;
+};
 
 function actionableGapQueueAllowsCurrentRepairPacket(queue: RiprActionableGapQueueStatus): boolean {
   return queue.state === 'topActionableGap'
@@ -993,22 +1000,48 @@ export class AgentHandoffController {
   private async fetchWorkspaceCommand(
     command: string,
     failedLogLabel: string
-  ): Promise<CockpitRequestResult<Record<string, unknown>>> {
+  ): Promise<WorkspaceCommandResponse> {
     const client = this.host.getClient();
     if (!client) {
       return { kind: 'no_client' };
     }
+    if (this.host.sessionRootBlocker()) {
+      return { kind: 'session_changed' };
+    }
+    const generation = this.host.getStartGeneration();
+    const root = this.host.getWorkspaceRoot();
+    const isCurrent = () => this.host.getClient() === client
+      && this.host.getStartGeneration() === generation
+      && this.host.getWorkspaceRoot() === root
+      && !this.host.sessionRootBlocker();
     try {
       const response = await client.sendRequest('workspace/executeCommand', {
         command,
         arguments: []
       });
-      return interpretCockpitObjectResponse(response);
+      return { kind: 'response', result: interpretCockpitObjectResponse(response), isCurrent };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.host.output.appendLine(`ripr ${failedLogLabel} failed: ${message}`);
-      return { kind: 'unavailable' };
+      return { kind: 'response', result: { kind: 'unavailable' }, isCurrent };
     }
+  }
+
+  private workspaceCommandPacket(
+    response: WorkspaceCommandResponse,
+    unavailableMessage: string
+  ): Record<string, unknown> | undefined {
+    // Check in the consuming continuation: another session can become current
+    // after the request settles but before its caller resumes. Workspace
+    // commands use the session guard, so no active file editor is required.
+    const result = response.kind === 'response'
+      ? response.isCurrent() ? response.result : { kind: 'session_changed' as const }
+      : response;
+    if (result.kind !== 'ok') {
+      this.showCockpitUnavailable(result, unavailableMessage);
+      return undefined;
+    }
+    return result.value;
   }
 
   private showCockpitUnavailable(
@@ -1019,17 +1052,16 @@ export class AgentHandoffController {
   }
 
   /** Shared helper: calls ripr.collectRepairPacket (top packet, no args) once. */
-  private async fetchTopRepairPacket(): Promise<CockpitRequestResult<Record<string, unknown>>> {
+  private async fetchTopRepairPacket(): Promise<WorkspaceCommandResponse> {
     return this.fetchWorkspaceCommand('ripr.collectRepairPacket', 'collectRepairPacket');
   }
 
   async copyTopRepairPacket(): Promise<void> {
     const response = await this.fetchTopRepairPacket();
-    if (response.kind !== 'ok') {
-      this.showCockpitUnavailable(response, 'ripr server did not respond — no repair packet available.');
+    const packet = this.workspaceCommandPacket(response, 'ripr server did not respond — no repair packet available.');
+    if (!packet) {
       return;
     }
-    const packet = response.value;
     const status = typeof packet['status'] === 'string' ? packet['status'] : undefined;
     if (status === 'not_actionable_or_incomplete' || packet['kind'] !== 'repair_packet') {
       const reason = typeof packet['reason'] === 'string' ? packet['reason'] : undefined;
@@ -1054,11 +1086,10 @@ export class AgentHandoffController {
 
   async copyTopVerifyCommand(): Promise<void> {
     const response = await this.fetchTopRepairPacket();
-    if (response.kind !== 'ok') {
-      this.showCockpitUnavailable(response, 'No verify command available.');
+    const packet = this.workspaceCommandPacket(response, 'No verify command available.');
+    if (!packet) {
       return;
     }
-    const packet = response.value;
     const status = typeof packet['status'] === 'string' ? packet['status'] : undefined;
     if (status === 'not_actionable_or_incomplete' || packet['kind'] !== 'repair_packet') {
       this.host.runtime.showInformationMessage('No verify command available.');
@@ -1087,11 +1118,10 @@ export class AgentHandoffController {
 
   async copyTopReceiptCommand(): Promise<void> {
     const response = await this.fetchTopRepairPacket();
-    if (response.kind !== 'ok') {
-      this.showCockpitUnavailable(response, 'No receipt command available.');
+    const packet = this.workspaceCommandPacket(response, 'No receipt command available.');
+    if (!packet) {
       return;
     }
-    const packet = response.value;
     const status = typeof packet['status'] === 'string' ? packet['status'] : undefined;
     if (status === 'not_actionable_or_incomplete' || packet['kind'] !== 'repair_packet') {
       this.host.runtime.showInformationMessage('No receipt command available.');
@@ -1119,17 +1149,16 @@ export class AgentHandoffController {
   // ---------------------------------------------------------------------------
 
   /** Shared helper: calls ripr.collectReceiptStatus once and returns the response. */
-  private async fetchReceiptStatus(): Promise<CockpitRequestResult<Record<string, unknown>>> {
+  private async fetchReceiptStatus(): Promise<WorkspaceCommandResponse> {
     return this.fetchWorkspaceCommand('ripr.collectReceiptStatus', 'collectReceiptStatus');
   }
 
   async showReceiptStatus(): Promise<void> {
     const response = await this.fetchReceiptStatus();
-    if (response.kind !== 'ok') {
-      this.showCockpitUnavailable(response, 'No receipt status available — server not responding.');
+    const packet = this.workspaceCommandPacket(response, 'No receipt status available — server not responding.');
+    if (!packet) {
       return;
     }
-    const packet = response.value;
     const receiptStatus = typeof packet['receipt_status'] === 'string'
       ? packet['receipt_status']
       : 'not_available';
@@ -1158,12 +1187,12 @@ export class AgentHandoffController {
 
   async copyReceiptCommand(): Promise<void> {
     const response = await this.fetchReceiptStatus();
-    if (response.kind !== 'ok') {
-      this.showCockpitUnavailable(response, 'No receipt command is available — server not responding.');
+    const packet = this.workspaceCommandPacket(response, 'No receipt command is available — server not responding.');
+    if (!packet) {
       return;
     }
-    const copyReceiptCommand = typeof response.value['copy_receipt_command'] === 'string'
-      ? response.value['copy_receipt_command'].trim()
+    const copyReceiptCommand = typeof packet['copy_receipt_command'] === 'string'
+      ? packet['copy_receipt_command'].trim()
       : '';
     if (!copyReceiptCommand || copyReceiptCommand === 'not_available') {
       this.host.runtime.showInformationMessage('No receipt command is available for the current state.');

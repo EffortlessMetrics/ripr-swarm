@@ -109,6 +109,10 @@ pub(crate) fn render_check_with_config_and_progress(
                 results_budget,
             ))
         }
+        OutputFormat::SarifCompact => {
+            let suppressions = load_suppressions(output, config)?;
+            sarif::render_findings_sarif_compact(output, config, &suppressions)
+        }
         OutputFormat::BadgeJson => {
             let summary = ripr_summary_with_suppressions(output, config)?;
             Ok(badge::render_native_json(&summary))
@@ -268,6 +272,13 @@ pub(crate) fn render_check_with_config_and_progress(
                     config,
                     results_budget,
                 ))
+            },
+        ),
+        OutputFormat::RepoSarifCompact => repo_inventory_with_progress(
+            progress,
+            || analysis::inventory_classified_seams_at_with_config(&output.root, config),
+            |(classified, limit_info)| {
+                sarif::render_repo_seams_sarif_compact(&classified, limit_info.as_ref(), config)
             },
         ),
         OutputFormat::AgentSeamPacketsJson => repo_inventory_with_progress(

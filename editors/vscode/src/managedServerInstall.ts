@@ -604,20 +604,24 @@ async function walkExtractedEntries(currentDir: string): Promise<void> {
 }
 
 async function findExecutable(root: string, executableName: string): Promise<string | undefined> {
+  let found: string | undefined;
   const entries = await fs.promises.readdir(root, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(root, entry.name);
+    let candidate: string | undefined;
     if (entry.isFile() && entry.name === executableName) {
-      return fullPath;
+      candidate = fullPath;
+    } else if (entry.isDirectory()) {
+      candidate = await findExecutable(fullPath, executableName);
     }
-    if (entry.isDirectory()) {
-      const found = await findExecutable(fullPath, executableName);
-      if (found) {
-        return found;
+    if (candidate !== undefined) {
+      if (found !== undefined) {
+        throw new Error(`Downloaded archive contains multiple files named ${executableName}; expected exactly one server executable.`);
       }
+      found = candidate;
     }
   }
-  return undefined;
+  return found;
 }
 
 function assertDescendantPath(root: string, candidate: string, description: string): void {

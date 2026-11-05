@@ -76,6 +76,11 @@ registration; the repository has not yet retained cold-session proof that
 either client completes the flow (tracked in #3092), so treat them as
 configuration, not a support claim.
 
+For Muse, use the [native RIPR package](../../plugins/muse/ripr/README.md).
+It declares the `core` MCP server and the `ripr-setup` and `ripr-repair`
+skills; its guide covers installation, explicit approval, updates, and
+starting a fresh session in the target repository.
+
 Every `ripr_refresh` result carries a top-level `fresh_for_working_tree`
 (`true` for a saved-worktree snapshot or a committed one with no uncommitted
 edits outside the analysis; `false` after a failed attempt or with edits the
@@ -251,6 +256,16 @@ runs no tests or verification and grants no execution or edit authority.
 | Resource template | `ripr://repair-attempt/{attempt_id}` |
 | Resource template | `ripr://receipt/{receipt_id}` |
 | Resource template | `ripr://repair-card/{canonical_id}` |
+
+The snapshot template accepts both the raw canonical id
+(`snapshot:sha256:<digest>`) and its URI-template expansion
+(`snapshot%3Asha256%3A<digest>`). Hex escapes may use either case. Only the
+captured id is decoded, once; the response echoes the original request URI.
+With a completed snapshot, double encoding, malformed escapes, non-UTF-8
+bytes and stale ids retain a typed `stale_snapshot` refusal with the current
+canonical identity and recovery. The namespace remains exact, and one literal
+trailing slash is tolerated. Pass raw canonical ids in JSON tool `snapshot_id`
+arguments; URI decoding applies only to resource reads (#13229).
 
 `ripr_workspace_status` and `ripr://workspace/status` return the same JSON
 document, schema `ripr-mcp-workspace-status-v1`. It wraps:
@@ -898,4 +913,38 @@ silence: syntax-invalid JSON (including nesting past the parser limit) receives
 Parse error (`-32700`, null id) and well-formed JSON that is not a request the
 SDK can type (null or fractional id, wrong `jsonrpc` version, missing method)
 receives Invalid Request (`-32600`); the transport then reads the next frame.
-The reply carries the request id
+For a well-formed JSON object with a string `method`, a transport-level
+Invalid Request reply preserves a string or integer `id` when its
+JSON-serialized form is at most 16 KiB. Otherwise the reply carries
+`id: null`. A request ID above that limit is never echoed; the server
+answers `-32600` and continues reading the session. An over-cap input
+message is discarded and answered with `-32600`, retaining its ID only
+when it can be recovered from the first 4 KiB; otherwise the ID is null.
+
+Incoming messages are capped at 256 KiB. The complete serialized JSON
+response is capped at 128 KiB, with its newline delimiter appended
+afterward, so an output frame is at most 128 KiB plus one byte. Tool and
+resource envelopes reserve the actual serialized request ID and fixed
+JSON-RPC overhead before they are sent. An envelope that exceeds that
+budget returns the typed `result_too_large` refusal. The writer retains a
+generic bounded-error fallback for responses that still exceed its cap;
+a response or fallback that cannot be encoded ends the session with an
+operational error.
+
+Partial input and output retain their state when an I/O future is
+cancelled. Clients must await replies before closing stdin: EOF ends the
+SDK service. Stdout carries only protocol messages; operational errors
+go to stderr. When the transport starts with an unavailable workspace,
+it emits one startup warning and remains available to report
+`workspace_unavailable`.
+
+Clients can use the initialize lifecycle, including `2025-11-25`, or
+the `2026-07-28` discovery lifecycle. Discovery requests carry
+`io.modelcontextprotocol/protocolVersion` and
+`io.modelcontextprotocol/clientCapabilities` in `params._meta`;
+unsupported inline versions are refused. Initialize sessions answer
+`ping` with an empty result, including when the request carries that
+metadata. Discovery sessions reject `ping` with Method Not Found.
+A second well-formed `initialize` on an initialized session receives
+`-32600` with an already-initialized message, and the session keeps
+serving.
