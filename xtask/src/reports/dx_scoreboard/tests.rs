@@ -11,6 +11,8 @@ use super::measure::{
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
 
+mod partial;
+
 /// The committed config, resolved from the crate root so a test that moves
 /// the working directory cannot break the lookup.
 fn committed_config() -> PathBuf {
@@ -5378,6 +5380,7 @@ fn timed_complete_run(ms: u64, rss_mb: u64, stdout: &str) -> MeasuredOutput {
     run
 }
 
+#[cfg(unix)]
 fn sample_of<'a>(samples: &'a [Sample], metric: &str) -> Option<&'a Sample> {
     samples.iter().find(|sample| sample.metric == metric)
 }

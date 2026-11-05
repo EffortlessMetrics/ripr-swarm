@@ -41,6 +41,7 @@ tests or mutants; "exposed" is static evidence only. It does not edit files.
 
 Before you start: commit the source change; `/target/` must be in .gitignore.
 Only edit tests. Never change production code to make a gap go away.
+Keep the same --base and source options for every check below.
 
 Loop (max 3 rounds per gap):
 1. FIND    `ripr check --quiet`   (add `--base <branch>` if there is no origin/main|master)
@@ -55,11 +56,15 @@ Loop (max 3 rounds per gap):
            whole-struct equality.
 4. VERIFY  `cargo test <your_test_name>` must pass. Then `ripr check --quiet` again
            (a dirty tree is analyzed automatically; new files need `git add -N PATH`).
-5. DONE    when `ripr check --quiet --json | jq '[.findings[]|select(.classification!="exposed")]|length'`
-           prints 0 (human form: "State: no gap selected for repair").
-           Report what you added; ripr's pass is static, not proof that tests catch real bugs.
+5. DONE    Read `ripr check --quiet --json` separately; require exit 0 and these fields:
+           `analysis_outcome.outcome.kind`: `complete_no_findings` or `complete_with_findings`;
+           `analysis_outcome.analysis_complete`: true; `summary.findings` = `summary.exposed`.
+           Missing required fields, `analysis_outcome.document_complete: false`, or
+           `unanalyzed_working_tree: true` mean STOP. Empty `.findings` alone is never enough.
+           Report tests added and the static result; this does not establish runtime bug detection.
 
 STOP and report instead of looping when:
+- the outcome names empty scope, no changed behavior, partial analysis, unsupported input or failed analysis;
 - the top finding says "Analyzer limit" / "Tests cannot close this static-analysis limitation";
 - the same gap remains after 3 exact-assert tests (it may be an equivalent change, e.g. `>` vs
   `>=` where both branches return the same value); or `ripr check` exits 2 or 3.
@@ -114,12 +119,38 @@ For one finding, pick by what the consumer is:
 
 ## When the agent should stop
 
-The block carries the rule, restated here because it is the part agents get
-wrong: **done** is `ripr check --quiet` reporting no gap selected for repair, and
-**stop** is an analyzer limit, three exact-assertion tests that leave the same
-gap (often an equivalent change such as `>` versus `>=` where both branches
-return the same value), or exit code 2 or 3. Stop means report to the human; it
-does not mean change production code until the gap disappears.
+**Done** requires the focused test to pass and a separate successful
+`ripr check --quiet --json` for the same base and source used by the loop.
+Read the complete report, not just `.findings` or the human message
+`State: no gap selected for repair`:
+
+- `analysis_outcome.outcome.kind` must be `complete_no_findings` or
+  `complete_with_findings`, and `analysis_outcome.analysis_complete` must be true.
+  `no_scope`, `no_changed_lines` and `no_behavioral_candidates` can also have
+  `analysis_complete: true`; they describe an empty analysis scope and do not
+  establish completion of the requested behavior review.
+- The required numeric `summary.findings` and `summary.exposed` counts must
+  match. These full-analysis counts also prevent a rendered subset from hiding
+  a remaining gap or a policy-suppressed finding.
+- `analysis_outcome.document_complete: false` means the output was truncated;
+  `unanalyzed_working_tree: true` means saved changes were not analyzed. Either
+  blocks done. These two fields are optional when the condition is absent;
+  missing outcome or summary fields do not establish completion.
+
+**Stop and report** the actual state when the outcome is empty, partial,
+unsupported or failed, required evidence is missing, or output is truncated.
+For an empty scope, confirm the intended base and saved source, then rerun
+with the appropriate `--base` or `--worktree` option; do not interpret zero
+findings as an all-clear. For truncation, follow the report's output-budget
+recovery and inspect a complete report. Check the command's own exit status
+before reading its JSON so a successful downstream filter cannot hide a failed
+check.
+
+An analyzer limit, three exact-assertion tests that leave the same gap (often
+an equivalent change such as `>` versus `>=` where both branches return the
+same value), or exit code 2 or 3 also means stop and report. It does not mean
+change production code until the gap disappears. A completed static loop
+still does not establish that tests catch real bugs.
 
 ## More
 
