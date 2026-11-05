@@ -127,15 +127,27 @@ impl PushArgumentFacts {
                             .scope_bindings
                             .iter()
                             .any(|binding| binding.name == *name && !binding.file_level)
-                        || !test.imports_in_file.iter().any(|import| {
-                            import.source == "vitest"
-                                && import.local == *name
-                                && import.imported.as_deref() == Some(*name)
-                        })
                 }) {
                     return None;
                 }
-                let witness = test_binding(test, &owner.name, receiver, value)?;
+                let framework = ["vitest", "@jest/globals"].into_iter().find(|framework| {
+                    // Keep the registration and assertion in the same framework;
+                    // independently trusted imports can still be a mixed pair.
+                    ["expect", "test"].iter().all(|name| {
+                        test.imports_in_file.iter().any(|import| {
+                            import.source == *framework
+                                && import.local == *name
+                                && import.imported.as_deref() == Some(*name)
+                        })
+                    })
+                })?;
+                let witness = test_binding(
+                    test,
+                    &owner.name,
+                    receiver,
+                    value,
+                    framework == "@jest/globals",
+                )?;
                 Some((test as *const TypeScriptTest, witness))
             })
             .collect();
@@ -204,12 +216,17 @@ fn test_binding(
     owner: &str,
     receiver: usize,
     value: usize,
+    require_plain_registration: bool,
 ) -> Option<PushTestWitness> {
     let owner = owner.to_owned();
     super::parse::parse_on_worker(&test.file, &test.body_text, move |_, source, allocator| {
         let parsed = Parser::new(allocator, source, SourceType::ts()).parse();
         if !parsed.errors.is_empty() || parsed.program.body.len() != 1 { return None }
         let registration = statement_call(&parsed.program.body[0])?;
+        // The Jest extension is bounded to the imported test itself. An unused
+        // import cannot authenticate an aliased or mixed-framework registration.
+        // Preserve the existing Vitest registration readings.
+        if require_plain_registration && identifier(&registration.callee) != Some("test") { return None }
         let Some(Argument::ArrowFunctionExpression(callback)) = registration.arguments.get(1) else { return None };
         if callback.r#async || callback.expression || !callback.params.items.is_empty() || callback.params.rest.is_some() { return None }
         let statements = callback.body.statements.as_slice();

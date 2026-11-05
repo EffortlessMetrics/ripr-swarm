@@ -22,8 +22,11 @@
 //! `not_measured` with its reason; absence is never reported as a pass.
 //! Cloning the real-repository corpus is opt-in (`--clone`).
 
+mod input;
 mod measure;
 mod population;
+
+pub(crate) use input::{check_baseline, ratio_sample};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -349,20 +352,6 @@ pub(crate) fn append_step_summary(path: &Path, markdown: &str) -> Result<(), Str
         .map_err(|err| format!("open step summary {}: {err}", path.display()))?;
     file.write_all(markdown.as_bytes())
         .map_err(|err| format!("write step summary {}: {err}", path.display()))
-}
-
-/// A baseline must be an earlier dx-scoreboard report; any other JSON would
-/// make every metric "absent from baseline" and pass the gate.
-pub(crate) fn check_baseline(value: Value) -> Result<Value, String> {
-    if value["schema_version"].as_str() != Some(SCHEMA_VERSION) {
-        return Err(format!(
-            "baseline schema_version must be `{SCHEMA_VERSION}`"
-        ));
-    }
-    if !value["metrics"].is_array() {
-        return Err("baseline has no metrics array".to_string());
-    }
-    Ok(value)
 }
 
 pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
@@ -2146,35 +2135,6 @@ fn spec_example_coverage_sample(metric: &MetricDef, dir: &str, pointer: &str) ->
             outcome: SampleOutcome::Failed,
             detail: err,
         },
-    }
-}
-
-pub(crate) fn ratio_sample(metric: &str, path: &str, pointer: &str, json: &Value) -> Sample {
-    let mut node = json;
-    for part in pointer.split('.').filter(|part| !part.is_empty()) {
-        node = &node[part];
-    }
-    let numerator = node["numerator"].as_f64();
-    let denominator = node["denominator"].as_f64();
-    let (outcome, detail) = match (numerator, denominator) {
-        (Some(n), Some(d)) if d > 0.0 => (
-            SampleOutcome::Value(n / d),
-            format!("{path} {pointer}: {n}/{d}"),
-        ),
-        (Some(_), Some(_)) => (
-            SampleOutcome::NotMeasured,
-            format!("{path} {pointer}: denominator is 0, no eligible cases yet"),
-        ),
-        _ => (
-            SampleOutcome::Failed,
-            format!("{path} {pointer}: missing numerator/denominator"),
-        ),
-    };
-    Sample {
-        metric: metric.to_string(),
-        repo: None,
-        outcome,
-        detail,
     }
 }
 
