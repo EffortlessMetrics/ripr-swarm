@@ -12,7 +12,7 @@
 //!   whole debug text of the owner's result;
 //! - **insta**: `assert_json_snapshot!(value)` compares a snapshot kept in a
 //!   committed file ripr does not read, and no redaction names the changed
-//!   field;
+//!   field, or the map's selectors cannot be read;
 //! - **fixture receiver**: the changed tail is a closure over a field of
 //!   `self`, and the test pins `helper().owner(..)` or `let x = helper();
 //!   x.owner(..)` to a literal, so the closure runs over data ripr does not
@@ -56,6 +56,7 @@ enum Idiom {
     MockClosure,
     ExpectDebug,
     InstaSnapshot,
+    InstaSettings,
     FixtureReceiver,
     RecordingDouble,
     LocalExecutor,
@@ -75,6 +76,9 @@ impl Idiom {
             }
             Idiom::InstaSnapshot => {
                 "compares the owner's result with an insta snapshot kept outside the source, and no redaction names the changed field"
+            }
+            Idiom::InstaSettings => {
+                "compares the owner's result with an insta snapshot under settings or redactions that ripr does not read"
             }
             Idiom::FixtureReceiver => {
                 "pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over"
@@ -151,8 +155,10 @@ pub(in crate::analysis) fn withhold_framework_oracle_gap(
                 Idiom::MockClosure
             } else if direct && expect_debug_literal(test, &owner.name) {
                 Idiom::ExpectDebug
-            } else if direct && insta_leaves_field_unredacted(test, changed_text, &owner.name) {
-                Idiom::InstaSnapshot
+            } else if direct
+                && let Some(idiom) = insta_field_snapshot_limit(test, changed_text, &owner.name)
+            {
+                idiom
             } else if strong
                 && direct
                 && family == ProbeFamily::ReturnValue
@@ -726,13 +732,11 @@ fn expect_debug_literal(test: &TestFact, owner: &str) -> bool {
         .starts_with(|ch: char| ch.is_alphanumeric() || matches!(ch, '[' | '(' | '{' | '-'))
 }
 
-/// An insta snapshot macro with no inline `@` literal, on a changed struct
-/// field initializer that no redaction names. The unredacted field is
-/// serialized into a committed file ripr does not read, so it is withheld,
-/// including a sibling beside a redaction map. A field the map's selector
-/// names, and any other changed line, keep the gap. Selectors are read from
-/// the top-level braced map only, with ordinary and raw string keys (#6642).
-fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &str) -> bool {
+/// An owner-bound field snapshot with unread selectors, or with an unredacted
+/// field whose external expected bytes are unread. Literal selectors keep the
+/// existing redacted-field gap. Unknown selectors cannot establish that gap,
+/// including beside inline expected text (#6642, #13035).
+fn insta_field_snapshot_limit(test: &TestFact, changed_text: &str, owner: &str) -> Option<Idiom> {
     let raw: &str = &test.body;
     let code = masked(raw);
     // Redactions and filters set outside the macro are not read.
@@ -740,9 +744,12 @@ fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &st
         .iter()
         .any(|name| code.contains(name))
     {
-        return false;
+        return None;
     }
-    let mut found = false;
+    // Only a struct field the snapshot serializes: other changed lines keep
+    // their existing disposition. An unread map alone is not a witness.
+    let field = field_name(changed_text)?;
+    let mut found = None;
     for macro_name in INSTA_MACROS {
         for (at, _) in code.match_indices(macro_name) {
             if !code[..at].chars().next_back().is_none_or(boundary) {
@@ -752,9 +759,6 @@ fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &st
                 continue;
             };
             let arguments = &code[from..to];
-            if arguments.contains('@') {
-                continue;
-            }
             // The snapshotted value follows an optional literal name; the
             // masked text hides a literal, so the original shows it.
             let parts = split_arguments(arguments);
@@ -773,28 +777,26 @@ fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &st
             if !derives_from_owner(&code, at, &arguments[start..end], owner) {
                 continue;
             }
-            // Only a struct field the snapshot serializes: a changed
-            // predicate or arm shapes the whole rendering, which the
-            // snapshot weakly checks as before.
-            let Some(field) = field_name(changed_text) else {
-                continue;
-            };
             // A redaction map that names the field replaces it in the
             // snapshot, so the gap stays; an unredacted sibling beside a map,
             // or no map at all, is serialized into a committed file ripr does
             // not read, so it is withheld (#6642).
             let Some(selectors) = redaction_selectors(&raw[from..to]) else {
-                // Unreadable redaction configuration does not establish that
-                // the changed field survives into the snapshot.
-                continue;
+                // Not reading a selector establishes neither that the field
+                // survives nor that it is redacted. Preserve that uncertainty
+                // even when expected bytes are inline in the source.
+                return Some(Idiom::InstaSettings);
             };
+            if arguments.contains('@') {
+                continue;
+            }
             if selectors
                 .iter()
                 .any(|selector| selector.split(boundary).any(|s| s == field))
             {
                 continue;
             }
-            found = true;
+            found = Some(Idiom::InstaSnapshot);
         }
     }
     found
@@ -1023,7 +1025,8 @@ mod tests {
 }
 ";
         assert!(
-            insta_leaves_field_unredacted(&test_named(match_operand, "snap")?, items_change, owner),
+            insta_field_snapshot_limit(&test_named(match_operand, "snap")?, items_change, owner)
+                .is_some(),
             "match arms in the operand must not masquerade as a redaction map"
         );
         Ok(())
@@ -1046,7 +1049,8 @@ mod tests {
         // The field the map names is replaced in the snapshot: the gap stays.
         for source in [&ordinary, &raw_key] {
             assert!(
-                !insta_leaves_field_unredacted(&test_named(source, "snap")?, id_change, owner),
+                insta_field_snapshot_limit(&test_named(source, "snap")?, id_change, owner)
+                    .is_none(),
                 "a redacted field keeps its gap"
             );
         }
@@ -1054,7 +1058,8 @@ mod tests {
         // serialized into a committed file ripr does not read: withheld.
         for source in [&ordinary, &raw_key, &whole_object] {
             assert!(
-                insta_leaves_field_unredacted(&test_named(source, "snap")?, items_change, owner),
+                insta_field_snapshot_limit(&test_named(source, "snap")?, items_change, owner)
+                    .is_some(),
                 "an unredacted field is withheld"
             );
         }

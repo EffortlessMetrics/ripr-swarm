@@ -446,7 +446,6 @@ fn insta_redaction_selectors_survive_unicode_and_nested_values() -> Result<(), S
         "{ \".id\" => insta::rounded_redaction(2), \".items\" => \"[n]\" }",
         "{ \".id\" => choose::<u8, u16>(), \".items\" => \"[n]\" }",
         "{ /* key */ \".items\" /* arrow */ => /* value */ 0 }",
-        "{ SELECTOR => 0 }",
         "match /* redactions */ .. { \".items\" => 0 }",
         "{ \".id\" => -1.5, \".items\" => \"[n]\" }",
         "{ \".id\" => réponse, \".items\" => \"[n]\" }",
@@ -464,6 +463,51 @@ fn insta_redaction_selectors_survive_unicode_and_nested_values() -> Result<(), S
         "unredacted sibling beside an expression value",
     )?;
     Ok(())
+}
+
+#[test]
+fn unread_insta_selectors_withhold_changed_fields() -> Result<(), String> {
+    let id = diff(
+        8,
+        "        id: format!(\"{}-0\", prefix),",
+        "        id: format!(\"{}-1\", prefix),",
+    );
+    let items = diff(
+        9,
+        "        items: items.len(),",
+        "        items: items.iter().count(),",
+    );
+    for assertion in [
+        "const SELECTOR: &str = \".id\"; insta::assert_json_snapshot!(record, { SELECTOR => \"[id]\" });",
+        "const SELECTOR: &str = \".items\"; insta::assert_json_snapshot!(\"record\", record, { SELECTOR => \"[items]\" });",
+        "const SELECTOR: &str = \".id\"; insta::assert_json_snapshot!(record, { \".items\" => \"[items]\", SELECTOR => \"[id]\" });",
+        "const SELECTOR: &str = \".id\"; insta::assert_json_snapshot!(record, match .. { SELECTOR => \"[id]\" });",
+        "const SELECTOR: &str = \".id\"; insta::assert_json_snapshot!(record, { SELECTOR => \"[id]\" }, @\"Record\");",
+    ] {
+        for (edit, line) in [(&id, 8), (&items, 9)] {
+            withheld(&insta_source(assertion), edit, line, assertion)?;
+            for finding in findings_on(&insta_source(assertion), edit, line)? {
+                assert!(
+                    finding
+                        .recommended_next_step
+                        .as_deref()
+                        .is_some_and(|step| {
+                            step.contains("settings or redactions that ripr does not read")
+                        }),
+                    "unread selectors need accurate advice: {finding:?}"
+                );
+            }
+        }
+    }
+    // Unread configuration still needs a snapshot of the owner's result.
+    keeps_gap(
+        &insta_source(
+            "const SELECTOR: &str = \".items\"; let other = 5; insta::assert_json_snapshot!(other, { SELECTOR => \"[items]\" });",
+        ),
+        &items,
+        9,
+        "unread selector on an unrelated snapshot operand",
+    )
 }
 
 #[test]

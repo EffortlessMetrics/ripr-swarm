@@ -406,17 +406,24 @@ non-ignored related test matches one of these shapes:
   strict snapshot grader names the owner by its identifier, so a different
   receiver's `other.own(..)` or a shadowed `own` is read as the owner; aliasing
   and escape are not followed.
-- **insta**: a `direct_owner_call` test with a snapshot macro that has no
-  inline `@` literal, whose snapshotted value (after an optional literal name)
-  derives from the owner as above (a live binding at the assertion), and no `add_redaction`, `with_settings` or `Settings`,
-  on a changed `field:` initializer that no redaction selector (a literal
-  keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
-  keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
-  does a redacted field (`lib-insta-json-redacted-id`). Selector scanning preserves UTF-8
-  boundaries through Unicode whitespace and uses Rust expression syntax for
-  redaction values, including generic calls, closures and comment trivia.
-  An unreadable map or nonliteral key does not establish that a changed field
-  is unredacted; it cannot justify this gap-withholding rule.
+- **insta**: a `direct_owner_call` test whose snapshotted value (after an
+  optional literal name) derives from the owner as above (a live binding at
+  the assertion), with no `add_redaction`, `with_settings` or `Settings`, and
+  a changed `field:` initializer. With no inline `@` literal, an unredacted
+  field is serialized into expected bytes ripr does not read and is withheld.
+  A readable redaction selector (a literal keyed by `=>`, such as `".id"` or
+  `"[].id"`) naming the field keeps the gap (`lib-insta-json-redacted-id`).
+  Any other changed line keeps the gap (the `snapshot_oracle` fixture's changed
+  predicate). Selector scanning preserves UTF-8 boundaries through Unicode
+  whitespace and uses Rust expression syntax for redaction values, including
+  generic calls, closures and comment trivia.
+  An unreadable map or nonliteral key establishes neither that the changed
+  field is serialized nor that it is redacted. After the owner-result and
+  changed-field gates, it therefore keeps `static_unknown` with the existing
+  `rust_framework_oracle_unresolved` limitation and unread-redaction advice
+  (#13035). This also applies beside inline expected text: readable bytes do
+  not resolve unread selectors. Ordinary inline snapshots keep their existing
+  disposition; Settings/`with_settings!` configuration is a separate reader.
 - **fixture receiver** (#9609): a `return_value` probe whose changed line
   holds a closure (`|..|`, `move |..|` or `|| ..` opening an argument; a boolean or bitwise `||` / `|` is not one) in a `&self` method, and a `direct_owner_call` test
   with a strong assertion: an `assert_eq!` with a literal (number, string,
@@ -1171,6 +1178,9 @@ Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
 - `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
 - `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
 - `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
+- `unread_insta_selectors_withhold_changed_fields` retains typed uncertainty
+  for constant selectors, named and match-prefixed maps, mixed literal/constant
+  keys and inline expected text, while unrelated snapshot operands keep a gap.
 - `fixtures/fixture_receiver_coincident_data` and its independent honesty case
   retain equal-column, single-row product/sum and all-zero product/sum refusals.
 - `fixture_receiver_literal_pin_reads_helper_data` and
