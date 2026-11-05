@@ -457,6 +457,17 @@ mod tests {
 
     /// Returns (evaluated seams, selected `(owner, why_now)`, warnings).
     fn run_fixture(label: &str, lib: &str, narrow: bool) -> Result<FixtureRun, String> {
+        run_fixture_at(label, lib, narrow, true)
+    }
+
+    /// `hit` false points the changed line and owner at nothing, so no
+    /// first-stage seam matches and every seam is a fallback.
+    fn run_fixture_at(
+        label: &str,
+        lib: &str,
+        narrow: bool,
+        hit: bool,
+    ) -> Result<FixtureRun, String> {
         let root = std::env::temp_dir().join(format!(
             "ripr-bounded-{label}-{}-{narrow}",
             std::process::id()
@@ -473,8 +484,9 @@ mod tests {
         }
         let mut working_set =
             AgentBriefResolvedWorkingSet::files(vec![PathBuf::from("src/lib.rs")]);
-        working_set.changed_lines = vec![AgentBriefLine::new("src/lib.rs", 2)];
-        working_set.changed_owners = vec![AgentBriefChangedOwner::new("src/lib.rs", 2, "eligible")];
+        let (line, owner) = if hit { (2, "eligible") } else { (90, "absent") };
+        working_set.changed_lines = vec![AgentBriefLine::new("src/lib.rs", line)];
+        working_set.changed_owners = vec![AgentBriefChangedOwner::new("src/lib.rs", line, owner)];
         let config = RiprConfig::default();
         let mut brief =
             BoundedAgentBrief::new(&working_set, 10, AgentBriefPolicy::from_config(&config))?;
@@ -569,5 +581,20 @@ mod tests {
         assert!(scope.can_match_non_fallback(&caller.seam, true));
         assert!(!scope.related_tests_possible([Path::new("tests/other.rs")]));
         assert!(scope.related_tests_possible([Path::new("./src/lib.rs")]));
+    }
+
+    #[test]
+    fn without_a_first_stage_match_nothing_is_skipped() -> Result<(), String> {
+        let (wide, wide_sel, wide_warn) = run_fixture_at("nm-wide", LIB_PLAIN, false, false)?;
+        let (narrow, narrow_sel, narrow_warn) =
+            run_fixture_at("nm-narrow", LIB_PLAIN, true, false)?;
+        assert!(
+            narrow.iter().any(|id| id.contains("caller.rs")),
+            "with no scoped match every seam is a fallback and must be evaluated: {narrow:?}"
+        );
+        assert_eq!(wide, narrow);
+        assert_eq!(wide_sel, narrow_sel);
+        assert_eq!(wide_warn, narrow_warn);
+        Ok(())
     }
 }
