@@ -294,7 +294,7 @@ fn native_muse_envelope_joins_pins_without_aliasing_namespaces() -> Result<(), S
     failed["observations"]["setup"]["status"] = json!("failed");
     failed["observations"]["setup"]["plugin_loaded"] = json!(false);
     failed["observations"]["setup"]["mcp_available"] = json!(false);
-    let err = to_input(&failed).err().ok_or("ready setup accepted failed MCP")?;
+    let err = to_input(&failed).err().ok_or("failed setup accepted")?;
     assert!(err.contains("canonical setup context"), "{err}");
     failed["mcp"]["setup_outcome"] = json!("server_unavailable");
     to_input(&failed)?;
