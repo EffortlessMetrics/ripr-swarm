@@ -34,10 +34,11 @@ requires review. After editing the package's installation source, run
 `muse plugins update ripr --json`, then inspect it again. Approval covers the
 whole installed package: even a README or skill edit returns an approved MCP
 capability to `modified`. That state and `review_needed` both require review
-and approval of the current package before the server can load. An unchanged
-update retains approval. Installation, approval, and package updates take effect
-in new sessions; start a fresh session after the capability is
-`trusted_enabled`. Muse's [trust rules](https://meta-models.github.io/muse-code-sdk/next/guides/plugins/concepts/trust-review-and-scopes/)
+and approval of the current package before the server can load in a new session.
+An unchanged update retains approval. An existing session keeps its already
+started MCP server, while updated skills refresh on the next prompt. Start a
+fresh session after the capability is `trusted_enabled` to activate the current
+MCP declaration. Muse's [trust rules](https://meta-models.github.io/muse-code-sdk/next/guides/plugins/concepts/trust-review-and-scopes/)
 define these states.
 
 The manifest does not specify `--root`. The MCP process resolves its root at
@@ -87,8 +88,11 @@ Manifest validation establishes package structure, not tool discovery or a
 successful repair.
 
 The [evaluation suite](../../benchmarks/muse-plugin/README.md) defines eight
-scenarios and the retained evidence boundaries. Its
-[run-record schema](../../schemas/ripr/muse-plugin-eval.schema.json) is distinct
-from the scenario expected-verdict files and historical prose receipts.
+scenarios and the retained evidence boundaries. The shared evaluation consumer
+owns the canonical `schemas/ripr/muse-plugin-eval.schema.json` and its version
+bindings ([#13120](https://github.com/EffortlessMetrics/ripr-swarm/issues/13120),
+implemented in [#13165](https://github.com/EffortlessMetrics/ripr-swarm/pull/13165));
+this package does not publish an independent schema. The full run-record schema
+is distinct from the scenario expected-verdict files and historical prose receipts.
 Plugin results report beside the DX scoreboard; these runs do not change
 scoreboard baselines or establish effectiveness targets.

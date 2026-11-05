@@ -8,8 +8,14 @@ The retained observations below do not establish that the entire suite passed.
 ## Run contract
 
 For acceptance, a new run must produce one `muse-plugin-eval-v1` record matching
-[the run-record schema](../../schemas/ripr/muse-plugin-eval.schema.json), plus
-retained raw evidence: the unchanged initial fixture, exact edits and Git diff,
+the canonical `schemas/ripr/muse-plugin-eval.schema.json`. The shared evaluation
+consumer owns that schema and its version bindings
+([#13120](https://github.com/EffortlessMetrics/ripr-swarm/issues/13120), implemented
+in [#13165](https://github.com/EffortlessMetrics/ripr-swarm/pull/13165)); this
+package does not publish an independent schema. Complete run-record validation
+depends on that canonical consumer.
+
+Retain raw evidence: the unchanged initial fixture, exact edits and Git diff,
 actual MCP exchange, before/after artifacts, executed test results, original
 transcript, and log digests. The existing receipts are historical Markdown
 summaries; no completed machine-readable run record is committed here yet.

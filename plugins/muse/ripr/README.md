@@ -117,7 +117,8 @@ and server declaration before approving the new package.
 
 A change to any package file, including this README or a skill, returns an
 approved MCP capability to `modified`, even when the manifest is unchanged.
-Both `modified` and `review_needed` leave the server inactive. After reviewing
+Both `modified` and `review_needed` prevent the server from loading in a new
+session; an existing session retains its already started server. After reviewing
 the current package, repeat `muse plugins approve plugin:ripr:mcp_server:core
 --json`, inspect for `trusted_enabled`, and start a fresh session from the
 target repository. An update with identical package content retains approval.
@@ -247,7 +248,7 @@ build `7fd1d0e00591d0b9cc18ce8a8f5a5130a037b7a3`:
 
 These are historical reported observations, not a fresh run of every scenario
 or validation of later package revisions. The suite currently retains these
-prose summaries and a run-record schema, not a committed machine-readable
+prose summaries, not a committed machine-readable
 `muse-plugin-eval-v1` run record. Repeated reproduction, comparative
 with/without-plugin effectiveness, elapsed-time targets, peak memory, and
 cross-agent plugin compatibility remain unestablished by these receipts.
