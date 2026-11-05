@@ -233,6 +233,14 @@ fn parameter_fields(
                 .or_default() += 1;
         }
     }
+    let all_parameters: BTreeSet<_> = function
+        .param_list()?
+        .params()
+        .filter_map(|parameter| match parameter.pat()? {
+            ast::Pat::IdentPat(pattern) => Some(pattern.name()?.text().to_string()),
+            _ => None,
+        })
+        .collect();
     let statements = body.stmt_list()?;
     let mut writes = BTreeMap::<String, usize>::new();
     let mut admitted_methods = 0;
@@ -241,12 +249,16 @@ fn parameter_fields(
         .filter_map(|statement| expression(&statement))
         .chain(statements.tail_expr())
     {
-        if let Some(field) = parameter_write(expression.clone(), parameters) {
+        // Unchanged arguments may still be written to other fields. They
+        // establish only bounded execution, never the selected payload carrier.
+        if parameter_write(expression.clone(), &all_parameters).is_some() {
             admitted_methods += expression
                 .syntax()
                 .descendants()
                 .filter(|node| ast::MethodCallExpr::can_cast(node.kind()))
                 .count();
+        }
+        if let Some(field) = parameter_write(expression, parameters) {
             *writes.entry(field).or_default() += 1;
         }
     }
