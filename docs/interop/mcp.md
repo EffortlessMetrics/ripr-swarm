@@ -327,7 +327,7 @@ configuration stays unloaded.
 
 Gap-list responses use `ripr-mcp-gap-list-v5`, including typed refusals.
 The prior v1 success schema forbids unknown top-level properties, so the new
- `filtered` and `filters` fields required the v2 change; v3 adds the snapshot's
+`filtered` and `filters` fields required the v2 change; v3 adds the snapshot's
 typed `outcome` block (`kind`, a plain label, and the outcome limitation
 kinds), so a `partial_with_limitations` run never reads as clean; v4 adds the
 independently windowed omission disclosure (`omitted_page`, `omitted_offset`).
