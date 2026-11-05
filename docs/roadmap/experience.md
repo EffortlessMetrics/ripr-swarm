@@ -1,13 +1,46 @@
 # Path to a great default-tool experience
 
-Tracking issue: #9278. The 0.11 cut has its own tracker (#9271); this page is the
-experience bar only, and says per gap whether it blocks 0.11 or can follow it.
+[#9278](https://github.com/EffortlessMetrics/ripr-swarm/issues/9278)
+owns ranked experience gaps;
+[#1693](https://github.com/EffortlessMetrics/ripr-swarm/issues/1693)
+owns repeated useful ordinary work. Start with the
+[product roadmap](../ROADMAP.md#now-continue-the-existing-work) and
+[current implementation priorities](../IMPLEMENTATION_PLAN.md#current-delivery-priorities),
+then read the linked issue and existing PR. Release selection stays with
+[#2766](https://github.com/EffortlessMetrics/ripr-swarm/issues/2766)
+under [#2379](https://github.com/EffortlessMetrics/ripr-swarm/issues/2379);
+this page does not choose release blockers.
 
-Bar: ripr is the tool a developer reaches for by default. That means a fast
-and light inner loop, verdicts that are trustworthy and say why and what to do
-next when they refuse, frictionless install and first run, and behavior that
-holds on real-world and hostile inputs. Every gap gets a scoreboard row with a
-trend and a regression gate. Fixes keep the actionability flip fail-closed.
+The target is a fast, bounded loop that identifies a useful finding, correct
+no-action result, or precise limitation; explains a usable next action; and
+keeps native verification separate from static evidence. Improve that outcome
+on real changes while preserving failed, limited, and abandoned journeys.
+
+## Current interpretation of the retained measurements
+
+The dated tables below preserve their subjects, revisions, and measurement
+limits. They do not describe current main. Use the
+[metric definitions and instruments](../METRICS.md), the committed scoreboard
+receipts, and each issue's latest acceptance to judge current performance.
+Single runs, different binaries or hosts, and fast refusals are not equivalent
+completed-work comparisons.
+
+The October 25 claim that all three first-run crates were `exposed` was an
+instrument error: the walk read a human legend as a verdict.
+[#11519](https://github.com/EffortlessMetrics/ripr-swarm/issues/11519)
+closed against narrowed acceptance after
+[merged PR #12984](https://github.com/EffortlessMetrics/ripr-swarm/pull/12984)
+recorded the honest `static_unknown` baseline and repaired the first-view
+read budget. That establishes neither three exposed results nor broad analyzer
+accuracy. Verdict follow-ups remain with
+[#12981](https://github.com/EffortlessMetrics/ripr-swarm/issues/12981) and
+[#11884](https://github.com/EffortlessMetrics/ripr-swarm/issues/11884).
+
+## Historical experience snapshots
+
+The following gap dispositions, release columns, and "met" assessments belong
+to their original observation windows. Retain their evidence; re-read live
+owners before selecting work or interpreting a row as a current blocker.
 
 Sources differ by row. The first-run timings were measured on main 4d91ae82
 on 2026-10-21 (release build, 4-core Linux container, one run each, not
@@ -30,7 +63,7 @@ as the previous point on each trend.
 | Inner loop, `ripr-swarm` itself | warm check 25 to 87 s on product Rust diffs | one-line edit under `crates/ripr`: 27 s first, then 15.1 s and 15.0 s against a 2 s target | misses; owned by the warm-check work |
 | Verdict trust, Rust | 5/499 false verdicts | 5/636 (0.8%), contradictions 0/804, spec examples 202/205, oracle accuracy 44/44, operator grid 21/21 | rate down from 1.0% to 0.8%; the five remaining rows were not re-triaged for owners here |
 | Verdict trust, other languages | TS 3/178, Python 0/80, Perl 0/94 on the #8979 candidate (the TS and Python figures predate it) | coordinator figures of 2026-10-24: TS 9/351, Python 2/224, Perl 2/81 (counts rose with the corpus) | owned by the corpus threads |
-| Adoption, first impression | 2 of 3 first-run crates ended `static_unknown` | all three end `exposed` (semver, fastrand, bytesize); generated workflow 174 lines and installs the published release | #9276 looks fixed on main; confirm and close |
+| Adoption, first impression | 2 of 3 first-run crates ended `static_unknown` | Historical instrument error: the apparent three `exposed` results came from parsing the human legend, corrected by #11519. #12984 records the honest `static_unknown` baseline. | Superseded measurement; this row does not establish analyzer improvement or current acceptance. |
 | Hostile input | oversized diff all-or-nothing (#9277) | `--path`/`--exclude` shipped (#9330); an empty filter is an error; `@generated` files are skipped; 20,000-deep parentheses, a 50 MB single line (34 s), a symlink loop, BOM with CRLF, a Unicode path, no manifest, a syntax error and 3,000 nested modules all finish without a panic | meets, with the gap below |
 | Hostile input, size scaling | `cargo xtask size-scaling` fails when wall time stops being linear in input size (nightly on a release binary in `size-scaling.yml`, advisory, report kept as an artifact; memory is not measured); `cargo xtask warm-ab` times a warm check of two pinned ripr-on-ripr diffs against a baseline build on one runner and fails past 1.5x (#10639) | probe of 2026-10-25 (debug build, one run each): Python production file 3.6 s/MB, Rust production 4.7 s/MB, both linear; TypeScript test file 5 MB single line 187 s before #10330 and about 20 s after; Python test file with 8,000 tests 13 s and 3.6 GB before #10359 and 2 s and 93 MB after; Rust test file 20 s at 1 MB, 49 s at 2 MB, 114 s at 4 MB (20 to 28 s/MB), time 2.1x to 2.5x per doubling, no single site found (#10363); 3,000-deep nesting and 17 MB files end in 0.1 s with a named limitation in all three; Perl not established without a producer (#10364) | misses; gate and trend row owned by #10362, TypeScript residuals on #10017 |
 | Agent loop | not on this page | last measured 2026-10-04 on an older build: 17 to 21 `ripr` commands and 19 to 22 tool steps to close one gap (targets 10 and 15); no baseline compare gates it | unmeasured on main and ungated (#10183) |
@@ -47,6 +80,10 @@ the path-dependency graph is limited and dependents may be missed. The
 disclosure never reaches machine consumers (#10182).
 
 ## What meets the bar today
+
+Historical October 2026 observations follow; "today" refers to the original
+snapshot, not current main. Current-subject evidence is needed before treating
+these rows as met.
 
 - Warm loop on small repos (single manual walk, not fixture-covered): `cargo xtask first-run` steps all at or under
   0.4 s (doctor 0.07 s, check 0.18 to 0.21 s, pilot 0.13 to 0.30 s,

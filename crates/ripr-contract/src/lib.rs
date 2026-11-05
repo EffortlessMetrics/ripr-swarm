@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Contract types shared by the `ripr` facade and its internal support
 //! crates (ADR 0027, #8382/#12726).
 //!

@@ -47,6 +47,7 @@ mod kani_lane;
 mod public_proof;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
+mod current_state;
 mod exact_candidate_harness;
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
@@ -61,6 +62,8 @@ mod native_libtest;
 mod no_panic;
 mod orchestration_attempt;
 mod output_enum_contracts;
+#[cfg(test)]
+mod output_properties;
 mod package_qualification;
 mod packaged_repair_receipt;
 mod policy;
@@ -75,6 +78,7 @@ mod python_judged_panel_replay;
 mod python_judged_panel_report;
 mod readiness_snapshot;
 mod repo_readiness;
+mod repository_orientation;
 mod ripr_agent_disposition;
 mod schema_pattern;
 mod size_scaling;
@@ -23981,6 +23985,14 @@ fn network_policy_patterns() -> Vec<String> {
         concat!("async-", "std"),
         concat!("Invoke-", "WebRequest"),
         concat!("Invoke-", "RestMethod"),
+        // Python network literals (#13092): stdlib fetch/socket surfaces
+        // that were previously invisible in tracked .py files. Split with
+        // concat! so the gate does not flag its own source. Deliberately
+        // excludes urllib.parse, which performs no network behavior.
+        concat!("urllib.", "request"),
+        concat!("url", "open"),
+        concat!("import so", "cket"),
+        concat!("http.", "client"),
     ]
     .iter()
     .map(|value| value.to_string())
