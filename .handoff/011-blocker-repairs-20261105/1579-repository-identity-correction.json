@@ -1,0 +1,9 @@
+{
+  "correction": "Prior0.13scope attribution conflated issue numbers across repositories. Swarm1579 is editor/MCP real-repair usefulness; publicripr1579 is precise error-return limitation. The policy exclusion cannot defer the public contract.",
+  "primary": [
+    "https://github.com/EffortlessMetrics/ripr-swarm/issues/1579",
+    "https://github.com/EffortlessMetrics/ripr/issues/1579",
+    "https://github.com/EffortlessMetrics/ripr/pull/1726"
+  ],
+  "consequence": "No golden was blessed for the unmet contract; it stays red. Preserve the actual source acceptance and repair bounded producer path, without general interprocedural analysis."
+}
