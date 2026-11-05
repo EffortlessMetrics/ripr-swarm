@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized] target(s) in 0.41s
+     Running unittests src/lib.rs (/workspace/12010-proof/target/debug/deps/ripr-7f72c4b83423df9b)
+
+running 3 tests
+test analysis::seam_cache::tests::favorable_classified_predecessors_miss_and_current_values_reuse ... ok
+test analysis::seam_cache::tests::favorable_shard_predecessors_are_refused_with_current_outer_key ... ok
+test analysis::witness::tests::favorable_stage_plus_absent_stage_cannot_collapse_to_equality ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 18173 filtered out; finished in 1.38s
+

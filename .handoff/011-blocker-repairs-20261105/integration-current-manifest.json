@@ -266,7 +266,7 @@
     "promotion trust hold",
     "release selection scope_pending"
   ],
-  "status": "not fully qualified; no remote CI request, protected merge, settings change or release performed",
+  "status": "Historical CAF candidate: compatibility44+6+70 and cache3 passed; schema9pass/2fail stale1.160 consumer pins stopped pipeline. Superseded by separately composed current-main carrier; not current release qualification.",
   "subsequent_delta_review": "cdbb-to-b6ae31 cumulative observer delta published; independent affected review pending",
   "clippy_diagnostic": {
     "base": "b135d8cf382821bcd6deafff8ca50dc02547d852",
@@ -305,5 +305,6 @@
     },
     "qualification": "first/last named/anonymous/glob negatives and standard/unused-dependency positives passed static/native controls; remaining full/native gates pending"
   },
-  "local_execution_adapter": "caf5114-qualification-cargo-adapter.json; local qualification only, not installed-journey environment"
+  "local_execution_adapter": "caf5114-qualification-cargo-adapter.json; local qualification only, not installed-journey environment",
+  "successor_manifest": "importer-binding-manifest.json"
 }

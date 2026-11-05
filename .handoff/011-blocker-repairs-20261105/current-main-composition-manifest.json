@@ -1,6 +1,6 @@
 {
-  "candidate": "3d82fd6d0b9ae02b0f204c1d5fc84ebd2e4aa045",
-  "tree": "ef4acd3d8d8d7019b68465ea0dc9ec908114cc30",
+  "candidate": "e133ffc21a8acdd3eed6734373465ab83b03c226",
+  "tree": "945114e13bdd8c02bf5b8ac429837b838465cbfd",
   "branch": "successor/011-current-main-20261105",
   "main_basis": "2c400f512f3f3e67b68fd340bfb998e72b3c8380",
   "core_predecessor": "caf5114c3c0693e61030fcd087a1f9babac80e60",
@@ -9,11 +9,11 @@
     "full": "1.163",
     "sharded_compact": "0.165"
   },
-  "status": "147 predecessor completed full18174/0/2 and affected checks; new proven dependency-alias defect repaired, focused qualification running; portable fixture epoch refresh pending",
+  "status": "Frozen importer repair: source-identical3d82 native16-pair integration and10 producer replay controls passed; e133 current driver/schema11/cache3 passed; compatibility and remaining qualification running",
   "consumer_pin_repair": "cc65646ecdbb78b51a01f35ad435106ba94c85b8 updates both corpus consumer constants and worked OUTPUT_SCHEMA examples to1.162",
   "running": {
-    "session": 67245,
-    "phase": "importer-alias-native-controls"
+    "session": 83479,
+    "phase": "owner-call-compatibility"
   },
   "prior_caf_terminal": {
     "compatibility": [
