@@ -1,6 +1,6 @@
 {
-  "candidate": "8f6121183b26fc2cdc56f8c01a34f3e3cdd9d68d",
-  "tree": "f1b1d725f2ad76deea7ba7ea943a42dd0e2aec21",
+  "candidate": "2de3449b72eb51f5c4976bad86213b104f8356f2",
+  "tree": "e39302e5715990210a17e4d0084fa2a5c668ad3f",
   "branch": "successor/011-integration-20261105",
   "product_source_review": {
     "candidate": "3424553ce6b55732b3403fa327722b51a295f3b7",
@@ -17,10 +17,11 @@
   },
   "current_delta": {
     "base": "3424553ce6b55732b3403fa327722b51a295f3b7",
-    "path": "8f612-observer-preservation-delta.patch",
-    "bytes": 28605,
-    "sha256": "4c0ad55405ed2f3101ae6e4c338c5894f69d923b9d8fec25bf5ce814fff0a33b",
-    "meaning": "reuse canonical element-field and chain-entry identity for supported observers; per-assertion negative controls; correct sparse payload fixture; align current corpus consumers and nested docs to cache1.160"
+    "path": "2de344-observer-preservation-complete.patch",
+    "bytes": 33012,
+    "sha256": "00fea12dfb66b3fe78a08bef8219890a9d70ced9bc11ba8c748085fc6d4935e1",
+    "incremental_from_e76": "2de344-context-delta.patch",
+    "meaning": "selected canonical array field/return pins and bound wrapper-entry identity; real Cargo/parser fixture contexts; current cache schema consumers and docs"
   },
   "retained_policy_leaves": {
     "allow_attributes": 0,
@@ -29,39 +30,47 @@
     "full_policy": "FD045 aggregate ci-policy exit 0; exact current refresh pending"
   },
   "qualification": {
-    "status": "running locally on frozen current commit",
-    "tool_session": 48003,
-    "current_phase": "production and native-path controls compiling",
-    "prior_candidate": "3424553ce6b55732b3403fa327722b51a295f3b7",
+    "status": "current sequential guarded runtime pipeline running",
+    "tool_session": 16886,
+    "current_phase": "array-return library test compilation",
+    "prior_candidate": "e76bd86315b4992657732943f1a8642b279a5948",
     "prior_exact_results": {
-      "cfg_controls": [
-        19,
+      "production": [
+        11,
         0
       ],
-      "macro_controls": [
-        33,
+      "native_paths": [
+        4,
         0
       ],
-      "reveal": [
-        159,
+      "schema_doc_contracts": [
+        11,
         0
       ],
-      "full_library": {
-        "passed": 18080,
-        "failed": 6,
-        "ignored": 2
-      }
+      "array_library_fixture": [
+        0,
+        1
+      ],
+      "payload_fixture": [
+        0,
+        1
+      ],
+      "helper_reach": [
+        42,
+        3
+      ]
     },
-    "prior_failures": "342455-full-library-failures.txt",
-    "current_six_repairs": "bounded array projection origin; assertion-local forwarding helper origin; synthetic payload positive/negative; current xtask/LSP corpus constants and nested rerun documentation",
+    "diagnosis": "production array positive and negatives passed both companion findings; array unit lacked Cargo closure; sparse payload fixture lacked parsed assertion source; mixed direct callers left the valid wrapper as same_test_file and stopped global chain",
+    "current_repairs": "real closed Cargo and parsed fixture contexts; existing single-wrapper producer plus exact whole-entry pin supplies identity independently of coarse relation; no new arm-selection or observation credit",
+    "prior_full": "342455-final-full-lib-receipt.json",
     "native_checks_pending": [
-      "focused/full runtime",
+      "scoped/full runtime",
       "native check-fast",
       "ci-policy",
       "goldens",
       "promotion honesty"
     ],
-    "remote_actions": "ordinary successor/evidence publication; no remote CI requested, protected merge, settings or release performed"
+    "remote_actions": "ordinary successor/evidence publication; no remote CI requested, protected merge/settings/release performed"
   },
   "history": {
     "public_source": "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a",
@@ -76,7 +85,7 @@
     "release selection scope_pending"
   ],
   "status": "not fully qualified; no remote CI request, protected merge, settings change or release performed",
-  "subsequent_delta_review": "Current 8f612 patch is available for affected review; previous acceptance is not extended to it.",
+  "subsequent_delta_review": "Current complete 342455-to-2de344 delta available for affected review; previous clean review stops at342455.",
   "clippy_diagnostic": {
     "base": "b135d8cf382821bcd6deafff8ca50dc02547d852",
     "frozen_patch_sha256": "75deb16a077b004d5d53f8353b85599532e39afc17cf0902c5f2a4fcd235622d",

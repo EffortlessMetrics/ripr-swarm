@@ -1,0 +1,680 @@
+diff --git a/changelog.d/12010-sink-identity.md b/changelog.d/12010-sink-identity.md
+index 5da881d24..684d03866 100644
+--- a/changelog.d/12010-sink-identity.md
++++ b/changelog.d/12010-sink-identity.md
+@@ -1,2 +1,2 @@
+ <!-- section: Fixed -->
+-- Withhold strong Rust discrimination from proximity-only oracles and unchanged return-value tokens; keep identity and confirmation on the selected oracle (#12010).
++- Withhold strong Rust discrimination from proximity-only oracles and unchanged return-value tokens; keep identity and confirmation on the selected oracle, including established returned-array fields and forwarded helper results (#12010).
+diff --git a/crates/ripr/src/analysis/classifier.rs b/crates/ripr/src/analysis/classifier.rs
+index 6912bae63..06aa0cc41 100644
+--- a/crates/ripr/src/analysis/classifier.rs
++++ b/crates/ripr/src/analysis/classifier.rs
+@@ -3598,64 +3598,77 @@ fn far_above_threshold_discounts() {
+ 
+     #[test]
+     fn parser_expression_confirms_payload_without_rewriting_emitted_probe() -> Result<(), String> {
+-        let owner = function("src/gate_watchdog.rs", "classify_gate_watchdog");
+-        let owner_id = owner.id.clone();
+-        let path = PathBuf::from("src/gate_watchdog.rs");
+-        let assertion = r#"ensure!(reason.kind == "run-missing");"#;
+-        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+-            functions: vec![owner],
+-            tests: vec![test_with_oracle(
+-                "src/tests/gate_watchdog_tests.rs",
+-                "classify_gate_watchdog_reports_run_missing",
+-                "classify_gate_watchdog(&input)",
+-                oracle_fact(assertion, OracleKind::ExactValue, OracleStrength::Strong),
+-            )],
+-            files: BTreeMap::from([(
+-                path,
+-                FileFacts {
+-                    path: PathBuf::from("src/gate_watchdog.rs"),
+-                    probe_shapes: vec![ProbeShapeFact {
+-                        start_line: 190,
+-                        end_line: 194,
+-                        start_byte: 1_024,
+-                        end_byte: 1_074,
+-                        kind: ProbeShapeKind::CallDeletion,
+-                        text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
+-                        value_consumed: false,
+-                        source_lines: None,
+-                    }],
+-                    ..FileFacts::default()
+-                },
+-            )]),
+-            workspace_authority: None,
+-            ..Default::default()
+-        });
+-        let probe = Probe {
+-            id: ProbeId("probe:watchdog-reason".to_string()),
+-            location: SourceLocation::new(
+-                PathBuf::from("/repo/ub-review/src/gate_watchdog.rs"),
+-                190,
+-                1,
+-            ),
+-            owner: Some(owner_id),
+-            family: ProbeFamily::CallDeletion,
+-            delta: DeltaKind::Effect,
+-            before: None,
+-            after: Some("watchdog_reason(".to_string()),
+-            expression: "watchdog_reason(".to_string(),
+-            expected_sinks: vec![],
+-            required_oracles: vec![],
+-        };
+-
+-        let finding = classify_probe(&probe, &index, true, None);
+-        if finding.class != ExposureClass::Exposed {
+-            return Err(format!("parser payload was not discriminated: {finding:?}"));
++        struct Workspace(PathBuf);
++        impl Drop for Workspace {
++            fn drop(&mut self) {
++                let _ = std::fs::remove_dir_all(&self.0);
++            }
+         }
+-        if finding.probe.expression != "watchdog_reason(" {
+-            return Err(format!(
+-                "emitted probe expression changed: {}",
+-                finding.probe.expression
++        for (body, expected) in [
++            (
++                "let input=();\n    assert_eq!(classify_gate_watchdog(&input), \"run-missing\");",
++                ExposureClass::Exposed,
++            ),
++            (
++                "let input=();\n    let _=classify_gate_watchdog(&input);\n    let unrelated=\"run-missing\";\n    assert_eq!(unrelated, \"run-missing\");",
++                ExposureClass::WeaklyExposed,
++            ),
++        ] {
++            // The call starts at line 190. Real parser facts establish both
++            // the payload shape and standard assertion execution; a discarded
++            // owner result cannot lend identity to the unrelated-value control.
++            let mut source = "\n".repeat(187);
++            source.push_str("pub fn classify_gate_watchdog(_input: &()) -> &'static str {\n    let mut reason=\"not-set\";\n    watchdog_reason(\n        \"run-missing\",\n        &mut reason,\n    );\n    reason\n}\nfn watchdog_reason(kind: &'static str, out: &mut &'static str) { *out=kind; }\n");
++            source.push_str(&format!(
++                "#[test]\nfn reports_run_missing() {{\n    {body}\n}}\n"
+             ));
++            let root = Workspace(crate::analysis::facts::drop_in::temp_workspace(
++                "parser-payload-observer",
++                &[
++                    (
++                        "Cargo.toml",
++                        "[package]\nname='payload_evidence'\nversion='0.0.0'\nedition='2024'\n",
++                    ),
++                    ("src/lib.rs", &source),
++                ],
++            )?);
++            let path = PathBuf::from("src/lib.rs");
++            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
++            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
++                functions: facts.functions.clone(),
++                tests: facts.tests.clone(),
++                files: BTreeMap::from([(path, facts)]),
++                ..Default::default()
++            });
++            index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root.0);
++            crate::analysis::facts::compose_fixture_source_roles(&mut index, &root.0);
++            let owner = index
++                .functions()
++                .iter()
++                .find(|owner| owner.name == "classify_gate_watchdog")
++                .ok_or("missing parsed owner")?;
++            let probe = Probe {
++                id: ProbeId("probe:watchdog-reason".to_string()),
++                location: SourceLocation::new(PathBuf::from("/repo/ub-review/src/lib.rs"), 190, 1),
++                owner: Some(owner.id.clone()),
++                family: ProbeFamily::CallDeletion,
++                delta: DeltaKind::Effect,
++                before: None,
++                after: Some("watchdog_reason(".to_string()),
++                expression: "watchdog_reason(".to_string(),
++                expected_sinks: vec![],
++                required_oracles: vec![],
++            };
++            let finding = classify_probe(&probe, &index, true, None);
++            if finding.class != expected {
++                return Err(format!("parser payload was not discriminated: {finding:?}"));
++            }
++            if finding.probe.expression != "watchdog_reason(" {
++                return Err(format!(
++                    "emitted probe expression changed: {}",
++                    finding.probe.expression
++                ));
++            }
+         }
+         Ok(())
+     }
+diff --git a/crates/ripr/src/analysis/classifier/evidence.rs b/crates/ripr/src/analysis/classifier/evidence.rs
+index 90c4f990a..8de174d7b 100644
+--- a/crates/ripr/src/analysis/classifier/evidence.rs
++++ b/crates/ripr/src/analysis/classifier/evidence.rs
+@@ -13,10 +13,10 @@ use crate::analysis::classify::{
+     function_returns_value, getter_plainly_reads, getter_plainly_reads_key,
+     has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
+     infection_evidence_for_owner, is_drop_destructor, local_flow_sinks, method_cannot_store,
+-    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
+-    outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
+-    propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
+-    reach_evidence, returned_array_construction_plain, reveal_outcome,
++    observes_returned_array_value, observes_returned_element_field, operand_only_pin,
++    oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
++    parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
++    pushed_literal_path, reach_evidence, returned_array_construction_plain, reveal_outcome,
+     same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
+     unconditional_owner_insert_field, unexercised_mask_bits, wrapper_return_boundary_pinned,
+ };
+@@ -654,6 +654,7 @@ impl ClassifiedProbeEvidence {
+         );
+         // The free-call chain's identity is one answer per probe.
+         let free_chain_identity = std::cell::OnceCell::new();
++        let assertion_wrapper_chain = std::cell::OnceCell::new();
+         let propagate = match (context.owner_fn, context.helper_chain.as_ref()) {
+             // An already-unknown stage keeps its own reason.
+             (Some(owner), Some(chain))
+@@ -1023,6 +1024,17 @@ impl ClassifiedProbeEvidence {
+                     })
+                 });
+             entry_pinned
++                || (context.workspace_complete
++                    && context.owner_fn.is_some_and(|owner| {
++                        observes_returned_array_value(
++                            context.probe,
++                            owner,
++                            test,
++                            assertion,
++                            context.index,
++                            pin_syntax,
++                        )
++                    }))
+                 || fmt_display_pin(test, assertion)
+                 || field_projection.as_ref().is_some_and(|receipt| {
+                     receipt.valid_for(context.probe) && receipt.admits(test, assertion)
+@@ -1231,13 +1243,45 @@ impl ClassifiedProbeEvidence {
+                 value_observer_identity: &|test, assertion| {
+                     context.workspace_complete
+                         && pin_syntax.admits(test, assertion, context.index)
+-                        && crate::analysis::classify::builder_override::owner_field_read_identity(
+-                            context.probe,
+-                            context.index,
+-                            test,
+-                            assertion,
+-                            pin_syntax,
+-                        )
++                        && if matches!(context.probe.family, ProbeFamily::MatchArm) {
++                            context.owner_fn.is_some_and(|owner| {
++                                // This local observer context does not upgrade
++                                // the reported relation. The entry producer must
++                                // still bind this test's actual whole-call operand
++                                // and every forwarding edge before it can admit.
++                                let observer = [(test, RelationReason::HelperOwnerCall)];
++                                let entry_pins = |chain| {
++                                    chain_entry_pin_admits(
++                                        &owner.name,
++                                        &context.probe.expression,
++                                        chain,
++                                        &observer,
++                                        context.index,
++                                        (test, assertion),
++                                        &std::cell::OnceCell::new(),
++                                    )
++                                };
++                                // Mixed direct tests can stop the global chain.
++                                // The existing wrapper producer independently binds
++                                // one same-file production edge; the entry pin still
++                                // proves this assertion's operand and forwarded result.
++                                context.helper_chain.as_ref().is_some_and(entry_pins)
++                                    || entry_pins(assertion_wrapper_chain.get_or_init(|| {
++                                        crate::analysis::classify::resolve_repo_boundary_chain(
++                                            &owner.name,
++                                            context.index,
++                                        )
++                                    }))
++                            })
++                        } else {
++                            crate::analysis::classify::builder_override::owner_field_read_identity(
++                                context.probe,
++                                context.index,
++                                test,
++                                assertion,
++                                pin_syntax,
++                            )
++                        }
+                 },
+                 setter_writes_field: &|impl_type, setter, field| {
+                     setter_plainly_writes(context.index, impl_type, setter, field)
+@@ -2945,10 +2989,28 @@ mod tests {
+     fn a_sibling_field_that_may_exit_keeps_return_value_weakly() -> Result<(), String> {
+         use crate::domain::ExposureClass;
+ 
+-        let class_for = |array_tail: &str| -> Result<ExposureClass, String> {
++        struct Workspace(PathBuf);
++        impl Drop for Workspace {
++            fn drop(&mut self) {
++                let _ = std::fs::remove_dir_all(&self.0);
++            }
++        }
++        let class_for = |array_tail: &str, test_body: &str| -> Result<ExposureClass, String> {
+             let source = format!(
+-                "pub struct Row {{\n    pub total: u32,\n}}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {{\n    {array_tail}\n}}\n\n#[test]\nfn pins_second_row() {{\n    let rows = rows(30, 3);\n    assert_eq!(rows[1].total, 33);\n}}\n"
++                "pub struct Row {{\n    pub total: u32,\n}}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {{\n    {array_tail}\n}}\n\n#[test]\nfn pins_second_row() {{\n    {test_body}\n}}\n"
+             );
++            // The element authority requires a real dependency-closed Cargo
++            // context, just as the production array controls supply.
++            let root = Workspace(crate::analysis::facts::drop_in::temp_workspace(
++                "returned-array-evidence",
++                &[
++                    (
++                        "Cargo.toml",
++                        "[package]\nname='array_evidence'\nversion='0.0.0'\nedition='2024'\n",
++                    ),
++                    ("src/lib.rs", &source),
++                ],
++            )?);
+             let path = PathBuf::from("src/lib.rs");
+             let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+             let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+@@ -2957,10 +3019,8 @@ mod tests {
+                 files: [(path, facts)].into_iter().collect(),
+                 ..Default::default()
+             });
+-            crate::analysis::facts::compose_fixture_source_roles(
+-                &mut index,
+-                std::path::Path::new(""),
+-            );
++            index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root.0);
++            crate::analysis::facts::compose_fixture_source_roles(&mut index, &root.0);
+             let owner = index
+                 .functions()
+                 .iter()
+@@ -2999,13 +3059,29 @@ mod tests {
+             Ok(evidence.classify(&probe))
+         };
+         assert_eq!(
+-            class_for("[Row { total: { std::process::exit(0) } }, Row { total: a + b }]")?,
++            class_for(
++                "[Row { total: { std::process::exit(0) } }, Row { total: a + b }]",
++                "let rows = rows(30, 3);\n    assert_eq!(rows[1].total, 33);"
++            )?,
+             ExposureClass::WeaklyExposed
+         );
+         assert_eq!(
+-            class_for("[Row { total: 0 }, Row { total: a + b }]")?,
++            class_for(
++                "[Row { total: 0 }, Row { total: a + b }]",
++                "let rows = rows(30, 3);\n    assert_eq!(rows[1].total, 33);"
++            )?,
+             ExposureClass::Exposed
+         );
++        for body in [
++            "let rows = rows(30, 3);\n    assert_eq!(rows[0].total, 0);",
++            "let mut rows = rows(30, 3);\n    rows[1].total = 33;\n    assert_eq!(rows[1].total, 33);",
++            "let _ = rows(30, 3);\n    let rows = [Row { total: 0 }, Row { total: 33 }];\n    assert_eq!(rows[1].total, 33);",
++        ] {
++            assert_eq!(
++                class_for("[Row { total: 0 }, Row { total: a + b }]", body)?,
++                ExposureClass::WeaklyExposed
++            );
++        }
+         Ok(())
+     }
+ 
+diff --git a/crates/ripr/src/analysis/classify/element_field_pin.rs b/crates/ripr/src/analysis/classify/element_field_pin.rs
+index 35ab01380..3dd6fc07d 100644
+--- a/crates/ripr/src/analysis/classify/element_field_pin.rs
++++ b/crates/ripr/src/analysis/classify/element_field_pin.rs
+@@ -17,14 +17,14 @@
+ 
+ use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
+ use super::owner_pin::{OwnerPinSyntax, field_builtin_integer, targeted_free_call_reaches_owner};
+-use crate::analysis::facts::FunctionContainer;
++use crate::analysis::facts::{FunctionContainer, OracleFact};
+ use crate::analysis::syntax::parse_clean_source_file;
+-use crate::domain::Probe;
++use crate::domain::{Probe, ProbeFamily};
+ use ra_ap_syntax::{
+     AstNode, AstToken, SyntaxKind,
+     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName},
+ };
+-use std::collections::BTreeSet;
++use std::collections::{BTreeMap, BTreeSet};
+ 
+ /// Whether `test` pins the field `probe` constructs inside the array `owner`
+ /// returns, through that element alone. The shared owner-pin authorities
+@@ -46,10 +46,147 @@ pub(in crate::analysis) fn observes_returned_element_field(
+             test,
+             index,
+             syntax,
++            selected_assertion: None,
+         },
+     )
+ }
+ 
++/// A returned-array value is observed through a field only when that field
++/// changed at the selected element. Field probes already identify the field;
++/// whole-return probes first narrow the before/after arrays. Both reuse the
++/// element pin's authorities, restricted to this exact assertion.
++pub(in crate::analysis) fn observes_returned_array_value(
++    probe: &Probe,
++    owner: &FunctionSummary,
++    test: &TestSummary,
++    assertion: &OracleFact,
++    index: &RustIndex,
++    syntax: &OwnerPinSyntax,
++) -> bool {
++    if !matches!(
++        probe.family,
++        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
++    ) || (matches!(probe.family, ProbeFamily::ReturnValue)
++        && !probe.expression.trim_start().starts_with('['))
++        || !owner.body.contains('[')
++        || index
++            .functions()
++            .iter()
++            .filter(|function| function.name == owner.name)
++            .count()
++            != 1
++    {
++        return false;
++    }
++    let authority = SharedAuthority {
++        owner,
++        test,
++        index,
++        syntax,
++        selected_assertion: Some(assertion),
++    };
++    if matches!(probe.family, ProbeFamily::FieldConstruction) {
++        return observes_with(probe, owner, test, &authority);
++    }
++    let Some(fields) = changed_array_fields(probe, owner) else {
++        return false;
++    };
++    fields.into_iter().any(|(field, before)| {
++        let mut field_probe = probe.clone();
++        field_probe.family = ProbeFamily::FieldConstruction;
++        field_probe.expression = field.syntax().text().to_string();
++        field_probe.before = Some(before);
++        field_probe.after = Some(field_probe.expression.clone());
++        let Some(prefix) = owner
++            .body
++            .get(..usize::from(field.syntax().text_range().start()))
++        else {
++            return false;
++        };
++        field_probe.location.line = owner.start_line + prefix.matches('\n').count();
++        observes_with(&field_probe, owner, test, &authority)
++    })
++}
++
++fn array_tail(source: &str) -> Option<ast::ArrayExpr> {
++    let parse = parse_clean_source_file(source)?;
++    let function = parse
++        .tree()
++        .syntax()
++        .descendants()
++        .find_map(ast::Fn::cast)?;
++    let statements = function.body()?.stmt_list()?;
++    if statements.statements().next().is_some() {
++        return None;
++    }
++    let ast::Expr::ArrayExpr(array) = unwrap_parens(statements.tail_expr()?) else {
++        return None;
++    };
++    array.semicolon_token().is_none().then_some(array)
++}
++
++fn changed_array_fields(
++    probe: &Probe,
++    owner: &FunctionSummary,
++) -> Option<Vec<(ast::RecordExprField, String)>> {
++    let after = array_tail(&owner.body)?;
++    if squeeze(&after.syntax().text().to_string()) != squeeze(&probe.expression) {
++        return None;
++    }
++    let before = array_tail(&format!("fn previous() {{ {} }}", probe.before.as_deref()?))?;
++    let before: Vec<_> = before.exprs().collect();
++    let after: Vec<_> = after.exprs().collect();
++    if before.len() != after.len() {
++        return None;
++    }
++    let mut changed = Vec::new();
++    for (before, after) in before.into_iter().zip(after) {
++        let (ast::Expr::RecordExpr(before), ast::Expr::RecordExpr(after)) = (before, after) else {
++            return None;
++        };
++        if squeeze(&before.path()?.syntax().text().to_string())
++            != squeeze(&after.path()?.syntax().text().to_string())
++        {
++            return None;
++        }
++        let before = before.record_expr_field_list()?;
++        let after = after.record_expr_field_list()?;
++        if before.spread().is_some()
++            || before.dotdot_token().is_some()
++            || after.spread().is_some()
++            || after.dotdot_token().is_some()
++        {
++            return None;
++        }
++        let mut old_fields = BTreeMap::new();
++        for field in before.fields() {
++            if old_fields
++                .insert(field.field_name()?.text().to_string(), field)
++                .is_some()
++            {
++                return None;
++            }
++        }
++        let mut seen = BTreeSet::new();
++        for field in after.fields() {
++            let name = field.field_name()?.text().to_string();
++            if !seen.insert(name.clone()) {
++                return None;
++            }
++            let old = old_fields.get(&name)?;
++            if squeeze(&old.expr()?.syntax().text().to_string())
++                != squeeze(&field.expr()?.syntax().text().to_string())
++            {
++                changed.push((field, old.syntax().text().to_string()));
++            }
++        }
++        if seen.len() != old_fields.len() {
++            return None;
++        }
++    }
++    Some(changed)
++}
++
+ /// The questions the element pin defers to a shared authority.
+ trait PinAuthority {
+     /// The shared assertion-context validator (macro rebinding, escapes,
+@@ -80,12 +217,17 @@ struct SharedAuthority<'a> {
+     test: &'a TestSummary,
+     index: &'a RustIndex,
+     syntax: &'a OwnerPinSyntax,
++    selected_assertion: Option<&'a OracleFact>,
+ }
+ 
+ impl PinAuthority for SharedAuthority<'_> {
+     fn admits_line(&self, line: usize) -> bool {
+         self.test.assertions.iter().any(|assertion| {
+-            assertion.line == line && self.syntax.admits(self.test, assertion, self.index)
++            assertion.line == line
++                && self
++                    .selected_assertion
++                    .is_none_or(|selected| selected.line == line && selected.text == assertion.text)
++                && self.syntax.admits(self.test, assertion, self.index)
+         })
+     }
+ 
+diff --git a/crates/ripr/src/analysis/classify/mod.rs b/crates/ripr/src/analysis/classify/mod.rs
+index d71ab7394..55d94078f 100644
+--- a/crates/ripr/src/analysis/classify/mod.rs
++++ b/crates/ripr/src/analysis/classify/mod.rs
+@@ -99,8 +99,8 @@ pub(in crate::analysis) use decision::{
+ pub(in crate::analysis) use diff_touched::DiffTouchedTests;
+ pub(in crate::analysis) use effect_carrier::{ArgumentReceiver, EffectStateCarrier};
+ pub(in crate::analysis) use element_field_pin::{
+-    drop_is_plain_in_closed_sources, observes_returned_element_field,
+-    returned_array_construction_plain,
++    drop_is_plain_in_closed_sources, observes_returned_array_value,
++    observes_returned_element_field, returned_array_construction_plain,
+ };
+ pub(in crate::analysis) use facade_reach::{
+     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
+diff --git a/crates/ripr/src/analysis/classify/reveal.rs b/crates/ripr/src/analysis/classify/reveal.rs
+index 401fe3520..5c3c7a078 100644
+--- a/crates/ripr/src/analysis/classify/reveal.rs
++++ b/crates/ripr/src/analysis/classify/reveal.rs
+@@ -3193,6 +3193,13 @@ fn analyze_related_assertions(
+                     || collection_read
+                     || effect_receiver_read
+                     || value_receiver_read
++                    // The canonical chain-entry pin authenticates this exact
++                    // helper-result operand. Arm selection and observation
++                    // confirmation remain independently required above. A
++                    // coarse same-file relation is not itself identity, but
++                    // does not defeat an independently established entry pin.
++                    || (matches!(probe.family, ProbeFamily::MatchArm)
++                        && (return_admission.value_observer_identity)(test, assertion))
+                     || producer_owned_result_identity(
+                         &assertion_context,
+                         assertion,
+diff --git a/crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs b/crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs
+index 4153b741b..38110e0d3 100644
+--- a/crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs
++++ b/crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs
+@@ -996,6 +996,37 @@ fn proximity_graph_rebuilds_after_a_same_path_helper_edit() -> Result<(), String
+     Ok(())
+ }
+ 
++#[test]
++fn forwarded_arm_result_cannot_lend_identity_to_an_unrelated_assertion() -> Result<(), String> {
++    let positive = "assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);";
++    for (label, body, expected) in [
++        (
++            "discarded",
++            "let _ = seconds_bridge(Unit::Fortnight);\n        assert_eq!(Unit::Fortnight, Unit::Fortnight);",
++            ExposureClass::WeaklyExposed,
++        ),
++        (
++            "unrelated-first",
++            "assert_eq!(Unit::Fortnight, Unit::Fortnight);\n        assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);",
++            ExposureClass::Exposed,
++        ),
++        (
++            "unrelated-last",
++            "assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600);\n        assert_eq!(Unit::Fortnight, Unit::Fortnight);",
++            ExposureClass::Exposed,
++        ),
++    ] {
++        let source = shared_reach_source().replacen(positive, body, 1);
++        let fixture = Fixture::new(label, &source)?;
++        assert_eq!(
++            fortnight_class(&fixture.arm_findings()?)?,
++            expected,
++            "{label}"
++        );
++    }
++    Ok(())
++}
++
+ /// Runs `work` with the classify pool pinned to `threads` workers.
+ fn with_classify_threads<T>(threads: usize, work: impl FnOnce() -> T) -> T {
+     super::CLASSIFY_THREADS_FOR_TEST.with(|pinned| pinned.set(Some(threads)));
+diff --git a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+index 8a8f17b97..6b11e7fb2 100644
+--- a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
++++ b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.159";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.160";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index 5efa618fa..8e1338c1f 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -608,3 +608,43 @@ fn persisted_effect_identity_tracks_the_changed_argument_not_written_siblings()
+     }
+     Ok(())
+ }
++
++#[test]
++fn returned_array_field_identity_tracks_the_changed_element() -> Result<(), String> {
++    let source = "pub struct Row { pub total:u32 }\npub fn rows(a:u32,b:u32)->[Row;2] {\n [Row { total:0 }, Row { total:a+b }]\n}\n";
++    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,1 +3,1 @@\n- [Row { total:0 }, Row { total:a-b }]\n+ [Row { total:0 }, Row { total:a+b }]\n";
++    for (body, exposed) in [
++        ("let rows=rows(30,3);\n assert_eq!(rows[1].total,33);", true),
++        ("let rows=rows(30,3);\n assert_eq!(rows[0].total,0);", false),
++        (
++            "let mut rows=rows(30,3);\n rows[1].total=33;\n assert_eq!(rows[1].total,33);",
++            false,
++        ),
++        (
++            "let _=rows(30,3);\n let rows=[Row { total:0 }, Row { total:33 }];\n assert_eq!(rows[1].total,33);",
++            false,
++        ),
++    ] {
++        let test = format!(
++            "use rust_catalog_description_structural_oracle::{{rows,Row}};\n#[test]\nfn observes() {{\n {body}\n}}\n"
++        );
++        let report = check_report(source, &test, MANIFEST, diff)?;
++        for family in ["return_value", "field_construction"] {
++            let findings: Vec<_> = report["findings"]
++                .as_array()
++                .ok_or("findings missing")?
++                .iter()
++                .filter(|finding| finding["probe"]["family"] == family)
++                .collect();
++            assert!(!findings.is_empty(), "{family}: {report}");
++            for finding in findings {
++                assert_eq!(
++                    finding["classification"] == "exposed",
++                    exposed,
++                    "{body}: {report}"
++                );
++            }
++        }
++    }
++    Ok(())
++}
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index d3e7c2dc0..0bb9167ae 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -19676,7 +19676,7 @@ top-level `source_subject`:
+ 
+ - `digest_algorithm`: always `"sha256"`.
+ - `corpus` (additive, full Rust inventory only): the analysis-owned
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.159",
++  `{ "scope": "rust_workspace", "cache_schema_version": "1.160",
+   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+   classified inventory cache key, including both production and test Rust
+   files after the existing generated-file exclusions. Repo-exposure producers
+@@ -20461,7 +20461,7 @@ targeted-rerun receipt shape:
+     "recomputation_reasons": ["selected_test_scope_recomputed"],
+     "invalidation_status": "not_available",
+     "input_fingerprint": {
+-      "schema_version": "1.159",
++      "schema_version": "1.160",
+       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+       "workspace_root_hash": "…",
+       "files_content_hash": "…",
+diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
+index 2c1dba6e3..ff0ace3d9 100644
+--- a/xtask/src/tests/rust_corpus_projection.rs
++++ b/xtask/src/tests/rust_corpus_projection.rs
+@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.159";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.160";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";

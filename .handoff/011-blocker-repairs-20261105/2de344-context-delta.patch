@@ -1,0 +1,229 @@
+diff --git a/crates/ripr/src/analysis/classifier.rs b/crates/ripr/src/analysis/classifier.rs
+index cf013246e..06aa0cc41 100644
+--- a/crates/ripr/src/analysis/classifier.rs
++++ b/crates/ripr/src/analysis/classifier.rs
+@@ -3598,61 +3598,59 @@ fn far_above_threshold_discounts() {
+ 
+     #[test]
+     fn parser_expression_confirms_payload_without_rewriting_emitted_probe() -> Result<(), String> {
+-        let owner = function("src/gate_watchdog.rs", "classify_gate_watchdog");
+-        let owner_id = owner.id.clone();
+-        let path = PathBuf::from("src/gate_watchdog.rs");
+-        // The positive oracle reads the owner result. Merely repeating the
+-        // payload on an unbound value cannot borrow a discarded owner's call.
+-        for (assertion, expected) in [
++        struct Workspace(PathBuf);
++        impl Drop for Workspace {
++            fn drop(&mut self) {
++                let _ = std::fs::remove_dir_all(&self.0);
++            }
++        }
++        for (body, expected) in [
+             (
+-                r#"assert_eq!(classify_gate_watchdog(&input), "run-missing");"#,
++                "let input=();\n    assert_eq!(classify_gate_watchdog(&input), \"run-missing\");",
+                 ExposureClass::Exposed,
+             ),
+             (
+-                r#"ensure!(reason.kind == "run-missing");"#,
++                "let input=();\n    let _=classify_gate_watchdog(&input);\n    let unrelated=\"run-missing\";\n    assert_eq!(unrelated, \"run-missing\");",
+                 ExposureClass::WeaklyExposed,
+             ),
+         ] {
+-            let mut test = test_with_oracle(
+-                "src/tests/gate_watchdog_tests.rs",
+-                "classify_gate_watchdog_reports_run_missing",
+-                "classify_gate_watchdog(&input)",
+-                oracle_fact(assertion, OracleKind::ExactValue, OracleStrength::Strong),
+-            );
+-            for call in &mut test.calls {
+-                call.name = owner.name.clone();
+-            }
+-            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+-                functions: vec![owner.clone()],
+-                tests: vec![test],
+-                files: BTreeMap::from([(
+-                    path.clone(),
+-                    FileFacts {
+-                        path: PathBuf::from("src/gate_watchdog.rs"),
+-                        probe_shapes: vec![ProbeShapeFact {
+-                            start_line: 190,
+-                            end_line: 194,
+-                            start_byte: 1_024,
+-                            end_byte: 1_074,
+-                            kind: ProbeShapeKind::CallDeletion,
+-                            text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
+-                            value_consumed: false,
+-                            source_lines: None,
+-                        }],
+-                        ..FileFacts::default()
+-                    },
+-                )]),
+-                workspace_authority: None,
++            // The call starts at line 190. Real parser facts establish both
++            // the payload shape and standard assertion execution; a discarded
++            // owner result cannot lend identity to the unrelated-value control.
++            let mut source = "\n".repeat(187);
++            source.push_str("pub fn classify_gate_watchdog(_input: &()) -> &'static str {\n    let mut reason=\"not-set\";\n    watchdog_reason(\n        \"run-missing\",\n        &mut reason,\n    );\n    reason\n}\nfn watchdog_reason(kind: &'static str, out: &mut &'static str) { *out=kind; }\n");
++            source.push_str(&format!(
++                "#[test]\nfn reports_run_missing() {{\n    {body}\n}}\n"
++            ));
++            let root = Workspace(crate::analysis::facts::drop_in::temp_workspace(
++                "parser-payload-observer",
++                &[
++                    (
++                        "Cargo.toml",
++                        "[package]\nname='payload_evidence'\nversion='0.0.0'\nedition='2024'\n",
++                    ),
++                    ("src/lib.rs", &source),
++                ],
++            )?);
++            let path = PathBuf::from("src/lib.rs");
++            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
++            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
++                functions: facts.functions.clone(),
++                tests: facts.tests.clone(),
++                files: BTreeMap::from([(path, facts)]),
+                 ..Default::default()
+             });
++            index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root.0);
++            crate::analysis::facts::compose_fixture_source_roles(&mut index, &root.0);
++            let owner = index
++                .functions()
++                .iter()
++                .find(|owner| owner.name == "classify_gate_watchdog")
++                .ok_or("missing parsed owner")?;
+             let probe = Probe {
+                 id: ProbeId("probe:watchdog-reason".to_string()),
+-                location: SourceLocation::new(
+-                    PathBuf::from("/repo/ub-review/src/gate_watchdog.rs"),
+-                    190,
+-                    1,
+-                ),
+-                owner: Some(owner_id.clone()),
++                location: SourceLocation::new(PathBuf::from("/repo/ub-review/src/lib.rs"), 190, 1),
++                owner: Some(owner.id.clone()),
+                 family: ProbeFamily::CallDeletion,
+                 delta: DeltaKind::Effect,
+                 before: None,
+@@ -3661,7 +3659,6 @@ fn far_above_threshold_discounts() {
+                 expected_sinks: vec![],
+                 required_oracles: vec![],
+             };
+-
+             let finding = classify_probe(&probe, &index, true, None);
+             if finding.class != expected {
+                 return Err(format!("parser payload was not discriminated: {finding:?}"));
+diff --git a/crates/ripr/src/analysis/classifier/evidence.rs b/crates/ripr/src/analysis/classifier/evidence.rs
+index 2eeaa5af1..8de174d7b 100644
+--- a/crates/ripr/src/analysis/classifier/evidence.rs
++++ b/crates/ripr/src/analysis/classifier/evidence.rs
+@@ -654,6 +654,7 @@ impl ClassifiedProbeEvidence {
+         );
+         // The free-call chain's identity is one answer per probe.
+         let free_chain_identity = std::cell::OnceCell::new();
++        let assertion_wrapper_chain = std::cell::OnceCell::new();
+         let propagate = match (context.owner_fn, context.helper_chain.as_ref()) {
+             // An already-unknown stage keeps its own reason.
+             (Some(owner), Some(chain))
+@@ -1243,20 +1244,35 @@ impl ClassifiedProbeEvidence {
+                     context.workspace_complete
+                         && pin_syntax.admits(test, assertion, context.index)
+                         && if matches!(context.probe.family, ProbeFamily::MatchArm) {
+-                            context
+-                                .owner_fn
+-                                .zip(context.helper_chain.as_ref())
+-                                .is_some_and(|(owner, chain)| {
++                            context.owner_fn.is_some_and(|owner| {
++                                // This local observer context does not upgrade
++                                // the reported relation. The entry producer must
++                                // still bind this test's actual whole-call operand
++                                // and every forwarding edge before it can admit.
++                                let observer = [(test, RelationReason::HelperOwnerCall)];
++                                let entry_pins = |chain| {
+                                     chain_entry_pin_admits(
+                                         &owner.name,
+                                         &context.probe.expression,
+                                         chain,
+-                                        &[(test, RelationReason::HelperOwnerCall)],
++                                        &observer,
+                                         context.index,
+                                         (test, assertion),
+                                         &std::cell::OnceCell::new(),
+                                     )
+-                                })
++                                };
++                                // Mixed direct tests can stop the global chain.
++                                // The existing wrapper producer independently binds
++                                // one same-file production edge; the entry pin still
++                                // proves this assertion's operand and forwarded result.
++                                context.helper_chain.as_ref().is_some_and(entry_pins)
++                                    || entry_pins(assertion_wrapper_chain.get_or_init(|| {
++                                        crate::analysis::classify::resolve_repo_boundary_chain(
++                                            &owner.name,
++                                            context.index,
++                                        )
++                                    }))
++                            })
+                         } else {
+                             crate::analysis::classify::builder_override::owner_field_read_identity(
+                                 context.probe,
+@@ -2973,10 +2989,28 @@ mod tests {
+     fn a_sibling_field_that_may_exit_keeps_return_value_weakly() -> Result<(), String> {
+         use crate::domain::ExposureClass;
+ 
++        struct Workspace(PathBuf);
++        impl Drop for Workspace {
++            fn drop(&mut self) {
++                let _ = std::fs::remove_dir_all(&self.0);
++            }
++        }
+         let class_for = |array_tail: &str, test_body: &str| -> Result<ExposureClass, String> {
+             let source = format!(
+                 "pub struct Row {{\n    pub total: u32,\n}}\n\npub fn rows(a: u32, b: u32) -> [Row; 2] {{\n    {array_tail}\n}}\n\n#[test]\nfn pins_second_row() {{\n    {test_body}\n}}\n"
+             );
++            // The element authority requires a real dependency-closed Cargo
++            // context, just as the production array controls supply.
++            let root = Workspace(crate::analysis::facts::drop_in::temp_workspace(
++                "returned-array-evidence",
++                &[
++                    (
++                        "Cargo.toml",
++                        "[package]\nname='array_evidence'\nversion='0.0.0'\nedition='2024'\n",
++                    ),
++                    ("src/lib.rs", &source),
++                ],
++            )?);
+             let path = PathBuf::from("src/lib.rs");
+             let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+             let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+@@ -2985,10 +3019,8 @@ mod tests {
+                 files: [(path, facts)].into_iter().collect(),
+                 ..Default::default()
+             });
+-            crate::analysis::facts::compose_fixture_source_roles(
+-                &mut index,
+-                std::path::Path::new(""),
+-            );
++            index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root.0);
++            crate::analysis::facts::compose_fixture_source_roles(&mut index, &root.0);
+             let owner = index
+                 .functions()
+                 .iter()
+diff --git a/crates/ripr/src/analysis/classify/reveal.rs b/crates/ripr/src/analysis/classify/reveal.rs
+index 259df91d6..5c3c7a078 100644
+--- a/crates/ripr/src/analysis/classify/reveal.rs
++++ b/crates/ripr/src/analysis/classify/reveal.rs
+@@ -3195,9 +3195,10 @@ fn analyze_related_assertions(
+                     || value_receiver_read
+                     // The canonical chain-entry pin authenticates this exact
+                     // helper-result operand. Arm selection and observation
+-                    // confirmation remain independently required above.
++                    // confirmation remain independently required above. A
++                    // coarse same-file relation is not itself identity, but
++                    // does not defeat an independently established entry pin.
+                     || (matches!(probe.family, ProbeFamily::MatchArm)
+-                        && *reason == RelationReason::HelperOwnerCall
+                         && (return_admission.value_observer_identity)(test, assertion))
+                     || producer_owned_result_identity(
+                         &assertion_context,

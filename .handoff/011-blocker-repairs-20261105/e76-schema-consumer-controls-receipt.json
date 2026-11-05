@@ -1,0 +1,52 @@
+{
+  "stage": "schema-consumer-controls",
+  "candidate": "e76bd86315b4992657732943f1a8642b279a5948",
+  "tree": "cf2a2237b8e8ebb4dd16f4d1cc13d946047af6ae",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "output::schemas::tests::",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 10.01,
+  "counts": {
+    "passed": 11,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 18078
+  },
+  "log_sha256": "fb71c6baf97763effba31f922a34893eaaee3522b3c446ff210e9c151e5300dd",
+  "peak_cgroup_memory_bytes": 1917370368,
+  "samples": [
+    {
+      "utc": "2026-11-05T09:46:35.191047+00:00",
+      "stage": "schema-consumer-controls",
+      "head": "e76bd86315b4992657732943f1a8642b279a5948",
+      "pid": 202619,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 1917370368,
+      "workspace_free_bytes": 23042748416,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}
