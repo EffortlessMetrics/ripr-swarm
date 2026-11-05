@@ -38,6 +38,12 @@ pub struct Summary {
     /// every probe; this says how many expressions received conflicting
     /// verdicts from different probe families. Zero is not rendered.
     pub conflicting_expressions: usize,
+    /// Findings whose only reaching code is a proof harness ripr does not
+    /// evaluate (#12921, RIPR-SPEC-0367). A subset of `no_static_path`: the
+    /// class is unchanged and the proof earns no test credit; this separates
+    /// "covered only by an unevaluated proof" from "no guard found". Zero is
+    /// not rendered.
+    pub proof_harness_only: usize,
 }
 
 impl Summary {

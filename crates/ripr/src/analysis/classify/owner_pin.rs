@@ -3274,11 +3274,14 @@ impl AssertionRefusal {
 
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
+        // Evidence text is host-independent: use the stable slash spelling
+        // so Windows and Unix emit identical bytes (#2337 family).
         let at = |path: &Path, line: usize| {
+            let text = crate::analysis::stable_path_text(path);
             if line == 0 {
-                path.display().to_string()
+                text
             } else {
-                format!("{}:{line}", path.display())
+                format!("{text}:{line}")
             }
         };
         match self {
@@ -3361,7 +3364,7 @@ impl AssertionRefusal {
                     match &site.kind {
                         MacroBindingKind::Unparsed => format!(
                             "{} did not parse cleanly, so it may redefine `{name}!`",
-                            path.display()
+                            crate::analysis::stable_path_text(path)
                         ),
                         MacroBindingKind::NoImplicitPrelude => format!(
                             "`#![no_implicit_prelude]` at {place} removes the standard `{name}!`"
@@ -5570,22 +5573,25 @@ impl OwnerReturnPin {
                     [(0usize, 1usize), (1, 0)]
                         .into_iter()
                         .find_map(|(at, other)| {
-                            let call = path_value::substitute_owner_call(
+                            let calls = path_value::substitute_owner_calls(
                                 test,
                                 operands[at],
                                 operands[other],
                                 owner,
                                 index,
                             )?;
-                            self.awaited_call_shape(poll_context, &call, &self.name)?;
-                            self.pointer_mask_gate.admits(&call).then_some(())?;
-                            if self
-                                .pointer_return_change
-                                .as_ref()
-                                .is_some_and(|change| change.is_invisible_at_call(&call))
-                            {
-                                return None;
-                            }
+                            // The first input at which the change is visible
+                            // represents the chain; invisible at every input
+                            // refuses.
+                            let call = calls.into_iter().find(|call| {
+                                self.awaited_call_shape(poll_context, call, &self.name)
+                                    .is_some()
+                                    && self.pointer_mask_gate.admits(call)
+                                    && !self
+                                        .pointer_return_change
+                                        .as_ref()
+                                        .is_some_and(|change| change.is_invisible_at_call(call))
+                            })?;
                             Some((at, call))
                         })
                 })

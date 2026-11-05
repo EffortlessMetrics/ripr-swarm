@@ -52,6 +52,14 @@ The SARIF layer should:
   folded results in `properties.folded_results`, and the run records the
   count in `runs[].properties.folded_same_line_results` (absent when zero).
   Different classes never fold: a weaker class does not hide a stronger one.
+- bound the results array by bytes: `RIPR_SARIF_RESULTS_BYTES` (default
+  `1000000`, `0` removes the cap, an unparseable value fails the run) keeps
+  the leading results in both diff-scoped and repo-scoped runs, always
+  keeping the first result. When the budget omits results, the run records
+  `runs[].properties.results_rendered`, `results_total`, `results_omitted`,
+  `results_byte_budget`, `limited_results_bound: true` and
+  `document_complete: false` (absent when nothing was omitted), so a bounded
+  document never reads as the complete set.
 
 ## Rule IDs
 

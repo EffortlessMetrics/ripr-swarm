@@ -678,7 +678,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (#12733, #12734).
 /// `1.157`: the repo-wide audit credits a claims `assert_ok_eq!` / `assert_some_eq!`
 /// statement through the same owner-pin decision as `ripr check` (#12394).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.157";
+/// `1.158`: a bounded `.map(owner)` chain is credited at the first input where
+/// the change is visible (#12841).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.158";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -877,7 +879,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.157";
 /// `0.157`: same generated-test invocation-scope rule as full `1.155` (#12320).
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.159";
+/// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1078,7 +1081,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.159";
 /// `0.157`: same generated-test invocation-scope rule as full `1.155` (#12320).
 /// `0.158`: same different-arm error-pin rule as full `1.156` (#12733, #12734).
 /// `0.159`: same audit claims-payload crediting as full `1.157` (#12394).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.159";
+/// `0.160`: same all-input `.map(owner)` visibility rule as full `1.158` (#12841).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.160";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1709,6 +1713,18 @@ pub(crate) enum CacheLoad<T> {
     Hit(T),
     Miss,
     CorruptIgnored { reason: String },
+}
+
+/// Bounded read of a classified-seam cache file (single entry, shard, or
+/// manifest). The store never publishes a file above the encoded shard
+/// ceiling, so a larger file on disk is corrupt, legacy, or hostile: the
+/// bounded read fails instead of allocating it whole, and callers degrade
+/// to `CorruptIgnored` rebuild. An unparseable ceiling env falls back to
+/// the default ceiling rather than failing the load.
+fn read_classified_cache_file(path: &Path) -> std::io::Result<Vec<u8>> {
+    let ceiling = classified_seam_cache_encoded_shard_ceiling_bytes()
+        .unwrap_or(CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES);
+    crate::bounded_input::read_with_limit(path, ceiling as u64)
 }
 
 /// Names the entry file in a corrupt-load reason so a burst of
@@ -2549,7 +2565,7 @@ impl RepoSeamFactCache {
         Vec<PathBuf>,
     )> {
         let path = self.entry_path(key);
-        let bytes = match std::fs::read(&path) {
+        let bytes = match read_classified_cache_file(&path) {
             Ok(b) => b,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
             Err(err) => {
@@ -2667,7 +2683,7 @@ impl RepoSeamFactCache {
         Vec<PathBuf>,
     )> {
         let manifest_path = self.sharded_manifest_path(key);
-        let bytes = match std::fs::read(&manifest_path) {
+        let bytes = match read_classified_cache_file(&manifest_path) {
             Ok(bytes) => bytes,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return CacheLoad::Miss,
             Err(err) => {
@@ -2747,7 +2763,7 @@ impl RepoSeamFactCache {
                     Ok(path) => path,
                     Err(reason) => return CacheLoad::CorruptIgnored { reason },
                 };
-            let bytes = match std::fs::read(&shard_path) {
+            let bytes = match read_classified_cache_file(&shard_path) {
                 Ok(bytes) => bytes,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                     return CacheLoad::CorruptIgnored {
@@ -5159,7 +5175,8 @@ mod tests {
         // 1.154 -> 1.155: macro-generated tests borrow invocation-site name scopes only when the expansion declares nothing (#12320).
         // 1.155 -> 1.156: different-arm error pin is one fact in every view (#12733, #12734).
         // 1.156 -> 1.157: the audit credits claims payload equality via the owner pin (#12394).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.157");
+        // 1.157 -> 1.158: `.map(owner)` chain credits at the first visible input (#12841).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.158");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5298,8 +5315,9 @@ mod tests {
         // 0.156 -> 0.157: same generated-test invocation-scope rule as full 1.155 (#12320).
         // 0.157 -> 0.158: same different-arm error-pin rule as full 1.156 (#12733, #12734).
         // 0.158 -> 0.159: same audit claims-payload crediting as full 1.157 (#12394).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.159");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.159");
+        // 0.159 -> 0.160: same all-input visibility rule as full 1.158 (#12841).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.160");
     }
 
     #[test]
@@ -7927,6 +7945,37 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn given_oversized_cache_entry_when_loading_then_corrupt_ignored_is_reported()
+    -> Result<(), String> {
+        // Memory bound: a cache file above the encoded shard ceiling is
+        // never allocated whole; the load degrades to a rebuild.
+        let dir = isolated_dir("oversized");
+        ignore_remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir: {err}"))?;
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_state().cache_key();
+        let path = cache.entry_path(&key);
+        let oversized = vec![b'x'; CLASSIFIED_SEAM_CACHE_ENCODED_SHARD_CEILING_BYTES + 1];
+        std::fs::write(&path, oversized).map_err(|err| format!("write oversized entry: {err}"))?;
+        let result = match cache.load_classified_seams(&key) {
+            CacheLoad::CorruptIgnored { reason } => {
+                if reason.contains("exceeds") {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "oversized reason should name the byte limit, got {reason}"
+                    ))
+                }
+            }
+            other => Err(format!(
+                "expected CorruptIgnored on oversized entry, got {other:?}"
+            )),
+        };
+        ignore_remove_dir_all(&dir);
+        result
     }
 
     #[test]
