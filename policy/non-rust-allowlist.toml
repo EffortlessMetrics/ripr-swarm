@@ -857,6 +857,15 @@ covered_by = [
 ]
 
 [[allow]]
+glob = "tools/python/installed-provider-recovery/run.py"
+kind = "installed_wheel_recovery_control"
+owner = "release-engineering"
+surface = "ci"
+classification = "test"
+reason = "The isolated pip-wheel consumer has Python and native Cargo but no source checkout or xtask executable; this stdlib harness observes the installed payload and private fixture/cache recovery (#10864)."
+covered_by = ["cargo xtask check-file-policy", "cargo xtask check-process-policy"]
+
+[[allow]]
 glob = "tools/python/portable-ripr-consumer/**/*.py"
 kind = "portable_native_consumer"
 owner = "agent/portable-consumer"

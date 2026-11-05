@@ -23798,6 +23798,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
         );
     }
 
+    if path == "tools/python/installed-provider-recovery/run.py" {
+        return Some(
+            "Installed pip-wheel recovery control runs without a source checkout or xtask executable, using the consumer's stdlib Python and qualified installed payload (#10864).",
+        );
+    }
+
     if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
         return Some(
             "Portable packet consumer must run as stdlib Python 3.11+ in agent environments that have no Cargo/rustc.",
