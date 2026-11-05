@@ -169,3 +169,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_macro_transcriber_own_call (14)
+
+Reason:
+RIPR-SPEC-0108: return-value probe no longer credits plausible activation when the only related test reaches the owner through an unexpanded macro (name-token reach only); infect reads unknown, class infection_unknown instead of weakly_exposed (#13040)
+
+Command:
+`cargo xtask goldens bless rust_macro_transcriber_own_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
