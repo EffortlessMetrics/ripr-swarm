@@ -1800,7 +1800,7 @@ fn ci_full() -> Result<(), String> {
     check_pr()?;
     run_ci_full_evidence_gates(&ci_full_evidence_gates())?;
     run("cargo", &["package", "-p", "ripr", "--list"])?;
-    run("cargo", &["publish", "-p", "ripr", "--dry-run"]).map(|_| ())
+    publish_rehearsal::run()
 }
 
 #[derive(Debug, Eq, PartialEq)]

@@ -59,12 +59,40 @@ fn run(script: &str, overrides: &[(&str, &str)]) -> TestResult<Output> {
     run_with_shell(WorkflowShell::ImplicitBash, script, overrides)
 }
 
+struct ShellScratch(std::path::PathBuf);
+
+impl ShellScratch {
+    fn new() -> TestResult<Self> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent)?;
+        let path = parent.join(format!(
+            "ripr-ci-leaf-shell-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&path)?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for ShellScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn run_with_shell(
     shell: WorkflowShell,
     script: &str,
     overrides: &[(&str, &str)],
 ) -> TestResult<Output> {
+    // Workflow blocks can contain real redirections even when commands such as
+    // cd are stubbed. Keep those writes away from the source checkout.
+    let scratch = ShellScratch::new()?;
     let mut cmd = Command::new("timeout");
+    cmd.current_dir(&scratch.0);
     cmd.args(["--kill-after=1s", "5s", "bash"]);
     match shell {
         WorkflowShell::ImplicitBash => {
@@ -123,6 +151,19 @@ fn run_with_shell(
     );
     Ok(output)
 }
+#[test]
+fn shell_redirections_are_owned_and_leave_the_caller_manifest_unchanged() -> TestResult {
+    let before = std::fs::read("Cargo.toml").ok();
+    let output = run(
+        "printf 'owned shell fixture\\n' >> Cargo.toml; cat Cargo.toml",
+        &[],
+    )?;
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout)?, "owned shell fixture\n");
+    assert_eq!(std::fs::read("Cargo.toml").ok(), before);
+    Ok(())
+}
+
 fn mapping<'a>(scope: &'a str, indent: usize, key: &str) -> Option<&'a str> {
     let marker = format!("{}{key}:\n", " ".repeat(indent));
     let offset = scope
