@@ -2719,13 +2719,17 @@ This advisory lane has no new branch-protection requirement. Completion shows
 that the scan ran; planned lints still have the support/configuration limits
 recorded in [Clippy policy](CLIPPY_POLICY.md).
 
-The same workflow's separate `stable-repo-policy` job checks the small policy
-package on the moving stable channel with matching LLVM tools. It records the
-compiler and LLVM identities, runs genuine coverage-profile controls and isolated
-`frontdoor` fixtures, and checks strict Clippy for that package. Failures stay
-visible in this advisory job; the repository pin, MSRV and required merge gates
-are unchanged. See the
-[focused toolchain-upgrade recipe](ci/coverage.md#validate-locally).
+The same workflow's separate `stable-repo-policy` job executes the marked
+[focused toolchain-upgrade recipe](ci/coverage.md#validate-locally) after running
+its workflow controls. It starts with the stable SDK first on `PATH` and an
+absolute stable `RUSTC`, so the recipe must switch to the repository pin and back
+to stable. The recipe explicitly installs the pin, refreshes stable, and selects
+matching LLVM tools. The job requires ordered successful pinned/stable diagnostics,
+stable `frontdoor` fixtures and strict package Clippy, with nonempty test summaries,
+genuine profile observations, and completion tied to the current run. Missing or
+malformed recipe boundaries, omitted checks, native failures and stale evidence
+fail this advisory job. Compiler and LLVM identities remain in the native log;
+the repository pin, MSRV, 15-minute budget and required merge gates are unchanged.
 
 It installs `cargo-deny` as a normal command-line binary before running the
 check, so self-hosted runners do not need Docker just to execute the security

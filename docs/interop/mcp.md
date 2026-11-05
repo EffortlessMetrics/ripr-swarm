@@ -4,7 +4,7 @@
 [Model Context Protocol](https://modelcontextprotocol.io/): newline-delimited
 JSON-RPC on stdin and stdout. It tells an MCP client which repository root
 RIPR would use, what RIPR is and is not allowed to do there, and — after an
-explicit `ripr_refresh` — the committed analysis snapshot: a deterministically
+explicit `ripr_refresh` — the completed session snapshot: a deterministically
 bounded working set of canonical items and one complete evidence document per
 item. It never edits source, runs tests or mutation, or executes verification
 commands; `ripr_prepare_repair` only creates an in-memory transaction that
@@ -110,7 +110,21 @@ input was not observed (`not_established`, `withheld`), every item is
 cause and `ripr_get_repair_card` refuses with `incomplete_inventory`: refresh
 again once the edit settles. Untracked files stay excluded
 until `git add -N <paths>`. The server does not watch the worktree, so
-refresh again after edits. Requested and captured source are separate facts:
+refresh again after edits.
+
+Initialize instructions, the refresh tool and source-schema descriptions, and
+`ripr mcp --help` name this conditional custody route before analysis. Saved
+tracked input alone never promises a repair-ready item. Established producer
+custody is necessary for a worktree card, alongside the ordinary card-admission
+checks. An admitted card may still be not ready: readiness depends on the
+per-item gates, and a not-ready card retains finding guidance. The retained
+`witness_bound_card_projects_the_shared_handoff_card` test exercises that
+distinction. The real stdio regression
+`refresh_source_worktree_serves_repair_card_and_readiness_with_established_custody`
+exercises successful saved-test edits; the custody controls for source, test
+oracle and HEAD movement retain the refusal boundary (#13194).
+
+Requested and captured source are separate facts:
 a failed worktree request keeps the last committed snapshot tagged
 committed, and the reverse. A commit on the default branch itself leaves an
 empty committed diff; `ripr check --worktree --format json` remains the
@@ -686,7 +700,7 @@ bounded-selection summary.
 `ripr://repair-card/{canonical_id}`) projects the bounded repair card
 for one canonical item: the same versioned `repair_card.v1` document `ripr
 agent card` and the standard language server project, assembled by the shared
-application authority from the committed snapshot — the adapter never
+application authority from the completed session snapshot — the adapter never
 re-derives readiness, identity, currentness, or route state. The analyzed
 repository head and the diff-scoped classified seam inventory (each retained
 seam owner-discriminated bound to a snapshot item, with its evidence-scope
@@ -762,7 +776,15 @@ in `error.data`, because no tool ran and no tool result exists. The
 object. Null, arrays and scalar values receive a correlated Invalid Params
 (`-32602`) response before tool dispatch, including for `ripr_refresh` and
 the no-argument status tool. Unknown
-methods use Method Not Found (`Method not found: <method>`). `ripr_list_gaps`
+methods use Method Not Found (`-32601`, `Method not found: <method>`).
+Names through 128 Unicode scalar values retain that exact message and no
+error data. Longer names use the first 128 scalar values, mark the message
+as truncated, and add `error.data.method`, `method_truncated: true`, and
+`method_bytes` (the original UTF-8 byte length before JSON escaping).
+Routing still compares the complete method name. This keeps an admitted
+long name from replacing Method Not Found with a generic response-limit
+error (#13220).
+`ripr_list_gaps`
 rejects a `language` filter that is not a language wire string (`rust`,
 `typescript`, `javascript`, `python`, `perl`) with an `invalid_argument` failure listing the
 allowed values, instead of returning an indistinguishable empty page.
@@ -913,4 +935,38 @@ silence: syntax-invalid JSON (including nesting past the parser limit) receives
 Parse error (`-32700`, null id) and well-formed JSON that is not a request the
 SDK can type (null or fractional id, wrong `jsonrpc` version, missing method)
 receives Invalid Request (`-32600`); the transport then reads the next frame.
-The reply carries the request id
+For a well-formed JSON object with a string `method`, a transport-level
+Invalid Request reply preserves a string or integer `id` when its
+JSON-serialized form is at most 16 KiB. Otherwise the reply carries
+`id: null`. A request ID above that limit is never echoed; the server
+answers `-32600` and continues reading the session. An over-cap input
+message is discarded and answered with `-32600`, retaining its ID only
+when it can be recovered from the first 4 KiB; otherwise the ID is null.
+
+Incoming messages are capped at 256 KiB. The complete serialized JSON
+response is capped at 128 KiB, with its newline delimiter appended
+afterward, so an output frame is at most 128 KiB plus one byte. Tool and
+resource envelopes reserve the actual serialized request ID and fixed
+JSON-RPC overhead before they are sent. An envelope that exceeds that
+budget returns the typed `result_too_large` refusal. The writer retains a
+generic bounded-error fallback for responses that still exceed its cap;
+a response or fallback that cannot be encoded ends the session with an
+operational error.
+
+Partial input and output retain their state when an I/O future is
+cancelled. Clients must await replies before closing stdin: EOF ends the
+SDK service. Stdout carries only protocol messages; operational errors
+go to stderr. When the transport starts with an unavailable workspace,
+it emits one startup warning and remains available to report
+`workspace_unavailable`.
+
+Clients can use the initialize lifecycle, including `2025-11-25`, or
+the `2026-07-28` discovery lifecycle. Discovery requests carry
+`io.modelcontextprotocol/protocolVersion` and
+`io.modelcontextprotocol/clientCapabilities` in `params._meta`;
+unsupported inline versions are refused. Initialize sessions answer
+`ping` with an empty result, including when the request carries that
+metadata. Discovery sessions reject `ping` with Method Not Found.
+A second well-formed `initialize` on an initialized session receives
+`-32600` with an already-initialized message, and the session keeps
+serving.

@@ -23817,6 +23817,16 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
             "Agent A/B discrimination harness scripts must run under the solver's POSIX shell (Git Bash/WSL) beside cargo and git: they drive cargo phases, per-run clone materialization, and record writes that execute outside any cargo process, so an xtask port cannot host them (#13113).",
         );
     }
+    if path == "tools/activate-rust.sh" {
+        return Some(
+            "Sourced Bash must update the caller's environment before Cargo is available; a Rust subprocess cannot export into its parent shell (#13123).",
+        );
+    }
+    if path == "tools/test-activate-rust.sh" {
+        return Some(
+            "Bash controls directly inspect source-time caller options, arguments and variable attributes; the Rust-owned rust_activation integration test executes this exact harness (#13123).",
+        );
+    }
     if path == ".ci/contabo-result.sh" {
         return Some(
             "Pinned EM CI requires a Bash result script; this lightweight jq consumer accepts only centrally authenticated exact-subject product imports without compiling or executing product code (#4988).",
@@ -23837,6 +23847,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with("editors/vscode/") && path.ends_with(".ts") {
         return Some(
             "VS Code extension source and tests must run in the VS Code Extension Host TypeScript API.",
+        );
+    }
+
+    if path == "tools/python/installed-provider-recovery/run.py" {
+        return Some(
+            "Installed pip-wheel recovery control runs without a source checkout or xtask executable, using the consumer's stdlib Python and qualified installed payload (#10864).",
         );
     }
 
