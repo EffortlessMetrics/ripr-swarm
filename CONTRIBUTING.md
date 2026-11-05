@@ -208,8 +208,14 @@ That harness uses controlled tool fixtures in fresh Bash shells. It tests
 activation and refusal behavior on the host and Bash version that execute it;
 it does not compile Rust or establish native macOS/Bash 3.2 or restored-task
 qualification. On Unix, `cargo test -p xtask --test rust_activation` runs the
-same harness as part of ordinary workspace regression coverage. Native Windows
-shells keep their existing setup route.
+same harness and a separate check against the run's already installed exact
+Rustup SDK. The native check sources the real helper in a fresh Bash child and
+compares compiler/Cargo identity at the repository root and in an isolated
+nested directory with an opposing pin. It disables automatic installation and
+runs version/identity probes only, with no workspace build. This requires the
+exact release/host SDK to be installed already; missing prerequisites fail the
+check. Hosted fresh-shell evidence does not establish saved-cloud restoration.
+Native Windows shells keep their existing setup route.
 
 ### Fixture preparation
 
