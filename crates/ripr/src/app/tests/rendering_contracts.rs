@@ -78,6 +78,181 @@ fn json_compact_parses_identically_to_json_and_is_smaller() -> Result<(), String
     Ok(())
 }
 
+/// `json-terse` pins the semantic-equivalence contract against a real
+/// multi-finding `ripr check --format json` document: every finding, verdict
+/// and identity field survives; coded prose expands through the document-head
+/// `evidence_legend` to the exact original strings; and the terse document is
+/// meaningfully smaller than the minified `json-compact` document.
+#[test]
+fn json_terse_round_trips_fixture_prose_and_beats_compact_in_size() -> Result<(), String> {
+    let full_text = include_str!(
+        "../../../../../fixtures/returned_closure_arithmetic_masking/expected/check.json"
+    );
+    let full: serde_json::Value =
+        serde_json::from_str(full_text).map_err(|error| error.to_string())?;
+    let terse_text = crate::output::json::render_terse(full_text)?;
+    let terse: serde_json::Value =
+        serde_json::from_str(&terse_text).map_err(|error| error.to_string())?;
+    let legend = terse
+        .get("evidence_legend")
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !legend.is_empty(),
+        "a real multi-finding document must code repeated prose: {terse_text}"
+    );
+
+    let expand = |text: &str| -> String {
+        legend
+            .get(text)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(text)
+            .to_string()
+    };
+    let full_findings = full["findings"].as_array().cloned().unwrap_or_default();
+    let terse_findings = terse["findings"].as_array().cloned().unwrap_or_default();
+    assert_eq!(full_findings.len(), terse_findings.len());
+    assert!(
+        full_findings.len() >= 3,
+        "fixture must exercise several findings, got {}",
+        full_findings.len()
+    );
+    for (full_finding, terse_finding) in full_findings.iter().zip(terse_findings.iter()) {
+        // Identity and verdict fields move verbatim.
+        for key in [
+            "id",
+            "classification",
+            "severity",
+            "confidence",
+            "probe",
+            "ripr",
+        ] {
+            assert_eq!(full_finding[key], terse_finding[key], "{key} moved");
+        }
+        // Coded prose surfaces round-trip through the legend, in order.
+        for key in ["evidence_path", "evidence", "missing"] {
+            let expanded: Vec<String> = terse_finding[key]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(expand)
+                .collect();
+            let original: Vec<String> = full_finding[key]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|entry| entry.as_str().map(str::to_string))
+                .collect();
+            assert_eq!(expanded, original, "{key} did not round-trip");
+        }
+    }
+    // Head identity fields are untouched.
+    for key in [
+        "schema_version",
+        "tool",
+        "mode",
+        "root",
+        "summary",
+        "analysis_outcome",
+    ] {
+        assert_eq!(full[key], terse[key], "{key} moved");
+    }
+
+    let compact_text = crate::output::json::render_compact(full_text);
+    assert!(
+        terse_text.len() < compact_text.len(),
+        "terse {} bytes must beat json-compact {} bytes on a multi-finding document",
+        terse_text.len(),
+        compact_text.len()
+    );
+    assert!(
+        compact_text.len() < full_text.len(),
+        "fixture control: json-compact {} must already beat json {} (whitespace)",
+        compact_text.len(),
+        full_text.len()
+    );
+
+    // The terse head keys must be declared by the published check schema,
+    // whose top level is closed (`additionalProperties: false`): the schema
+    // is the consumer contract, and json-terse documents must validate.
+    let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../schemas/ripr/check.schema.json");
+    let schema: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&schema_path)
+            .map_err(|error| format!("{}: {error}", schema_path.display()))?,
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        schema["additionalProperties"],
+        serde_json::Value::Bool(false),
+        "premise: closed check schema"
+    );
+    let declared = schema["properties"]
+        .as_object()
+        .ok_or("schema properties")?;
+    for key in ["rendering", "evidence_legend", "dropped_aliases"] {
+        assert!(declared.contains_key(key), "schema must declare {key}");
+        assert!(terse.get(key).is_some(), "terse document must carry {key}");
+    }
+    assert_eq!(
+        declared["rendering"]["const"].as_str(),
+        Some("terse"),
+        "schema rendering const must match the producer"
+    );
+    Ok(())
+}
+
+/// Pipeline check: `json-terse` through `render_check_with_config` keeps the
+/// finding set and verdicts of `json` and stamps the rendering marker. The
+/// default `json` bytes are untouched by the new mode.
+#[test]
+fn json_terse_pipeline_keeps_findings_and_marks_rendering() -> Result<(), String> {
+    let output = check_output_with(vec![
+        sample_finding("src/lib.rs", 1),
+        sample_finding("src/lib.rs", 2),
+    ]);
+    let config = RiprConfig::default();
+    let json = render_check_with_config(&output, &OutputFormat::Json, &config)?;
+    let terse = render_check_with_config(&output, &OutputFormat::JsonTerse, &config)?;
+    let json_value: serde_json::Value =
+        serde_json::from_str(&json).map_err(|error| error.to_string())?;
+    let terse_value: serde_json::Value =
+        serde_json::from_str(&terse).map_err(|error| error.to_string())?;
+    // The terse pass rewrites prose fields, so compare identity/verdicts.
+    let json_findings = json_value["findings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let terse_findings = terse_value["findings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(json_findings.len(), terse_findings.len());
+    for (json_finding, terse_finding) in json_findings.iter().zip(terse_findings.iter()) {
+        for key in ["id", "classification", "severity", "confidence"] {
+            assert_eq!(json_finding[key], terse_finding[key], "{key} moved");
+        }
+    }
+    assert_eq!(
+        terse_value["rendering"].as_str(),
+        Some("terse"),
+        "terse document must name its rendering profile: {terse}"
+    );
+    assert!(
+        terse.len() < json.len(),
+        "terse {} must be smaller than json {}",
+        terse.len(),
+        json.len()
+    );
+    // The `json` document never gains the terse marker.
+    assert!(!json.contains("\"rendering\""), "json bytes moved: {json}");
+    Ok(())
+}
+
 #[test]
 fn summary_default_is_empty() {
     let summary = Summary::default();

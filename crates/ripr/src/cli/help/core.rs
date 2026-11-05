@@ -304,6 +304,9 @@ Options:
                            machine consumer (jq, CI scripts) -> json (--json);
                            same document with less whitespace for a machine
                            or coding agent -> json-compact;
+                           same findings with repeated evidence prose coded
+                           against a document-head legend (smallest JSON for
+                           LLM consumers) -> json-terse;
                            compact report for a coding agent -> agent;
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif; README badge ->
@@ -312,7 +315,8 @@ Options:
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
-                               human, human-full, json, json-compact, github,
+                               human, human-full, json, json-compact,
+                               json-terse, github,
                                sarif, agent,
                                check-findings-json (identified snapshot
                                for `agent verify`)
