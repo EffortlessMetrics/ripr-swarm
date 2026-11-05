@@ -39,20 +39,19 @@ case "$LOWER" in
     exit 2 ;;
 esac
 
-# Refuse destinations under any Cargo workspace manifest: cargo resolves the
-# nearest ancestor [workspace] and then rejects the materialized package
-# ("package is not a member of the workspace"), breaking every cargo step.
+# Conservatively refuse any ancestor Cargo manifest. A workspace ancestor can
+# claim the nested package; some non-workspace manifests would be safe.
 DIR_WALK="$DEST"
 while :; do
   if [ -f "$DIR_WALK/Cargo.toml" ]; then
     echo "ERROR: refusing to materialize under '$DEST': ancestor '$DIR_WALK/Cargo.toml' is a Cargo manifest." >&2
-    echo "       cargo would claim the scenario package ('not a member of the workspace')." >&2
-    echo "       Materialize under a run-namespaced directory outside any Cargo workspace checkout (see RUNBOOK.md)." >&2
+    echo "       an ancestor workspace may claim the scenario package." >&2
+    echo "       Materialize under a run-namespaced directory outside any ancestor Cargo manifest (see RUNBOOK.md)." >&2
     exit 2
   fi
+  case "$DIR_WALK" in [A-Za-z]:|[A-Za-z]:/|/|.) break ;; esac
   PARENT="$(dirname "$DIR_WALK")"
   [ "$PARENT" = "$DIR_WALK" ] && break
-  case "$PARENT" in [A-Za-z]:|[A-Za-z]:/|/|.) break ;; esac
   DIR_WALK="$PARENT"
 done
 

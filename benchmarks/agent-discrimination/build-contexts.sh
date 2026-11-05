@@ -38,11 +38,12 @@ esac
 # Match the generator and evaluator: reject a crate below a Cargo manifest
 # before writing any context files that imply the run is usable.
 DIR_WALK="$(dirname "$CRATE")"
-while [ "$DIR_WALK" != / ] && [ "$DIR_WALK" != . ]; do
+while :; do
   if [ -f "$DIR_WALK/Cargo.toml" ]; then
-    echo "ERROR: crate '$CRATE' sits under Cargo manifest '$DIR_WALK/Cargo.toml'; materialize outside Cargo workspaces." >&2
+    echo "ERROR: crate '$CRATE' sits under Cargo manifest '$DIR_WALK/Cargo.toml'; materialize outside ancestor Cargo manifests." >&2
     exit 2
   fi
+  case "$DIR_WALK" in [A-Za-z]:|[A-Za-z]:/|/|.) break ;; esac
   PARENT="$(dirname "$DIR_WALK")"
   [ "$PARENT" = "$DIR_WALK" ] && break
   DIR_WALK="$PARENT"

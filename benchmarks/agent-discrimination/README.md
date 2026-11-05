@@ -45,8 +45,8 @@ wrote records with zeroed structured fields. This encoding fixes all four:
 per-run cloned crates (one writer, run-namespaced scratch, never shared temp
 space — the scripts refuse shared temp roots such as drive-letter Temp
 directories, `/tmp`, and `/var/tmp`, and refuse
-destinations under any Cargo workspace manifest, where cargo would claim the
-materialized package), step-zero toolchain
+destinations under ancestor Cargo manifests as a conservative proxy for
+workspace membership; Cargo can accept some non-workspace ancestors), step-zero toolchain
 PATH normalization in `eval.sh`/`build-contexts.sh` and the prompt, true cargo
 exit codes captured in `run_phase`, and `record-run.sh` (validated structured
 fields, atomic report writes, `summary.csv` derived from the reports).

@@ -81,11 +81,11 @@ Run id format: `<scenario>-<variant>-r<NN>`, e.g. `flipped-comparison-vanilla-r0
 1. **Materialize a run-owned crate clone** (validity fix for the seed-study
    shared-crate collisions — never reuse or share a materialized crate, and
    never materialize into shared temp space). The scratch root must be
-   **outside the ripr checkout and any other Cargo workspace**: cargo
-   resolves the nearest ancestor `[workspace]` and rejects the materialized
-   package ("not a member of the workspace"), breaking every cargo step —
-   both scripts refuse such destinations with exit 2 and name the ancestor
-   manifest:
+   **outside the ripr checkout and any other Cargo manifest**. Cargo can
+   reject a nested package when an ancestor owns a workspace; the scripts
+   conservatively refuse ancestor `Cargo.toml` files, including some
+   non-workspace manifests that Cargo itself would accept. They exit 2 and
+   name the manifest:
 
    ```bash
    SCRATCH=<run-namespaced-dir-outside-checkouts>/<run_id>   # one per run

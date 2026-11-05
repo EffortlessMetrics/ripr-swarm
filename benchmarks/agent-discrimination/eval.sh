@@ -65,20 +65,18 @@ esac
 git -C "$CRATE" rev-parse --verify -q HEAD >/dev/null || { echo "ERROR: $CRATE is not a git repo"; exit 2; }
 git -C "$CRATE" rev-parse --verify -q HEAD~1 >/dev/null || { echo "ERROR: $CRATE has no HEAD~1 (need 2 commits)"; exit 2; }
 
-# Refuse a crate nested under any Cargo workspace manifest: cargo resolves
-# the nearest ancestor [workspace] and rejects the crate ("package is not a
-# member of the workspace"), which would score every phase as a setup
-# failure. Materialize run-owned clones outside Cargo workspace checkouts.
+# Conservatively refuse any ancestor Cargo manifest. A workspace ancestor can
+# claim the nested package and break evaluation; some other manifests are safe.
 DIR_WALK="$CRATE"
 while :; do
   if [ -f "$DIR_WALK/Cargo.toml" ] && [ "$DIR_WALK" != "$CRATE" ]; then
-    echo "ERROR: crate '$CRATE' sits under Cargo workspace manifest '$DIR_WALK/Cargo.toml'; cargo would claim it ('not a member of the workspace')." >&2
-    echo "       Materialize run-owned clones outside any Cargo workspace checkout (see RUNBOOK.md)." >&2
+    echo "ERROR: crate '$CRATE' sits under Cargo manifest '$DIR_WALK/Cargo.toml'; an ancestor workspace may claim it." >&2
+    echo "       Materialize run-owned clones outside any ancestor Cargo manifest (see RUNBOOK.md)." >&2
     exit 2
   fi
+  case "$DIR_WALK" in [A-Za-z]:|[A-Za-z]:/|/|.) break ;; esac
   PARENT="$(dirname "$DIR_WALK")"
   [ "$PARENT" = "$DIR_WALK" ] && break
-  case "$PARENT" in [A-Za-z]:|[A-Za-z]:/|/|.) break ;; esac
   DIR_WALK="$PARENT"
 done
 
