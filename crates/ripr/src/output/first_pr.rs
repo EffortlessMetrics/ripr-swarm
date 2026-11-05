@@ -144,8 +144,7 @@ mod validation;
 
 use freshness::{producing_ripr_version, start_here_packet_version_freshness};
 pub(crate) use freshness::{start_here_json_version_freshness, start_here_version_stale_detail};
-pub(crate) use options::FIRST_PR_HELP;
-use options::{FirstPrOptions, parse_options, print_help};
+pub(crate) use options::{FIRST_PR_HELP, FirstPrOptions};
 use preflight::{FirstPrPreflight, first_pr_preflight};
 #[cfg(test)]
 use rendering::markdown_code_or_text;
@@ -163,13 +162,9 @@ use crate::agent::loop_commands::anchored_redirect_target;
 use validation::validate_selected_state;
 use validation::{validate_selected_command_root, validate_start_here_packet};
 
-pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-
-    let mut options = parse_options(args)?;
+/// Run `first-pr` for already-parsed options. Argv parsing and `--help` live in
+/// the CLI adapter (`cli::commands::first_pr`), so this layer never imports it.
+pub(crate) fn first_pr_with_options(mut options: FirstPrOptions) -> Result<(), String> {
     let repo = repo_root()?;
     // A root that is not a directory cannot be analyzed: refuse (exit 2) before
     // the disclosure and before writing a recovery packet, so a mistyped path
@@ -936,7 +931,7 @@ fn root_preflight_recovery(root: &Path, options: &FirstPrOptions) -> Option<Sele
         // to `doctor` (#10713). A root `doctor` also detects as Python keeps
         // `wrong_root` (its `package.json` is likely tooling), and Rust below
         // the root still means a wrong root.
-        let doctor_languages = crate::cli::commands::detect_languages(root);
+        let doctor_languages = crate::config::language_detection::detect_languages(root);
         let doctor_javascript = doctor_languages.contains(&LanguageId::JavaScript);
         if LanguageId::TypeScript.is_available()
             && (doctor_javascript || doctor_languages.contains(&LanguageId::TypeScript))
@@ -3406,6 +3401,13 @@ fn repo_root() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    // Argv entry points live in the CLI adapter; these tests drive the same
+    // end-to-end path through it. The only output -> cli edge left is this
+    // cfg(test) wrapper plus `detect_languages` (tracked in #5193).
+    fn first_pr(args: &[String]) -> Result<(), String> {
+        crate::cli::commands::first_pr::first_pr(args)
+    }
+
     #[test]
     fn a_verbatim_prefixed_root_is_the_same_root_as_its_plain_form() {
         use std::path::Path;
@@ -3569,51 +3571,6 @@ mod tests {
         let rendered = first_pr_write_command(&options, Path::new("/Repo/out/Reports"), false);
         assert!(rendered.contains("--out-dir /Repo/out/Reports"));
         assert!(!rendered.contains("--out-dir target/ripr/reports"));
-    }
-
-    #[test]
-    fn parse_accepts_artifact_paths_and_check() -> Result<(), String> {
-        let parsed = parse_options(&[
-            "--root".to_string(),
-            "repo".to_string(),
-            "--base".to_string(),
-            "origin/main".to_string(),
-            "--head".to_string(),
-            "HEAD".to_string(),
-            "--check-output".to_string(),
-            "check.json".to_string(),
-            "--gap-ledger".to_string(),
-            "gap.json".to_string(),
-            "--out-dir".to_string(),
-            "out".to_string(),
-            "--check".to_string(),
-        ])?;
-        assert_eq!(parsed.root, "repo");
-        assert_eq!(parsed.base, "origin/main");
-        assert!(parsed.base_explicit);
-        assert!(!FirstPrOptions::default().base_explicit);
-        assert_eq!(parsed.head, "HEAD");
-        assert_eq!(parsed.check_output.as_deref(), Some("check.json"));
-        assert_eq!(parsed.gap_ledger, "gap.json");
-        assert_eq!(parsed.out_dir, "out");
-        assert!(parsed.check);
-        assert!(parsed.preflight);
-        assert!(!FirstPrOptions::default().preflight);
-        assert_eq!(
-            parse_options(&["--gap-ledger".to_string(), "".to_string()]),
-            Err("first-pr --gap-ledger requires a non-empty value; pass a value right after --gap-ledger".to_string())
-        );
-        match parse_options(&["--gap-ledgr".to_string()]) {
-            Err(unknown)
-                if unknown.contains("Did you mean `--gap-ledger`?")
-                    && unknown.contains("Run `ripr first-pr --help`.") => {}
-            other => {
-                return Err(format!(
-                    "first-pr typo must suggest --gap-ledger from its help body, got {other:?}"
-                ));
-            }
-        }
-        Ok(())
     }
 
     #[test]
@@ -4707,7 +4664,7 @@ mod tests {
             &repo,
             &["package.json", "lib/pricing.ts", "lib/pricing.test.ts"],
         )?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::TypeScript),
             "fixture must be TypeScript to doctor: {doctor_languages:?}"
@@ -4771,7 +4728,7 @@ mod tests {
         fs::write(repo.join("index.js"), "module.exports = (x) => x;\n")
             .map_err(|err| format!("write index.js: {err}"))?;
         init_git_repo_with_initial_files(&repo, &["index.js"])?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::JavaScript),
             "fixture must be JavaScript to doctor: {doctor_languages:?}"
@@ -4799,7 +4756,7 @@ mod tests {
         fs::write(repo.join("app.py"), "def f():\n    return 1\n")
             .map_err(|err| format!("write app.py: {err}"))?;
         init_git_repo_with_initial_files(&repo, &["package.json", "app.py"])?;
-        let doctor_languages = crate::cli::commands::detect_languages(&repo);
+        let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::Python),
             "fixture must be Python to doctor: {doctor_languages:?}"

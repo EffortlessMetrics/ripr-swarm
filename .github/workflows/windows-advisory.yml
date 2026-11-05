@@ -1021,6 +1021,24 @@ jobs:
         run: |
           mkdir -p ../../target; set +e; npx mocha --ui tdd out/test/suite/managed_server_install.test.js 2>&1 | tee ../../target/subset-vscode-install-lock.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > ../../target/subset-vscode-install-lock.status; if [ "$(cat ../../target/subset-vscode-install-lock-compile.status 2>/dev/null || echo missing)" != "0" ]; then echo "subset-vscode-install-lock: npm ci or tsc failed; a passing suite does not clear it" | tee -a ../../target/subset-vscode-install-lock.log; printf '%s\n' 1 > ../../target/subset-vscode-install-lock.status; fi; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-vscode-install-lock.log" >&2; exit 1; fi; exit 0
 
+      # #13175: full-transcript and descendant cleanup proof uses the same
+      # native Windows owner as the producer, without launching an editor host.
+      - name: Run fixture producer process controls (advisory, #13175)
+        shell: bash
+        working-directory: editors/vscode
+        run: |
+          mkdir -p ../../target; set +e
+          if [ "$(cat ../../target/subset-vscode-install-lock-compile.status 2>/dev/null || echo missing)" != "0" ]; then
+            echo 'fixture producer controls unavailable: npm ci or tsc failed' > ../../target/subset-vscode-fixture-producer.log
+            printf '%s\n' 1 > ../../target/subset-vscode-fixture-producer.status
+            exit 0
+          fi
+          npx mocha --ui tdd --reporter json out/test/suite/fixture_producer.test.js 2>&1 | tee ../../target/subset-vscode-fixture-producer.log
+          pipe_status=("${PIPESTATUS[@]}")
+          printf '%s\n' "${pipe_status[0]}" > ../../target/subset-vscode-fixture-producer.status
+          if [ "${pipe_status[1]}" != "0" ]; then echo 'fixture producer evidence capture failed' >&2; exit 1; fi
+          exit 0
+
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
       - name: Produce and replay exact-head selector recovery (advisory)
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -1496,7 +1514,7 @@ jobs:
           {
             printf '## Windows advisory subset (#4938)\n\n'
             printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'
-            for label in subset-gap-artifacts subset-workflow-readonly subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock subset-selector-literal; do
+            for label in subset-gap-artifacts subset-workflow-readonly subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock subset-vscode-fixture-producer subset-selector-literal; do
             if [ "$label" = subset-selector-literal ] && [ "$SELECTOR_CONSUMER_ENABLED" != true ]; then continue; fi
               status_file="target/${label}.status"
               if [ ! -f "$status_file" ]; then
@@ -1518,7 +1536,7 @@ jobs:
       - name: Fail on missing or empty subset evidence
         shell: bash
         run: |
-          for label in subset-gap-artifacts subset-workflow-readonly subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock; do
+          for label in subset-gap-artifacts subset-workflow-readonly subset-cargo-home subset-cache-warning subset-clippy subset-process-owner subset-xtask-capture subset-lsp-initialize subset-vscode-install-lock subset-vscode-fixture-producer; do
             test -f "target/${label}.status" || exit 1
             test -f "target/${label}.log" || exit 1
           done
@@ -1543,6 +1561,41 @@ jobs:
           if [ "$(cat target/subset-vscode-install-lock.status)" = "0" ]; then
             grep -Eq '^ +[1-9][0-9]* passing' target/subset-vscode-install-lock.log || { echo "subset-vscode-install-lock: mocha exited 0 but reported no passing test" >&2; exit 1; }
           fi
+
+      - name: Verify the native fixture producer denominator
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, re
+          from pathlib import Path
+          status_path = Path('target/subset-vscode-fixture-producer.status')
+          log_path = Path('target/subset-vscode-fixture-producer.log')
+          if not all(p.is_file() and p.stat().st_size for p in [status_path, log_path]):
+              raise SystemExit('fixture producer evidence missing or empty')
+          status = status_path.read_text(encoding='utf-8-sig').strip()
+          if not re.fullmatch(r'(0|[1-9][0-9]{0,2})', status) or int(status) > 255:
+              raise SystemExit('fixture producer native/compile status is invalid')
+          if status == '0':
+              report = json.loads(log_path.read_text(encoding='utf-8-sig'))
+              expected = {
+                  "Genuine fixture producer process boundary runs asynchronously with the explicit child cwd/env and visible progress",
+                  "Genuine fixture producer process boundary retains native status and both streams for a failed process",
+                  "Genuine fixture producer process boundary retains the final transcript before accepting native success",
+                  "Genuine fixture producer process boundary reports the actual missing executable as a spawn failure",
+                  "Genuine fixture producer process boundary refuses an already cancelled producer before starting a child",
+                  "Genuine fixture producer process boundary rejects output overflow and bounds the retained bytes",
+                  "Genuine fixture producer process boundary timeout-after-primary-exit terminates an owned descendant that ignores SIGTERM and inherits pipes",
+                  "Genuine fixture producer process boundary cancel-active-tree terminates an owned descendant that ignores SIGTERM and inherits pipes",
+                  "Genuine fixture producer process boundary validates the deadline instead of silently disabling or overflowing it",
+              }
+              observed = [row['fullTitle'] for row in report.get('passes', [])]
+              stats = report.get('stats', {})
+              if len(observed) != len(expected) or set(observed) != expected:
+                  raise SystemExit('fixture producer PASS is missing native process controls')
+              if any(stats.get(key) != value for key, value in {'tests': 12, 'passes': 9, 'failures': 0, 'pending': 3}.items()):
+                  raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
+              print('Verified nine native process controls; three POSIX-only adapter controls are pending.')
+          PY
 
       - name: Require selector consumer receipt, log and native status
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -1613,6 +1666,8 @@ jobs:
             target/subset-vscode-install-lock.log
             target/subset-vscode-install-lock.status
             target/subset-vscode-install-lock-compile.status
+            target/subset-vscode-fixture-producer.log
+            target/subset-vscode-fixture-producer.status
             target/windows-subset-verdict.md
             target/subset-selector-literal.log
             target/subset-selector-literal.status

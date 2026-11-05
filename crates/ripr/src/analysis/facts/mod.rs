@@ -42,6 +42,7 @@ mod index;
 mod local_test_alias;
 mod macro_generated_tests;
 pub(crate) mod macro_visibility;
+pub(crate) mod resource_dependencies;
 
 /// The index builder's macro-generated test registration, for fixtures that
 /// assemble an index by hand.
@@ -277,19 +278,27 @@ fn reuse_cached_index(
     // Provider, target and runner configuration can change with unchanged
     // Rust bytes. Rebuild the post-parse authority from cached raw facts; do
     // not reuse a formerly admitted or formerly refused property generation.
-    if !cached.index.proptest_receipts.is_empty()
-        || !cached.index.bolero_receipts.is_empty()
-        || cached.index.files().iter().any(|(_, file)| {
-            (!file.used_lexical_fallback
-                && file.source.contains("bolero")
-                && !crate::analysis::syntax::bolero_profiles(&file.source).is_empty())
-                || file.unresolved_property_macros.iter().any(|property| {
-                    matches!(
-                        property.name.as_str(),
-                        "proptest" | "proptest::proptest" | "::proptest::proptest"
-                    )
-                })
-        })
+    // Within one run (`same_run`) the configuration cannot have moved, and the
+    // post-process below regenerates every property-test fact from the merged
+    // index: the style normalizer drops generated tests (they have no parsed
+    // function), the proptest and bolero producers clear and rebuild their
+    // receipts, and a property macro already lifted from
+    // `unresolved_property_macros` is only ever lifted again. So the extended
+    // result equals a fresh build without re-decoding the fact cache.
+    if !same_run
+        && (!cached.index.proptest_receipts.is_empty()
+            || !cached.index.bolero_receipts.is_empty()
+            || cached.index.files().iter().any(|(_, file)| {
+                (!file.used_lexical_fallback
+                    && file.source.contains("bolero")
+                    && !crate::analysis::syntax::bolero_profiles(&file.source).is_empty())
+                    || file.unresolved_property_macros.iter().any(|property| {
+                        matches!(
+                            property.name.as_str(),
+                            "proptest" | "proptest::proptest" | "::proptest::proptest"
+                        )
+                    })
+            }))
     {
         return build_cached_index_with_test_harnesses(
             root,
@@ -325,6 +334,9 @@ fn reuse_cached_index(
         // absent/present export or the assertion sites derived from it.
         cached.index.member_crates = member_crates::MemberCrates::new(root);
         cached.index.call_identity_memos.clear();
+        // #5171: embedded resource bytes are not part of the Rust-file reuse
+        // comparison; refresh producer-owned edges from the current workspace.
+        resource_dependencies::attach_resource_dependencies(root, &mut cached.index);
         return Ok(cached);
     }
     // Post-processing is only incrementally exact when the file set grows by
