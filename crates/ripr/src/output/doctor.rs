@@ -3346,7 +3346,7 @@ mod tests {
         std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
         let script = |identity: &str| {
             format!(
-                "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --version ] && [ \"$RUSTUP_AUTO_INSTALL\" = 0 ] || exit 17\nprintf 'rustc {MINIMUM_RUSTC_VERSION} ({identity}; %s)\\n' \"${{PWD##*/}}\"\n"
+                "#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = --version ] && [ \"$RUSTUP_AUTO_INSTALL\" = 0 ] || exit 17\nprintf 'rustc 1.95.0 ({identity}; %s)\\n' \"${{PWD##*/}}\"\n"
             )
         };
         publish_doctor_test_tool(&path, "rustc", &script("PATH"))?;
@@ -3376,10 +3376,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         for (identity, result) in results? {
             assert_eq!(result.status, DoctorStatus::Pass, "{}", result.evidence);
-            assert_eq!(
-                result.evidence,
-                format!("rustc {MINIMUM_RUSTC_VERSION} ({identity}; selected root)")
-            );
+            let expected = format!("rustc 1.95.0 ({identity}; selected root)");
+            assert_eq!(result.evidence, expected);
         }
         Ok(())
     }
@@ -3392,7 +3390,7 @@ mod tests {
         let healthy = publish_doctor_test_tool(
             &dir,
             "rustc",
-            &format!("#!/bin/sh\nprintf 'rustc {MINIMUM_RUSTC_VERSION} (healthy)\\n'\n"),
+            "#!/bin/sh\nprintf 'rustc 1.95.0 (healthy)\\n'\n",
         )?;
         let old = publish_doctor_test_tool(
             &dir,
