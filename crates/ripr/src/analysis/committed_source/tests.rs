@@ -953,7 +953,10 @@ fn probe_records_ignored_and_deleted_snapshot_inputs() -> Result<(), String> {
         "// Jest Snapshot v1\n\nexports[`price 1`] = `1`;\n",
     )?;
     // The directory is ignored, so the tracked snapshot needs a forced add.
-    git(&repo.0, &["add", "-f", "test/__snapshots__/price.test.ts.snap"])?;
+    git(
+        &repo.0,
+        &["add", "-f", "test/__snapshots__/price.test.ts.snap"],
+    )?;
     commit_all(&repo.0, "tracked snap")?;
     write(
         &repo.0,
@@ -965,6 +968,18 @@ fn probe_records_ignored_and_deleted_snapshot_inputs() -> Result<(), String> {
         probe(&repo.0, DEADLINE)?.ok_or("ignored snapshot input must produce an overlay")?;
     with_overlay(Some(Arc::new(ignored_overlay)), || {
         assert!(snapshot_inputs_differ_in(
+            &repo.0,
+            Path::new("test/__snapshots__")
+        ));
+    });
+
+    // Isolate deletion from the ignored-input branch: otherwise local.snap
+    // keeps the ignored directory dirty even if deletion tracking regresses.
+    std::fs::remove_file(repo.0.join("test/__snapshots__/local.snap"))
+        .map_err(|error| error.to_string())?;
+    let clean_overlay = probe(&repo.0, DEADLINE)?;
+    with_overlay(clean_overlay.map(Arc::new), || {
+        assert!(!snapshot_inputs_differ_in(
             &repo.0,
             Path::new("test/__snapshots__")
         ));
