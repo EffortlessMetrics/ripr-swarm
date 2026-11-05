@@ -803,6 +803,35 @@ fn native_text(output: &Output) -> Result<&str> {
     std::str::from_utf8(&output.stdout).map_err(|error| error.to_string())
 }
 
+fn strip_observation(value: Value) -> Result<()> {
+    let record = format!("\nripr-coverage-strip {value}\n");
+    if record.len() > LINE_BYTES {
+        return Err("native strip observation exceeded its record bound".into());
+    }
+    write_record(&mut io::stdout().lock(), &record).map_err(|error| error.to_string())
+}
+
+fn strip_text_observation(phase: &str, mode: &str, source: &str) -> Result<()> {
+    let mut remaining = source.chars();
+    for part in 0..8 {
+        let text: String = remaining.by_ref().take(512).collect();
+        if text.is_empty() {
+            break;
+        }
+        let more = remaining.clone().next().is_some();
+        strip_observation(json!({
+            "phase": phase,
+            "mode": mode,
+            "part": part,
+            "source_bytes": source.len(),
+            "text": text,
+            "more": more,
+            "truncated": part == 7 && more,
+        }))?;
+    }
+    Ok(())
+}
+
 struct StripTools {
     rustc: PathBuf,
     cargo: PathBuf,
@@ -909,6 +938,7 @@ fn strip_executable(root: &Path, tools: &StripTools, mode: &str) -> Result<PathB
         .collect();
     assert_eq!(invocations.len(), 1, "one actual Cargo test compilation");
     let invocation = invocations[0];
+    strip_text_observation("compiler", mode, invocation)?;
     assert!(invocation.contains("-C instrument-coverage"));
     assert!(invocation.contains("-C debuginfo=line-tables-only"));
     assert!(!invocation.contains("-C strip=symbols"));
@@ -1032,6 +1062,178 @@ fn owned_coverage(export: &Value, source: &Path) -> Result<Value> {
     Ok(json!({"file": files[0], "functions": owned}))
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+struct DebugSection {
+    name: String,
+    section_type: String,
+    size_bytes: u64,
+    flags: String,
+}
+
+fn debug_section_name(name: &str) -> bool {
+    name.starts_with(".debug") || name.starts_with(".zdebug")
+}
+
+fn parse_debug_sections(text: &str) -> Result<Vec<DebugSection>> {
+    let headers = text
+        .lines()
+        .filter(|line| line.trim() == "Section Headers:")
+        .count();
+    if headers != 1 {
+        return Err("expected one GNU ELF section table".into());
+    }
+    let lines = text
+        .lines()
+        .skip_while(|line| line.trim() != "Section Headers:")
+        .skip(1);
+    let mut rows = BTreeSet::new();
+    let mut names = BTreeSet::new();
+    let mut sections = Vec::new();
+    let mut ended = false;
+    for line in lines.map(str::trim).filter(|line| !line.is_empty()) {
+        if line == "Key to Flags:" {
+            ended = true;
+            break;
+        }
+        let (index, row) = line
+            .strip_prefix('[')
+            .and_then(|line| line.split_once(']'))
+            .ok_or("malformed GNU ELF section row")?;
+        if index.trim() == "Nr" {
+            continue;
+        }
+        let index = index
+            .trim()
+            .parse::<u32>()
+            .map_err(|error| error.to_string())?;
+        if !rows.insert(index) || rows.len() > 256 {
+            return Err("duplicate or excessive GNU ELF section rows".into());
+        }
+        let fields: Vec<_> = row.split_whitespace().collect();
+        let name = fields.first().ok_or("empty GNU ELF section row")?;
+        if !debug_section_name(name) {
+            if fields.iter().any(|field| debug_section_name(field)) {
+                return Err("misplaced GNU ELF debug section name".into());
+            }
+            continue;
+        }
+        if !matches!(fields.len(), 9 | 10) {
+            return Err("malformed GNU ELF debug section fields".into());
+        }
+        let flags = if fields.len() == 10 { fields[6] } else { "" };
+        if name.len() > 128 || fields[1].len() > 32 || flags.len() > 16 {
+            return Err("GNU ELF debug section text exceeds bounds".into());
+        }
+        if !names.insert((*name).to_owned()) || sections.len() == 32 {
+            return Err("duplicate or excessive GNU ELF debug sections".into());
+        }
+        for field in &fields[2..6] {
+            u64::from_str_radix(field, 16).map_err(|error| error.to_string())?;
+        }
+        for field in &fields[fields.len() - 3..] {
+            field.parse::<u64>().map_err(|error| error.to_string())?;
+        }
+        sections.push(DebugSection {
+            name: (*name).to_owned(),
+            section_type: fields[1].to_owned(),
+            size_bytes: u64::from_str_radix(fields[4], 16)
+                .map_err(|error| error.to_string())?,
+            flags: flags.to_owned(),
+        });
+    }
+    if !ended || rows.is_empty() {
+        return Err("incomplete or empty GNU ELF section table".into());
+    }
+    Ok(sections)
+}
+
+fn nonempty_dwarf_line_table(section: &DebugSection) -> bool {
+    section.name == ".debug_line"
+        && section.section_type == "PROGBITS"
+        && section.size_bytes > 0
+        && !section.flags.contains('A')
+}
+
+fn permitted_debug_loader(section: &DebugSection) -> bool {
+    // Rust emits pretty-printer loader records here and keeps a volatile
+    // reference. This allocated, read-only data is not a DWARF line table.
+    // Do not generalize lld's ALLOC exception to arbitrary debug sections.
+    section.name == ".debug_gdb_scripts"
+        && section.section_type == "PROGBITS"
+        && section.size_bytes > 0
+        && section.flags.contains('A')
+        && !section.flags.contains('W')
+        && !section.flags.contains('X')
+}
+
+#[test]
+fn debug_sections_require_dwarf_removal_and_exact_allocated_loader_marker() -> Result<()> {
+    let header = "  [Nr] Name Type Address Off Size ES Flg Lk Inf Al\n";
+    let null = "  [ 0] NULL 0000000000000000 000000 000000 00 0 0 0\n";
+    let line = "  [ 2] .debug_line PROGBITS 0000000000000000 000040 000020 00 0 0 1\n";
+    let loader =
+        "  [ 3] .debug_gdb_scripts PROGBITS 0000000000000040 000060 000022 01 AMS 0 0 1\n";
+    let table = format!("Section Headers:\n{header}{null}{line}{loader}Key to Flags:\n");
+    let sections = parse_debug_sections(&table)?;
+    assert_eq!(sections.len(), 2);
+    assert_eq!(sections[0].size_bytes, 32, "GNU sizes are hexadecimal");
+    assert!(nonempty_dwarf_line_table(&sections[0]));
+    assert!(!permitted_debug_loader(&sections[0]));
+    assert!(permitted_debug_loader(&sections[1]));
+    assert!(!nonempty_dwarf_line_table(&sections[1]));
+    let no_debug = parse_debug_sections(&format!("Section Headers:\n{null}Key to Flags:\n"))?;
+    assert!(no_debug.is_empty(), "the unnamed NULL row is not a debug section");
+    let lookalike = parse_debug_sections(&table.replace(
+        ".debug_gdb_scripts",
+        ".debug_gdb_scripts_extra",
+    ))?;
+    assert_eq!(lookalike[1].name, ".debug_gdb_scripts_extra");
+    assert!(!permitted_debug_loader(&lookalike[1]));
+
+    let mut allocated_dwarf = sections[0].clone();
+    allocated_dwarf.flags = "A".into();
+    assert!(!permitted_debug_loader(&allocated_dwarf));
+    assert!(!nonempty_dwarf_line_table(&allocated_dwarf));
+    let mut empty_dwarf = sections[0].clone();
+    empty_dwarf.size_bytes = 0;
+    assert!(!nonempty_dwarf_line_table(&empty_dwarf));
+    for name in [
+        ".debug_info",
+        ".zdebug_info",
+        ".debug_gdb_scripts_extra",
+        ".debug_unknown",
+    ] {
+        let mut wrong = sections[1].clone();
+        wrong.name = name.into();
+        assert!(!permitted_debug_loader(&wrong), "{name}");
+    }
+    for flags in ["", "MS", "WA", "AX"] {
+        let mut wrong = sections[1].clone();
+        wrong.flags = flags.into();
+        assert!(!permitted_debug_loader(&wrong), "{flags}");
+    }
+    for (section_type, size_bytes) in [("NOBITS", 34), ("PROGBITS", 0)] {
+        let mut wrong = sections[1].clone();
+        wrong.section_type = section_type.into();
+        wrong.size_bytes = size_bytes;
+        assert!(!permitted_debug_loader(&wrong));
+    }
+    for broken in [
+        table.replace("Section Headers:\n", ""),
+        table.replace("Key to Flags:\n", ""),
+        table.replace("000020", "invalid"),
+        table.replace(" 0 0 1", " 0 0"),
+        table.replace("[ 2]", "[invalid]"),
+        table.replace(".debug_line", "other .debug_line"),
+        table.replace(loader, &format!("{loader}{loader}")),
+        table.replace("[ 3] .debug_gdb_scripts", "[ 3] .debug_line"),
+        "Section Headers:\nKey to Flags:\n".into(),
+    ] {
+        assert!(parse_debug_sections(&broken).is_err(), "{broken}");
+    }
+    Ok(())
+}
+
 struct StripObservation {
     bytes: u64,
     build_id: String,
@@ -1112,19 +1314,35 @@ fn observe_strip_variant(root: &Path, tools: &StripTools, mode: &str) -> Result<
         "ELF inspection warnings are not success"
     );
     let image = native_text(&image)?;
-    let debug_sections: Vec<_> = image
-        .split_whitespace()
-        .filter(|word| word.starts_with(".debug_") || word.starts_with(".zdebug_"))
-        .collect();
+    let debug_sections = match parse_debug_sections(image) {
+        Ok(sections) => sections,
+        Err(error) => {
+            strip_text_observation("elf_parse_failure", mode, image)?;
+            return Err(error);
+        }
+    };
+    strip_observation(json!({
+        "phase": "elf_sections",
+        "mode": mode,
+        "debug_section_count": debug_sections.len(),
+    }))?;
+    for section in &debug_sections {
+        strip_observation(json!({
+            "phase": "elf_section",
+            "mode": mode,
+            "section": section,
+            "permitted_loader": permitted_debug_loader(section),
+        }))?;
+    }
     if mode == "none" {
         assert!(
-            debug_sections.contains(&".debug_line"),
-            "baseline has actual line tables"
+            debug_sections.iter().any(nonempty_dwarf_line_table),
+            "baseline has a nonempty, nonallocated PROGBITS DWARF line table"
         );
     } else {
         assert!(
-            debug_sections.is_empty(),
-            "candidate removed all debug sections"
+            debug_sections.iter().all(permitted_debug_loader),
+            "candidate retained an unsupported debug section; see named section receipts"
         );
     }
     let build_id = one_build_id(

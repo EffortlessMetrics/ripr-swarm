@@ -181,8 +181,36 @@ builds the same dependency-free Cargo test fixture with explicit `none` and
 coverage instrumentation. Child-only compiler/wrapper/encoded-flag overrides
 prevent the outer cargo-llvm-cov environment from changing either comparison.
 The native compiler invocation must show the expected coverage/debug flags and
-candidate strip setting. The baseline binary must contain line tables; the
-candidate must contain no debug sections and be smaller.
+candidate strip setting. The baseline binary must contain a nonempty,
+nonallocated `PROGBITS` `.debug_line` section. The candidate must be smaller
+and contain no debug-prefixed section except an exact, nonempty `PROGBITS`
+`.debug_gdb_scripts` with `ALLOC` and without write/execute flags. Allocated
+DWARF, compressed debug sections, lookalike names and unknown debug prefixes
+still fail the control.
+
+The distinction follows the pinned producer and linker. Rust's
+[GDB metadata producer](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/compiler/rustc_codegen_llvm/src/debuginfo/gdb.rs)
+emits pretty-printer loader records and retains a volatile reference to them;
+they are not DWARF line tables. The pinned
+[linker mapping](https://github.com/rust-lang/rust/blob/59807616e1fa2540724bfbac14d7976d7e4a3860/compiler/rustc_codegen_ssa/src/back/linker.rs)
+selects `--strip-debug`, and the matching LLVM
+[debug-section predicate](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/lld/ELF/InputSection.h)
+excludes allocated sections. This permits only the named loader metadata in
+the control; allocation alone never admits another debug section. Actual
+retained sections must come from the native receipt, not this source rule.
+
+The GNU ELF parser requires a complete indexed section table and records each
+debug-prefixed section's name, type, byte size and flags, parsing sizes from
+the tool's hexadecimal fields. It requires numeric unique indices for all
+data rows, and rejects malformed fields or duplicate names among debug
+subjects and exhausted row/text bounds. Ordinary section fields and name
+uniqueness are outside its validation; the unnamed `NULL` section is not a
+debug subject. Each compiler/section diagnostic
+record is at most 4 KiB. Compiler text and raw context for parse failures are
+bounded to eight 512-character chunks with explicit remaining/truncated
+markers. At most 32 debug sections from at most 256 indexed rows are admitted.
+These observations precede the assertions, so a later failure retains its
+actual section evidence in the job output.
 
 Each variant runs the exact test twice, with a post-assertion acknowledgement,
 one-test success and a fresh nonempty profile per invocation. Matching-sysroot
