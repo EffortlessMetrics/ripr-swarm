@@ -1,0 +1,671 @@
+diff --git a/.ripr/traceability.d/12010-sink-identity.toml b/.ripr/traceability.d/12010-sink-identity.toml
+index 0fa2cc0a0..22fd96ad5 100644
+--- a/.ripr/traceability.d/12010-sink-identity.toml
++++ b/.ripr/traceability.d/12010-sink-identity.toml
+@@ -18,4 +18,5 @@ tests = [
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::bound_literal_matches_keeps_scalar_identity_and_currentness",
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::independent_same_named_method_helper_does_not_look_self_computed",
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::primitive_named_format_effect_carries_only_its_changed_argument",
++  "crates/ripr/tests/return_diagnostic_confirmation.rs::tuple_option_projection_keeps_its_receiver_and_changed_slot",
+ ]
+diff --git a/crates/ripr/src/analysis/classify/call_identity.rs b/crates/ripr/src/analysis/classify/call_identity.rs
+index 4865579ce..1b825028a 100644
+--- a/crates/ripr/src/analysis/classify/call_identity.rs
++++ b/crates/ripr/src/analysis/classify/call_identity.rs
+@@ -3599,6 +3599,66 @@ fn qualifier_before(head: &str) -> Option<Vec<String>> {
+     Some(segments)
+ }
+ 
++// A trait on Ref<Vec<_>> can intercept first/last before dereferencing to
++// the slice, even when its method declaration is outside the index. The
++// workspace import closure is deliberately conservative: an unread external
++// import (including a re-export in another indexed file) withholds this
++// projection witness. Ordinary field identity and closed standard imports
++// keep their existing admission.
++pub(in crate::analysis) fn closed_method_dispatch_imports(index: &RustIndex) -> bool {
++    use crate::analysis::syntax::parse_clean_source_file;
++    use ra_ap_syntax::{AstNode, ast};
++    // MemberCrates admits only a witnessed library target at src/lib.rs.
++    // A globally familiar crate name is not its binding in this importer:
++    // Cargo can bind the package's own name, or even `alloc`, to an outside
++    // dependency. Resolve each nonstandard root through manifest authority.
++    // The value-equality witness separately certifies the std/core roots.
++    let library_roots: Vec<_> = index
++        .files()
++        .iter()
++        .map(|(path, _)| path)
++        .filter(|path| path.ends_with("src/lib.rs"))
++        .collect();
++    index.files().iter().all(|(file, facts)| {
++        let known = |root: &str| {
++            matches!(root, "std" | "core" | "crate" | "self" | "super")
++                || library_roots.iter().any(|library| {
++                    index
++                        .member_crates
++                        .import_names(file, library)
++                        .iter()
++                        .any(|bound| bound == root)
++                })
++        };
++        if crate::analysis::classify::reveal::flattened_use_paths(&facts.source)
++            .iter()
++            .any(|import| {
++                !known(
++                    import
++                        .path
++                        .trim_start_matches("::")
++                        .split("::")
++                        .next()
++                        .unwrap_or_default(),
++                )
++            })
++        {
++            return false;
++        }
++        if !facts.source.contains("extern") {
++            return true;
++        }
++        let Some(file) = parse_clean_source_file(&facts.source) else {
++            return false;
++        };
++        file.tree()
++            .syntax()
++            .descendants()
++            .filter_map(ast::ExternCrate::cast)
++            .all(|item| item.name_ref().is_some_and(|name| known(name.text())))
++    })
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+index 2ef4e2739..3d1226525 100644
+--- a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
++++ b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+@@ -56,63 +56,7 @@ fn mentions(node: &ra_ap_syntax::SyntaxNode, binding: &str) -> bool {
+             })
+     })
+ }
+-// A trait on Ref<Vec<_>> can intercept first/last before dereferencing to
+-// the slice, even when its method declaration is outside the index. The
+-// workspace import closure is deliberately conservative: an unread external
+-// import (including a re-export in another indexed file) withholds this
+-// projection witness. Ordinary field identity and closed standard imports
+-// keep their existing admission.
+-fn projection_imports_closed(index: &RustIndex) -> bool {
+-    // MemberCrates admits only a witnessed library target at src/lib.rs.
+-    // A globally familiar crate name is not its binding in this importer:
+-    // Cargo can bind the package's own name, or even `alloc`, to an outside
+-    // dependency. Resolve each nonstandard root through manifest authority.
+-    // The value-equality witness separately certifies the std/core roots.
+-    let library_roots: Vec<_> = index
+-        .files()
+-        .iter()
+-        .map(|(path, _)| path)
+-        .filter(|path| path.ends_with("src/lib.rs"))
+-        .collect();
+-    index.files().iter().all(|(file, facts)| {
+-        let known = |root: &str| {
+-            matches!(root, "std" | "core" | "crate" | "self" | "super")
+-                || library_roots.iter().any(|library| {
+-                    index
+-                        .member_crates
+-                        .import_names(file, library)
+-                        .iter()
+-                        .any(|bound| bound == root)
+-                })
+-        };
+-        if crate::analysis::classify::reveal::flattened_use_paths(&facts.source)
+-            .iter()
+-            .any(|import| {
+-                !known(
+-                    import
+-                        .path
+-                        .trim_start_matches("::")
+-                        .split("::")
+-                        .next()
+-                        .unwrap_or_default(),
+-                )
+-            })
+-        {
+-            return false;
+-        }
+-        if !facts.source.contains("extern") {
+-            return true;
+-        }
+-        let Some(file) = parse_clean_source_file(&facts.source) else {
+-            return false;
+-        };
+-        file.tree()
+-            .syntax()
+-            .descendants()
+-            .filter_map(ast::ExternCrate::cast)
+-            .all(|item| item.name_ref().is_some_and(|name| known(name.text())))
+-    })
+-}
++
+ fn field_root(
+     mut expression: ast::Expr,
+     index: &RustIndex,
+@@ -557,7 +501,8 @@ impl ArgumentReceiver {
+             parameter,
+             fields,
+             receiver_type: receiver_ty,
+-            projection_imports_closed: projection_imports_closed(index),
++            projection_imports_closed:
++                crate::analysis::classify::call_identity::closed_method_dispatch_imports(index),
+         })
+     }
+     pub(in crate::analysis) fn admits(
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 66e98de3b..3a9d24eb8 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -146,6 +146,9 @@ pub(in crate::analysis) struct OwnerReturnPin {
+     /// (#12796). The test side still checks that `T` is a plain
+     /// single-integer-field struct.
+     tuple_projection: Option<String>,
++    /// The sole changed tuple slot is `None` -> `Some(self.integer_field)`.
++    /// Its numeric projection observes that changed slot, never a sibling.
++    tuple_option_projection: Option<(String, String)>,
+     /// The owner is an `async fn`, so a test reads its return value as
+     /// `owner(..).await` (RIPR-SPEC-0197 rule 1, `#[tokio::test]`).
+     awaited: bool,
+@@ -4839,6 +4842,9 @@ impl OwnerReturnPin {
+     ) -> Option<Self> {
+         let name = owner.name.as_str();
+         let call = pin_call(owner, index)?;
++        let tuple_option_projection = matches!(path, ReturnPathGate::Any)
++            .then(|| changed_tuple_option_projection(owner, probe))
++            .flatten();
+         // #6544: a bare call's same-package module-level rivals are settled
+         // per test by the import or path that spells the call; every other
+         // competing definition still refuses the pin here.
+@@ -4846,7 +4852,13 @@ impl OwnerReturnPin {
+             CallKind::Bare => super::call_identity::shared_owner_call_identity(index, owner),
+             CallKind::Method | CallKind::Associated => None,
+         };
+-        if other_definition_competes(owner, index, call.kind(), identity.as_deref()) {
++        if other_definition_competes(
++            owner,
++            index,
++            call.kind(),
++            identity.as_deref(),
++            tuple_option_projection.is_some(),
++        ) {
+             return None;
+         }
+         let walked_positions =
+@@ -4883,6 +4895,7 @@ impl OwnerReturnPin {
+                 &probe.expression,
+             ),
+             tuple_projection,
++            tuple_option_projection,
+             awaited: declares_async(owner, index),
+             poll_helpers: if declares_async(owner, index) {
+                 super::poll_helper::verified_helpers(index)
+@@ -4998,7 +5011,7 @@ impl OwnerReturnPin {
+             || !field_compares_with_derived_equality(type_name, field, index)
+             || derives_clone(type_name, index)
+             || workspace_declares_trait(index, "Clone")
+-            || other_definition_competes(owner, index, CallKind::Method, None)
++            || other_definition_competes(owner, index, CallKind::Method, None, false)
+         {
+             return None;
+         }
+@@ -5018,6 +5031,7 @@ impl OwnerReturnPin {
+             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+             pointer_return_change: None,
+             tuple_projection: None,
++            tuple_option_projection: None,
+             closed_owner: None,
+             awaited: declares_async(owner, index),
+             poll_helpers: if declares_async(owner, index) {
+@@ -5106,7 +5120,7 @@ impl OwnerReturnPin {
+         // #6617 keeps the associated-function pin to a return value: a
+         // `T::new()` whole-value field pin is a separate claim.
+         if matches!(call, PinCall::Associated { .. })
+-            || other_definition_competes(owner, index, call.kind(), None)
++            || other_definition_competes(owner, index, call.kind(), None, false)
+         {
+             return None;
+         }
+@@ -5129,6 +5143,7 @@ impl OwnerReturnPin {
+             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+             pointer_return_change: None,
+             tuple_projection: None,
++            tuple_option_projection: None,
+             closed_owner: None,
+             awaited: declares_async(owner, index),
+             poll_helpers: if declares_async(owner, index) {
+@@ -5217,7 +5232,7 @@ impl OwnerReturnPin {
+         // As for a whole-value field: no associated-function pin, and no
+         // other definition may take a call by the owner's name.
+         if matches!(call, PinCall::Associated { .. })
+-            || other_definition_competes(owner, index, call.kind(), None)
++            || other_definition_competes(owner, index, call.kind(), None, false)
+         {
+             return None;
+         }
+@@ -5232,6 +5247,7 @@ impl OwnerReturnPin {
+             pointer_mask_gate: super::mask_pin::PointerMaskGate::Refuse,
+             pointer_return_change: None,
+             tuple_projection: None,
++            tuple_option_projection: None,
+             closed_owner: None,
+             awaited: declares_async(owner, index),
+             poll_helpers: if declares_async(owner, index) {
+@@ -5328,12 +5344,15 @@ impl OwnerReturnPin {
+         operands: [&'a str; 2],
+         index: &RustIndex,
+         syntax: &OwnerPinSyntax,
+-    ) -> Option<[&'a str; 2]> {
+-        let type_name = self.tuple_projection.as_deref()?;
++    ) -> Option<([&'a str; 2], &str)> {
++        let suffix = self
++            .tuple_option_projection
++            .as_ref()
++            .map_or(".0", |(suffix, _)| suffix.as_str());
+         let strip = |operand: &'a str| {
+             operand
+                 .trim()
+-                .strip_suffix(".0")
++                .strip_suffix(suffix)
+                 .map(str::trim_end)
+                 .filter(|base| !base.is_empty())
+         };
+@@ -5342,13 +5361,29 @@ impl OwnerReturnPin {
+             (None, Some(base)) => [operands[0], base],
+             _ => return None,
+         };
+-        let owner = index.functions().iter().find(|function| {
+-            function.file == self.owner_file
+-                && function.name == self.name
+-                && function.start_line == self.owner_start_line
++        let owner = index.functions().iter().find(|f| {
++            f.file == self.owner_file
++                && f.name == self.name
++                && f.start_line == self.owner_start_line
+         })?;
+-        field_builtin_integer_of(owner, type_name, "0", true, index, syntax)?;
+-        Some(stripped)
++        if let Some((_, field)) = &self.tuple_option_projection {
++            let type_name = match &owner.item.container {
++                FunctionContainer::Inherent { self_ty }
++                | FunctionContainer::TraitImpl { self_ty, .. } => self_ty,
++                _ => return None,
++            };
++            if ["Option", "Some", "None"]
++                .iter()
++                .any(|name| wrapper_may_be_rebound(name, index))
++            {
++                return None;
++            }
++            field_builtin_integer_of(owner, type_name, field, true, index, syntax)?;
++        } else {
++            let type_name = self.tuple_projection.as_deref()?;
++            field_builtin_integer_of(owner, type_name, "0", true, index, syntax)?;
++        }
++        Some((stripped, suffix))
+     }
+ 
+     fn default_trait_call_shape<'a>(
+@@ -5787,7 +5822,7 @@ impl OwnerReturnPin {
+             // integer tuple struct is the changed `T(e)`'s own `e`, so the
+             // projection reads as the whole-value pin on the owner call.
+             let (operands, projection) = match self.projected_operands(operands, index, syntax) {
+-                Some(stripped) => (stripped, ".0"),
++                Some(projected) => projected,
+                 None => (operands, ""),
+             };
+             // #9478: a typed immutable function pointer lends its exact call,
+@@ -8101,6 +8136,75 @@ pub(super) fn is_whole_free_owner_call(operand: &str, name: &str) -> bool {
+     )
+ }
+ 
++/// The only changed slot of a whole returned tuple is an Option's
++/// presence, stored from one plain self field. Numeric sibling projections
++/// cannot borrow this identity. Type/equality and receiver gates run later.
++fn changed_tuple_option_projection(
++    owner: &FunctionSummary,
++    probe: &Probe,
++) -> Option<(String, String)> {
++    fn tuple(source: &str) -> Option<ast::TupleExpr> {
++        let parsed = parse_clean_source_file(source)?;
++        let function = parsed
++            .tree()
++            .syntax()
++            .descendants()
++            .find_map(ast::Fn::cast)?;
++        let body = function.body()?.stmt_list()?;
++        if body.statements().next().is_some() {
++            return None;
++        }
++        let ast::Expr::TupleExpr(tuple) = body.tail_expr()? else {
++            return None;
++        };
++        Some(tuple)
++    }
++    let after = tuple(&owner.body)?;
++    if collapse_whitespace(&after.syntax().text().to_string())
++        != collapse_whitespace(&probe.expression)
++    {
++        return None;
++    }
++    let before = tuple(&format!("fn previous() {{ {} }}", probe.before.as_deref()?))?;
++    let old: Vec<_> = before.fields().collect();
++    let new: Vec<_> = after.fields().collect();
++    if old.len() != new.len() {
++        return None;
++    }
++    let mut changed = old.iter().zip(&new).enumerate().filter(|(_, (a, b))| {
++        collapse_whitespace(&a.syntax().text().to_string())
++            != collapse_whitespace(&b.syntax().text().to_string())
++    });
++    let (position, (old, new)) = changed.next()?;
++    if changed.next().is_some() {
++        return None;
++    }
++    if old.syntax().text().to_string().trim() != "None" {
++        return None;
++    }
++    let ast::Expr::CallExpr(call) = new else {
++        return None;
++    };
++    if call.expr()?.syntax().text().to_string() != "Some" {
++        return None;
++    }
++    let args: Vec<_> = call.arg_list()?.args().collect();
++    let [ast::Expr::FieldExpr(field)] = args.as_slice() else {
++        return None;
++    };
++    if field.expr()?.syntax().text().to_string() != "self" {
++        return None;
++    }
++    let ty = declared_return_type(&owner.body)?;
++    let types = top_level_arguments(ty.strip_prefix('(')?.strip_suffix(')')?);
++    let selected = types.get(position)?.split_whitespace().collect::<String>();
++    let integer = selected.strip_prefix("Option<")?.strip_suffix('>')?;
++    if !INTEGER_TYPES.contains(&integer) {
++        return None;
++    }
++    Some((format!(".{position}"), field.name_ref()?.text().to_string()))
++}
++
+ /// #12796: the tuple struct `T` when the changed tail is exactly `T(e)` or
+ /// `Self(e)`, the owner declares that type (or `Self`) as its return, and the
+ /// constructor takes one argument. A tuple constructor's arity is its field
+@@ -12601,7 +12705,7 @@ fn free_call_reaches_definition(
+ ) -> bool {
+     if !owner.item.has_body
+         || !matches!(pin_call(owner, index), Some(PinCall::Bare))
+-        || other_definition_competes(owner, index, CallKind::Bare, None)
++        || other_definition_competes(owner, index, CallKind::Bare, None, false)
+         || index
+             .files()
+             .get(&owner.file)
+@@ -13291,11 +13395,75 @@ fn climb_one_level(
+ /// function: inherent and trait-impl functions of any type, trait items,
+ /// unknown containers, and every unindexed `fn name`. A free function
+ /// cannot be the target of a type path, so it never competes.
++/// A same-named method on a different, explicitly declared root nominal
++/// type cannot dispatch on this pin's receiver. Unread traits and aliases
++/// retain the old refusal; assertion-local receiver binding still applies.
++fn method_receivers_are_distinct_nominal_types(
++    owner: &FunctionSummary,
++    other: &FunctionSummary,
++    index: &RustIndex,
++) -> bool {
++    fn ty(function: &FunctionSummary) -> Option<&str> {
++        match &function.item.container {
++            FunctionContainer::Inherent { self_ty }
++            | FunctionContainer::TraitImpl { self_ty, .. } => Some(self_ty.as_str()),
++            _ => None,
++        }
++    }
++    let (Some(a), Some(b)) = (ty(owner), ty(other)) else {
++        return false;
++    };
++    if a == b
++        || !is_plain_identifier(a)
++        || !is_plain_identifier(b)
++        || !super::call_identity::closed_method_dispatch_imports(index)
++    {
++        return false;
++    }
++    // The shared import closure's std/core exclusion is certified elsewhere
++    // by collection value equality. This new nominal route instead refuses
++    // explicit standard-root imports and extern aliases altogether.
++    if index.files().values().any(|facts| {
++        facts.source.contains("extern")
++            || flattened_use_paths(&facts.source).iter().any(|import| {
++                matches!(
++                    import.path.trim_start_matches("::").split("::").next(),
++                    Some("std" | "core")
++                )
++            })
++    }) {
++        return false;
++    }
++    [(owner, a), (other, b)]
++        .into_iter()
++        .all(|(function, name)| {
++            index.files().get(&function.file).is_some_and(|facts| {
++                let Some(shape) = local_type_equality(&facts.source, name) else {
++                    return false;
++                };
++                if shape.generic_params
++                    || shape.other_attributes
++                    || declaring_file_rebinds(&facts.source, name, true, index)
++                {
++                    return false;
++                }
++                parse_clean_source_file(&facts.source).is_some_and(|file| {
++                    file.tree()
++                        .syntax()
++                        .children()
++                        .filter_map(ast::Struct::cast)
++                        .any(|item| item.name().is_some_and(|n| n.text() == name))
++                })
++            })
++        })
++}
++
+ fn other_definition_competes(
+     owner: &FunctionSummary,
+     index: &RustIndex,
+     kind: CallKind,
+     settled_per_test: Option<&OwnerCallIdentity>,
++    changed_tuple_projection: bool,
+ ) -> bool {
+     let method = kind == CallKind::Method;
+     let associated = kind == CallKind::Associated;
+@@ -13319,6 +13487,8 @@ fn other_definition_competes(
+                     && function.item.has_self_param
+                     && function.item.has_body
+                     && !is_self_forward(&function.body, name)
++                    && !(changed_tuple_projection
++                        && method_receivers_are_distinct_nominal_types(owner, function, index))
+             }
+         }
+     });
+@@ -13522,7 +13692,7 @@ pub(in crate::analysis) fn pin_scope_needs(
+         CallKind::Method | CallKind::Associated => None,
+     };
+     needs.competing_definitions =
+-        !other_definition_competes(owner, index, kind, identity.as_deref());
++        !other_definition_competes(owner, index, kind, identity.as_deref(), false);
+     needs
+ }
+ 
+@@ -15069,12 +15239,11 @@ fn test_file_helpers_reaching_owner(
+     });
+     candidates
+         .into_iter()
+-        .filter_map(|helper| {
+-            // Missing owner identity cannot certify an independent helper.
+-            owner
+-                .is_none_or(|owner| callers.caller_reaches(index, owner, None, helper))
+-                .then(|| helper.to_string())
++        // Missing owner identity cannot certify an independent helper.
++        .filter(|helper| {
++            owner.is_none_or(|owner| callers.caller_reaches(index, owner, None, helper))
+         })
++        .map(str::to_string)
+         .collect()
+ }
+ 
+diff --git a/crates/ripr/src/analysis/seam_cache.rs b/crates/ripr/src/analysis/seam_cache.rs
+index 7ed867bf8..41baab7c7 100644
+--- a/crates/ripr/src/analysis/seam_cache.rs
++++ b/crates/ripr/src/analysis/seam_cache.rs
+@@ -700,7 +700,8 @@ pub(crate) struct CachedSeamLimitInfo {
+ /// `1.165`: returned comparisons retain same-owner/element boundary pairing.
+ /// `1.166`: canonical scalar-match and unit-error unwrap observer identity.
+ /// `1.167`: typed helper-call independence and primitive named-format effect carriers.
+-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.167";
++/// `1.168`: changed tuple Option slots retain nominal receiver and component identity.
++pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.168";
+ /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
+ /// #3286) — sharded entries derive from the same facts and cannot bypass
+ /// the outer generation bump.
+@@ -913,7 +914,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.167";
+ /// `0.167`: same returned-boundary pairing as full `1.165`.
+ /// `0.168`: same observer identity as full `1.166`.
+ /// `0.169`: same observer identities as full `1.167`.
+-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
++/// `0.170`: same tuple-component identity as full `1.168`.
++const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
+ 
+ /// Compact-classified seam cache schema. This cache stores the same
+ /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
+@@ -1128,7 +1130,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
+ /// `0.167`: same returned-boundary pairing as full `1.165`.
+ /// `0.168`: same observer identity as full `1.166`.
+ /// `0.169`: same observer identities as full `1.167`.
+-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.169";
++/// `0.170`: same tuple-component identity as full `1.168`.
++pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.170";
+ 
+ /// Compact class-count cache used by repo badge rendering. It keys off
+ /// the same workspace state as the full fact cache, but stores only
+@@ -5284,7 +5287,7 @@ mod tests {
+         // 1.159 -> 1.160: assertion call-kind identity separates same-named owners (#12234).
+         // Composed main and successor invalidate both predecessor branches.
+         // 1.160 -> 1.161: unresolved field snapshots cannot remain marker-free (#13278).
+-        assert_eq!(CACHE_SCHEMA_VERSION, "1.167");
++        assert_eq!(CACHE_SCHEMA_VERSION, "1.168");
+         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
+         // #3731 semantic transition as the outer classified-seam cache,
+         // for the sharded and compact envelopes.
+@@ -5430,8 +5433,8 @@ mod tests {
+         // 0.160 -> 0.161: same cloned-callback withholding as full 1.159 (#13219).
+         // 0.161 -> 0.162: same assertion call-kind identity as full 1.160 (#12234).
+         // 0.162 -> 0.163: same field-snapshot limitation as full 1.161 (#13278).
+-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.169");
+-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.169");
++        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
++        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.170");
+     }
+ 
+     #[test]
+@@ -5763,6 +5766,7 @@ mod tests {
+             ("pre-returned-boundary-pairing", "1.164", "0.166"),
+             ("pre-scalar-and-unit-error-identity", "1.165", "0.167"),
+             ("pre-helper-and-formatted-effect-identity", "1.166", "0.168"),
++            ("pre-tuple-component-identity", "1.167", "0.169"),
+         ] {
+             for compact in [false, true] {
+                 for sharded in [false, true] {
+@@ -5836,7 +5840,7 @@ mod tests {
+     fn favorable_shard_predecessors_are_refused_with_current_outer_key() -> Result<(), String> {
+         for previous in [
+             "0.33", "0.38", "0.39", "0.40", "0.41", "0.42", "0.43", "0.44", "0.159", "0.160",
+-            "0.161", "0.162", "0.163", "0.164", "0.165", "0.166", "0.167", "0.168",
++            "0.161", "0.162", "0.163", "0.164", "0.165", "0.166", "0.167", "0.168", "0.169",
+         ] {
+             for compact in [false, true] {
+                 let scratch = integrity_scratch("property-shard-generation")?;
+diff --git a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+index e52f85bc2..f188a2b7e 100644
+--- a/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
++++ b/crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs
+@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.167";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.168";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index fed68f44c..7c823e212 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -905,3 +905,29 @@ fn primitive_named_format_effect_carries_only_its_changed_argument() -> Result<(
+     }
+     Ok(())
+ }
++
++#[test]
++fn tuple_option_projection_keeps_its_receiver_and_changed_slot() -> Result<(), String> {
++    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
++        .join("../../fixtures/rust_same_method_owner_type_positive");
++    let source =
++        std::fs::read_to_string(fixture.join("input/src/lib.rs")).map_err(|e| e.to_string())?;
++    let original = std::fs::read_to_string(fixture.join("input/tests/size_hints.rs"))
++        .map_err(|e| e.to_string())?;
++    let manifest =
++        std::fs::read_to_string(fixture.join("input/Cargo.toml")).map_err(|e| e.to_string())?;
++    let diff = std::fs::read_to_string(fixture.join("diff.patch")).map_err(|e| e.to_string())?;
++    for (test,exposed) in [
++        (original.clone(),true),
++        (original.replace("assert_eq!(it.size_hint().1, Some(it.remaining));","assert_eq!(it.size_hint().0, 0);"),false),
++        (original.replace("assert_eq!(it.size_hint().1, Some(it.remaining));","let hint=it.size_hint();\n    assert_eq!(hint.1, Some(it.remaining));"),true),
++        (original.replace("assert_eq!(it.size_hint().1, Some(it.remaining));","let mut hint=it.size_hint();\n    hint=(0,Some(it.remaining));\n    assert_eq!(hint.1, Some(it.remaining));"),false),
++        (original.replace("::WhileSome;","::{WhileSome,Combinations};").replace("assert_eq!(it.size_hint().1, Some(it.remaining));","let _=it.size_hint();\n    let other=Combinations { remaining:2 };\n    assert_eq!(other.size_hint().1, Some(other.remaining));"),false),
++    ] {
++        let report=check_report(&source,&test,&manifest,&diff)?;
++        let findings=report["findings"].as_array().ok_or("missing findings")?;
++        assert_eq!(findings.len(),1,"{report}");
++        assert_eq!(findings[0]["classification"]=="exposed",exposed,"{test}: {report}");
++    }
++    Ok(())
++}
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index c1ec528ca..76f4ded8a 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -19795,7 +19795,7 @@ top-level `source_subject`:
+ 
+ - `digest_algorithm`: always `"sha256"`.
+ - `corpus` (additive, full Rust inventory only): the analysis-owned
+-  `{ "scope": "rust_workspace", "cache_schema_version": "1.167",
++  `{ "scope": "rust_workspace", "cache_schema_version": "1.168",
+   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+   classified inventory cache key, including both production and test Rust
+   files after the existing generated-file exclusions. Repo-exposure producers
+@@ -20580,7 +20580,7 @@ targeted-rerun receipt shape:
+     "recomputation_reasons": ["selected_test_scope_recomputed"],
+     "invalidation_status": "not_available",
+     "input_fingerprint": {
+-      "schema_version": "1.167",
++      "schema_version": "1.168",
+       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
+       "workspace_root_hash": "…",
+       "files_content_hash": "…",
+diff --git a/xtask/src/tests/rust_corpus_projection.rs b/xtask/src/tests/rust_corpus_projection.rs
+index bbbda83d1..6eb253114 100644
+--- a/xtask/src/tests/rust_corpus_projection.rs
++++ b/xtask/src/tests/rust_corpus_projection.rs
+@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
+ mod fixture_git;
+ 
+ const GAP: &str = "gap:54c07ec8eeadf203";
+-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.167";
++const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.168";
+ const SEAM: &str = "67f9714ba37b3967";
+ const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+ const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";

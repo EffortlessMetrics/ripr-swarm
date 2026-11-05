@@ -1,0 +1,13 @@
+{
+  "base": "5bc9e2d3513ba8818299958c959c5d9271bdac6a",
+  "candidate": "4e463e27746957d4746795d78c81b16abfe1be9e",
+  "tree": "62152bac220d26098cbeb3c5ad4b9df589079e0e",
+  "patch_bytes": 31830,
+  "patch_sha256": "a0333041bafdec0cb75d5b0f622e1bfe0d8bba2a0082f60742fa7a5f54865d0b",
+  "prior_exact_proof": "5bc9:16production+4native, all pass; CLI original helper/effect/unwrap/wildcard positives restored, both sibling negatives weak",
+  "native_tuple_proof": "changed upper-slot assertion passes current/fails before; unchanged lower-slot and other-receiver assertions pass both versions; every run has1 executed test",
+  "scope": "None -> Some(self.integer_field) in the sole changed whole tuple slot; numeric projection pins only that slot. Distinct root nominal method rivals are excluded ONLY for this tuple view, with closed imports and explicit std/core imports/extern aliases refused. Other return-pin rival rules retain old behavior. Existing importer-aware collection closure moved unchanged to shared call-identity owner.",
+  "cache": "full1.168/sharded+compact0.170; predecessor1.167/0.169 rejected",
+  "current_proof": "guarded17production+4native, compatibility120, owner-pin/reveal, field parity, schema/cache queued sequentially; no current pass claim",
+  "remaining": "terminal affected proof;ambiguous typed-return golden disposition;25 artifact producer regeneration;current local/hosted review/installed journey/selection/promotion holds"
+}

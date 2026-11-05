@@ -1,0 +1,5 @@
+   Compiling rust_same_method_owner_type_positive_fixture v0.1.0 (/dev/shm/ripr-011-qualification/tuple-native-gzgfh48t/input)
+    Finished `test` profile [unoptimized] target(s) in 0.31s
+     Running unittests src/lib.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/rust_same_method_owner_type_positive_fixture-d9126a6681e4d09d)
+     Running tests/size_hints.rs (/workspace/011-integration-proof/golden-native-pairs/target/debug/deps/size_hints-2990cdd104654db4)
+   Doc-tests rust_same_method_owner_type_positive_fixture
