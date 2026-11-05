@@ -21,7 +21,8 @@ Linked plan:
 Linked issues:
 
 - #5327 (serde `format_u8` false gap), #5432 (sibling-arm oracles),
-  #9442 and #9443 (owners reached without a placeable call)
+  #9442 and #9443 (owners reached without a placeable call),
+  #11985 (TypeScript workspace byte limits cannot establish a missing test)
 
 Linked PRs:
 
@@ -31,7 +32,7 @@ Linked PRs:
 Support-tier impact:
 
 - None.
-- This narrows when Rust findings claim a gap. It does not promote a
+- This narrows when Rust and TypeScript/JavaScript findings claim a gap. It does not promote a
   language, surface, or gate.
 
 Policy impact:
@@ -1049,12 +1050,40 @@ the partial file set even when the walk stopped before reaching it. Without
 that, a cut-short walk leaves the change with no owner and no finding at all.
 
 This does not make the cut-short run complete: the limitation still marks the
-outcome partial. Reference-tree pruning, walk order by changed paths and the
-read budget are separate work.
+outcome partial. Reference-tree pruning and walk order by changed paths are
+separate work. Byte-read limits follow the rule below.
+
+### TypeScript workspace sources refused by a byte limit (#11985)
+
+A finished discovery walk does not establish that no test reaches a change
+when the workspace reader refused discovered sources under
+`RIPR_TS_MAX_FILE_READ_BYTES` or `RIPR_TS_MAX_WORKSPACE_READ_BYTES`. An unread
+source may contain the test itself or an import/call path connecting a test
+to the changed owner. The refusal list from the bounded reader, before its
+path samples are capped for display, is the evidence that the index is partial.
+
+When at least one workspace source was refused by either byte cap, every
+TypeScript or JavaScript finding classed `no_static_path` with no earlier
+`static_limit_kind` is rewritten through the shared `withhold_gap` owner to
+`static_unknown` under `typescript_workspace_read_limited`. Its first
+unresolved edge names the unread source count. Its next step names the
+effective per-file and total byte limits, both environment settings, and a
+narrower root as recovery. TypeScript actionability evidence is refreshed by
+its existing producer to name the same limitation and recovery route;
+canonical repair-gap and TypeScript repair-packet projection remain withheld.
+
+This rule preserves findings with observed related tests and any named limit
+another producer already established. Discovery withholding runs first, so a
+run that also stopped its walk retains `typescript_workspace_discovery_truncated`
+on those findings. The existing per-path read-limit disclosures still mark
+the run partial. A sufficient-budget read with a reachable test keeps the
+test and its oracle; a finished read with no test keeps `no_static_path`.
+Refusing the changed source itself still produces no owner or invented
+finding. The byte caps and all reader refusals remain enforced.
 
 ## Scope boundary
 
-- Rust check findings only, except the TypeScript truncated-discovery rule above. The pilot seam rule is RIPR-SPEC-0230 (#5569).
+- Rust check findings only, except the TypeScript truncated-discovery and byte-read-limit rules above. The pilot seam rule is RIPR-SPEC-0230 (#5569).
 - `weakly_exposed` findings are out of scope except for the framework
   oracles above and the profile-dependent `debug_assert_eq!` above (which the
   owner pin would credit as `assert_eq!`): a credited weak oracle is read
@@ -1269,6 +1298,16 @@ Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 `no_static_path`; a truncated walk withholds it, names the cap, keeps the changed
 file in scope and leaves the outcome partial).
 
+`crates/ripr/tests/typescript_read_budget.rs` invokes the real CLI with
+child-local byte limits. Both a per-file refusal and an aggregate-budget
+refusal of an existing reachable test withhold the false `no_static_path` and
+expose the named limit, matching actionability, recovery, and partial outcome.
+Sufficient budgets retain that test's exact-value boundary witness; a finished
+read with no tests retains `no_static_path`; an observed test's whole finding
+is unchanged beside an unread unrelated source; and a refused changed source
+does not fabricate a finding. The shared withholding unit test also pins
+idempotence, zero-refusal behavior, other classes, and existing typed limits.
+
 Wire strings are pinned by
 `crates/ripr-contract/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
 and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_clean_prose`.
@@ -1292,6 +1331,10 @@ and `crates/ripr-contract/src/domain/probe.rs::tests::stop_reason_glosses_are_cl
   indirect-owner decision.
 - `crates/ripr/src/analysis/language/rust/mod.rs` calls it last in
   `apply_probe_and_oracle_limits`.
+- `crates/ripr/src/analysis/language/typescript/mod.rs` applies byte-read
+  withholding from the bounded reader's refusal list after discovery
+  withholding; `crates/ripr/src/analysis/language/typescript/actionability.rs` keeps the producer-owned
+  actionability fields aligned with the resulting named limit.
 - `crates/ripr-contract/src/domain/language.rs` and `crates/ripr-contract/src/domain/probe.rs`
   own the new wire values.
 
