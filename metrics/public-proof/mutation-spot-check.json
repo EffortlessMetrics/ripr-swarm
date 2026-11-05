@@ -632,6 +632,50 @@
     "scored": 23,
     "unavailable_repos": 0
   },
+  "recall_of_missed": {
+    "by_language": {
+      "python": {
+        "reason": "no real-mutant corpus has been run for this language yet; no figure is claimed",
+        "status": "not_established"
+      },
+      "rust": {
+        "flagged_or_unknown_missed": 189,
+        "flagged_or_unknown_share_of_missed": 0.587,
+        "missed_by_grip_class": {
+          "activation_unknown": 151,
+          "no_joined_seam": 114,
+          "opaque": 4,
+          "strongly_gripped": 19,
+          "ungripped": 34,
+          "weakly_gripped": 0
+        },
+        "missed_total": 322,
+        "not_flagged_missed": 133,
+        "status": "established",
+        "ungripped_missed": 34,
+        "ungripped_share_of_missed": 0.106
+      },
+      "typescript": {
+        "reason": "no real-mutant corpus has been run for this language yet; no figure is claimed",
+        "status": "not_established"
+      }
+    },
+    "claim_boundary": "Advisory. Counts runtime-missed mutants of every disposition by the grip class ripr recorded for them; the recorded checkout revisions and cargo-mutants runs only. Two figures are reported and must be labelled: ungripped_share_of_missed is the strict share flagged ungripped; flagged_or_unknown_share_of_missed also counts weakly_gripped, activation_unknown and opaque, which are an honest gap or unknown rather than a confirmed gap, and excludes strongly_gripped and no_joined_seam (no seam) mutants. A missed mutant that ripr did not flag is not a ripr error and a share is not suite adequacy. by_language lists only languages with a recorded real-mutant corpus as established.",
+    "flagged_or_unknown_missed": 189,
+    "flagged_or_unknown_share_of_missed": 0.587,
+    "missed_by_grip_class": {
+      "activation_unknown": 151,
+      "no_joined_seam": 114,
+      "opaque": 4,
+      "strongly_gripped": 19,
+      "ungripped": 34,
+      "weakly_gripped": 0
+    },
+    "missed_total": 322,
+    "not_flagged_missed": 133,
+    "ungripped_missed": 34,
+    "ungripped_share_of_missed": 0.106
+  },
   "repos": [
     {
       "calibration_metrics": {
@@ -659,6 +703,7 @@
       "cargo_mutants_args": [],
       "cargo_mutants_version": "27.1.0",
       "exposure_run_status": "complete",
+      "language": "rust",
       "mutant_diffs_checked_against_revision": 86,
       "mutant_set_sha256": "73d4594dde4d80d08e5f12d60223ad69adbde9005456c1a7cf23c6715571432b",
       "mutant_timeout_secs": 60,
@@ -706,6 +751,7 @@
       "cargo_mutants_args": [],
       "cargo_mutants_version": "27.1.0",
       "exposure_run_status": "complete",
+      "language": "rust",
       "mutant_diffs_checked_against_revision": 365,
       "mutant_set_sha256": "93775d8607fee5e0e2018957ab372f177bdb7d7cb173bcc7c810d445a6210cb5",
       "mutant_timeout_secs": 60,
@@ -753,6 +799,7 @@
       "cargo_mutants_args": [],
       "cargo_mutants_version": "27.1.0",
       "exposure_run_status": "complete",
+      "language": "rust",
       "mutant_diffs_checked_against_revision": 358,
       "mutant_set_sha256": "01ddabdebf76915bd6172185be4831207eb2cd31c1105ca553cc6885e007f76b",
       "mutant_timeout_secs": 60,
@@ -801,6 +848,7 @@
       "cargo_mutants_args": [],
       "cargo_mutants_version": "27.1.0",
       "exposure_run_status": "complete",
+      "language": "rust",
       "mutant_diffs_checked_against_revision": 362,
       "mutant_set_sha256": "f21961c4587411f6b1a3ccc7717c9c8b06b22ccbcc75076ff14fa9a72a73cc95",
       "mutant_timeout_secs": 60,
@@ -847,6 +895,7 @@
       "cargo_mutants_args": [],
       "cargo_mutants_version": "27.1.0",
       "exposure_run_status": "complete",
+      "language": "rust",
       "mutant_diffs_checked_against_revision": 574,
       "mutant_set_sha256": "94dfc9ff682dcc5d7df3a94d0fc6d72f460826a95c3036c63d0b30e58093ed45",
       "mutant_timeout_secs": 60,
@@ -889,6 +938,17 @@
       "mutants_scored": 12,
       "seams_scored": 6
     }
+  },
+  "seam_coverage": {
+    "canonical_precise": 493,
+    "canonical_precise_share": 0.283,
+    "caught": 1325,
+    "claim_boundary": "Advisory. Shares are of every recorded mutant, including timeout and unviable outcomes; recorded checkout revisions only. Seam coverage is a join-rate fact about ripr's seam inventory, not suite adequacy.",
+    "missed": 322,
+    "mutants_total": 1745,
+    "no_containing_seam": 843,
+    "no_containing_seam_share": 0.483,
+    "with_caught_or_missed_outcome": 1647
   },
   "status": "advisory"
 }

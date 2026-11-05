@@ -103,6 +103,7 @@ map is:
 | Output | Field | Current value |
 | --- | --- | --- |
 | `ripr check --format json` | `schema_version` | `0.2` |
+| `ripr check --format json-compact` | `schema_version` | `0.2` (the `json` document minified; parsed values identical, #13103) |
 | `ripr context --json` (`context_packet`; versions via top-level `version` key) | `version` | `1.1` |
 | `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
 | `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
@@ -3572,6 +3573,15 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_assertion_context_unresolved` -- (RIPR-SPEC-0240, additive) Every related `assert_eq!` ripr refused was refused for a limit of its own reading (an unparsed or unplaced file, an unidentified test, a feature `cfg`, a binding that only may rebind the macro). The `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 - `rust_log_capture_unresolved` -- (#7133, additive) A changed `log::` record is checked by a related test that installs a capturing logger before calling the owner and asserts exactly on the captured store, against a string literal that carries the record's static template text. `tracing::` events and count or status assertions (`lines.len()`) keep their gap. ripr does not resolve the logger or the format template, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 - `rust_panic_outcome_unresolved` -- (RIPR-SPEC-0240, additive) A related, non-ignored test with no assertion carries `#[should_panic]` (bare, `expected = ""`, or an `expected` message found in a literal argument of a panicking macro on or after the changed line), calls the owner directly, and the owner invokes a panicking macro on or after the changed line. ripr does not resolve whether the changed code decides that panic, so the `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
+  Repository seam evidence carries the same named limitation without changing
+  its raw grip class or stage states. Pilot ranking and agent brief selection
+  withhold that seam even when every stage remains `yes` or `no`; pilot includes
+  it in `withheld_static_limitations_total`. Its evidence record and canonical
+  item retain a `static_limitations[]` row with the original stage, state and
+  reason, category `rust_panic_outcome_unresolved`, and repair route
+  `analysis/oracle-semantics-audit-fixes`. The row is analyzer work and provides
+  no focused repair command. Ordinary gaps without the limitation remain
+  eligible for selection (#12977).
 - `rust_debug_assertion_profile_unresolved` -- (RIPR-SPEC-0240, additive, #8051) A related, non-ignored test calls the owner directly and pins its result with a bare `debug_assert_eq!` that the owner-return pin admits under every gate it applies to `assert_eq!`. Debug assertions run under the default `cargo test` profile and are compiled out under `--release`, and ripr does not resolve which profile runs the tests, so the `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
 - `rust_call_fact_budget` -- (#8600, additive) A related test has a source line holding 256 distinct callees, the per-line call-fact budget, so further calls on that line may have been omitted (exactly 256 is treated as possibly truncated, not as proof a call was dropped). A negative claim that depends on the test's calls (`reachable_unrevealed` or `weakly_exposed`) is withheld as `static_unknown` with stop reason `gap_evidence_unresolved`; an already-unknown finding keeps its class, gains the named reason, and drops its call-derived absence lines, missing discriminators and next-step prescription. Saturation is read over every matched related test before the eight-row render cap, and a saturated test's `no_call_path`, `no_assertion`, `missing_input` and `assertion_not_observing` row misses read `observation_unconfirmed`. Findings with no related saturated test are unchanged, and the reason never raises a class. The `repo-exposure-json` and `repo-exposure-summary-json` seam readings apply the same decision to their stage evidence: a stage that read `no` or `weak` becomes `unknown`, the seam's missing boundary values are dropped, and the evidence record carries a `static_limitations[]` row whose `category` is `rust_call_fact_budget`, a `static_limitation` actionability and a `limitation` canonical item with no repair command; an already-unknown seam keeps its class and gains the reason. A named limitation, not a missing-test, coverage, or repair claim.
 - `rust_framework_oracle_unresolved` -- (RIPR-SPEC-0240, additive) A related test checks the owner through an environment variable it sets or removes, a mockall `returning` closure that reads its arguments, an expect-test `assert_debug_eq` literal, an insta snapshot whose redactions do not name the changed field, a literal pin on a receiver a test helper builds under a changed closure tail, or a field of a hand-written recording double the test passes as `&mut`. ripr does not evaluate that oracle, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
@@ -5329,10 +5339,13 @@ Field contract:
   confidence context. `no_runtime_data` means no imported runtime
   calibration was supplied; it does not imply runtime confirmation.
 - `seams[].evidence_record.static_limitations` - unknown or opaque static
-  evidence stages that should be treated as analyzer limitations rather than
-  focused-test instructions. Each entry carries the original `stage`, `state`,
-  and `reason` plus a normalized `category` and `repair_route` so Lane 1 can
-  group analyzer limits without treating them as user test gaps.
+  evidence stages and authoritative producer-named limitations, including
+  `rust_panic_outcome_unresolved` when its stage remains `yes` or `no`. Each
+  entry carries the original `stage`, `state`, and `reason` plus a normalized
+  `category` and `repair_route` so Lane 1 can group analyzer limits without
+  treating them as user test gaps. The panic limitation retains its typed
+  category and routes to `analysis/oracle-semantics-audit-fixes`; the raw grip
+  class and stage states remain unchanged.
   Predicate boundaries whose activation operand is local, member-access,
   iterator-derived, or computed use category
   `activation_boundary_input_unresolved`. Iterator-derived operands route to

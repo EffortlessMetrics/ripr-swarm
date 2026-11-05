@@ -20870,6 +20870,7 @@ mod suite_factory_tests;
 mod table_case_tests;
 mod table_loop_tests;
 mod typed_loose_equality_tests;
+mod unemitted_stage_unknown_tests;
 mod value_hiding_tests;
 mod var_runner_binding_tests;
 
