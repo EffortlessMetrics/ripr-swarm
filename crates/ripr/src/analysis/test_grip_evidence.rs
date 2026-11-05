@@ -313,9 +313,9 @@ pub(crate) struct EvidencePass<'index> {
     context: Option<CompactGripContext<'index>>,
     /// The whole-index tables are paid once per pass, not per stage.
     shared_tables_warmed: std::sync::Once,
-    /// #11524: the shared-table warm panicked, so the memos it fills may be
-    /// incomplete. Once set, no seam reads them; every seam gets the fail-closed
-    /// stand-in instead.
+    /// A shared-table warm (#11524) or compact derivation panicked, so the
+    /// memos may be incomplete. Once set, no seam reads them; full evidence
+    /// returns fail-closed stand-ins and compact publication declines.
     warm_failed: std::sync::atomic::AtomicBool,
     /// Files of every seam answered with the stand-in. The failure is
     /// pass-wide (the memos are shared), so this is the scope of the pass's
@@ -325,6 +325,8 @@ pub(crate) struct EvidencePass<'index> {
     /// after the macro-site scan memo is populated and before the rest.
     #[cfg(test)]
     inject_warm_panic: std::sync::atomic::AtomicU8,
+    #[cfg(test)]
+    inject_compact_panic: std::sync::atomic::AtomicBool,
 }
 
 impl<'index> EvidencePass<'index> {
@@ -347,6 +349,8 @@ impl<'index> EvidencePass<'index> {
             incomplete_files: std::sync::Mutex::new(BTreeSet::new()),
             #[cfg(test)]
             inject_warm_panic: std::sync::atomic::AtomicU8::new(0),
+            #[cfg(test)]
+            inject_compact_panic: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -443,6 +447,48 @@ impl<'index> EvidencePass<'index> {
         if let Some(context) = &self.context {
             context.clear_window_memos();
         }
+    }
+
+    /// Canonical compact evidence in input order, reusing this pass's context.
+    /// An unavailable or damaged context declines the entire window; opaque
+    /// stand-ins from the full path must never become compact cache entries.
+    /// Serial evaluation retains the caller's cancellation and source overlay.
+    pub(crate) fn compact_evidence_for(
+        &self,
+        seams: &[RepoSeam],
+    ) -> Result<Option<Vec<TestGripEvidence>>, String> {
+        cancellation::checkpoint()?;
+        let Some(context) = self.context.as_ref() else {
+            return Ok(None);
+        };
+        if self.warm_failed.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let mut out = Vec::with_capacity(seams.len());
+        for seam in seams {
+            cancellation::checkpoint()?;
+            let evidence = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                #[cfg(test)]
+                if self.inject_compact_panic.load(Ordering::Acquire) {
+                    std::panic::resume_unwind(Box::new("injected compact evidence panic"));
+                }
+                compact_evidence_for_seam(seam, context)
+            }));
+            // A panic can leave shared memos partially initialized. Poison the
+            // pass permanently, discarding both this window and its payload.
+            let evidence = match evidence {
+                Ok(evidence) => evidence,
+                Err(_) => {
+                    self.warm_failed.store(true, Ordering::Release);
+                    cancellation::checkpoint()?;
+                    return Ok(None);
+                }
+            };
+            cancellation::checkpoint()?;
+            out.push(evidence);
+        }
+        cancellation::checkpoint()?;
+        Ok(Some(out))
     }
 
     /// Evidence for `seams`, sorted by `seam_id`; empty when the context
@@ -5665,5 +5711,7 @@ fn sort_value_facts(values: &mut Vec<ValueFact>) {
     });
 }
 
+#[cfg(test)]
+mod compact_windows;
 #[cfg(test)]
 mod tests;

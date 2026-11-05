@@ -2644,6 +2644,26 @@ impl RepoSeamFactCache {
         )
     }
 
+    /// Publish complete compact evidence while retaining one producer window at a time.
+    pub(crate) fn store_compact_classified_windows(
+        &self,
+        key: &RepoSeamCacheKey,
+        total_seams: usize,
+        lexical_fallback_files: &[PathBuf],
+        window_limit: usize,
+        producer: impl FnMut(usize) -> Result<Option<Vec<ClassifiedSeam>>, String>,
+    ) -> Result<CacheStoreStatus, String> {
+        store::publish_compact_windows(
+            self,
+            key,
+            total_seams,
+            lexical_fallback_files,
+            window_limit,
+            classified_seam_cache_encoded_shard_ceiling_bytes()?,
+            producer,
+        )
+    }
+
     /// Store classified seams with the given cache-store limit.
     ///
     /// `limit_info` is `Some(...)` when this is a truncated run (seam limit
