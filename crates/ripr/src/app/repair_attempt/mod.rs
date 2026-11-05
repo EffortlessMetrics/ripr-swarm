@@ -4787,6 +4787,12 @@ fn file_content_contains_plain_test_gate(content: &str) -> bool {
         if crate::analysis::attribute_is_plain_test_gate(attribute) {
             return true;
         }
+        // An apparent opener can itself be inside a literal or comment. If
+        // its extent contains another opener, it may have swallowed a real
+        // gate; defer rather than refusing or rescanning overlapping suffixes.
+        if attribute[2..].contains("#[") {
+            return true;
+        }
         index += end;
     }
     false
@@ -6422,6 +6428,9 @@ mod tests {
             "#[cfg(\nfeature = \"slow]\"\n)]"
         ));
         assert!(file_content_contains_plain_test_gate("#[cfg(\n test"));
+        assert!(file_content_contains_plain_test_gate(
+            "const X: &str = \"#[\";\n#[cfg(\n test)]\nmod tests {}\nconst Y: &str = \"]\";"
+        ));
     }
 
     /// #11458: TypeScript adapter test conventions (`*.spec.*`, `test-*`,
