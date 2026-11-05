@@ -255,6 +255,7 @@ pub(super) fn repo_seam_cases(
 
 /// Judge a typed limitation independently of the seam's unchanged grip class.
 /// A missing selector or malformed evidence is never a successful absence.
+/// Match the whole expression so a field cannot also select its enclosing return.
 pub(super) fn expected_limitation_violations(
     case_label: &str,
     report: &Value,
@@ -268,6 +269,7 @@ pub(super) fn expected_limitation_violations(
             "{case_label}: `expected_repo_seam_limitation` requires a `seams` array"
         )];
     };
+    let expression = normalized_seam_expression(expression);
     let matched: Vec<&Value> = seams
         .iter()
         .filter(|seam| {
@@ -275,13 +277,13 @@ pub(super) fn expected_limitation_violations(
                 && seam
                     .get("expression")
                     .and_then(Value::as_str)
-                    .is_some_and(|text| text.contains(expression))
+                    .is_some_and(|text| normalized_seam_expression(text) == expression)
         })
         .collect();
     if matched.len() != 1 {
         return vec![format!(
             "{case_label}: `expected_repo_seam_limitation` requires exactly one seam with \
-             owner `{owner}` and expression containing `{expression}`, matched {}",
+             owner `{owner}` and expression equal to `{expression}`, matched {}",
             matched.len()
         )];
     }
@@ -314,6 +316,11 @@ pub(super) fn expected_limitation_violations(
         }
     }
     violations
+}
+
+fn normalized_seam_expression(expression: &str) -> &str {
+    let expression = expression.trim();
+    expression.strip_suffix(',').unwrap_or(expression).trim_end()
 }
 
 /// Older trimmed captures may omit the evidence record. An explicit malformed
@@ -782,6 +789,69 @@ mod tests {
         let row = marked["seams"][0]["evidence_record"]["static_limitations"][0].clone();
         marked["seams"][0]["evidence_record"]["static_limitations"] = json!([row, row]);
         assert!(!field_limit_violations(&marked, true).is_empty());
+    }
+
+    #[test]
+    fn named_limitation_assertions_select_fields_apart_from_enclosing_returns() {
+        let owner = "src/lib.rs::make_record";
+        let field = "items: items.iter().count()";
+        let returned = "Record {\n    items: items.iter().count(),\n}";
+        let category = "rust_framework_oracle_unresolved";
+        let report = json!({
+            "seams": [
+                {
+                    "seam_id": "returned", "owner": owner, "kind": "return_value",
+                    "expression": returned,
+                    "evidence_record": {"static_limitations": []}
+                },
+                {
+                    "seam_id": "field", "owner": owner, "kind": "field_construction",
+                    "expression": field,
+                    "evidence_record": {"static_limitations": [{
+                        "stage": "discriminate", "state": "weak", "category": category
+                    }]}
+                }
+            ]
+        });
+        let judge = |expression, present| {
+            expected_limitation_violations(
+                "nested field",
+                &report,
+                owner,
+                expression,
+                category,
+                present,
+            )
+        };
+        for selector in [field.to_string(), format!("  {field},  ")] {
+            let violations = judge(&selector, true);
+            assert!(violations.is_empty(), "{violations:?}");
+            assert_eq!(judge(&selector, false).len(), 1);
+        }
+        assert!(judge(returned, false).is_empty());
+        assert_eq!(judge(returned, true).len(), 1);
+        assert!(!judge(&format!("{field},,"), true).is_empty());
+        let mut with_comma = report.clone();
+        with_comma["seams"][1]["expression"] = json!(format!("  {field},  "));
+        let violations = expected_limitation_violations(
+            "field with comma",
+            &with_comma,
+            owner,
+            field,
+            category,
+            true,
+        );
+        assert!(violations.is_empty(), "{violations:?}");
+        let return_only = json!({"seams": [report["seams"][0]]});
+        let missing = expected_limitation_violations(
+            "missing field",
+            &return_only,
+            owner,
+            field,
+            category,
+            false,
+        );
+        assert!(!missing.is_empty());
     }
 
     #[test]

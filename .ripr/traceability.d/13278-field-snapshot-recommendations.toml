@@ -27,6 +27,7 @@ id = "RIPR-SPEC-0108"
 tests = [
   "xtask/src/evidence_promotion/repo_seam_reports.rs::tests::named_limitation_assertions_distinguish_identical_class_and_stages",
   "xtask/src/evidence_promotion/repo_seam_reports.rs::tests::named_limitation_assertions_reject_missing_malformed_and_duplicate_rows",
+  "xtask/src/evidence_promotion/repo_seam_reports.rs::tests::named_limitation_assertions_select_fields_apart_from_enclosing_returns",
   "xtask/src/evidence_promotion/repo_seam_reports.rs::tests::named_limitation_cases_require_explicit_presence_and_a_live_subject",
   "fixtures/evidence-promotion-honesty-corpus/cases/rust_repo_field_snapshot_settings.json",
   "fixtures/evidence-promotion-honesty-corpus/cases/rust_repo_field_snapshot_literal.json",
