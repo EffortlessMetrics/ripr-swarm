@@ -45,7 +45,22 @@
     "content": "history plus exact 7490 artifact, not 12010 repair",
     "qualification": "not run; no 12010 repair or combined schema yet",
     "refreshed_commit": "2fc0b8f98d7f0fe3ca1dbb242427776a6ae5fa3a",
-    "refreshed_tree": "4d74ab87fcd57a2a635489657316b23c6c9aac6e"
+    "refreshed_tree": "4d74ab87fcd57a2a635489657316b23c6c9aac6e",
+    "current_source_assembly": {
+      "base": "5cd7015ac7cf0260a888f05ad8952fcb50f5021c",
+      "merge_source": "c57a6d90f34ed6fd32da6ca41ddbfacb25f3b570",
+      "staged_tree": "7f9a9c95d471b16aa7ad212ad3daddda95937471",
+      "patch": "integration-source-assembly.patch",
+      "patch_sha256": "d6d18e1d1d5ab04dd62ac4279e747700eafc5e6cba8e02a2c09e1c6e9470044a",
+      "patch_bytes": 139852,
+      "meaning": "frozen composed source before real producer output regeneration; 27 output baselines provisional; not merge/release qualification",
+      "actual_main": "984c69a290486b1da9d91700a6f771045ab079e1",
+      "schema": {
+        "full": "1.160",
+        "compact": "0.162",
+        "sharded": "0.162"
+      }
+    }
   },
   "holds": [
     "queue-only CI except approved one-PR history-sync route",
@@ -53,24 +68,20 @@
     "no release selection/publication claim"
   ],
   "current_binding_candidate": {
-    "commit": "ad4eaa495ad79a33cf49dcf9f734e0dd4dc45cde",
-    "tree": "42300fa56fb2b27ad1e0adb8cf76d52d6ad16d67",
-    "qualification": "eight-test production suite compiling; reveal rerun follows sequentially",
-    "prior_production": {
-      "commit": "7776ac45765b679697ff8c55f4dbe434d628e4c1",
-      "passed": 7,
-      "failed": 0,
-      "log": "coherent-identity-workspace-final.log"
+    "commit": "c57a6d90f34ed6fd32da6ca41ddbfacb25f3b570",
+    "tree": "d76251faa018ce74fb63223c4d49fcfac91bfe76",
+    "production_tests": {
+      "passed": 8,
+      "failed": 0
     },
-    "prior_reveal": {
-      "commit": "c28da281b2faff2db10fb7d586b4c2a855adab08",
-      "passed": 158,
-      "failed": 1,
-      "log": "coherent-identity-reveal-final.log",
-      "remaining": "observation-only unit lacked affirmative identity; expected strong result corrected to weak with identity_unresolved"
+    "native_path_roots": {
+      "passed": 4,
+      "failed": 0
     },
-    "confirmed_counterexample": "foreign same-named constructor received field observer identity after owner result was separately discarded; current patch uses indexed constructor namespace binding",
-    "reconciliation": "reveal-26-reconciliation.json"
+    "command": "cargo test --locked -p ripr --test return_diagnostic_confirmation --test native_path_roots -- --test-threads=1",
+    "log": "constructor-origin-workspace.log",
+    "reveal": "pending on final composed candidate to avoid duplicate expensive compile",
+    "counterexamples": "foreign constructor and owner call nested inside unrelated wrapper both reproduced false exposure before their repairs"
   },
   "review_delta": {
     "base": "d1bef96f582a0df8ed627481d808e1f72a25acc0",

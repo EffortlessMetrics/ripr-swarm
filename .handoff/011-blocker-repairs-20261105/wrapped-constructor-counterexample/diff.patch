@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ pub struct Builder { pub attempts:u32 }
+ impl Builder {
+  pub fn new()->Self {
+-  Self { attempts:3 }
++  Self { attempts:4 }
+  }
+ }

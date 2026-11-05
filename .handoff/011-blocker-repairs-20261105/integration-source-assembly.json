@@ -1,0 +1,15 @@
+{
+  "base": "5cd7015ac7cf0260a888f05ad8952fcb50f5021c",
+  "merge_source": "c57a6d90f34ed6fd32da6ca41ddbfacb25f3b570",
+  "staged_tree": "7f9a9c95d471b16aa7ad212ad3daddda95937471",
+  "patch": "integration-source-assembly.patch",
+  "patch_sha256": "d6d18e1d1d5ab04dd62ac4279e747700eafc5e6cba8e02a2c09e1c6e9470044a",
+  "patch_bytes": 139852,
+  "meaning": "frozen composed source before real producer output regeneration; 27 output baselines provisional; not merge/release qualification",
+  "actual_main": "984c69a290486b1da9d91700a6f771045ab079e1",
+  "schema": {
+    "full": "1.160",
+    "compact": "0.162",
+    "sharded": "0.162"
+  }
+}
