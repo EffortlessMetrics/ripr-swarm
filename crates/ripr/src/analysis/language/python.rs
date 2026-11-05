@@ -2499,6 +2499,13 @@ mod imported_call_operator_tests;
 mod may_reach_tests;
 #[cfg(test)]
 mod module_value_tests;
+
+#[cfg(test)]
+pub(crate) use module_value_tests::{
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
+};
+
 #[cfg(test)]
 mod new_declaration_tests;
 

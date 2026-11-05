@@ -54,7 +54,11 @@ pub(crate) use python::{
     PythonAdapter, PythonFileFactStore, detect_python_test_framework, detect_python_test_frameworks,
 };
 #[cfg(all(test, feature = "lang-python"))]
-pub(crate) use python::{python_direct_and_advisory_finding, python_miss_matrix_findings};
+pub(crate) use python::{
+    python_direct_and_advisory_finding, python_miss_matrix_findings,
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
+};
 #[cfg(test)]
 pub(crate) use router::UNANALYZED_SOURCE_LANGUAGES_FOR_TESTS;
 pub(crate) use router::{

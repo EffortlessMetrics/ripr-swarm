@@ -129,7 +129,11 @@ pub use language::{
     PartialDiffStopReason,
 };
 #[cfg(all(test, feature = "lang-python"))]
-pub(crate) use language::{python_direct_and_advisory_finding, python_miss_matrix_findings};
+pub(crate) use language::{
+    python_direct_and_advisory_finding, python_miss_matrix_findings,
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
+};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
     normalize_rust_expression, sanitize_path,
