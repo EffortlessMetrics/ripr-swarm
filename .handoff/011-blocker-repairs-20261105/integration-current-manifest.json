@@ -28,7 +28,7 @@
     "full_policy": "FD045 aggregate ci-policy exit 0; exact current refresh pending"
   },
   "qualification": {
-    "status": "bounded external-trait repair compiling; prior d409 passes are not current qualification",
+    "status": "caf compatibility terminal pass; sequential cache/full/native qualification running",
     "prior_exact_candidate": "2ed9a70d5dcfe9e396d126c5a5e27cacac969dc1",
     "prior_full_library": {
       "passed": 18087,
@@ -85,7 +85,7 @@
       "receipt": "2ed9-owner-call-compatibility-receipt.json",
       "remaining": "mixed same-line boundary pairing in new control; same-file module and block-tail bool identity; out-of-line parent trait/unit imports"
     },
-    "tool_session": 72617,
+    "tool_session": 7754,
     "prior_d409_focused_and_full": {
       "array-return-controls": {
         "candidate": "d409ff2e408b4252f78b5bde91474d40c905ed38",
@@ -242,6 +242,16 @@
       "clippy": "workspace all-targets -D warnings pass on d409",
       "receipt": "d409-fresh-check-fast-receipt.json",
       "old_driver_attempt": "stopped incomplete; current driver rebuilt before this terminal run"
+    },
+    "current_compatibility": {
+      "candidate": "caf5114c3c0693e61030fcd087a1f9babac80e60",
+      "qualified_entry_passed": 44,
+      "glob_identity_passed": 6,
+      "owner_execution_passed": 70,
+      "failed": 0,
+      "native_exit": 0,
+      "receipt": "caf5114-owner-call-compatibility-receipt.json",
+      "log_sha256": "d89d919fb2536b2d9693aa803ef149b832f6d812268445de4c91dcd5d0d08ad9"
     }
   },
   "history": {
@@ -293,6 +303,7 @@
       "full": "1.161",
       "sharded_compact": "0.163"
     },
-    "qualification": "running; no current pass inferred"
-  }
+    "qualification": "first/last named/anonymous/glob negatives and standard/unused-dependency positives passed static/native controls; remaining full/native gates pending"
+  },
+  "local_execution_adapter": "caf5114-qualification-cargo-adapter.json; local qualification only, not installed-journey environment"
 }

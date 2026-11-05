@@ -1,0 +1,9 @@
+{
+  "purpose": "propagate already-authorized marker-free temp configuration to native xtask cargo children; execute the real pinned cargo with all caller arguments unchanged",
+  "wrapper": "/workspace/011-integration-proof/qualification-bin/cargo",
+  "wrapper_sha256": "1bec4f353539a2b3bdd0ef2d5e95c6982a990c329cc4cb6d68bca49d7a08428c",
+  "real_cargo": "/workspace/.rustup/toolchains/1.95.0-x86_64-unknown-linux-gnu/bin/cargo",
+  "real_cargo_sha256": "841072d1d92f9e841d9ba5b0814182a0adf064acf4527cd120967b7bc49dcb66",
+  "added_config": "TMPDIR/TMP/TEMP=/dev/shm/ripr-011-qualification, relative=false",
+  "scope": "this local process environment only; no source/hosted-workflow/protection changes"
+}
