@@ -51,7 +51,9 @@ fn unread_configuration_withheld(assertion: &str, edit: &str, line: usize) -> Re
     if !advice.contains("settings or redactions that ripr does not read")
         || advice.contains("no redaction names")
     {
-        return Err(format!("unread configuration advice is inaccurate: {advice}"));
+        return Err(format!(
+            "unread configuration advice is inaccurate: {advice}"
+        ));
     }
     Ok(())
 }
@@ -79,7 +81,12 @@ fn with_settings_withholds_both_fields() -> Result<(), String> {
 fn inline_snapshot_with_unread_configuration_is_limited() -> Result<(), String> {
     for (edit, line) in changed_fields() {
         unread_configuration_withheld(&format!("{SETTINGS}\n        {INLINE}"), &edit, line)?;
-        keeps_gap(&insta_source(INLINE), &edit, line, "ordinary inline control")?;
+        keeps_gap(
+            &insta_source(INLINE),
+            &edit,
+            line,
+            "ordinary inline control",
+        )?;
     }
     Ok(())
 }
@@ -127,7 +134,10 @@ fn an_exact_field_assertion_keeps_its_credit_with_unread_settings() -> Result<()
     let source = insta_source(&format!("{SETTINGS}\n        assert_eq!(record.items, 2);"));
     let findings = findings_on(&source, &insta_edit(), 9)?;
     let [finding] = findings.as_slice() else {
-        return Err(format!("expected one field control, got {}", findings.len()));
+        return Err(format!(
+            "expected one field control, got {}",
+            findings.len()
+        ));
     };
     if finding.class != ExposureClass::Exposed || finding.static_limit_kind.is_some() {
         return Err(format!(
