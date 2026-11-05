@@ -202,3 +202,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_control_qualified (17)
+
+Reason:
+RIPR-SPEC-0005: restore the inherited human refusal line to the exact output of the repaired public-parent candidate; other evidence and classification are unchanged.
+
+Actual producer command (initial artifact comparison, not a goldens bless):
+`ripr check --root fixtures/module_reach_control_qualified/input --diff fixtures/module_reach_control_qualified/diff.patch --mode fast --legend`
+
+Producer: verified hosted artifact 13393509401 from run 41980182060, candidate `62b2b3a2ca790e82281acb8efb6d93ff9c950b0d`, tree `37bbda3224104f29a60e408408e41564074ce09c`; native payload SHA256 `6048cbb6ddd9ade11ab0160ba18dae7e786fc88ff2532e1d722663814340ce49`. Dedicated cache/Rayon 1 and unchanged compiled canonical normalization/comparison helpers were used. Actual normalized bytes equal main `22eba11598aeb86f645233c9c6741c56f522df63` byte for byte. Canonical goldens/dogfood and required hosted qualification remain pending; no bless/check pass is claimed.
+
+Updated:
+- `expected/human.txt`

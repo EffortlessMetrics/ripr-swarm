@@ -180,6 +180,36 @@ and an exact declaration. Unknown attributes, `#[path]`, includes and unresolved
 placement do not gain a new visibility verdict. An independent, already-admitted
 helper witness survives the direct-relation veto; fallback affinity alone must
 not restore the disproven relation.
+Ordinary child-helper delegation requires a parsed qualified call in the
+current function body. Calls only inside uncalled closures, async bodies,
+nested functions, item/const-block initializers, type/const-generic arguments,
+array-repeat lengths or unsupported macro token trees do not establish runtime
+helper reach. Runtime array-element calls retain their evidence. A separate eager call keeps its evidence even when a deferred body
+mentions the same helper. Conditional-compilation ancestry must establish that
+the call is enabled independently of the library build: `cfg(test)`, unknown
+feature/platform predicates and conditionally introduced unknown gates do not
+grant this qualified-call reach. Constant enabled `cfg(all())` and inactive
+`cfg_attr(any(), ...)` preserve credit; a disabled sibling does not veto a
+separate eager call. This is a conservative availability proof, not Cargo
+configuration evaluation. The same ancestry must preserve its source body:
+unknown proc attributes, including conditionally introduced ones whose absence
+is not build-independently known, cannot grant call credit. An inactive
+constant-false proc-attribute introduction preserves the ordinary eager call.
+The retained fn-keyword body is rebound uniquely to the original indexed file
+source before this proof, preserving function/impl/module/crate ancestors.
+Missing, duplicate or unparseable source does not grant qualified reach; the
+analysis does not re-read live files or change cached source spans. A qualified
+ordinary helper edge preserves its exact indexed owner identity when another
+production owner in the package has the same name. A relative module spelling,
+crate-root filename or truncated nested path is not that identity. Duplicate
+candidate identities do not grant reach. These newly admitted ordinary helper
+routes also require a unique production parent name in the package, since the
+private graph groups parent bodies by terminal name. An unused same-named
+parent is not a witness for the function a test calls. Bare names require package-wide
+uniqueness or a production delegation witness in the owner's exact lexical
+module; a nested rival's same-named function is not a witness. The supported
+single-level qualified targets retain credit; deeper unsupported routes remain
+below helper authority. This does not expand import or general path resolution.
 
 Full evidence carries the indexed test target. Compact evidence intentionally
 omits target details and preserves the five stage states and contradiction count.
@@ -687,3 +717,8 @@ Proposed metrics to track as the implementation lands:
 - `stable_id_collision_rate`: collisions per seam inventory run (must be zero).
 - `seam_to_finding_link_rate`: percentage of diff findings that reference a
 known `SeamId`.
+
+A public parent can supply an exact-value contradiction for a private helper
+only when its complete return expression directly calls that helper. A helper
+call whose result is discarded or transformed does not establish the parent
+result; the helper fold stays not evaluable through that parent.

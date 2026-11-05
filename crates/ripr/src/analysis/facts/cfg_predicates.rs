@@ -172,6 +172,18 @@ where
 /// this evaluates `test = true` and empty Boolean combinators. Feature,
 /// target and custom atoms stay unknown; no host configuration is guessed.
 pub(crate) fn attribute_test_build_availability(attr_text: &str) -> Option<bool> {
+    attribute_build_availability(attr_text, Some(true))
+}
+
+/// Availability without assuming the library's compilation configuration.
+/// A test atom is unknown here: integration tests can call a library built
+/// without cfg(test). Constant Boolean predicates still retain their proof.
+/// Feature, platform and custom atoms remain unknown in every context.
+pub(crate) fn attribute_build_independent_availability(attr_text: &str) -> Option<bool> {
+    attribute_build_availability(attr_text, None)
+}
+
+fn attribute_build_availability(attr_text: &str, test_build: Option<bool>) -> Option<bool> {
     let tokens: Vec<_> = positioned_tokens(attr_text)?
         .into_iter()
         .map(|positioned| positioned.token)
@@ -192,7 +204,7 @@ pub(crate) fn attribute_test_build_availability(attr_text: &str) -> Option<bool>
         ] => body,
         _ => return None,
     };
-    availability_attribute(body, 0).ok().flatten()
+    availability_attribute(body, 0, test_build).ok().flatten()
 }
 
 /// Whether `#[cfg_attr(<predicate>, test)]` makes the function a plain
@@ -394,6 +406,16 @@ fn inactive_prelude_lint_sibling(meta: &ra_ap_syntax::ast::Meta) -> bool {
 /// configuration-inert while replacing a module and its bindings entirely.
 /// Only known built-ins and recursively inert cfg_attr introductions qualify.
 pub(crate) fn attribute_preserves_source_items(attr_text: &str) -> bool {
+    attribute_preserves_source_items_in_build(attr_text, Some(true))
+}
+
+/// Source preservation without assuming cfg(test) for a consumed library.
+/// Unknown conditional proc attributes cannot establish an unchanged body.
+pub(crate) fn attribute_preserves_source_items_build_independent(attr_text: &str) -> bool {
+    attribute_preserves_source_items_in_build(attr_text, None)
+}
+
+fn attribute_preserves_source_items_in_build(attr_text: &str, test_build: Option<bool>) -> bool {
     let Some(positioned) = positioned_tokens(attr_text) else {
         return false;
     };
@@ -422,7 +444,7 @@ pub(crate) fn attribute_preserves_source_items(attr_text: &str) -> bool {
         ] => (body, &strings[3..strings.len() - 1], true),
         _ => return false,
     };
-    preserving_attribute(body, strings, inner_attribute, 0)
+    preserving_attribute(body, strings, inner_attribute, 0, test_build)
 }
 
 fn preserving_attribute(
@@ -430,6 +452,7 @@ fn preserving_attribute(
     strings: &[Option<&str>],
     inner_attribute: bool,
     depth: usize,
+    test_build: Option<bool>,
 ) -> bool {
     if depth > MAX_PREDICATE_NESTING || !body_is_balanced(tokens) {
         return false;
@@ -496,7 +519,10 @@ fn preserving_attribute(
             inner @ ..,
             Token::Punct(')'),
         ] if name == "cfg" => {
-            matches!(availability_predicate(inner, depth + 1), Ok(Some(true)))
+            matches!(
+                availability_predicate_in_build(inner, depth + 1, test_build),
+                Ok(Some(true))
+            )
         }
         [
             Token::Word(name),
@@ -520,10 +546,10 @@ fn preserving_attribute(
             {
                 return false;
             }
-            match availability_predicate(condition, depth + 1) {
+            match availability_predicate_in_build(condition, depth + 1, test_build) {
                 Ok(Some(false)) => true,
                 Ok(_) => introduced.iter().all(|(attribute, strings)| {
-                    preserving_attribute(attribute, strings, inner_attribute, depth + 1)
+                    preserving_attribute(attribute, strings, inner_attribute, depth + 1, test_build)
                 }),
                 Err(()) => false,
             }
@@ -611,7 +637,11 @@ fn preservation_string_value(literal: &str) -> Option<String> {
     string.value().ok().map(|value| value.into_owned())
 }
 
-fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>, ()> {
+fn availability_attribute(
+    tokens: &[Token],
+    depth: usize,
+    test_build: Option<bool>,
+) -> Result<Option<bool>, ()> {
     if depth > MAX_PREDICATE_NESTING || !body_is_balanced(tokens) {
         return Err(());
     }
@@ -625,7 +655,7 @@ fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>
             Token::Punct('('),
             inner @ ..,
             Token::Punct(')'),
-        ] if name == "cfg" => availability_predicate(inner, depth + 1),
+        ] if name == "cfg" => availability_predicate_in_build(inner, depth + 1, test_build),
         [
             Token::Word(name),
             Token::Punct('('),
@@ -639,10 +669,10 @@ fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>
             if introduced.is_empty() {
                 return Err(());
             }
-            let condition = availability_predicate(condition, depth + 1)?;
+            let condition = availability_predicate_in_build(condition, depth + 1, test_build)?;
             let introduced = introduced
                 .iter()
-                .map(|part| availability_attribute(part, depth + 1))
+                .map(|part| availability_attribute(part, depth + 1, test_build))
                 .collect::<Result<Vec<_>, _>>()?;
             let introduced = availability_all(&introduced);
             Ok(match condition {
@@ -659,11 +689,19 @@ fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>
 }
 
 fn availability_predicate(tokens: &[Token], depth: usize) -> Result<Option<bool>, ()> {
+    availability_predicate_in_build(tokens, depth, Some(true))
+}
+
+fn availability_predicate_in_build(
+    tokens: &[Token],
+    depth: usize,
+    test_build: Option<bool>,
+) -> Result<Option<bool>, ()> {
     if depth > MAX_PREDICATE_NESTING || !body_is_balanced(tokens) {
         return Err(());
     }
     match tokens {
-        [Token::Word(name)] if name == "test" => Ok(Some(true)),
+        [Token::Word(name)] if name == "test" => Ok(test_build),
         [Token::Word(_)] | [Token::Word(_), Token::Punct('='), Token::Literal] => Ok(None),
         [
             Token::Word(name),
@@ -674,7 +712,7 @@ fn availability_predicate(tokens: &[Token], depth: usize) -> Result<Option<bool>
             let parts = availability_arguments(inner)?;
             let values = parts
                 .iter()
-                .map(|part| availability_predicate(part, depth + 1))
+                .map(|part| availability_predicate_in_build(part, depth + 1, test_build))
                 .collect::<Result<Vec<_>, _>>()?;
             match name.as_str() {
                 "all" => Ok(availability_all(&values)),
