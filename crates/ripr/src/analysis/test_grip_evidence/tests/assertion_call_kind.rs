@@ -13,7 +13,9 @@ fn owner_index_from_source(source: &str) -> Result<FixtureIndex, String> {
             .drop_in_manifests
             .unbound_standard_root(Path::new("src/lib.rs"), root)
         {
-            return Err(format!("owner fixture did not establish its {root} manifest binding"));
+            return Err(format!(
+                "owner fixture did not establish its {root} manifest binding"
+            ));
         }
     }
     Ok(fixture)
