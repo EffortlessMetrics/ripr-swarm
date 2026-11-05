@@ -214,7 +214,8 @@ compares compiler/Cargo identity at the repository root and in an isolated
 nested directory with an opposing pin. It disables automatic installation and
 runs version/identity probes only, with no workspace build. This requires the
 exact release/host SDK to be installed already; missing prerequisites fail the
-check. Hosted fresh-shell evidence does not establish saved-cloud restoration.
+check. CI retains that native test's identity/probe output in the existing JUnit
+report. Hosted fresh-shell evidence does not establish saved-cloud restoration.
 Native Windows shells keep their existing setup route.
 
 ### Fixture preparation
