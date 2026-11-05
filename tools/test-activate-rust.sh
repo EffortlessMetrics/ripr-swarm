@@ -2,7 +2,13 @@
 # Behavioral proof for the sourced Bash boundary; never installs or runs real Rust.
 set -euo pipefail
 
-repo_root=$(dirname -- "${BASH_SOURCE[0]}")
+repo_root=${BASH_SOURCE[0]}
+if [[ $repo_root == */* ]]; then
+    repo_root=${repo_root%/*}
+    repo_root=${repo_root:-/}
+else
+    repo_root=.
+fi
 [[ $repo_root == /* ]] || repo_root=./$repo_root
 repo_root=$(builtin cd -- "$repo_root/.." && builtin pwd -P)
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/ripr-activate.XXXXXXXX")
@@ -49,7 +55,8 @@ for selected in stable "$exact"; do
     cat > "$selected_root/bin/rustc" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-sysroot=$(cd -- "$(dirname -- "$0")/.." && pwd -P)
+script_dir=${0%/*}
+sysroot=$(builtin cd -- "$script_dir/.." && builtin pwd -P)
 case "$*" in
     '-vV')
         [[ ${TEST_COMPILER_FAIL-0} != 1 ]] || exit 71
@@ -59,7 +66,7 @@ case "$*" in
         if [[ ${TEST_RELEASE_DRIFT-0} == 1 ]]; then release=1.94.0; fi
         printf 'rustc %s (fixture)\nbinary: rustc\ncommit-hash: %s\nhost: x86_64-unknown-linux-gnu\nrelease: %s\nLLVM version: 21.1.0\n' "$release" "$commit" "$release" ;;
     '--print sysroot')
-        if [[ ${TEST_SYSROOT_DRIFT-0} == 1 ]]; then sysroot=$sysroot/other; fi
+        if [[ ${TEST_SYSROOT_DRIFT-0} == 1 ]]; then sysroot=$sysroot/lib; fi
         printf '%s\n' "$sysroot" ;;
     *) exit 72 ;;
 esac
@@ -95,6 +102,13 @@ SH
     chmod +x "$test_root/wrong tools/$tool"
 done
 
+cat > "$fixture_repo/dirname" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'caller dirname executable invoked' >> "$TEST_TRACE"
+exit 97
+SH
+chmod +x "$fixture_repo/dirname"
+
 tests_run=0
 run_case() {
     local name=$1 body=$2
@@ -120,7 +134,7 @@ directory_before=$PWD
 if source "$source_file" "${selector---pinned}"; then exit 41; fi
 after=$(declare -p CARGO_HOME RUSTUP_HOME RUSTUP_TOOLCHAIN RUSTUP_AUTO_INSTALL RUSTC PATH LLVM_COV LLVM_PROFDATA 2>/dev/null || :)
 [[ $before == "$after" && $options_before == "$SHELLOPTS" && $flags_before == "$-" && $directory_before == "$PWD" ]]
-! declare -F _ripr_activate_rust
+if builtin declare -F _ripr_activate_rust >/dev/null; then exit 42; fi
 '
 
 run_case 'default pin; parent exports; fresh nested fixture; spaces; matching LLVM' '
@@ -134,7 +148,7 @@ source "$source_file" --pinned
 [[ $(command -v llvm-cov) == "$LLVM_COV" ]]
 [[ $LLVM_COV == "$TEST_RUSTUP_HOME/toolchains/$RUSTUP_TOOLCHAIN/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-cov" ]]
 [[ $(cargo) == "fixture inherited exact compiler and homes" ]]
-! declare -F _ripr_activate_rust
+if builtin declare -F _ripr_activate_rust >/dev/null; then exit 42; fi
 '
 relative_source_check='
 cd "$TEST_REPO"
@@ -146,12 +160,68 @@ source tools/activate-rust.sh --pinned
 [[ $options_before == "$SHELLOPTS" && $flags_before == "$-" && $directory_before == "$PWD" ]]
 [[ $# == 2 && $1 == unrelated-caller-argument && $2 == "second caller argument" ]]
 [[ $RUSTUP_TOOLCHAIN == 1.95.0-x86_64-unknown-linux-gnu && $(command -v rustc) == "$RUSTC" ]]
-! declare -F _ripr_activate_rust
+if builtin declare -F _ripr_activate_rust >/dev/null; then exit 42; fi
 cd "$TEST_REPO/fixtures/nested"
 [[ $(cargo) == "fixture inherited exact compiler and homes" ]]
 '
 run_case 'relative source preserves exported CDPATH and caller state' 'export CDPATH=.; '"$relative_source_check"
 run_case 'relative source preserves readonly CDPATH and caller state' 'export CDPATH=.; readonly CDPATH; '"$relative_source_check"
+run_case 'bare source name keeps caller state and resolves the repository pin' '
+builtin cd -- "$TEST_REPO/tools"
+set -- unrelated-caller-argument "second caller argument"
+options_before=$SHELLOPTS; flags_before=$-; directory_before=$PWD
+source activate-rust.sh --pinned
+[[ $options_before == "$SHELLOPTS" && $flags_before == "$-" && $directory_before == "$PWD" ]]
+[[ $# == 2 && $1 == unrelated-caller-argument && $2 == "second caller argument" ]]
+[[ $(command -v rustc) == "$RUSTC" ]]
+builtin cd -- "$TEST_REPO/fixtures/nested"
+[[ $(cargo) == "fixture inherited exact compiler and homes" ]]
+'
+for command_name in dirname cd pwd; do
+    if [[ $command_name == dirname ]]; then native_call='command dirname'; else native_call="builtin $command_name"; fi
+    run_case "$command_name function stays intact and cannot alter path resolution" "
+$command_name() { builtin printf '%s\n' 'caller $command_name output'; $native_call \"\$@\"; }
+function_before=\$(builtin declare -f $command_name)
+set -- unrelated-caller-argument \"second caller argument\"
+options_before=\$SHELLOPTS; flags_before=\$-; directory_before=\$PWD
+source \"\$source_file\" --pinned
+[[ \$(builtin declare -f $command_name) == \"\$function_before\" ]]
+[[ \$options_before == \"\$SHELLOPTS\" && \$flags_before == \"\$-\" && \$directory_before == \"\$PWD\" ]]
+[[ \$# == 2 && \$1 == unrelated-caller-argument && \$2 == \"second caller argument\" ]]
+[[ \$(command -v rustc) == \"\$RUSTC\" ]]
+builtin cd -- \"\$TEST_REPO/fixtures/nested\"
+[[ \$(cargo) == \"fixture inherited exact compiler and homes\" ]]
+"
+done
+run_case 'cd and pwd aliases stay intact and cannot alter path resolution' '
+shopt -s expand_aliases
+alias cd="builtin printf \"caller cd output\n\"; builtin cd"
+alias pwd="builtin printf \"caller pwd output\n\"; builtin pwd"
+aliases_before=$(builtin alias cd pwd)
+set -- unrelated-caller-argument "second caller argument"
+options_before=$SHELLOPTS; flags_before=$-; directory_before=$PWD
+source "$source_file" --pinned
+[[ $(builtin alias cd pwd) == "$aliases_before" ]]
+[[ $options_before == "$SHELLOPTS" && $flags_before == "$-" && $directory_before == "$PWD" ]]
+[[ $# == 2 && $1 == unrelated-caller-argument && $2 == "second caller argument" ]]
+[[ $(command -v rustc) == "$RUSTC" ]]
+shopt -q expand_aliases
+builtin cd -- "$TEST_REPO/fixtures/nested"
+[[ $(cargo) == "fixture inherited exact compiler and homes" ]]
+'
+run_case 'empty PATH component never invokes the caller directory dirname' '
+builtin cd -- "$TEST_REPO"
+export PATH=:$PATH
+set -- unrelated-caller-argument "second caller argument"
+options_before=$SHELLOPTS; flags_before=$-; directory_before=$PWD
+source tools/activate-rust.sh --pinned
+[[ $options_before == "$SHELLOPTS" && $flags_before == "$-" && $directory_before == "$PWD" ]]
+[[ $# == 2 && $1 == unrelated-caller-argument && $2 == "second caller argument" ]]
+[[ $(command -v rustc) == "$RUSTC" ]]
+[[ $(< "$TEST_TRACE") != *"caller dirname executable invoked"* ]]
+builtin cd -- "$TEST_REPO/fixtures/nested"
+[[ $(cargo) == "fixture inherited exact compiler and homes" ]]
+'
 run_case 'stable freezes exact release and stays idempotent' '
 options_before=$SHELLOPTS; flags_before=$-; directory_before=$PWD
 source "$source_file" stable

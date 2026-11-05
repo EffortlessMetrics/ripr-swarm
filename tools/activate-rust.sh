@@ -40,7 +40,13 @@ _ripr_activate_rust() {
             return 1
         fi
     done
-    repo_root=$(dirname -- "${BASH_SOURCE[0]}") || return 1
+    repo_root=${BASH_SOURCE[0]}
+    if [[ $repo_root == */* ]]; then
+        repo_root=${repo_root%/*}
+        repo_root=${repo_root:-/}
+    else
+        repo_root=.
+    fi
     # An explicit relative path bypasses CDPATH without assigning to it.
     [[ $repo_root == /* ]] || repo_root=./$repo_root
     repo_root=$(builtin cd -- "$repo_root/.." && builtin pwd -P) || return 1
@@ -122,7 +128,7 @@ _ripr_activate_rust() {
         printf '%s\n' 'activate-rust: the exact release did not resolve an executable absolute rustc path.' >&2
         return 1
     fi
-    exact_compiler=$(cd -- "$(dirname -- "$exact_compiler")" && printf '%s/%s\n' "$(pwd -P)" "${exact_compiler##*/}") || return 1
+    exact_compiler=$(builtin cd -- "${exact_compiler%/*}/." && builtin printf '%s/%s\n' "$(builtin pwd -P)" "${exact_compiler##*/}") || return 1
     exact_id=$("$exact_compiler" -vV) || return 1
     if [[ $exact_id != "$compiler_id" ]]; then
         printf '%s\n' 'activate-rust: requested and exact-release rustc identities differ; no activation was applied.' >&2
@@ -130,7 +136,7 @@ _ripr_activate_rust() {
     fi
     current_compiler=${RUSTC-}
     if [[ $current_compiler == /* && -x $current_compiler ]]; then
-        current_compiler=$(cd -- "$(dirname -- "$current_compiler")" && printf '%s/%s\n' "$(pwd -P)" "${current_compiler##*/}") || return 1
+        current_compiler=$(builtin cd -- "${current_compiler%/*}/." && builtin printf '%s/%s\n' "$(builtin pwd -P)" "${current_compiler##*/}") || return 1
     fi
     if [[ -n $current_compiler && $current_compiler != "$exact_compiler" ]]; then
         printf 'activate-rust: RUSTC selects %q; unset it explicitly to select %q.\n' "$RUSTC" "$exact_compiler" >&2
@@ -145,14 +151,14 @@ _ripr_activate_rust() {
         printf '%s\n' 'activate-rust: rustc did not report an absolute sysroot.' >&2
         return 1
     fi
-    sysroot=$(cd -- "$sysroot" && pwd -P) || return 1
+    sysroot=$(builtin cd -- "$sysroot" && builtin pwd -P) || return 1
     cargo_bin=$(CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" RUSTUP_AUTO_INSTALL=0 \
         "$rustup_bin" which --toolchain "$exact" cargo) || return 1
     if [[ $cargo_bin != /* || ! -x $cargo_bin ]]; then
         printf '%s\n' 'activate-rust: rustup did not resolve an executable absolute Cargo path.' >&2
         return 1
     fi
-    cargo_bin=$(cd -- "$(dirname -- "$cargo_bin")" && printf '%s/%s\n' "$(pwd -P)" "${cargo_bin##*/}") || return 1
+    cargo_bin=$(builtin cd -- "${cargo_bin%/*}/." && builtin printf '%s/%s\n' "$(builtin pwd -P)" "${cargo_bin##*/}") || return 1
     if [[ $exact_compiler != "$sysroot/bin/rustc" || $cargo_bin != "$sysroot/bin/cargo" ]]; then
         printf '%s\n' 'activate-rust: rustc, Cargo and sysroot do not identify the same installed toolchain.' >&2
         return 1

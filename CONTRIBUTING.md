@@ -116,9 +116,10 @@ refused because fixture commands change directories. It exports an exact
 `RUSTUP_TOOLCHAIN`, the resolved `RUSTC`, and `RUSTUP_AUTO_INSTALL=0`; nested
 fixtures inherit the selected compiler even when they contain their own pin.
 Directories added to `PATH` must not contain colons, which separate PATH entries.
-Activation refuses an unrepresentable Cargo-home or physical sysroot path before
-changing exports, including a colon reached through a symlink target. Spaces and
-symlinked homes remain supported when the selected PATH directories are representable.
+Activation refuses colons in the configured Cargo-home PATH entry and in the
+physical sysroot before changing exports. The physical-sysroot check also catches
+colons hidden by a symlink. Spaces and symlinked homes remain supported when the
+selected PATH entries are representable.
 Existing conflicting `RUSTC` / `CARGO_BUILD_RUSTC` or compiler-wrapper environment
 variables cause a refusal with an explicit repair. Remove an override deliberately
 when switching compilers. Shell functions or aliases named `cargo` or `rustc`
@@ -176,6 +177,11 @@ Run the tools needed by your next lane before scheduling expensive builds:
 cargo fmt --version
 cargo clippy --version
 cargo nextest --version
+```
+
+For coverage work, also probe both selected sysroot tools:
+
+```bash
 "$LLVM_COV" --version
 "$LLVM_PROFDATA" --version
 ```
