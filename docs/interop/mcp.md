@@ -121,7 +121,9 @@ default branch.
 When a later refresh fails and a previous snapshot is retained, that snapshot's
 `empty_scope_hint.why` still describes the base of the **last completed**
 analysis. The separate `requested_base` and `attempt.failure.recovery` describe
-the newer failed request; neither silently changes the retained analysis scope. The additions are explicit-base-only so a base-less caller
+the newer failed request; neither silently changes the retained analysis scope.
+
+The additions are explicit-base-only so a base-less caller
 sees the unchanged v1 shapes: `ripr_refresh` adds `requested_base` and
 `ripr_workspace_status` reports `session.current_desired_input.base:
 explicit` with `base_revision` only after a refresh named a base, and the
