@@ -132,8 +132,8 @@ process cannot activate its caller. The existing policy executable's compiler
 identity guard remains in force: rebuild through `cargo policy` after changing
 compilers.
 
-To qualify the installed current stable compiler, source with `stable` **during
-image preparation**:
+To select the installed current stable compiler for later qualification, source
+with `stable` **during image preparation**:
 
 ```bash
 source tools/activate-rust.sh stable
@@ -200,10 +200,11 @@ bash tools/test-activate-rust.sh
 ```
 
 That harness uses controlled tool fixtures in fresh Bash shells. It tests
-activation and refusal behavior; it does not compile Rust or qualify a restored
-managed environment. On Unix, `cargo test -p xtask --test rust_activation` runs
-the same harness as part of ordinary workspace regression coverage. Native
-Windows shells keep their existing setup route.
+activation and refusal behavior on the host and Bash version that execute it;
+it does not compile Rust or establish native macOS/Bash 3.2 or restored-task
+qualification. On Unix, `cargo test -p xtask --test rust_activation` runs the
+same harness as part of ordinary workspace regression coverage. Native Windows
+shells keep their existing setup route.
 
 ### Fixture preparation
 
