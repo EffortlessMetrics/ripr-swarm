@@ -161,6 +161,12 @@ pub fn undocumented_doc_flags(
                 continue;
             };
             for flag in &invocation.flags {
+                // command_help already succeeded with --help. The help screen
+                // need not list that flag itself; all other flags still need
+                // their own option evidence, even in a help invocation.
+                if flag == "--help" {
+                    continue;
+                }
                 if !help_lists_flag(&help, flag) {
                     drift.push(format!(
                         "{name}:{} `ripr {command} {flag}` is not an option of `ripr {command} --help`",
