@@ -115,7 +115,9 @@ fn bound_sarif_results(
     };
     let total = results.len();
     let mut kept: Vec<Value> = Vec::new();
-    let mut array_bytes = 0usize;
+    // Nonempty arrays add `[` + newline and newline + six spaces + `]`
+    // around the indented results. Count that framing before admitting rows.
+    let mut array_bytes = 10usize;
     for result in results {
         let payload_bytes = serde_json::to_string_pretty(&result)
             .map(|rendered| nested_result_bytes(&rendered))
@@ -1775,7 +1777,7 @@ mod tests {
     }
 
     #[test]
-    fn sarif_results_budget_is_a_hard_cap_after_the_first_result() {
+    fn sarif_results_budget_is_a_hard_cap_after_the_first_result() -> Result<(), String> {
         // Only the first result may cross the budget; a later result that
         // would cross it is omitted, so rendered bytes stay within budget
         // whenever more than one result renders.
@@ -1801,14 +1803,41 @@ mod tests {
         let pair: Vec<Value> = (0..3)
             .map(|index| json!({"id": index, "pad": "x".repeat(64)}))
             .collect();
-        let nested = |value: &Value| {
-            serde_json::to_string_pretty(value)
-                .map(|rendered| nested_result_bytes(&rendered))
-                .unwrap_or(0)
+        let render_results = |results: Vec<Value>| {
+            sarif_document(
+                "diff",
+                vec![],
+                results,
+                None,
+                None,
+                SarifRunDisclosures {
+                    omitted_not_current: 0,
+                    folded_same_line: 0,
+                    results_bound: None,
+                },
+            )
         };
-        let two_budget = nested(&pair[0]) + 2 + nested(&pair[1]);
+        let array_bytes = |document: &str| -> Result<usize, String> {
+            let start = document
+                .find("\"results\": [")
+                .ok_or("rendered results array opening delimiter missing")?
+                + "\"results\": ".len();
+            let end = document[start..]
+                .find("\n      ]")
+                .ok_or("rendered results array closing delimiter missing")?
+                + start
+                + 8;
+            Ok(end - start)
+        };
+        let two_budget = array_bytes(&render_results(pair[..2].to_vec()))?;
+        // The old per-result sum omits ten bytes of brackets/newlines.
+        let (one, bound) = bound_sarif_results(pair.clone(), Some(two_budget - 1));
+        assert_eq!(one.len(), 1);
+        assert!(bound.is_some());
         let (two, _) = bound_sarif_results(pair, Some(two_budget));
         assert_eq!(two.len(), 2);
+        assert_eq!(array_bytes(&render_results(two))?, two_budget);
+        Ok(())
     }
 
     #[test]
