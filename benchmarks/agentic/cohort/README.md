@@ -82,6 +82,7 @@ original observations, not recomputed or statistically requalified by this chang
 
 ## Limits
 
+- Isolation: the agent's tool grant is narrow (file tools plus `cargo test`, `cargo build`, `ripr` and read-only `git`/`ls`/`cat`), not a general shell, but `cargo test` executes agent-written code and `acceptEdits` lets it write anywhere the process can. Run the harness only in a disposable environment with no secrets; it does not enforce isolation or redaction itself.
 - Known scorer limits (being repaired in a child PR): a timed-out or otherwise failing mutant run counts as killed, a pristine run that executes zero tests counts as valid, and scoring runs in the agent-edited checkout. Escape rates above are therefore best read as lower bounds with unverified scorer provenance.
 - One provider (Anthropic), two models. The "two providers" bar is not met; no other provider is reachable from this environment.
 - Mutants for the large and real-code tasks are mechanical (not cargo-mutants, which is not installed here) and filtered by Sonnet-written suites, so bugs those suites could not kill are excluded; this biases toward bugs that are easy to kill.
