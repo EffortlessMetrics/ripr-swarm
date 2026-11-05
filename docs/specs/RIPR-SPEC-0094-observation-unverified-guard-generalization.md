@@ -558,8 +558,10 @@ remain uncertain.
 
 The refusal keeps uncertainty whenever the established candidate makes an
 outgoing call, including calls to indexed helpers or uppercase callable
-parameters. Only actual parsed enum constructors, established by the
-existing enum-declaration authority, are treated as non-calling. This
+parameters. Only actual parsed `Enum::Variant` constructors are treated as
+non-calling: the enum and function must be established in the same file-root
+scope, no indexed callable may compete for the variant name, and the existing
+enum-declaration and rebinding authority must accept the path. This
 intentionally leaves unrelated wrapper chains conservative rather than
 using name-only reach to prove absence. Returned-function invocation,
 opaque or unsupported assertion syntax, ambiguous dispatch and implicit

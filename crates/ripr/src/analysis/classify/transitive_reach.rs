@@ -1252,13 +1252,23 @@ impl OwnerReach<'_, '_> {
             return true;
         };
         let syntax = parse.tree().syntax().clone();
+        let Some(definition) = syntax.children().find_map(ast::Fn::cast) else {
+            return true;
+        };
+        let snapshot = self.index.source_syntax.get(self.index, &function.file);
+        let root_scope = snapshot.as_ref().and_then(|snapshot| {
+            snapshot.item_nesting(&function.name, function.start_line, true)
+        }).is_some_and(|scope| scope.modules.is_empty() && !scope.cfg_gated);
         let type_parameters: HashSet<String> = syntax
             .descendants()
             .filter_map(ast::TypeParam::cast)
             .filter_map(|parameter| parameter.name().map(|name| name.text().to_string()))
             .collect();
         syntax.descendants().any(|node| {
-            if ast::MethodCallExpr::can_cast(node.kind()) || ast::MacroCall::can_cast(node.kind()) {
+            if ast::MethodCallExpr::can_cast(node.kind())
+                || ast::MacroCall::can_cast(node.kind())
+                || (ast::Item::can_cast(node.kind()) && node != *definition.syntax())
+            {
                 return true;
             }
             let Some(call) = ast::CallExpr::cast(node) else {
@@ -1270,10 +1280,30 @@ impl OwnerReach<'_, '_> {
             let Some(path) = callee.path() else {
                 return true;
             };
-            path.syntax().descendants().any(|node| {
-                ast::NameRef::cast(node)
-                    .is_some_and(|name| type_parameters.contains(&*name.text()))
-            }) || !super::owner_pin::owner_builds_declared_error_variant(
+            let Some(qualifier) = path.qualifier() else {
+                return true;
+            };
+            let (Some(enum_name), Some(variant)) = (
+                qualifier.segment().and_then(|segment| segment.name_ref()),
+                path.segment().and_then(|segment| segment.name_ref()),
+            ) else {
+                return true;
+            };
+            // The older enum helper establishes declarations and rebinding,
+            // not this occurrence's namespace. Restrict the exception to a
+            // bare Enum::Variant and an enum in this function's own file-root
+            // scope. Modules, constants, aliases and nested owners stay unknown.
+            let local_enum = root_scope
+                && qualifier.qualifier().is_none()
+                && !self.graph.by_name.contains_key(&*variant.text())
+                && !type_parameters.contains(&*enum_name.text())
+                && snapshot.as_ref().and_then(|snapshot| snapshot.tree()).is_some_and(|tree| {
+                    tree.syntax().children().filter_map(ast::Enum::cast).any(|item| {
+                        item.name().is_some_and(|name| name.text() == enum_name.text())
+                            && super::call_identity::entry_data_declaration_is_unambiguous(item.syntax())
+                    })
+                });
+            !local_enum || !super::owner_pin::owner_builds_declared_error_variant(
                 &path.syntax().text().to_string(),
                 function,
                 self.index,

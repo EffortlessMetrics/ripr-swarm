@@ -1478,7 +1478,7 @@ fn entry_attributes_preserve_items(source: &ra_ap_syntax::SyntaxNode) -> bool {
 
 /// A syntactic data declaration cannot establish an import's kind if a cfg,
 /// rewriting attribute or another declaration/import can select a trait there.
-fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
+pub(super) fn entry_data_declaration_is_unambiguous(node: &ra_ap_syntax::SyntaxNode) -> bool {
     use ra_ap_syntax::{AstNode, ast, ast::HasName};
     if !crate::analysis::syntax::supported_targeted_item_context(node)
         || node.ancestors().any(|ancestor| {

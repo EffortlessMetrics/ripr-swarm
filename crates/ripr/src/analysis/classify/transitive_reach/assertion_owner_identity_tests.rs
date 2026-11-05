@@ -212,8 +212,9 @@ fn opposite_kind_unicode_function_values_keep_owner_uncertainty() -> Result<(), 
 
 #[test]
 fn opposite_kind_returned_function_items_keep_owner_uncertainty() -> Result<(), String> {
-    // The alias keeps a `fn(...)` return-type token out of forward's call
-    // facts, so these controls actually challenge the function-value walk.
+    // Retain the exact stimulus that exposed the earlier candidate: the
+    // alias prevents a phantom `fn(...)` signature call from hiding the
+    // missed returned-function item behind unrelated call uncertainty.
     for (owner_generic, helper, returned) in [
         ("", "", "consume"),
         ("<T>", "", "consume::<u32>"),
@@ -252,7 +253,7 @@ fn opposite_kind_returned_function_items_keep_owner_uncertainty() -> Result<(), 
             .ok_or_else(|| "missing returned-function helper".to_string())?;
         assert!(
             calls_of(forward).next().is_none(),
-            "the control must reach the value scan, not an unknown call: {returned:?}"
+            "the regression stimulus must not acquire a phantom signature call: {returned:?}"
         );
         assert!(
             !pins_other_in_test(&index,

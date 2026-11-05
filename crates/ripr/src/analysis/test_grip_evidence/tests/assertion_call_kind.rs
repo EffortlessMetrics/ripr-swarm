@@ -535,6 +535,38 @@ mod tests {
 }
 "##,
         ),
+        (
+            "constructor_module_shadow_local_test",
+            "src/lib.rs::consume",
+            r##"#[derive(Debug, PartialEq)]
+pub enum Reduction { Over(u32), Empty }
+pub fn consume(value: u32) -> Reduction {
+    match value {
+        0 => Reduction::Empty,
+        _ => Reduction::Over(16),
+    }
+}
+#[allow(non_snake_case)]
+pub mod other {
+    pub mod Reduction {
+        pub fn Over(value: u32) -> crate::Reduction { crate::consume(value) }
+    }
+    pub struct Widget;
+    impl Widget {
+        pub fn consume(&self, value: u32) -> crate::Reduction { Reduction::Over(value) }
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn receiver_contract() {
+            let widget = Widget;
+            assert_eq!(widget.consume(1), crate::Reduction::Over(16));
+        }
+    }
+}
+"##,
+        ),
     ] {
         let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
         let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
