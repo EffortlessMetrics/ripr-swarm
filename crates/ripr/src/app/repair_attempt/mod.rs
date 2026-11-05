@@ -2759,18 +2759,83 @@ pub(crate) fn load_edit_cage_baseline_from(
     attempt_id: &RepairAttemptId,
 ) -> Result<crate::edit_cage::AttemptBaseline, String> {
     let (store, _, manifest) = open_attempt(root, store, attempt_id)?;
-    let root = store.canonical_root();
-    let artifact = find_manifest_artifact(&manifest, "edit_cage_baseline")?;
-    let path = root.join(&artifact.path);
-    let bytes =
-        std::fs::read(&path).map_err(|error| format!("read {} failed: {error}", path.display()))?;
-    if u64::try_from(bytes.len()).map_err(|error| error.to_string())? != artifact.bytes
-        || sha256_bytes(&bytes) != artifact.sha256
-    {
-        return Err("repair attempt edit-cage baseline binding failed".to_string());
-    }
+    load_retained_edit_cage_baseline(store.canonical_root(), &manifest)
+}
+
+/// Read the before artifact of an already validated manifest without reopening
+/// its store inventory. The bounded artifact reader rechecks containment and
+/// digest binding at use time; compatibility workflow files are never consulted.
+fn load_retained_edit_cage_baseline(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Result<crate::edit_cage::AttemptBaseline, String> {
+    let artifact = find_manifest_artifact(manifest, "edit_cage_baseline")?;
+    let bytes = read_attempt_artifact_bytes_with_limit(
+        root,
+        manifest,
+        artifact,
+        crate::bounded_input::MAX_CLI_INPUT_BYTES,
+    )
+    .map_err(|error| format!("repair attempt edit-cage baseline unavailable: {error}"))?;
     serde_json::from_slice(&bytes)
-        .map_err(|error| format!("decode edit-cage baseline failed: {error}; the staged baseline is damaged, so start a new attempt with `ripr agent repair`"))
+        .map_err(|error| format!("decode edit-cage baseline failed: {error}"))
+}
+
+/// The retained before capture's readiness fact (#13216), separate from the
+/// manifest's operational state and from any eventual edit-cage verdict.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RepairAttemptBaselineReading {
+    Unambiguous,
+    Ambiguous,
+    Unavailable { reason: String },
+}
+
+impl RepairAttemptBaselineReading {
+    pub(crate) fn ambiguous(&self) -> Option<bool> {
+        match self {
+            Self::Unambiguous => Some(false),
+            Self::Ambiguous => Some(true),
+            Self::Unavailable { .. } => None,
+        }
+    }
+
+    pub(crate) fn unavailable_reason(&self) -> Option<&str> {
+        match self {
+            Self::Unavailable { reason } => Some(reason),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn permits_continuation(&self) -> bool {
+        matches!(self, Self::Unambiguous)
+    }
+
+    /// Evidence disclosure only: the caller owns whether a new before command
+    /// is currently admitted. This text never embeds an unchecked restart.
+    pub(crate) fn limitation(&self) -> Option<String> {
+        match self {
+            Self::Unambiguous => None,
+            Self::Ambiguous => Some("the retained before baseline is ambiguous: it cannot establish the exact workspace state this attempt measures, so its after phase cannot produce a comparable result. Resolve the workspace condition before another baseline is captured".to_string()),
+            Self::Unavailable { reason } => Some(format!(
+                "the retained before baseline is unavailable: {reason}. Its ambiguity is unknown, so this attempt is not offered as an edit or after continuation; inspect the retained evidence"
+            )),
+        }
+    }
+}
+
+/// Shared readiness reading for status, ordinary continuation and MCP. A
+/// missing/legacy/malformed artifact stays unavailable, never false. The
+/// advanced after phase retains its own finish authority and may truthfully
+/// record an Incomparable result when explicitly invoked.
+pub(crate) fn repair_attempt_baseline_reading(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> RepairAttemptBaselineReading {
+    match load_retained_edit_cage_baseline(root, manifest) {
+        Ok(baseline) if baseline.is_ambiguous() => RepairAttemptBaselineReading::Ambiguous,
+        Ok(_) => RepairAttemptBaselineReading::Unambiguous,
+        Err(reason) => RepairAttemptBaselineReading::Unavailable { reason },
+    }
 }
 
 /// Reserve the attempt transaction exclusively. Creating the directory with
@@ -7979,6 +8044,63 @@ mod tests {
         })();
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        result
+    }
+
+    /// #13216: decoding is a distinct requirement from digest binding. A
+    /// missing/nonboolean flag in bound bytes must remain unavailable, never
+    /// a legacy false default. The test rebinds only the reader's in-memory
+    /// artifact descriptor; it does not claim a tampered manifest validates.
+    #[test]
+    fn retained_baseline_reader_refuses_bound_malformed_ambiguity() -> Result<(), String> {
+        let root = test_repo_root("baseline-reading-malformed")?;
+        let result = (|| -> Result<(), String> {
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "reader")?;
+            let original = prepared.manifest;
+            assert_eq!(
+                repair_attempt_baseline_reading(&root, &original),
+                RepairAttemptBaselineReading::Unambiguous
+            );
+            let artifact = find_manifest_artifact(&original, "edit_cage_baseline")?;
+            let path = root.join(&artifact.path);
+            let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+            let baseline: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+            for malformed in [None, Some(serde_json::json!("false"))] {
+                let mut value = baseline.clone();
+                let object = value
+                    .as_object_mut()
+                    .ok_or_else(|| "captured baseline is not an object".to_string())?;
+                match malformed {
+                    Some(flag) => {
+                        object.insert("ambiguous".to_string(), flag);
+                    }
+                    None => {
+                        object.remove("ambiguous");
+                    }
+                }
+                let changed = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
+                std::fs::write(&path, &changed).map_err(|error| error.to_string())?;
+                let mut rebound = original.clone();
+                let descriptor = rebound
+                    .artifacts
+                    .iter_mut()
+                    .find(|entry| entry.role == "edit_cage_baseline")
+                    .ok_or_else(|| "fixture lost its baseline descriptor".to_string())?;
+                descriptor.bytes = u64::try_from(changed.len()).map_err(|error| error.to_string())?;
+                descriptor.sha256 = sha256_bytes(&changed);
+                let reading = repair_attempt_baseline_reading(&root, &rebound);
+                assert_eq!(reading.ambiguous(), None);
+                assert!(!reading.permits_continuation());
+                assert!(
+                    reading
+                        .unavailable_reason()
+                        .is_some_and(|reason| reason.contains("decode edit-cage baseline failed"))
+                );
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
         result
     }
 

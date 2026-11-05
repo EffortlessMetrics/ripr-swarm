@@ -29,6 +29,18 @@ suite('repairStart (#4645)', () => {
     assert.strictEqual(findLiveRepairAttemptForSeam(rows, 'missing'), undefined);
   });
 
+  test('Start does not reuse an ambiguous or unavailable retained baseline (#13216)', () => {
+    const rows: AttemptInventoryRow[] = [
+      { attemptId: 'ambiguous', seamId: 'seam-a', state: 'awaiting_edit', disposition: 'baseline_ambiguous', command: 'ripr agent repair --attempt ambiguous --phase after' },
+      { attemptId: 'unavailable', seamId: 'seam-a', state: 'awaiting_edit', disposition: 'baseline_unavailable', command: 'ripr agent repair --attempt unavailable --phase after' }
+    ];
+    // The shared disposition decides even if a recorded after command is
+    // present. Operational AwaitingEdit is not permission to continue.
+    assert.strictEqual(findLiveRepairAttemptForSeam(rows, 'seam-a'), undefined);
+    const clean: AttemptInventoryRow = { attemptId: 'clean', seamId: 'seam-a', state: 'awaiting_edit', disposition: 'resumable', command: 'ripr agent repair --attempt clean --phase after' };
+    assert.strictEqual(findLiveRepairAttemptForSeam([...rows, clean], 'seam-a')?.attemptId, 'clean');
+  });
+
   test('parseBeforePhaseRepairStart reads attempt, edit cage, and related test', () => {
     const stdout = JSON.stringify({
       schema_version: '0.5',

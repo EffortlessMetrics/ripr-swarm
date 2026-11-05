@@ -15326,7 +15326,8 @@ Field contract:
   unknown currentness in status, but receipt reissue refuses them; a fresh
   before phase is required. `null` also applies when `HEAD` cannot be read or
   related to the prepared head), `disposition` (`resumable`,
-  `prepared_at_other_head`, `retry_budget_spent`, `head_unknown`,
+  `prepared_at_other_head`, `retry_budget_spent`, `baseline_ambiguous`,
+  `baseline_unavailable`, `head_unknown`,
   `not_published`, `finished`, `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
   that would move this attempt or its seam forward, or `null`),
   `receipt`, and `last_after_refusal`. A `ready_to_finish` attempt reads
@@ -15344,6 +15345,17 @@ Field contract:
   without running, so `command` is the fresh before-phase start (or `null`
   when the repair eligibility gate refuses the seam) and never the after
   command.
+  - `baseline_ambiguous` is a nullable boolean read from the retained,
+    digest-bound edit-cage baseline (#13216). `false` means that capture did
+    not record ambiguity; it is not a complete comparability or success
+    claim. `true` means it did; `null` means the reading is unavailable.
+    `baseline_unavailable_reason` is then the artifact-specific diagnostic,
+    otherwise `null`. Missing legacy baseline roles never default to false.
+    Live ambiguous/unavailable attempts retain their operational state but
+    use the corresponding `baseline_ambiguous`/`baseline_unavailable`
+    disposition, never `resumable`. Their command is an admitted fresh before
+    recovery or `null` when the repair-start gate withholds it. A malformed
+    manifest or broken artifact binding still withholds the whole inventory.
   - `receipt` - `null` unless the attempt is `ready_to_finish`. Otherwise an
     object read from the attempt-local terminal receipt when that attempt
     retained one, else from `target/ripr/reports/agent-receipt.json` for a
@@ -15407,6 +15419,7 @@ Field contract:
   (`language_routes.state: required` with a recorded route command).
   A warning (`repair_attempt_unreadable`, `ambiguous_repair_attempts`,
   `multiple_open_repair_seams`, `repair_attempt_head_unknown`,
+  `repair_attempt_baseline_ambiguous`, `repair_attempt_baseline_unavailable`,
   `pilot_found_no_repair_target`,
   `pilot_withheld_static_limitations_no_repair_target`,
   `pilot_routed_to_check_no_repair_target`) then names the choices. A seam
@@ -15515,6 +15528,11 @@ Field contract:
   wrong store is `corrupt_or_unavailable` there, never silently resolved.
 - `attempt.state` is the manifest's operational state; it is `null` only when
   the manifest could not be validated at all.
+- `attempt.baseline_ambiguous` and `attempt.baseline_unavailable_reason`
+  have the inventory fields' nullable meanings. An ambiguous or unavailable
+  live baseline produces `status_class: limited`, preserving the original
+  state and identity. A denied restart never becomes an after continuation;
+  `next_action` stays null and `claim_boundary` names the gate refusal.
 - `attempt.status_class` is the resume vocabulary: `awaiting_edit`,
   `prepared`, `finished_current`, `finished_historical`, `stale`,
   `incomparable`, `failed`, `limited`, `corrupt_or_unavailable`, and
@@ -15524,7 +15542,8 @@ Field contract:
   split by whether `HEAD` is still the head the after phase recorded (a
   moved `HEAD` downgrades to `finished_historical`; the retained result
   stays readable and is explicitly not current proof). `limited` covers a
-  receipt that does not show the gap closed and states whose currentness
+  live attempt with an ambiguous/unavailable retained baseline, a receipt
+  that does not show the gap closed and states whose currentness
   cannot be read. `corrupt_or_unavailable` covers missing, tampered, or
   unbound attempt-local terminal evidence — status never falls back to
   another attempt's one-slot compatibility receipt. `legacy_compatibility_only`

@@ -23,7 +23,8 @@ use super::workspace::{
 use crate::app::repair_attempt::{
     AttemptTerminalReceipt, RepairAttemptInventoryEntry, RepairAttemptState,
     find_manifest_artifact_by_role, find_terminal_artifact_by_role, inventory_repair_attempts_from,
-    load_attempt_terminal_receipt, repair_attempt_head_reading, repair_attempt_state_label,
+    load_attempt_terminal_receipt, repair_attempt_baseline_reading, repair_attempt_head_reading,
+    repair_attempt_state_label,
 };
 use crate::output::agent_receipt::AgentReceiptReading;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state_from_receipt_value;
@@ -314,6 +315,28 @@ fn session_attempt_document(transaction: &RepairTransaction) -> Value {
     })
 }
 
+/// MCP retains the typed failure but never copies host-local filesystem
+/// diagnostics into its portable document (ADR 0022). The CLI owns the full
+/// artifact-specific diagnostic under the caller's selected root.
+fn baseline_unavailable_note(
+    baseline: &crate::app::repair_attempt::RepairAttemptBaselineReading,
+) -> Option<&'static str> {
+    baseline.unavailable_reason().map(|_| {
+        "the retained edit-cage baseline could not be read or decoded; inspect `ripr agent status --attempt <id>` for the artifact-specific diagnostic"
+    })
+}
+
+fn baseline_projection_limitation(
+    baseline: &crate::app::repair_attempt::RepairAttemptBaselineReading,
+) -> Option<String> {
+    match baseline_unavailable_note(baseline) {
+        Some(reason) => Some(format!(
+            "the retained before baseline is unavailable: {reason}; ambiguity is unknown and no after continuation is offered"
+        )),
+        None => baseline.limitation(),
+    }
+}
+
 fn durable_attempt_document(
     manifest: &crate::app::repair_attempt::RepairAttemptManifest,
     root: &Path,
@@ -368,6 +391,14 @@ fn durable_attempt_document(
         })
     });
     let mut limitations = manifest.limitations.clone();
+    if matches!(
+        manifest.state,
+        RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
+    )
+        && let Some(limitation) = baseline_projection_limitation(&selected.view.baseline)
+    {
+        limitations.insert(0, limitation);
+    }
     limitations.extend(route_limitations);
     // Ordinary next-action displays bind the portable root, like the repair
     // card: presentation only, never execution authority (ADR 0022).
@@ -381,6 +412,8 @@ fn durable_attempt_document(
         "attempt_id": manifest.repair_attempt_id.as_str(),
         "origin": "durable_store",
         "state": repair_attempt_state_label(&manifest.state),
+        "baseline_ambiguous": selected.view.baseline.ambiguous(),
+        "baseline_unavailable_reason": baseline_unavailable_note(&selected.view.baseline),
         "root_identity": root_identity,
         "repository_head": manifest.repository_head,
         "seam_id": manifest.seam_id,
@@ -508,7 +541,17 @@ pub(super) fn durable_receipt_document(
     let attempt_id = manifest.repair_attempt_id.as_str().to_string();
     let current_head = crate::agent::artifact::current_git_head(root).ok();
     let head_reading = repair_attempt_head_reading(root, manifest, current_head.as_deref());
+    let baseline = repair_attempt_baseline_reading(root, manifest);
     let (status, receipt) = match &manifest.state {
+        RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
+            if !baseline.permits_continuation() =>
+        {
+            let receipt = json!({
+                "status": "not_issued",
+                "note": baseline_projection_limitation(&baseline),
+            });
+            ("limited", receipt)
+        }
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit => {
             let receipt = json!({
                 "status": "not_issued",
@@ -605,6 +648,18 @@ pub(super) fn durable_receipt_document(
         ) => "limited",
         _ => status,
     };
+    let mut limitations = vec![
+        "static movement and focused runtime test execution remain separate evidence axes; this document reports static receipt state only".to_string(),
+        "RIPR executed nothing to produce this state and executes nothing in response to reading it".to_string(),
+    ];
+    if matches!(
+        manifest.state,
+        RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
+    )
+        && let Some(limitation) = baseline_projection_limitation(&baseline)
+    {
+        limitations.insert(0, limitation);
+    }
     json!({
         "schema_version": RECEIPT_STATUS_SCHEMA_VERSION,
         "receipt_id": attempt_id,
@@ -612,6 +667,8 @@ pub(super) fn durable_receipt_document(
         "attempt": {
             "attempt_id": attempt_id,
             "state": state_label,
+            "baseline_ambiguous": baseline.ambiguous(),
+            "baseline_unavailable_reason": baseline_unavailable_note(&baseline),
             "root_identity": root_identity,
             "repository_head": manifest.repository_head,
             "seam_id": manifest.seam_id,
@@ -625,10 +682,7 @@ pub(super) fn durable_receipt_document(
             "after_current": manifest.after.as_ref().map(|after| after.current),
             "basis": "shared read-time HEAD applicability; after_current records finish-time admission only and is not live freshness",
         },
-        "limitations": [
-            "static movement and focused runtime test execution remain separate evidence axes; this document reports static receipt state only",
-            "RIPR executed nothing to produce this state and executes nothing in response to reading it",
-        ],
+        "limitations": limitations,
         "non_claims": NON_CLAIMS,
         "claim_boundary": "Receipt status for one durable repair attempt. The receipt binds exact before/after/verify bytes under the attempt identity; MCP re-validates those bindings on every read and projects the state without joining by mtime or latest-file convention.",
         "links": {

@@ -12,11 +12,12 @@ use crate::agent::loop_commands::{
 };
 use crate::app::repair_attempt::{
     AfterPhaseHeadAdmission, AttemptTerminalReceipt, CanonicalAdmission, DivergedHeadRecovery,
-    REPAIR_ATTEMPT_DIRECTORY, RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptManifest,
-    RepairAttemptState, RepairAttemptStoreAccess, RepairAttemptStoreCurrentness,
-    RepairAttemptStoreLocationClass, canonically_admit_terminal_pair,
-    diverged_head_recovery_for_subject, inventory_repair_attempts_from,
-    load_attempt_terminal_receipt, load_repair_attempt_manifest_from, quoted_store_flag,
+    REPAIR_ATTEMPT_DIRECTORY, RepairAttemptBaselineReading, RepairAttemptId,
+    RepairAttemptInventoryEntry, RepairAttemptManifest, RepairAttemptState,
+    RepairAttemptStoreAccess, RepairAttemptStoreCurrentness, RepairAttemptStoreLocationClass,
+    canonically_admit_terminal_pair, diverged_head_recovery_for_subject,
+    inventory_repair_attempts_from, load_attempt_terminal_receipt,
+    load_repair_attempt_manifest_from, quoted_store_flag, repair_attempt_baseline_reading,
     repair_attempt_head_reading, repair_attempt_state_label, resolve_store,
     validate_issued_receipt_evidence,
 };
@@ -177,6 +178,7 @@ pub(crate) struct AgentStatusRepairAttempt {
     pub(crate) state: &'static str,
     pub(crate) head_current: Option<bool>,
     pub(crate) disposition: &'static str,
+    pub(crate) baseline: RepairAttemptBaselineReading,
     pub(crate) manifest: String,
     pub(crate) command: Option<String>,
     /// True when `command` was a repair start that the shared repair gate
@@ -681,6 +683,7 @@ fn status_repair_attempt(
     let restart = Some(restart_command.clone());
     let receipt = attempt_receipt(root, manifest, receipt);
     let head_reading = repair_attempt_head_reading(root, manifest, current_head);
+    let baseline = repair_attempt_baseline_reading(root, manifest);
     let evidence_head = head_reading.evidence_head;
     let mut diverged_recovery = None;
     let legacy_gap_binding = manifest
@@ -688,6 +691,23 @@ fn status_repair_attempt(
         .as_ref()
         .is_some_and(crate::app::repair_attempt::RepairAttemptGapBinding::is_legacy);
     let (head_current, (state, disposition, command)) = match manifest.state {
+        // The retained before capture owns this immutable limitation. A moved
+        // HEAD, retry, or fresh session cannot make that capture comparable.
+        RepairAttemptState::AwaitingEdit | RepairAttemptState::Prepared
+            if !baseline.permits_continuation() =>
+        {
+            (
+                head_reading.head_current,
+                (
+                    repair_attempt_state_label(&manifest.state),
+                    match &baseline {
+                        RepairAttemptBaselineReading::Ambiguous => "baseline_ambiguous",
+                        _ => "baseline_unavailable",
+                    },
+                    restart,
+                ),
+            )
+        }
         // A legacy (C2a) gap marker has no immutable base commit: its after
         // phase refuses, so the only next action is a fresh start.
         RepairAttemptState::AwaitingEdit if legacy_gap_binding => (
@@ -799,6 +819,7 @@ fn status_repair_attempt(
         state,
         head_current,
         disposition,
+        baseline,
         manifest: format!(
             "{store_locator}/{}/attempt.json",
             manifest.repair_attempt_id.as_str()
@@ -1015,6 +1036,15 @@ fn finished_attempt_warnings(
             continue;
         }
         match attempt.disposition {
+            "baseline_ambiguous" | "baseline_unavailable" => {
+                if let Some(message) = attempt.baseline.limitation() {
+                    warnings.push(AgentStatusWarning {
+                        kind: format!("repair_attempt_{}", attempt.disposition),
+                        artifact: attempt.manifest.clone(),
+                        message,
+                    });
+                }
+            }
             "finished" => warnings.push(AgentStatusWarning {
                 kind: "repair_receipt_stale".to_string(),
                 artifact: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
@@ -2309,6 +2339,10 @@ fn open_seam_restart_command(
 
 fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
     match attempt.disposition {
+        "baseline_ambiguous" | "baseline_unavailable" => attempt
+            .baseline
+            .limitation()
+            .unwrap_or_else(|| "before baseline readiness is unavailable".to_string()),
         "prepared_at_other_head" if attempt.legacy_gap_binding => {
             "awaiting an edit, but it was started by an earlier ripr build that did not record the immutable base commit, so its after phase refuses; start a fresh attempt".to_string()
         }
@@ -2594,6 +2628,8 @@ fn agent_status_repair_attempt_json(attempt: &AgentStatusRepairAttempt) -> Value
         "state": attempt.state,
         "head_current": attempt.head_current,
         "disposition": attempt.disposition,
+        "baseline_ambiguous": attempt.baseline.ambiguous(),
+        "baseline_unavailable_reason": attempt.baseline.unavailable_reason(),
         "manifest": attempt.manifest,
         "command": attempt.command,
         "receipt": attempt_receipt_json(&attempt.receipt),
@@ -2743,6 +2779,8 @@ pub(crate) struct AgentAttemptStatusAttempt {
     pub(crate) manifest: String,
     pub(crate) state: Option<&'static str>,
     pub(crate) status_class: &'static str,
+    pub(crate) baseline_ambiguous: Option<bool>,
+    pub(crate) baseline_unavailable_reason: Option<String>,
     pub(crate) head_current: Option<bool>,
     pub(crate) currentness: &'static str,
     pub(crate) evidence_head: Option<String>,
@@ -2977,6 +3015,14 @@ pub(crate) fn build_agent_attempt_status(
         _ => {}
     }
     let mut limitations = manifest.limitations.clone();
+    if matches!(
+        manifest.state,
+        RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
+    )
+        && let Some(limitation) = view.baseline.limitation()
+    {
+        limitations.insert(0, limitation);
+    }
     limitations.extend(resolved.limitations().iter().cloned());
     if view.head_current.is_none() {
         limitations.push(if current_head.is_none() {
@@ -2996,6 +3042,8 @@ pub(crate) fn build_agent_attempt_status(
             manifest: manifest_label,
             state: Some(repair_attempt_state_label(&manifest.state)),
             status_class,
+            baseline_ambiguous: view.baseline.ambiguous(),
+            baseline_unavailable_reason: view.baseline.unavailable_reason().map(str::to_string),
             head_current: view.head_current,
             currentness,
             evidence_head: Some(view.evidence_head.clone()),
@@ -3040,6 +3088,8 @@ fn corrupt_attempt_status(
             manifest: manifest_label.to_string(),
             state: None,
             status_class: "corrupt_or_unavailable",
+            baseline_ambiguous: None,
+            baseline_unavailable_reason: Some(reason.clone()),
             head_current: None,
             currentness: "unknown",
             evidence_head: None,
@@ -3071,6 +3121,7 @@ fn attempt_status_class(
     view: &AgentStatusRepairAttempt,
 ) -> &'static str {
     match manifest.state {
+        RepairAttemptState::Prepared if !view.baseline.permits_continuation() => "limited",
         RepairAttemptState::Prepared => "prepared",
         RepairAttemptState::AwaitingEdit => match view.disposition {
             "resumable" => "awaiting_edit",
@@ -3119,7 +3170,10 @@ fn restart_recommended_for(status_class: &str, view: &AgentStatusRepairAttempt) 
     match status_class {
         "prepared" | "stale" | "incomparable" | "failed" | "corrupt_or_unavailable" => true,
         "limited" => {
-            view.disposition == "retry_budget_spent"
+            matches!(
+                view.disposition,
+                "retry_budget_spent" | "baseline_ambiguous" | "baseline_unavailable"
+            )
                 || matches!(
                     &view.receipt,
                     AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
@@ -3168,6 +3222,15 @@ fn canonical_next_action_for_attempt(
     } else {
         seam.to_string()
     };
+    let mut limitations = manifest.limitations.clone();
+    if matches!(
+        manifest.state,
+        RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
+    )
+        && let Some(limitation) = view.baseline.limitation()
+    {
+        limitations.insert(0, limitation);
+    }
     select_canonical_next_action(&NextActionInput {
         producer: NextActionProducer::RepairAttemptStatus,
         root,
@@ -3227,7 +3290,7 @@ fn canonical_next_action_for_attempt(
         doctor_recovery: None,
         pilot_delegation: None,
         alternatives: Vec::new(),
-        limitations: manifest.limitations.clone(),
+        limitations,
     })
 }
 
@@ -3386,6 +3449,15 @@ fn restart_attempt_command(
         "failed" => restart(format!(
             "repair `{id}` for gap `{seam}` ended failed; start a new repair while the gap is still open"
         )),
+        "limited"
+            if matches!(view.disposition, "baseline_ambiguous" | "baseline_unavailable") =>
+        {
+            view.baseline.limitation().and_then(|limitation| {
+                restart(format!(
+                    "repair attempt `{id}` for gap `{seam}` cannot continue from its before capture: {limitation}. Set any test edit aside, resolve the cause, and start a fresh before phase from a clean state while the gap is still open"
+                ))
+            })
+        }
         "limited" if view.disposition == "retry_budget_spent" => restart(format!(
             "repair `{id}` for gap `{seam}` used up its retry limit, so it now refuses without running; start a new repair while the gap is still open"
         )),
@@ -3447,6 +3519,8 @@ pub(crate) fn render_agent_attempt_status_json(
             "manifest": attempt.manifest,
             "state": attempt.state,
             "status_class": attempt.status_class,
+            "baseline_ambiguous": attempt.baseline_ambiguous,
+            "baseline_unavailable_reason": attempt.baseline_unavailable_reason,
             "head_current": attempt.head_current,
             "currentness": attempt.currentness,
             "evidence_head": attempt.evidence_head,
@@ -3495,6 +3569,15 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
     }
     if let Some(reason) = &attempt.unreadable_reason {
         rendered.push_str(&format!("Unreadable: {reason}\n"));
+    }
+    if attempt.baseline_ambiguous == Some(true) {
+        rendered
+            .push_str("Before baseline: ambiguous; no comparable after continuation is offered.\n");
+    }
+    if let Some(reason) = &attempt.baseline_unavailable_reason {
+        rendered.push_str(&format!(
+            "Before baseline: unavailable ({reason}); ambiguity is unknown.\n"
+        ));
     }
     if let Some(receipt) = &attempt.receipt {
         let summary = match receipt {
@@ -5677,6 +5760,7 @@ mod tests {
             state: "failed",
             head_current: Some(true),
             disposition,
+            baseline: RepairAttemptBaselineReading::Unambiguous,
             manifest: format!("{REPAIR_ATTEMPT_DIRECTORY}/{id}/attempt.json"),
             command: command.map(str::to_string),
             start_withheld: false,
@@ -6018,6 +6102,140 @@ mod tests {
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
+    }
+
+    /// #13216: baseline recovery obeys the existing start gate even when its
+    /// real retained capture is ambiguous. No reset/after alternative can
+    /// evade that immutable limitation.
+    #[test]
+    fn ambiguous_baseline_recovery_obeys_the_repair_start_gate() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let root = unique_agent_status_test_dir("baseline-gate");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let result = (|| -> Result<(), String> {
+            run_git(&root, &["init"])?;
+            run_git(&root, &["config", "user.email", "ripr-test@example.invalid"])?;
+            run_git(&root, &["config", "user.name", "RIPR Test"])?;
+            write_file(&root.join("README.md"), "fixture\n")?;
+            run_git(&root, &["add", "."])?;
+            run_git(&root, &["commit", "--no-gpg-sign", "-m", "baseline gate"])?;
+            crate::testing::fixture_git::stage_case_collision_index_entries(&root)?;
+            let refused = crate::app::task_first::tests::gate_entry(
+                SeamGripClass::WeaklyGripped,
+                vec![crate::app::task_first::tests::weak_related_test()],
+            );
+            let seam = refused.seam.id().as_str().to_string();
+            prepare_attempt_fixture(&root, &seam)?;
+            let id = only_attempt_id(&root, None)?;
+            let manifest = load_repair_attempt_manifest_from(&root, None, &id)?;
+            let gate = RepairStartGate::preloaded(&root, vec![refused]);
+            let head = crate::agent::artifact::current_git_head(&root)?;
+            let view = status_repair_attempt(
+                ".",
+                REPAIR_ATTEMPT_DIRECTORY,
+                "",
+                &manifest,
+                Some(&head),
+                &WorkflowReceiptRead::Missing,
+                &gate,
+            );
+            assert_eq!(view.disposition, "baseline_ambiguous");
+            assert_eq!(attempt_status_class(&manifest, &view), "limited");
+            assert!(view.start_withheld);
+            assert!(view.command.is_none());
+            assert!(view.diverged_recovery.is_none());
+            let decision = canonical_next_action_for_attempt(
+                &manifest,
+                &view,
+                "limited",
+                ".",
+                &view.manifest,
+                "",
+                true,
+            )?;
+            assert!(!matches!(
+                decision.action_class(),
+                NextActionClass::RetryCurrentSubject | NextActionClass::SatisfyPrerequisite
+            ));
+            let attempts = vec![view];
+            let mut warnings = Vec::new();
+            let next = select_next_command(
+                ".",
+                None,
+                Some(&attempts),
+                &[],
+                &mut warnings,
+                inventory_store(),
+                &gate,
+            );
+            assert!(next.is_none());
+            assert!(
+                warnings
+                    .iter()
+                    .any(|warning| warning.kind == "repair_start_withheld")
+            );
+            assert!(
+                warnings
+                    .iter()
+                    .all(|warning| !warning.message.contains("--phase before"))
+            );
+            // Isolate decoding after the binding check: only this reader's
+            // in-memory descriptor is rebound, not the durable commitment.
+            // Unavailable evidence must not smuggle restart advice around
+            // the very same closed gate through its diagnostic prose.
+            use sha2::{Digest, Sha256};
+            let mut malformed = manifest.clone();
+            let artifact = malformed
+                .artifacts
+                .iter_mut()
+                .find(|entry| entry.role == "edit_cage_baseline")
+                .ok_or_else(|| "fixture lost its baseline".to_string())?;
+            let bytes = b"{malformed baseline";
+            std::fs::write(root.join(&artifact.path), bytes).map_err(|error| error.to_string())?;
+            artifact.bytes = u64::try_from(bytes.len()).map_err(|error| error.to_string())?;
+            artifact.sha256 = format!("sha256:{:x}", Sha256::digest(bytes));
+            let unavailable = status_repair_attempt(
+                ".",
+                REPAIR_ATTEMPT_DIRECTORY,
+                "",
+                &malformed,
+                Some(&head),
+                &WorkflowReceiptRead::Missing,
+                &gate,
+            );
+            assert_eq!(unavailable.disposition, "baseline_unavailable");
+            assert!(unavailable.start_withheld && unavailable.command.is_none());
+            let reason = unavailable
+                .baseline
+                .unavailable_reason()
+                .ok_or_else(|| "malformed baseline lost its diagnostic".to_string())?;
+            assert!(reason.contains("decode edit-cage baseline failed"));
+            let limitation = unavailable
+                .baseline
+                .limitation()
+                .ok_or_else(|| "malformed baseline lost its limitation".to_string())?;
+            for disclosure in [reason, limitation.as_str()] {
+                assert!(!disclosure.contains("ripr agent repair"));
+                assert!(!disclosure.contains("start a new attempt"));
+                assert!(!disclosure.contains("--phase before"));
+            }
+            let decision = canonical_next_action_for_attempt(
+                &malformed,
+                &unavailable,
+                "limited",
+                ".",
+                &unavailable.manifest,
+                "",
+                true,
+            )?;
+            assert!(!matches!(
+                decision.action_class(),
+                NextActionClass::RetryCurrentSubject | NextActionClass::SatisfyPrerequisite
+            ));
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     /// #8766: the recorded-refusal sanitizer cuts the `--phase before` recipe
@@ -7171,6 +7389,7 @@ mod tests {
             state: "awaiting_edit",
             head_current: Some(true),
             disposition: "resumable",
+            baseline: RepairAttemptBaselineReading::Unambiguous,
             manifest: "target/ripr/repair-attempts/repair-attempt-01/attempt.json".to_string(),
             command: Some("ripr agent repair --phase after".to_string()),
             start_withheld: false,
@@ -7561,6 +7780,8 @@ mod tests {
                 manifest: "store/repair-attempt-01/attempt.json".to_string(),
                 state: Some("awaiting_edit"),
                 status_class: "awaiting_edit",
+                baseline_ambiguous: Some(false),
+                baseline_unavailable_reason: None,
                 head_current: Some(true),
                 currentness: "current",
                 evidence_head: Some("abc123".to_string()),
@@ -7683,6 +7904,8 @@ mod tests {
                     manifest: "store/repair-attempt-01/attempt.json".to_string(),
                     state: row.state,
                     status_class: row.status_class,
+                    baseline_ambiguous: None,
+                    baseline_unavailable_reason: None,
                     head_current: Some(true),
                     currentness: "current",
                     evidence_head: Some("abc123".to_string()),
