@@ -6751,9 +6751,6 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
     Ok(())
 }
 
-/// Untracked and excluded input never becomes an all-clear (#7357): an
-/// untracked-only change analyzes nothing and says so with the real remedy,
-/// and intent-to-add (the named remedy) makes the file analyzable.
 /// #13280: a default-base `ripr_refresh` that analyzed nothing must not read
 /// as clean through `ripr_list_gaps`. Real temporary Git repository over the
 /// production stdio transport: with `main` resolved to HEAD the committed
@@ -6964,6 +6961,9 @@ fn gap_list_says_not_analyzed_for_a_default_base_empty_refresh() -> Result<(), S
     Ok(())
 }
 
+/// Untracked and excluded input never becomes an all-clear (#7357): an
+/// untracked-only change analyzes nothing and says so with the real remedy,
+/// and intent-to-add (the named remedy) makes the file analyzable.
 #[cfg(feature = "lang-rust")]
 #[test]
 fn refresh_source_worktree_discloses_untracked_input_and_the_intent_to_add_remedy()
