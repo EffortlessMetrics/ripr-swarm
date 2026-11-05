@@ -1,0 +1,47 @@
+{
+  "prior_source": "ada92361f3a35de2c5890e0ea6fec213bf199b04",
+  "prior_outcome": {
+    "passed": 133,
+    "failed": 26
+  },
+  "current_source": "7776ac45765b679697ff8c55f4dbe434d628e4c1",
+  "state": "source reconciliation completed; pending exact rerun",
+  "categories": {
+    "producer_oracle_regressions_shared_authority_restored": [
+      "aliased_foreign_import_does_not_defeat_owner_confirmation",
+      "cross_package_same_name_defeat_blocks_owner_confirmation",
+      "error_path_probe_is_independent_of_ok_arm_observation",
+      "guarded_result_match_exact_variant_on_owner_confirms",
+      "guarded_result_match_on_owner_confirms_observation_without_token_overlap",
+      "no_import_or_own_crate_import_keeps_owner_confirmation",
+      "return_value_probe_observing_ok_arm_confirms",
+      "return_value_probe_on_err_construction_is_independent_of_ok_arm_observation",
+      "a_payload_change_needs_the_whole_value_owner_pin",
+      "proximity_only_error_variant_assertion_is_not_named_for_a_predicate",
+      "reveal_evidence_records_matching_assertions_and_sorts_related_tests"
+    ],
+    "fixture_owner_or_observed_operand_completed": [
+      "aligned_variant_assertion_confirms_field_construction_error_construction",
+      "error_path_exact_variant_oracle_keeps_discriminate_yes",
+      "error_path_matches_variant_oracle_keeps_discriminate_yes",
+      "error_path_parser_context_cannot_replace_emitted_probe_variant",
+      "field_construction_with_token_match_keeps_discriminate_yes",
+      "ok_or_question_mark_line_carries_its_variant_into_the_sibling_gate",
+      "sibling_variant_exact_value_pin_cannot_confirm_a_changed_error_variant"
+    ],
+    "producer_pin_context_repaired_with_actual_binding_controls": [
+      "typed_variant_site_loses_credit_when_witness_pin_removed",
+      "owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner",
+      "struct_literal_default_field_read_stays_exposed",
+      "untouched_field_assertion_does_not_confirm_a_partly_changed_literal"
+    ],
+    "intended_weaker_without_identity_strength_preserved": [
+      "name_only_test_cannot_supply_the_oracle_for_reach_from_another_test",
+      "sibling_effect_kind_cannot_confirm_beside_owner_caller",
+      "self_computed_expected_value_is_weak_and_unconfirmed"
+    ],
+    "observation_matcher_not_identity_harness": [
+      "error_path_is_confirmed_only_by_an_error_observing_assertion"
+    ]
+  }
+}

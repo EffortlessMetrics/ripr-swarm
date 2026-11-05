@@ -53,19 +53,29 @@
     "no release selection/publication claim"
   ],
   "current_binding_candidate": {
-    "commit": "ada92361f3a35de2c5890e0ea6fec213bf199b04",
-    "tree": "5695d660f12f26ab3c0ced991558864d4d02fbf3",
-    "production_repair": "4ed7bb43bfa313ef532004b41908f759d5d21e37",
-    "workspace_integration_file": {
-      "passed": 5,
+    "commit": "7776ac45765b679697ff8c55f4dbe434d628e4c1",
+    "tree": "03c5e8204246dc7a70f79757b2f9f17fc8dbb78e",
+    "qualification": "seven-test production integration compiling; exact reveal rerun follows sequentially",
+    "prior_verified_production_boundary": {
+      "source": "269bae78916bd4bf09789e1236551cf104d6025e",
+      "passed": 6,
       "failed": 0,
-      "ignored": 0,
-      "log": "assertion-binding-effect-workspace-final.log",
-      "source_custody": "same source bytes executed immediately before final one-line test-only commit; no production changes in ada92361",
-      "coverage": "discarded result, diagnostic-only use, shadowed binding, discarded initializer/asserted blocks, actual direct/bound results and both orders; native mutation contrast; persisted effect actual observer and separate-instance negative"
+      "log": "effect-receiver-affirmative-workspace-final.log"
     },
-    "qualification": "broader Rust-only reveal suite compiling; not composed or merge ready",
-    "review_delta": "whole-call-effect-review-delta.patch"
+    "prior_coherent_batch": {
+      "source": "affd65f0a6ce099a462ec6b8b2c2b526191057d5",
+      "passed": 6,
+      "failed": 1,
+      "log": "coherent-identity-workspace.log",
+      "failure": "whole returned one-field literal not credited because lexical helper is intentionally partial-only; corrected in stronger field-origin path at current source"
+    },
+    "prior_reveal": {
+      "source": "ada92361f3a35de2c5890e0ea6fec213bf199b04",
+      "passed": 133,
+      "failed": 26,
+      "log": "assertion-binding-whole-call-reveal.log"
+    },
+    "reconciliation": "reveal-26-reconciliation.json"
   },
   "review_delta": {
     "base": "d1bef96f582a0df8ed627481d808e1f72a25acc0",
@@ -81,5 +91,6 @@
     "compact": "0.162",
     "tests": "separate synthesized favorable shared-generation payloads tagged for 7490 and 12010; not actual historical cache captures",
     "qualification": "not run; integration merge retains 27 generated-output conflicts awaiting producer regeneration"
-  }
+  },
+  "ci_authority": "One-PR history-sync queue-only exception approved through coordinator; request only after qualified exact candidate and source review. No protections bypass/change; restore approved merge setting after import. Promotion trust hold unchanged."
 }

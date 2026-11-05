@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -17,5 +17,5 @@
+ }
+ 
+ pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {
+-    notifier.send("static_msg")
++    notifier.send(order_id)
+ }

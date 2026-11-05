@@ -1,0 +1,1217 @@
+diff --git a/.ripr/traceability.d/12010-sink-identity.toml b/.ripr/traceability.d/12010-sink-identity.toml
+index c14b96aae..0b7c8fee5 100644
+--- a/.ripr/traceability.d/12010-sink-identity.toml
++++ b/.ripr/traceability.d/12010-sink-identity.toml
+@@ -9,4 +9,5 @@ tests = [
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle",
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::persisted_effect_observer_retains_identity_without_lending_it_to_another_instance",
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::established_effect_carrier_binds_the_called_instance_only",
++  "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_fields_and_builders_keep_real_identity_and_reject_replaced_values",
+ ]
+diff --git a/crates/ripr/src/analysis/classifier/evidence.rs b/crates/ripr/src/analysis/classifier/evidence.rs
+index 8a35a62df..552115e4a 100644
+--- a/crates/ripr/src/analysis/classifier/evidence.rs
++++ b/crates/ripr/src/analysis/classifier/evidence.rs
+@@ -1228,6 +1228,16 @@ impl ClassifiedProbeEvidence {
+                                 receiver.admits(owner, context.index, test, assertion, pin_syntax)
+                             })
+                 },
++                value_observer_identity: &|test, assertion| {
++                    context.workspace_complete
++                        && pin_syntax.admits(test, assertion, context.index)
++                        && crate::analysis::classify::builder_override::owner_field_read_identity(
++                            context.probe,
++                            context.index,
++                            test,
++                            assertion,
++                        )
++                },
+                 setter_writes_field: &|impl_type, setter, field| {
+                     setter_plainly_writes(context.index, impl_type, setter, field)
+                 },
+diff --git a/crates/ripr/src/analysis/classify/builder_override.rs b/crates/ripr/src/analysis/classify/builder_override.rs
+index 78fce0796..00d2f50ee 100644
+--- a/crates/ripr/src/analysis/classify/builder_override.rs
++++ b/crates/ripr/src/analysis/classify/builder_override.rs
+@@ -203,6 +203,11 @@ fn struct_literal_initializers(expression: &str) -> StructLiteral {
+ /// -> `Request { url, timeout_ms: t.unwrap_or(3_000) }` names `timeout_ms`
+ /// alone). `None` otherwise, so a caller keeps every field in play.
+ pub(super) fn changed_struct_literal_fields(before: &str, after: &str) -> Option<Vec<String>> {
++    let changed = changed_struct_literal_field_names(before, after)?;
++    (changed.len() < struct_literal_initializers(after).fields.len()).then_some(changed)
++}
++
++fn changed_struct_literal_field_names(before: &str, after: &str) -> Option<Vec<String>> {
+     let (before, after) = (
+         struct_literal_initializers(before),
+         struct_literal_initializers(after),
+@@ -227,7 +232,7 @@ pub(super) fn changed_struct_literal_fields(before: &str, after: &str) -> Option
+         .filter(|(b, a)| normalized(&b.1) != normalized(&a.1))
+         .map(|(_, a)| a.0.clone())
+         .collect();
+-    (!changed.is_empty() && changed.len() < after.fields.len()).then_some(changed)
++    (!changed.is_empty()).then_some(changed)
+ }
+ 
+ /// The initializer's non-trivia tokens joined by one space, so formatting and
+@@ -295,6 +300,209 @@ pub(super) fn overridden_fields_read(
+         .collect()
+ }
+ 
++/// Affirmative origin for a literal-pinned field read. Unlike override refusal,
++/// this requires every receiver transformation to be proved field-preserving.
++pub(in crate::analysis) fn owner_field_read_identity(
++    probe: &crate::domain::Probe,
++    index: &RustIndex,
++    test: &TestSummary,
++    assertion: &OracleFact,
++) -> bool {
++    field_identity(probe, index, test, assertion).is_some()
++}
++fn field_identity(
++    probe: &crate::domain::Probe,
++    index: &RustIndex,
++    test: &TestSummary,
++    assertion: &OracleFact,
++) -> Option<()> {
++    use crate::domain::ProbeFamily;
++    let owner = OwnerCall::from_symbol(&probe.owner.as_ref()?.0)?;
++    let fields = match probe.family {
++        ProbeFamily::FieldConstruction => {
++            vec![super::reveal::constructed_field_name(&probe.expression)?.to_string()]
++        }
++        ProbeFamily::ReturnValue if probe.expression.contains('{') => match probe.before.as_deref()
++        {
++            Some(before) => changed_struct_literal_field_names(before, &probe.expression)?,
++            None => struct_literal_fields(&probe.expression),
++        },
++        _ => return None,
++    };
++    let tree = parse_clean_source_file(&test.body)?.tree();
++    let call = assertion_macro_at_line(&tree, &test.body, test, assertion)?;
++    let visible = visible_statements_before(call.syntax());
++    let operands = super::reveal::assertion_comparison_operands(&assertion.text)?;
++    for (subject, expected) in [(operands[0], operands[1]), (operands[1], operands[0])] {
++        let subject = parsed_operand(subject)?;
++        let expected = parsed_operand(expected)?;
++        if !matches!(expected, ast::Expr::Literal(_)) {
++            continue;
++        }
++        let ast::Expr::FieldExpr(read) = subject else {
++            continue;
++        };
++        let field = read.name_ref()?.text().to_string();
++        if fields.contains(&field)
++            && field_origin(
++                &read.expr()?,
++                &visible,
++                owner,
++                &field,
++                index,
++                MAX_BINDING_HOPS,
++            )
++        {
++            return Some(());
++        }
++    }
++    None
++}
++fn parsed_operand(text: &str) -> Option<ast::Expr> {
++    let tree = parse_clean_source_file(&format!("fn operand() {{ {text}; }}"))?.tree();
++    let function = tree.syntax().children().find_map(ast::Fn::cast)?;
++    let statements: Vec<_> = function.body()?.stmt_list()?.statements().collect();
++    let [ast::Stmt::ExprStmt(statement)] = statements.as_slice() else {
++        return None;
++    };
++    statement.expr()
++}
++fn field_origin(
++    expression: &ast::Expr,
++    visible: &[ast::Stmt],
++    owner: OwnerCall<'_>,
++    field: &str,
++    index: &RustIndex,
++    hops: usize,
++) -> bool {
++    if hops == 0 {
++        return false;
++    }
++    let mut root = expression.clone();
++    loop {
++        let next = match &root {
++            ast::Expr::ParenExpr(paren) => paren.expr(),
++            ast::Expr::MethodCallExpr(call) => {
++                let preserves = owner.impl_type.is_some_and(|ty| {
++                    call.name_ref().is_some_and(|name| {
++                        super::effect_carrier::EffectStateCarrier::method_preserves_field(
++                            index,
++                            ty,
++                            name.text(),
++                            field,
++                        )
++                    })
++                });
++                if !preserves {
++                    return false;
++                }
++                call.receiver()
++            }
++            _ => break,
++        };
++        let Some(next) = next else { return false };
++        root = next;
++    }
++    match &root {
++        ast::Expr::CallExpr(call) => owner.is_called_by(call),
++        ast::Expr::PathExpr(path) => {
++            let Some(binding) = single_identifier(path) else {
++                return false;
++            };
++            let Some((at, definition)) = binding_let(visible, &binding) else {
++                return false;
++            };
++            let Some(initializer) = definition.initializer() else {
++                return false;
++            };
++            if !field_origin(
++                &initializer,
++                &visible_statements_before(definition.syntax()),
++                owner,
++                field,
++                index,
++                hops - 1,
++            ) {
++                return false;
++            }
++            visible[at + 1..].iter().all(|statement| {
++                if !mentions_identifier(statement.syntax(), &binding) {
++                    return true;
++                }
++                // Reading a binding into another owned value does not mutate it.
++                if let ast::Stmt::LetStmt(statement) = statement {
++                    return !borrows_mutably(statement.syntax(), &binding);
++                }
++                let ast::Stmt::ExprStmt(statement) = statement else {
++                    return false;
++                };
++                let Some(ast::Expr::MethodCallExpr(call)) = statement.expr() else {
++                    return false;
++                };
++                let Some(ast::Expr::PathExpr(receiver)) = call.receiver() else {
++                    return false;
++                };
++                if single_identifier(&receiver).as_deref() != Some(binding.as_str()) {
++                    return false;
++                }
++                owner.impl_type.is_some_and(|ty| {
++                    call.name_ref().is_some_and(|name| {
++                        discarded_method_keeps_scalar(index, ty, name.text(), field)
++                    })
++                })
++            })
++        }
++        _ => false,
++    }
++}
++fn discarded_method_keeps_scalar(index: &RustIndex, ty: &str, name: &str, field: &str) -> bool {
++    let Some(definition) = declared_once(index, ty) else {
++        return false;
++    };
++    let Some(ast::FieldList::RecordFieldList(fields)) = definition.field_list() else {
++        return false;
++    };
++    let scalar = fields.fields().any(|entry| {
++        entry.name().is_some_and(|name| name.text() == field)
++            && entry.ty().is_some_and(|ty| {
++                matches!(
++                    ty.syntax().text().to_string().as_str(),
++                    "bool"
++                        | "char"
++                        | "u8"
++                        | "u16"
++                        | "u32"
++                        | "u64"
++                        | "u128"
++                        | "usize"
++                        | "i8"
++                        | "i16"
++                        | "i32"
++                        | "i64"
++                        | "i128"
++                        | "isize"
++                        | "f32"
++                        | "f64"
++                )
++            })
++    });
++    if !scalar {
++        return false;
++    }
++    let Some(source) = inherent_method_body(index, ty, name) else {
++        return false;
++    };
++    let Some(tree) = parse_clean_source_file(source).map(|parse| parse.tree()) else {
++        return false;
++    };
++    tree.syntax()
++        .children()
++        .find_map(ast::Fn::cast)
++        .and_then(|method| method.param_list())
++        .and_then(|parameters| parameters.self_param())
++        .is_some_and(|receiver| receiver.amp_token().is_some() && receiver.mut_token().is_none())
++}
++
+ /// The single macro call (`assert_eq!(..)`) starting on the assertion's line.
+ /// Two calls on the line, or none, leave the assertion unlocated.
+ fn assertion_macro_at_line(
+diff --git a/crates/ripr/src/analysis/classify/effect_carrier.rs b/crates/ripr/src/analysis/classify/effect_carrier.rs
+index f8b04fd8b..0b780f7d9 100644
+--- a/crates/ripr/src/analysis/classify/effect_carrier.rs
++++ b/crates/ripr/src/analysis/classify/effect_carrier.rs
+@@ -929,6 +929,45 @@ impl EffectStateCarrier {
+         tokens
+     }
+ 
++    /// A receiver-chain method forwards the same value and does not write
++    /// the selected field. This is affirmative source proof, unlike an
++    /// absent overwrite or an unresolved conventional builder method.
++    pub(in crate::analysis) fn method_preserves_field(
++        index: &RustIndex,
++        ty: &str,
++        name: &str,
++        field: &str,
++    ) -> bool {
++        let Some(body) = super::builder_override::inherent_method_body(index, ty, name) else {
++            return false;
++        };
++        let Some(function) = index.functions().iter().find(|function| {
++            function.body == body
++                && container_self_type(&function.item.container).as_deref() == Some(ty)
++        }) else {
++            return false;
++        };
++        let Some(uses) = function_field_use(function) else {
++            return false;
++        };
++        if uses.opaque || !uses.self_calls.is_empty() || uses.writes.contains(field) {
++            return false;
++        }
++        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(body) else {
++            return false;
++        };
++        use ra_ap_syntax::{AstNode, ast};
++        parse
++            .tree()
++            .syntax()
++            .children()
++            .find_map(ast::Fn::cast)
++            .and_then(|method| method.body())
++            .and_then(|body| body.stmt_list())
++            .and_then(|list| list.tail_expr())
++            .is_some_and(|tail| tail.syntax().text().to_string().trim() == "self")
++    }
++
+     /// Affirmative identity requires a compared binding on which the owner
+     /// was called. `admits` alone is only a permissive carrier veto.
+     pub(in crate::analysis) fn identifies(
+diff --git a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+index b350594ea..2c827a806 100644
+--- a/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
++++ b/crates/ripr/src/analysis/classify/effect_carrier/argument_receiver.rs
+@@ -129,18 +129,9 @@ impl ArgumentReceiver {
+         if impl_self_type_name(&callee.id.0).as_deref() != Some(receiver_ty.as_str()) {
+             return None;
+         }
+-        let callee = parse_function(&callee.body)?;
+-        let fields = callee
+-            .body()?
+-            .syntax()
+-            .descendants()
+-            .filter_map(ast::FieldExpr::cast)
+-            .filter_map(|field| {
+-                (bare_path(field.expr()?).as_deref() == Some("self"))
+-                    .then(|| field.name_ref().map(|name| name.text().to_string()))
+-                    .flatten()
+-            })
+-            .collect::<BTreeSet<_>>();
++        // Reuse the carrier's write attribution. Merely reading self.status
++        // must not identify an observer of the self.sent write.
++        let fields = super::function_field_use(callee)?.writes;
+         (!fields.is_empty()).then_some(Self { parameter, fields })
+     }
+     pub(in crate::analysis) fn admits(
+diff --git a/crates/ripr/src/analysis/classify/mod.rs b/crates/ripr/src/analysis/classify/mod.rs
+index a43c50edc..05b0d779d 100644
+--- a/crates/ripr/src/analysis/classify/mod.rs
++++ b/crates/ripr/src/analysis/classify/mod.rs
+@@ -4,7 +4,7 @@ mod argument_fold;
+ mod arm_selection;
+ mod binding_return_flow;
+ mod boundary_pairing;
+-mod builder_override;
++pub(in crate::analysis) mod builder_override;
+ mod call_identity;
+ mod caller_loop_selector;
+ mod changed_span;
+diff --git a/crates/ripr/src/analysis/classify/reveal.rs b/crates/ripr/src/analysis/classify/reveal.rs
+index 5d029e4e4..440fbb90f 100644
+--- a/crates/ripr/src/analysis/classify/reveal.rs
++++ b/crates/ripr/src/analysis/classify/reveal.rs
+@@ -106,6 +106,7 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
+     pub(in crate::analysis) effect_state_carried: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+     /// Affirmative call-site/established-carrier binding, never absence of a veto.
+     pub(in crate::analysis) effect_observer_identity: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
++    pub(in crate::analysis) value_observer_identity: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+     /// RIPR-SPEC-0040 builder override (#6613): whether the owner type's
+     /// method `(type, setter, field)` plainly stores its argument in the
+     /// field (`builder_override::setter_plainly_writes`). Only a verified
+@@ -167,6 +168,15 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
+ fn reveal_evidence(
+     probe: &Probe,
+     related_tests: &[(&TestSummary, RelationReason)],
++) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
++    reveal_evidence_with_value_identity(probe, related_tests, &|_, _| false)
++}
++
++#[cfg(test)]
++fn reveal_evidence_with_value_identity(
++    probe: &Probe,
++    related_tests: &[(&TestSummary, RelationReason)],
++    identity: &dyn Fn(&TestSummary, &OracleFact) -> bool,
+ ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
+     let (observe, discriminate, related, _) = reveal_evidence_with_expression(
+         probe,
+@@ -192,6 +202,7 @@ fn reveal_evidence(
+             expected_operand_value: &|_, _| None,
+             effect_state_carried: &|_, _| true,
+             effect_observer_identity: &|_, _| false,
++            value_observer_identity: identity,
+             setter_writes_field: &|_, _, _| true,
+             collection_argument_observed: &|_, _| false,
+             pushed_literal_observed: &|_, _| false,
+@@ -242,6 +253,7 @@ fn reveal_evidence_with_exit(
+             expected_operand_value: &|_, _| None,
+             effect_state_carried: &|_, _| true,
+             effect_observer_identity: &|_, _| false,
++            value_observer_identity: &|_, _| false,
+             setter_writes_field: &|_, _, _| true,
+             collection_argument_observed: &|_, _| false,
+             pushed_literal_observed: &|_, _| false,
+@@ -312,6 +324,7 @@ fn reveal_evidence_proximity_reach_pinning(
+             expected_operand_value: &|_, _| None,
+             effect_state_carried: &|_, _| true,
+             effect_observer_identity: &|_, _| false,
++            value_observer_identity: &|_, _| false,
+             setter_writes_field: &|_, _, _| true,
+             collection_argument_observed: &|_, _| false,
+             pushed_literal_observed: &|_, _| false,
+@@ -2879,7 +2892,16 @@ fn analyze_related_assertions(
+                 && !cross_package_defeats_owner
+                 && !match_context.owner_shadowed
+                 && (return_admission.effect_observer_identity)(test, assertion);
++            let value_receiver_read = matches!(
++                probe.family,
++                ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction
++            ) && *reason == RelationReason::DirectOwnerCall
++                && !import_defeats_owner
++                && !cross_package_defeats_owner
++                && !match_context.owner_shadowed
++                && (return_admission.value_observer_identity)(test, assertion);
+             let matched = matched
++                || value_receiver_read
+                 || effect_receiver_read
+                 || recording_double_read
+                 || field_collection_read
+@@ -3075,6 +3097,7 @@ fn analyze_related_assertions(
+                                 || collection_argument_read
+                                 || out_parameter_confirmed
+                                 || effect_receiver_read
++                                || value_receiver_read
+                                 || recording_double_read
+                                 || captured_log_read
+                                 || (direct_collection_mutation_receiver(&probe.expression)
+@@ -3140,7 +3163,7 @@ fn analyze_related_assertions(
+                             operands
+                                 .iter()
+                                 .any(|operand| is_whole_owner_call(operand.trim(), owner))
+-                        }) || crate::analysis::extract::outer_assertion_condition(&assertion.text)
++                        }) || crate::analysis::extract::assertion_observed_operand(&assertion.text)
+                             .is_some_and(|operand| is_whole_owner_call(operand.trim(), owner))
+                     });
+                 let identity = (direct_owner_oracle
+@@ -3168,7 +3191,14 @@ fn analyze_related_assertions(
+                     || out_parameter_confirmed
+                     || captured_log_read
+                     || collection_read
+-                    || effect_receiver_read;
++                    || effect_receiver_read
++                    || value_receiver_read
++                    || producer_owned_result_identity(
++                        &assertion_context,
++                        assertion,
++                        import_defeats_owner,
++                        cross_package_defeats_owner,
++                    );
+                 // Keep strength, kind, and confirmation on one assertion.
+                 // An equally strong confirmed oracle wins over an unrelated
+                 // one regardless of encounter order; a weaker oracle cannot.
+@@ -3584,7 +3614,7 @@ fn changed_literal_fields(probe: &Probe) -> Option<Vec<(String, String)>> {
+     )
+ }
+ 
+-fn constructed_field_name(expression: &str) -> Option<&str> {
++pub(super) fn constructed_field_name(expression: &str) -> Option<&str> {
+     let expression = expression.trim().trim_end_matches(',').trim();
+     let head = match expression.find(':') {
+         Some(colon) if !expression[colon + 1..].starts_with(':') => &expression[..colon],
+@@ -3843,6 +3873,31 @@ fn guarded_oracle_names_bare_callee(text: &str, callee: &str) -> bool {
+     text.contains(&format!("match {callee}("))
+ }
+ 
++fn producer_owned_result_identity(
++    context: &RevealMatchContext,
++    assertion: &OracleFact,
++    import_defeats_owner: bool,
++    cross_package_defeats_owner: bool,
++) -> bool {
++    context.owner_callee.is_some_and(|owner| {
++        matches!(assertion.kind, OracleKind::GuardedResultMatch)
++            && matches!(
++                context.family,
++                ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
++            )
++            && !import_defeats_owner
++            && !cross_package_defeats_owner
++            && !context.owner_shadowed
++            && guarded_oracle_names_bare_callee(&assertion.text, owner)
++            && context
++                .error_construction_variant
++                .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
++            && (matches!(context.family, ProbeFamily::ErrorPath)
++                || context.error_construction_variant.is_some()
++                || assertion.ok_value_observed == Some(true))
++    })
++}
++
+ /// String literals in a match-arm pattern (left of the arm separator `=>`).
+ /// Empty when the expression has no arm separator: without a statically
+ /// established pattern there is no literal arm identity to confirm.
+@@ -4610,18 +4665,12 @@ fn assertion_matches_probe_detail_with_literals(
+     //   Err-guard discriminator — the pin gate above names the changed
+     //   variant — the same principle that leaves ErrorPath probes
+     //   unchanged here.
+-    let producer_owned_result = owner_callee.is_some_and(|owner| {
+-        matches!(assertion.kind, OracleKind::GuardedResultMatch)
+-            && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::ReturnValue)
+-            && !import_defeats_owner
+-            && !cross_package_defeats_owner
+-            && guarded_oracle_names_bare_callee(&assertion.text, owner)
+-            && error_construction_variant
+-                .is_none_or(|variant| contains_as_whole_word(&assertion.text, variant))
+-            && (matches!(family, ProbeFamily::ErrorPath)
+-                || error_construction_variant.is_some()
+-                || assertion.ok_value_observed == Some(true))
+-    });
++    let producer_owned_result = producer_owned_result_identity(
++        context,
++        assertion,
++        import_defeats_owner,
++        cross_package_defeats_owner,
++    );
+     // #4478: an `assert_eq!` whose operand is a call naming the owner pins
+     // the owner's whole return value, which a changed `return_value`
+     // expression flows into when the owner's return paths make it the
+@@ -6684,6 +6733,7 @@ mod tests {
+             expected_operand_value: &|_, _| None,
+             effect_state_carried: &|_, _| true,
+             effect_observer_identity: &|_, _| false,
++            value_observer_identity: &|_, _| false,
+             setter_writes_field: &|_, _, _| false,
+             getter_reads_field: &|_, _, _| false,
+             collection_argument_observed: &|_, _| false,
+@@ -8021,9 +8071,11 @@ mod tests {
+             );
+             let (_, discriminate, _) =
+                 reveal_evidence(&probe, &[(&failing, RelationReason::DirectOwnerCall)]);
+-            if discriminate.state != StageState::Yes {
++            if discriminate.state != StageState::Weak
++                || !discriminate.summary.contains("identity_unresolved")
++            {
+                 return Err(format!(
+-                    "error-observing assertion `{text}` lost confirmation: {discriminate:?}"
++                    "error-observing assertion `{text}` lost token observation or incorrectly acquired identity: {discriminate:?}"
+                 ));
+             }
+         }
+@@ -8164,6 +8216,7 @@ mod tests {
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -8265,6 +8318,7 @@ mod tests {
+                     expected_operand_value: &|_, _| None,
+                     effect_state_carried: &|_, _| true,
+                     effect_observer_identity: &|_, _| false,
++                    value_observer_identity: &|_, _| false,
+                     setter_writes_field: &|_, _, _| true,
+                     collection_argument_observed: &|_, _| false,
+                     pushed_literal_observed: &|_, _| false,
+@@ -8453,6 +8507,7 @@ mod tests {
+                     expected_operand_value: &|_, _| None,
+                     effect_state_carried: &|_, _| true,
+                     effect_observer_identity: &|_, _| false,
++                    value_observer_identity: &|_, _| false,
+                     setter_writes_field: &|_, _, _| true,
+                     collection_argument_observed: &|_, _| false,
+                     pushed_literal_observed: &|_, _| false,
+@@ -8568,6 +8623,7 @@ mod tests {
+                     expected_operand_value: &|_, _| None,
+                     effect_state_carried: &|_, _| true,
+                     effect_observer_identity: &|_, _| false,
++                    value_observer_identity: &|_, _| false,
+                     setter_writes_field: &|_, _, _| true,
+                     collection_argument_observed: &|_, _| false,
+                     pushed_literal_observed: &|_, _| false,
+@@ -8696,9 +8752,9 @@ mod tests {
+             ],
+         ] {
+             let (_, discriminate, _) = reveal_evidence(&probe, &related);
+-            if discriminate.state != StageState::Yes {
++            if discriminate.state != StageState::Weak {
+                 return Err(format!(
+-                    "relation with no reach-bearing test lost its oracle reading: {discriminate:?}"
++                    "name-only relation acquired unproved identity: {discriminate:?}"
+                 ));
+             }
+         }
+@@ -9001,6 +9057,7 @@ mod tests {
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -9098,6 +9155,7 @@ mod tests {
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -9584,7 +9642,7 @@ return Err(\"boxed identity should survive\".into());
+             "try_parse_summary_fails_closed_on_malformed_source",
+             "let result = try_parse_summary(\"@bad;\");",
+             vec![oracle(
+-                "if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
++                "if !matches!(try_parse_summary(\"@bad;\"), Err(ParseSummaryError::MalformedSource)) {
+ return Err(\"typed pin\".into());
+ }",
+                 OracleKind::ExactErrorVariant,
+@@ -9756,14 +9814,15 @@ return Err(\"typed pin\".into());
+ 
+     #[test]
+     fn aligned_variant_assertion_confirms_field_construction_error_construction() {
+-        let probe = probe(
++        let probe = owned_probe(
+             ProbeFamily::FieldConstruction,
+             "outcome: Err(CalcError::TooLarge)",
++            "build_outcome",
+         );
+         let test = test_with_assertions(
+             "too_large_outcome_asserted",
+             vec![oracle(
+-                "assert_eq!(err, CalcError::TooLarge);",
++                "assert_eq!(build_outcome(), Outcome { outcome: Err(CalcError::TooLarge) });",
+                 OracleKind::ExactErrorVariant,
+                 OracleStrength::Strong,
+             )],
+@@ -10918,6 +10977,7 @@ return Err(\"typed pin\".into());
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -10994,6 +11054,7 @@ return Err(\"typed pin\".into());
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -11041,6 +11102,7 @@ return Err(\"typed pin\".into());
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -11107,6 +11169,7 @@ return Err(\"typed pin\".into());
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -11175,6 +11238,7 @@ return Err(\"typed pin\".into());
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -11423,6 +11487,7 @@ return Err(\"typed pin\".into());
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -11473,6 +11538,7 @@ return Err(\"typed pin\".into());
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -11542,6 +11608,24 @@ return Err(\"typed pin\".into());
+         )
+     }
+ 
++    fn builder_reveal_evidence(
++        probe: &Probe,
++        related: &[(&TestSummary, RelationReason)],
++    ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
++        let source = "#[derive(Clone)] pub struct RetryBuilder { attempts: u32, delay_ms: u64 }
++impl RetryBuilder { pub fn new()->Self { Self { attempts: 4, delay_ms: 100 } } pub fn build(self)->Self { self } pub fn attempts(mut self, n:u32)->Self { self.attempts=n; self } pub fn delay_ms(mut self,n:u64)->Self { self.delay_ms=n; self } pub fn with_attempts(&self,n:u32)->Self { Self { attempts:n, ..self.clone() } } pub fn with_other(self,_other:Self)->Self { self } }";
++        let path = PathBuf::from("src/settings.rs");
++        let facts = crate::analysis::rust_index::summarize_file(path.clone(), source.to_string());
++        let mut index = crate::analysis::rust_index::RustIndex::default();
++        index.extend_functions(facts.functions.iter().cloned());
++        index.insert_file_only(path, facts);
++        reveal_evidence_with_value_identity(probe, related, &|test, assertion| {
++            crate::analysis::classify::builder_override::owner_field_read_identity(
++                probe, &index, test, assertion,
++            )
++        })
++    }
++
+     fn builder_override_probe(family: ProbeFamily, expression: &str) -> Probe {
+         Probe {
+             owner: Some(SymbolId(
+@@ -11570,7 +11654,7 @@ return Err(\"typed pin\".into());
+             builder_override_probe(ProbeFamily::FieldConstruction, "attempts: 4"),
+         ] {
+             let (observe, discriminate, _related) =
+-                reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
++                builder_reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+             assert_eq!(observe.state, StageState::Yes, "{}", probe.expression);
+             assert_eq!(discriminate.state, StageState::Weak, "{}", probe.expression);
+             assert_eq!(discriminate.summary, BUILDER_OVERRIDE_UNOBSERVED_SUMMARY);
+@@ -11594,7 +11678,7 @@ return Err(\"typed pin\".into());
+             "assert_eq!(retry.delay_ms, 100);",
+         );
+         let (_, discriminate, _) =
+-            reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
++            builder_reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
+         assert_ne!(
+             discriminate.state,
+             StageState::Yes,
+@@ -11606,7 +11690,7 @@ return Err(\"typed pin\".into());
+             "assert_eq!(retry.attempts, 4);",
+         );
+         let (_, discriminate, _) =
+-            reveal_evidence(&probe, &[(&changed, RelationReason::DirectOwnerCall)]);
++            builder_reveal_evidence(&probe, &[(&changed, RelationReason::DirectOwnerCall)]);
+         assert_eq!(
+             discriminate.state,
+             StageState::Yes,
+@@ -11616,7 +11700,7 @@ return Err(\"typed pin\".into());
+         // Control: with no `before`, every field stays in play.
+         probe.before = None;
+         let (_, discriminate, _) =
+-            reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
++            builder_reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
+         assert_eq!(
+             discriminate.state,
+             StageState::Yes,
+@@ -11657,7 +11741,7 @@ return Err(\"typed pin\".into());
+                 builder_override_probe(ProbeFamily::FieldConstruction, "attempts: 4"),
+             ] {
+                 let (_observe, discriminate, _related) =
+-                    reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
++                    builder_reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+                 assert_eq!(
+                     discriminate.state,
+                     StageState::Yes,
+@@ -11779,13 +11863,13 @@ return Err(\"typed pin\".into());
+     /// must stay exposed (StageState::Yes).
+     #[test]
+     fn field_construction_with_token_match_keeps_discriminate_yes() {
+-        // "priority: 3" — tokens: ["priority"]. Assertion "assert_eq!(item.priority, 3);"
++        // "priority: 3" — tokens: ["priority"]. Assertion "assert_eq!(make_item(), Item { priority: 3 });"
+         // contains "priority".
+-        let probe = probe(ProbeFamily::FieldConstruction, "priority: 3");
++        let probe = owned_probe(ProbeFamily::FieldConstruction, "priority: 3", "make_item");
+         let test = test_with_assertions(
+             "item_has_priority",
+             vec![oracle(
+-                "assert_eq!(item.priority, 3);",
++                "assert_eq!(make_item(), Item { priority: 3 });",
+                 OracleKind::ExactValue,
+                 OracleStrength::Strong,
+             )],
+@@ -11951,6 +12035,7 @@ return Err(\"typed pin\".into());
+                         expected_reaches_owner: &|_, _| false,
+                         effect_state_carried: &|_, _| true,
+                         effect_observer_identity: &|_, _| false,
++                        value_observer_identity: &|_, _| false,
+                         setter_writes_field: &|_, _, _| false,
+                         getter_reads_field: &|_, _, _| false,
+                     },
+@@ -12037,6 +12122,7 @@ return Err(\"typed pin\".into());
+                     expected_reaches_owner: &|_, _| false,
+                     effect_state_carried: &|_, _| true,
+                     effect_observer_identity: &|_, _| false,
++                    value_observer_identity: &|_, _| false,
+                     setter_writes_field: &|_, _, _| false,
+                     getter_reads_field: &|_, _, _| false,
+                 },
+@@ -12047,7 +12133,7 @@ return Err(\"typed pin\".into());
+             let (_, alone, _) =
+                 reveal_evidence(&probe, &[(&sibling, RelationReason::SameTestFile)]);
+             assert_eq!(alone.state, StageState::Weak);
+-            // Direct/helper relations confirm without a shared token.
++            // A direct/helper relation cannot bind an unrelated sibling oracle.
+             for reason in [
+                 RelationReason::DirectOwnerCall,
+                 RelationReason::HelperOwnerCall,
+@@ -12059,7 +12145,7 @@ return Err(\"typed pin\".into());
+                         (&sibling, reason),
+                     ],
+                 );
+-                assert_eq!(direct.state, StageState::Yes);
++                assert_eq!(direct.state, StageState::Weak);
+             }
+             // Token confirmation alone still cannot bind this sibling to the sink.
+             let token = test_with_assertions(
+@@ -12468,6 +12554,7 @@ return Err(\"typed pin\".into());
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -12579,6 +12666,7 @@ return Err(\"typed pin\".into());
+                     expected_operand_value: &|_, _| None,
+                     effect_state_carried: &|_, _| true,
+                     effect_observer_identity: &|_, _| false,
++                    value_observer_identity: &|_, _| false,
+                     setter_writes_field: &|_, _, _| true,
+                     collection_argument_observed: &|_, _| false,
+                     pushed_literal_observed: &|_, _| false,
+@@ -12633,6 +12721,7 @@ return Err(\"typed pin\".into());
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -12933,12 +13022,16 @@ return Err(\"typed pin\".into());
+         // (`a_payload_change_needs_the_whole_value_owner_pin`).
+         let probe = Probe {
+             before: Some("Err(ParseError::Empty)".to_string()),
+-            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
++            ..owned_probe(
++                ProbeFamily::ErrorPath,
++                "Err(ParseError::TooLong(len))",
++                "parse",
++            )
+         };
+         let test = test_with_assertions(
+             "too_long_error_pinned",
+             vec![oracle(
+-                "assert_eq!(err, ParseError::TooLong(12));",
++                "assert_eq!(parse(), Err(ParseError::TooLong(12)));",
+                 OracleKind::ExactErrorVariant,
+                 OracleStrength::Strong,
+             )],
+@@ -12984,7 +13077,7 @@ return Err(\"typed pin\".into());
+         let sibling = test_with_assertions(
+             "limit_is_pinned",
+             vec![oracle(
+-                "assert!(matches!(e, PayError::Limit))",
++                "assert!(matches!(pay(), Err(PayError::Limit)))",
+                 OracleKind::ExactValue,
+                 OracleStrength::Strong,
+             )],
+@@ -12992,7 +13085,7 @@ return Err(\"typed pin\".into());
+         let exact = test_with_assertions(
+             "insufficient_is_pinned",
+             vec![oracle(
+-                "assert!(matches!(e, PayError::Insufficient))",
++                "assert!(matches!(pay(), Err(PayError::Insufficient)))",
+                 OracleKind::ExactValue,
+                 OracleStrength::Strong,
+             )],
+@@ -13002,7 +13095,7 @@ return Err(\"typed pin\".into());
+             ProbeFamily::ReturnValue,
+             ProbeFamily::FieldConstruction,
+         ] {
+-            let probe = probe(family.clone(), "return Err(PayError::Insufficient);");
++            let probe = owned_probe(family.clone(), "return Err(PayError::Insufficient);", "pay");
+             let (_observe, discriminate, _related) =
+                 reveal_evidence(&probe, &[(&sibling, RelationReason::DirectOwnerCall)]);
+             assert_ne!(
+@@ -13042,11 +13135,11 @@ return Err(\"typed pin\".into());
+             error_path_variant_path("let d = digit(c).ok_or(CodeError::NotDigit);"),
+             None
+         );
+-        let probe = probe(ProbeFamily::ErrorPath, LINE);
++        let probe = owned_probe(ProbeFamily::ErrorPath, LINE, "parse_code");
+         let sibling = test_with_assertions(
+             "too_long_is_pinned",
+             vec![oracle(
+-                "assert_eq!(err, CodeError::TooLong);",
++                "assert_eq!(parse_code(), Err(CodeError::TooLong));",
+                 OracleKind::ExactErrorVariant,
+                 OracleStrength::Strong,
+             )],
+@@ -13062,7 +13155,7 @@ return Err(\"typed pin\".into());
+         let exact = test_with_assertions(
+             "not_digit_is_pinned",
+             vec![oracle(
+-                "assert_eq!(err, CodeError::NotDigit);",
++                "assert_eq!(parse_code(), Err(CodeError::NotDigit));",
+                 OracleKind::ExactErrorVariant,
+                 OracleStrength::Strong,
+             )],
+@@ -13103,12 +13196,16 @@ return Err(\"typed pin\".into());
+         // (`a_payload_change_needs_the_whole_value_owner_pin`).
+         let probe = Probe {
+             before: Some("Err(ParseError::Empty)".to_string()),
+-            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
++            ..owned_probe(
++                ProbeFamily::ErrorPath,
++                "Err(ParseError::TooLong(len))",
++                "parse",
++            )
+         };
+         let test = test_with_assertions(
+             "too_long_is_exact",
+             vec![oracle(
+-                "assert_eq!(err, ParseError::TooLong(12));",
++                "assert_eq!(parse(), Err(ParseError::TooLong(12)));",
+                 OracleKind::ExactErrorVariant,
+                 OracleStrength::Strong,
+             )],
+@@ -13138,6 +13235,7 @@ return Err(\"typed pin\".into());
+                 expected_operand_value: &|_, _| None,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -13201,12 +13299,16 @@ return Err(\"typed pin\".into());
+         // (`a_payload_change_needs_the_whole_value_owner_pin`).
+         let probe = Probe {
+             before: Some("Err(ParseError::Empty)".to_string()),
+-            ..probe(ProbeFamily::ErrorPath, "Err(ParseError::TooLong(len))")
++            ..owned_probe(
++                ProbeFamily::ErrorPath,
++                "Err(ParseError::TooLong(len))",
++                "parse",
++            )
+         };
+         let test = test_with_assertions(
+             "too_long_error_matches",
+             vec![oracle(
+-                "assert!(matches!(err, ParseError::TooLong(_)));",
++                "assert!(matches!(parse(), Err(ParseError::TooLong(_))));",
+                 OracleKind::ExactErrorVariant,
+                 OracleStrength::Strong,
+             )],
+@@ -13691,6 +13793,7 @@ return Err(\"typed pin\".into());
+                 expected_operand_value: operand_value,
+                 effect_state_carried: &|_, _| true,
+                 effect_observer_identity: &|_, _| false,
++                value_observer_identity: &|_, _| false,
+                 setter_writes_field: &|_, _, _| true,
+                 collection_argument_observed: &|_, _| false,
+                 pushed_literal_observed: &|_, _| false,
+@@ -13754,7 +13857,12 @@ return Err(\"typed pin\".into());
+             "let subtotal = tax(300);\nassert_eq!(subtotal, 24);",
+             vec![exact("assert_eq!(subtotal, 24);")],
+         );
+-        let (discriminate, _) = tax_reveal("subtotal * 8 / 1000", &bound, &params, &|_, _| false);
++        // The indexed bound-result pin is an explicit precondition in this
++        // matching-unit harness. The workspace integration independently tests
++        // genuine bound-result production and shadow/discard refusals.
++        let bound_probe = owned_probe(ProbeFamily::ReturnValue, "subtotal * 8 / 1000", "tax");
++        let discriminate =
++            discriminate_with_owner_pin(&bound_probe, &bound_probe.expression, &bound, true);
+         assert_eq!(
+             discriminate.state,
+             StageState::Yes,
+@@ -13824,13 +13932,14 @@ return Err(\"typed pin\".into());
+         );
+ 
+         // The same assertion against an `invoice` that never calls `tax`
+-        // compares tax with an independent value and keeps its credit.
++        // keeps its oracle strength. Without a producer pin, this non-whole
++        // comparison still has no established owner-result identity.
+         let (discriminate, strength) =
+             tax_reveal("subtotal * 8 / 1000", &test, &params, &|_, _| false);
+         assert_eq!(strength, OracleStrength::Strong);
+         assert_eq!(
+             discriminate.state,
+-            StageState::Yes,
++            StageState::Weak,
+             "{}",
+             discriminate.summary
+         );
+diff --git a/crates/ripr/src/analysis/extract/mod.rs b/crates/ripr/src/analysis/extract/mod.rs
+index 75c7b9a3d..23bcd7533 100644
+--- a/crates/ripr/src/analysis/extract/mod.rs
++++ b/crates/ripr/src/analysis/extract/mod.rs
+@@ -26,11 +26,11 @@ pub(crate) use mask::{
+     rust_identity_spans, string_literal_spans,
+ };
+ pub(crate) use oracles::{
+-    LazyDecls, OracleTextShape, assertion_oracle_text, classify_assertion, classify_assertion_with,
+-    equality_assertion_arguments, err_return_guard_oracles, err_return_guard_twin,
+-    extract_assertions, extract_assertions_in, extract_line_scanned_oracles,
+-    guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
+-    is_exact_membership_any_assertion, is_inequality_assertion,
++    LazyDecls, OracleTextShape, assertion_observed_operand, assertion_oracle_text,
++    classify_assertion, classify_assertion_with, equality_assertion_arguments,
++    err_return_guard_oracles, err_return_guard_twin, extract_assertions, extract_assertions_in,
++    extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,
++    has_oracle_text_shape, is_exact_membership_any_assertion, is_inequality_assertion,
+     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
+     outer_assertion_condition, retain_reached_oracles, terminal_err_return_guard_oracle,
+     uncompared_unwrap_err, unwrap_err_bound_variables,
+diff --git a/crates/ripr/src/analysis/extract/oracles/arguments.rs b/crates/ripr/src/analysis/extract/oracles/arguments.rs
+index 08fc93187..3583131a1 100644
+--- a/crates/ripr/src/analysis/extract/oracles/arguments.rs
++++ b/crates/ripr/src/analysis/extract/oracles/arguments.rs
+@@ -47,6 +47,42 @@ pub(crate) fn assertion_oracle_text(line: &str) -> Option<String> {
+     .map(|(_, text)| text)
+ }
+ 
++/// The observed subject of a standard assertion, excluding diagnostics and
++/// unwrapping a `matches!` condition. This supplies operand boundaries only;
++/// identity, execution and strength remain with their existing authorities.
++pub(crate) fn assertion_observed_operand(line: &str) -> Option<String> {
++    observed_assertion_macro_operand(line).or_else(|| {
++        let (_, twin) = super::scan::err_return_guard_twin(line)?;
++        observed_assertion_macro_operand(&twin)
++    })
++}
++
++fn observed_assertion_macro_operand(line: &str) -> Option<String> {
++    let masked = mask_comments_and_strings(line);
++    let (_, mut arguments) = [
++        "assert!",
++        "debug_assert!",
++        "ensure!",
++        "assert_eq!",
++        "assert_ne!",
++        "debug_assert_eq!",
++        "debug_assert_ne!",
++        "assert_matches!",
++        "debug_assert_matches!",
++    ]
++    .into_iter()
++    .filter_map(|name| macro_invocation_arguments_at(line, &masked, name))
++    .min_by_key(|(offset, _)| *offset)?;
++    let subject = arguments.drain(..).next()?;
++    if subject.trim_start().starts_with("matches!") {
++        macro_invocation_arguments(&subject, "matches!")?
++            .into_iter()
++            .next()
++    } else {
++        Some(subject)
++    }
++}
++
+ pub(super) fn custom_assertion_arguments(line: &str) -> Option<Vec<String>> {
+     let masked = mask_comments_and_strings(line);
+     let open = masked.find('(')?;
+diff --git a/crates/ripr/src/analysis/extract/oracles/mod.rs b/crates/ripr/src/analysis/extract/oracles/mod.rs
+index ee95a1be4..2300c7bb2 100644
+--- a/crates/ripr/src/analysis/extract/oracles/mod.rs
++++ b/crates/ripr/src/analysis/extract/oracles/mod.rs
+@@ -7,7 +7,8 @@ mod reach;
+ mod scan;
+ 
+ pub(crate) use arguments::{
+-    assertion_oracle_text, equality_assertion_arguments, outer_assertion_condition,
++    assertion_observed_operand, assertion_oracle_text, equality_assertion_arguments,
++    outer_assertion_condition,
+ };
+ pub(crate) use classify::{classify_assertion, classify_assertion_with, is_inequality_assertion};
+ pub(crate) use pattern_admission::LazyDecls;
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index a6728a3f1..8c3a32bea 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -282,13 +282,32 @@ fn discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle() ->
+ fn persisted_effect_observer_retains_identity_without_lending_it_to_another_instance()
+ -> Result<(), String> {
+     let source =
+-        include_str!("../../../fixtures/observation_verified_side_effect/input/src/lib.rs");
++        include_str!("../../../fixtures/observation_verified_side_effect/input/src/lib.rs")
++            .replace(
++                "pub sent: RefCell<Vec<String>>,",
++                "pub sent: RefCell<Vec<String>>,\n    pub status: u32,",
++            )
++            .replace(
++                "Notifier { sent: RefCell::new(Vec::new()) }",
++                "Notifier { sent: RefCell::new(Vec::new()), status: 0 }",
++            )
++            .replace(
++                "self.sent.borrow_mut().push(payload.to_string());",
++                "let _ = self.status;\n        self.sent.borrow_mut().push(payload.to_string());",
++            );
+     let test = include_str!(
+         "../../../fixtures/observation_verified_side_effect/input/tests/process_tests.rs"
+     );
+     let manifest =
+         include_str!("../../../fixtures/observation_verified_side_effect/input/Cargo.toml");
+-    let diff = include_str!("../../../fixtures/observation_verified_side_effect/diff.patch");
++    let line = source
++        .lines()
++        .position(|line| line.trim() == "notifier.send(order_id)")
++        .ok_or("effect line missing")?
++        + 1;
++    let diff = format!(
++        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-    notifier.send(\"static_msg\")\n+    notifier.send(order_id)\n"
++    );
+     let unrelated = test.replace(
+         "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
+         "let other = Notifier::new();\n    assert_eq!(*other.sent.borrow(), Vec::<String>::new());",
+@@ -305,6 +324,11 @@ fn persisted_effect_observer_retains_identity_without_lending_it_to_another_inst
+         "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
+         "notifier.sent.borrow_mut().clear();\n    assert_eq!(*notifier.sent.borrow(), Vec::<String>::new());",
+     );
++    let readonly = test.replace(
++        "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
++        "assert_eq!(notifier.status, 0);",
++    );
++    assert_ne!(readonly, test);
+     assert_ne!(renamed, test);
+     assert_ne!(coincident_name, test);
+     assert_ne!(cleared, test);
+@@ -314,8 +338,9 @@ fn persisted_effect_observer_retains_identity_without_lending_it_to_another_inst
+         (unrelated.as_str(), "weakly_exposed"),
+         (coincident_name.as_str(), "weakly_exposed"),
+         (cleared.as_str(), "weakly_exposed"),
++        (readonly.as_str(), "weakly_exposed"),
+     ] {
+-        let report = check_report(source, test, manifest, diff)?;
++        let report = check_report(&source, test, manifest, &diff)?;
+         let finding = report["findings"]
+             .as_array()
+             .ok_or("missing findings")?
+@@ -351,3 +376,85 @@ fn established_effect_carrier_binds_the_called_instance_only() -> Result<(), Str
+     }
+     Ok(())
+ }
++
++#[test]
++fn returned_fields_and_builders_keep_real_identity_and_reject_replaced_values() -> Result<(), String>
++{
++    let cases = [
++        (
++            "pub fn tax(subtotal:i32)->i32 {\n    subtotal*8/1000\n}\n",
++            "subtotal*8",
++            "subtotal*9",
++            "let result=tax(3000);\n    assert_eq!(result,24);",
++            true,
++        ),
++        (
++            "pub fn tax(subtotal:i32)->i32 {\n    subtotal*8/1000\n}\n",
++            "subtotal*8",
++            "subtotal*9",
++            "let result=tax(3000);\n    let result=24;\n    assert_eq!(result,24);",
++            false,
++        ),
++        (
++            "pub struct Item { pub priority:u32 }\npub fn make_item()->Item {\n    Item { priority:3 }\n}\n",
++            "priority:3",
++            "priority:4",
++            "let item=make_item();\n    assert_eq!(item.priority,3);",
++            true,
++        ),
++        (
++            "pub struct Item { pub priority:u32 }\npub fn make_item()->Item {\n    Item { priority:3 }\n}\n",
++            "priority:3",
++            "priority:4",
++            "let _=make_item();\n    let item=Item { priority:3 };\n    assert_eq!(item.priority,3);",
++            false,
++        ),
++        (
++            "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn attempts(mut self,n:u32)->Self { self.attempts=n; self }\n pub fn build(self)->Self { self }\n}\n",
++            "attempts:4",
++            "attempts:3",
++            "let item=Builder::new().build();\n    assert_eq!(item.attempts,4);",
++            true,
++        ),
++        (
++            "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn attempts(mut self,n:u32)->Self { self.attempts=n; self }\n pub fn build(self)->Self { self }\n}\n",
++            "attempts:4",
++            "attempts:3",
++            "let item=Builder::new().attempts(7).build();\n    assert_eq!(item.attempts,7);",
++            false,
++        ),
++        (
++            "pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn build(self)->Self { Self { attempts:4 } }\n}\n",
++            "attempts:4",
++            "attempts:3",
++            "let item=Builder::new().build();\n    assert_eq!(item.attempts,4);",
++            false,
++        ),
++    ];
++    for (source, after, before, body, exposed) in cases {
++        let line = source
++            .lines()
++            .position(|line| line.contains(after))
++            .ok_or("changed field missing")?
++            + 1;
++        let actual = source.lines().nth(line - 1).ok_or("line missing")?;
++        let previous = actual.replace(after, before);
++        let diff = format!(
++            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -{line},1 +{line},1 @@\n-{previous}\n+{actual}\n"
++        );
++        let test = format!(
++            "use rust_catalog_description_structural_oracle::*;\n#[test]\nfn observes() {{\n    {body}\n}}\n"
++        );
++        let report = check_report(source, &test, MANIFEST, &diff)?;
++        let findings = report["findings"].as_array().ok_or("findings missing")?;
++        assert!(!findings.is_empty(), "{report}");
++        for finding in findings {
++            if exposed {
++                assert_eq!(finding["classification"], "exposed", "{report}");
++            } else {
++                assert_ne!(finding["classification"], "exposed", "{report}");
++            }
++        }
++    }
++    Ok(())
++}
