@@ -56,13 +56,78 @@ fn a_sibling_modules_private_glob_does_not_block_the_test() {
 }
 
 #[test]
-fn a_glob_in_the_tests_own_file_or_an_ancestor_still_blocks_it() {
+fn a_glob_in_the_tests_own_file_still_blocks_it() {
     let own = format!("use rayon::prelude::*;\n{SUITE_BODY}");
     let index_own = index(&[(LIB, ROOT_LIB), (GLOBS, PLAIN), (SUITE, own.as_str())]);
     assert!(is_binding(&refusal_of(&index_own, SUITE)), "own file");
+}
+
+/// #13269: a private `use` is not inherited by a child module, so a crate-root
+/// glob (`use colored::*;` in `main.rs`) cannot rebind `assert_eq!` in a
+/// descendant that holds no glob of its own to carry it down.
+#[test]
+fn an_ancestor_glob_does_not_reach_a_descendant_with_no_glob_chain() {
     let lib = format!("use rayon::prelude::*;\n{ROOT_LIB}");
     let index_root = index(&[(LIB, lib.as_str()), (GLOBS, PLAIN), (SUITE, SUITE_BODY)]);
-    assert!(is_binding(&refusal_of(&index_root, SUITE)), "crate root");
+    assert_eq!(refusal_of(&index_root, SUITE), None, "crate root");
+    // Two levels down, with neither module carrying a glob.
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let child = "#[test]\nfn weighs() {\n    assert_eq!(2 + 2, 4);\n}\n";
+    let deep = index(&[(LIB, lib), (SUITE, "mod tests;\n"), (SUITE_TESTS, child)]);
+    assert_eq!(refusal_of(&deep, SUITE_TESTS), None, "two levels");
+    // A `use super::*` in the test module alone reaches `suite`, not the root.
+    let child = "use super::*;\n\n#[test]\nfn weighs() {\n    assert_eq!(2 + 2, 4);\n}\n";
+    let broken = index(&[(LIB, lib), (SUITE, "mod tests;\n"), (SUITE_TESTS, child)]);
+    assert_eq!(
+        refusal_of(&broken, SUITE_TESTS),
+        None,
+        "chain stops at suite"
+    );
+}
+
+/// Negative controls: every path that can carry the root glob down keeps the
+/// refusal, as does any composition ripr cannot establish.
+#[test]
+fn an_ancestor_glob_still_blocks_a_descendant_a_glob_chain_can_reach() {
+    let lib = format!("use rayon::prelude::*;\n{ROOT_LIB}");
+    // `use crate::*` in the test's own module reaches the root directly.
+    let via_crate = format!("use crate::*;\n{SUITE_BODY}");
+    let index_crate = index(&[
+        (LIB, lib.as_str()),
+        (GLOBS, PLAIN),
+        (SUITE, via_crate.as_str()),
+    ]);
+    assert!(is_binding(&refusal_of(&index_crate, SUITE)), "use crate::*");
+    let via_super = format!("use super::*;\n{SUITE_BODY}");
+    let index_super = index(&[
+        (LIB, lib.as_str()),
+        (GLOBS, PLAIN),
+        (SUITE, via_super.as_str()),
+    ]);
+    assert!(is_binding(&refusal_of(&index_super, SUITE)), "use super::*");
+    // Chained through the intermediate module and the test module.
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let child = "use super::*;\n\n#[test]\nfn weighs() {\n    assert_eq!(2 + 2, 4);\n}\n";
+    let chained = index(&[
+        (LIB, lib),
+        (SUITE, "use super::*;\nmod tests;\n"),
+        (SUITE_TESTS, child),
+    ]);
+    assert!(is_binding(&refusal_of(&chained, SUITE_TESTS)), "full chain");
+    // A macro call at item position could emit the glob.
+    let macro_suite = index(&[
+        (LIB, lib),
+        (SUITE, "emit_glob!();\nmod tests;\n"),
+        (SUITE_TESTS, child),
+    ]);
+    assert!(is_binding(&refusal_of(&macro_suite, SUITE_TESTS)), "macro");
+    // A file that does not parse cleanly may hold anything.
+    let broken = index(&[
+        (LIB, lib),
+        (SUITE, "mod tests;\nfn broken( {\n"),
+        (SUITE_TESTS, child),
+    ]);
+    assert!(is_binding(&refusal_of(&broken, SUITE_TESTS)), "unparsed");
 }
 
 #[test]

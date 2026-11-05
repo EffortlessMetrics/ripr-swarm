@@ -11,6 +11,8 @@ are scoped or reviewed.
 
 ### Changed
 
+- A private crate-root glob import such as `use colored::*;` no longer withholds assertion credit from descendant tests that have no glob chain (`use super::*`, `use crate::*`) carrying it down; any chain that can reach the glob, and any unresolved composition, still refuses (#13269).
+
 - `ripr cache status|export|clear --help` now open with the command's catalog
   summary before the `Usage:` line, and `ripr policy|reports|baseline|pr-comments
   <leaf> --help` lead with that leaf's catalog summary (the sentence
