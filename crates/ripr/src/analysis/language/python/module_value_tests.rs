@@ -318,10 +318,8 @@ fn fstring_constant_reader_bounds_the_interpolated_utf8_bytes() -> Check {
         (format!("{}xxx", "☃".repeat(21_843)), false),
     ] {
         let assertion = format!("assert greet('{argument}') == 'hello{argument}'");
-        let finding = classify_fstring_reader(
-            "    return f'{GREETING}{name}'",
-            &fstring_test(&assertion),
-        )?;
+        let finding =
+            classify_fstring_reader("    return f'{GREETING}{name}'", &fstring_test(&assertion))?;
         if credited {
             assert_credited(&finding);
         } else {
@@ -367,10 +365,7 @@ fn fstring_constant_reader_declines_conversions_specs_and_non_strings() -> Check
             "assert greet(object()) == 'hello, custom'",
         ),
     ] {
-        assert_no_module_value_credit(&classify_fstring_reader(
-            body,
-            &fstring_test(assertion),
-        )?);
+        assert_no_module_value_credit(&classify_fstring_reader(body, &fstring_test(assertion))?);
     }
     Ok(())
 }
