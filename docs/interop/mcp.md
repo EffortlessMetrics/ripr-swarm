@@ -363,8 +363,8 @@ independently windowed omission disclosure (`omitted_page`, `omitted_offset`); v
 adds optional `outcome.analysis_status` (`not_analyzed`) and `outcome.clean`
 (`false`), present only for a committed zero-item `no_scope`, `no_changed_lines`
 or `no_behavioral_candidates` snapshot, so zero items from an unexamined scope
-never read as a clean result (a complete-clean snapshot, a filtered or past-end
-page, and a worktree snapshot never carry them). Strict v1
+never read as a clean result (a complete-clean snapshot and a worktree snapshot never carry them;
+the fields describe the snapshot, so they appear regardless of filter or offset). Strict v1
 readers must rediscover `tools/list`, accept v5 explicitly and validate
 against the advertised `outputSchema`; callers may still omit all filter
 arguments.
