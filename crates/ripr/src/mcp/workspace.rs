@@ -5360,9 +5360,7 @@ mod tests {
                 .ok_or("expected unique retained snapshot")?;
             snapshot.base = Some("original-snapshot-base".to_string());
             let named = refresh_document(&session)["empty_scope_hint"]["why"].to_string();
-            if !named.contains("original-snapshot-base")
-                || named.contains("new-requested-base")
-            {
+            if !named.contains("original-snapshot-base") || named.contains("new-requested-base") {
                 return Err(format!("hint lost the retained snapshot base: {named}"));
             }
             session.last_good = None;
