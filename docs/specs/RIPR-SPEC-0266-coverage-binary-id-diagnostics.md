@@ -11,9 +11,9 @@ Linked issues: #4978, #13116, #13221
 Linked PRs: #7579, #13121
 
 Standalone reason: #4978 records failed coverage diagnostics from the CI
-coverage adapter. This contract governs only the additive diagnostic evidence;
-it does not classify coverage as successful or identify a test, process, or
-cause.
+coverage adapter. This contract governs diagnostic evidence and the bounded
+compatibility control for stripping coverage-build debug information; it does
+not classify coverage as successful or identify a test, process, or cause.
 
 Support-tier impact:
 
@@ -32,6 +32,10 @@ Policy impact:
   through the documented pinned/stable upgrade recipe, without running workspace
   coverage or adding a required check. Its existing 15-minute budget and routing
   remain unchanged.
+- Only Coverage's Generate step sets `CARGO_PROFILE_TEST_STRIP=debuginfo`.
+  Its mandatory native diagnostics preflight checks coverage equivalence;
+  ordinary builds, full test selection, profiles and report failure semantics
+  retain their existing contracts.
 
 ## Problem
 
@@ -102,6 +106,105 @@ coverage failure.
 
 ## Required Evidence
 
+### Coverage command ownership
+
+One private Linux owner retains the primary child's PID with non-reaping
+observation until owned-group cleanup, then reaps it exactly once. Lost
+custody disarms numeric signalling. Native success, failure and signal status
+remain observable; an exhausted observation budget never stops the command.
+The fixed full-workspace/all-features LCOV builder inherits all streams and
+environment variables. Controls require its exact arguments, a confirmed
+separate descendant, loss-of-custody refusal and cleanup on owner drop.
+The environment control seeds a dedicated variable only in an isolated exact
+libtest child. The observed command must inherit that variable without an
+explicit override; the parent environment is never changed. Absence of
+ambient HOME is exercised in that child. Require its successful native
+status, exact nonempty test selection and a fresh acknowledgement written
+only after the original exit, phase, stream and profiling assertions pass.
+Require the inner final receipt to explicitly confirm successful cleanup.
+The parent bounds the child to 30 seconds and each captured stream to 16 KiB.
+All witnesses remain under its owned root; errors or panics retain them,
+and deletion requires confirmed cleanup and completed validation.
+Bounded records use one write of at most 4 KiB and flush immediately; a short
+write is an error. The prerequisite uses this owner only in native controls;
+the Generate step still directly invokes the fixed Cargo command.
+
+### Coverage-build strip compatibility
+
+The Generate step may remove linked debug information with the literal Cargo
+test-profile setting `CARGO_PROFILE_TEST_STRIP=debuginfo`. The setting must not
+move to workflow/job scope, apply to plain prebuilds, become `symbols` or
+replace the fixed full-workspace/all-features LCOV command. The selected
+control must execute in the mandatory diagnostics preflight before Generate,
+without a conditional, ignored result or narrower test filter.
+
+The native Linux control builds one dependency-free source fixture in separate
+Cargo targets with explicit baseline `none` and candidate `debuginfo` modes.
+Both builds use the same compiler and explicit coverage/link-ID arguments;
+child-only wrapper and encoded-flag overrides remove outer llvm-cov compiler
+interposition without mutating the parent environment. Require exactly one
+intended Cargo test artifact and actual test compiler invocation per mode.
+The candidate invocation must request `strip=debuginfo`; do not require Cargo
+to emit its default `strip=none`. Require a nonempty, nonallocated `PROGBITS`
+`.debug_line` baseline section and a smaller candidate executable. The
+candidate must remove every debug-prefixed section except the exact nonempty
+`PROGBITS` `.debug_gdb_scripts` loader metadata with `ALLOC` and without
+write/execute flags. Allocation cannot excuse retained DWARF or another
+unknown, compressed or lookalike debug name. The compiler's loader metadata
+is not a DWARF table; use the emitted native section evidence to identify an
+actual remaining section instead of inferring it from this permitted case.
+
+Require exactly one literal `[Nr]` column header before any numeric row, with
+whitespace-separated tokens `Name Type Address Off Size ES Flg Lk Inf Al` in
+that order. Reject missing, malformed, duplicate or late column headers and
+require numeric unique indices for data rows. Decode and record type/size/flags
+only for debug-prefixed rows, converting hexadecimal sizes to byte counts and
+requiring unique debug names. Optional empty flags remain valid; nonempty
+flags contain only unique bytes from `WAXMSILOGTCERlyopx`, as emitted by the
+[pinned LLVM GNU section printer](https://github.com/rust-lang/llvm-project/blob/1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e/llvm/tools/llvm-readobj/ELFDumper.cpp).
+Check this lexical flag grammar before applying the retained section policy.
+The unnamed `NULL` row is not a debug subject; ordinary section field layouts
+and ordinary section-name uniqueness are outside this control's validation.
+Reject malformed debug fields and missing, truncated or excessive table
+structure. Bound inspection to 256 indexed rows, 32 debug
+sections and text fields of 128/32/16 bytes for names/types/flags. Emit typed
+sections and bounded actual compiler text before the native assertions. Each
+record is at most 4 KiB; compiler and parse-failure text use at most eight
+512-character chunks with explicit remaining/truncated markers. Pure controls
+must reject retained allocated DWARF, a nonallocated loader, wrong/empty
+section types/sizes, writable/executable loader flags, ambiguous tables and
+prefix lookalikes while retaining the valid native-shaped alternatives.
+
+Each executable runs the same exact libtest identity twice. Require one test
+passed and one post-assertion acknowledgement per invocation, plus a fresh,
+nonempty bounded raw profile. The matching compiler-sysroot LLVM tools must
+merge both profiles without warnings, match the merged profile ID to that
+mode's own executable and export both JSON and LCOV for the exact source.
+Require nonempty source regions and an execution count of two for each
+authored fixture function, a hot-line count of two and a cold-line count of
+zero. Compare the complete owned JSON file record, both authored function
+records after removing only their mangled names, and all owned LCOV line
+counts between modes. Other exported files and unrelated functions are
+outside this compatibility probe; it does not qualify the LLVM exporter or
+require whole-export equality. Different image IDs across modes remain valid.
+Missing tools, malformed records, duplicate/absent subjects and
+zero test selection are errors, not skipped proof. Existing genuine malformed
+profile refusal and diagnostic size limits remain exercised.
+
+Native control commands use owned process groups with non-reaping custody,
+30-second command bounds and 256 KiB per-stream capture limits. The bounded
+receipt identifies actual tools, both executable sizes, IDs and counts. These
+control bounds do not shorten the workload timeout. Before explicit success
+cleanup, the native fixture retains and reports its root on any error or
+panic. Removal requires all commands and assertions to finish successfully
+and precedes the passed receipt. Fixture shrinkage proves
+that stripping took effect; full-workspace allocation savings and capacity
+acceptance require the complete native coverage workload and retained report.
+The observed instrumented-build bucket is not a measurement of debug bytes
+and does not establish the producer of later, unobserved ENOSPC growth.
+
+### Profile and compiler evidence
+
 - Exercise the genuine retained 160-byte header/ID from run 38613901957 with the
   active compiler's matching LLVM: retain its bytes and failed merge outcome
   for malformed data or a raw-version mismatch; associate only a controlled
@@ -164,6 +267,23 @@ coverage failure.
   a mapping failure preserves the original profile manifest and failed result.
 
 ## Test Mapping
+
+The strip compatibility controls are:
+
+- `tools/repo-policy/src/coverage_diagnostics/strip_tests.rs::native_test_profile_strip_preserves_coverage_and_reduces_fixture_size`:
+  actual Cargo compilation, exact acknowledged execution, strict matching LLVM
+  merge/export, source/counter equivalence, own-image IDs and active stripping.
+- `tools/repo-policy/src/coverage_diagnostics/strip_tests.rs::debug_sections_require_dwarf_removal_and_exact_allocated_loader_marker`:
+  one exact GNU column header before data, numeric indexed rows,
+  unnamed/optional-field handling, unique producer flag bytes, exact loader
+  identity/type/flags and nonempty baseline DWARF, with allocated-DWARF,
+  wrong-name/type/size/flag, missing/misplaced/duplicate header, malformed and
+  duplicate-subject refusals.
+- `tools/repo-policy/src/workflow_tests.rs::coverage_strip_is_generate_only_and_requires_native_controls`:
+  mandatory preflight, exact Generate-only setting and full Cargo command,
+  with global/other-step, missing, duplicate, stronger-strip, skipped-control
+  and reduced-command counterexamples. The selected fixed-command control
+  independently pins every workspace/all-features/LCOV argument.
 
 The committed controls in
 `tools/repo-policy/src/coverage_diagnostics/binary_ids_tests.rs` include:
@@ -230,6 +350,13 @@ The stable advisory job is covered in `tools/repo-policy/tests/future_clippy.rs`
 These shell fixtures do not substitute for genuine compiler/LLVM execution.
 
 ## Implementation Mapping
+
+- `tools/repo-policy/src/coverage_diagnostics/process.rs` owns command fidelity,
+  process custody and bounded record writes; `process_tests.rs` retains their
+  real status, descendant and lost-custody controls.
+- `tools/repo-policy/src/coverage_diagnostics/strip_tests.rs` owns the native
+  strip comparison and ELF-section parser controls, registered alongside the
+  process/workflow controls in `.ripr/traceability.d/4978-coverage-strip.toml`.
 
 - `tools/repo-policy/src/coverage_diagnostics/binary_ids.rs` owns bounded
   profile-ID parsing and executable association.
