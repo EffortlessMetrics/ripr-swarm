@@ -1,10 +1,11 @@
 {
-  "candidate": "3424553ce6b55732b3403fa327722b51a295f3b7",
-  "tree": "6edd558d5ccccb6f2647442ef555721ac5711fdc",
+  "candidate": "8f6121183b26fc2cdc56f8c01a34f3e3cdd9d68d",
+  "tree": "f1b1d725f2ad76deea7ba7ea943a42dd0e2aec21",
   "branch": "successor/011-integration-20261105",
   "product_source_review": {
-    "candidate": "c0287c53f83aee5db1b74862ff10701612303bc6",
-    "result": "narrow independent source review clean, per coordinator; no merge authority inferred"
+    "candidate": "3424553ce6b55732b3403fa327722b51a295f3b7",
+    "tree": "6edd558d5ccccb6f2647442ef555721ac5711fdc",
+    "result": "coordinator confirmed accumulated D074-to-342455 delta source review clean; current preservation delta needs affected review"
   },
   "product_controls": {
     "candidate": "c0287c53f83aee5db1b74862ff10701612303bc6",
@@ -15,11 +16,11 @@
     "carried_forward_limit": "ten production plus four native subjects ran on c028, before canonical cfg authority integration and equivalent Clippy refactor; not relabeled current qualification"
   },
   "current_delta": {
-    "base": "b135d8cf382821bcd6deafff8ca50dc02547d852",
-    "path": "342455-receipt-normalization-delta.patch",
-    "bytes": 1289,
-    "sha256": "75deb16a077b004d5d53f8353b85599532e39afc17cf0902c5f2a4fcd235622d",
-    "meaning": "equivalent nested-if collapse in CLI receipt test normalization; no product behavior or lint suppression change"
+    "base": "3424553ce6b55732b3403fa327722b51a295f3b7",
+    "path": "8f612-observer-preservation-delta.patch",
+    "bytes": 28605,
+    "sha256": "4c0ad55405ed2f3101ae6e4c338c5894f69d923b9d8fec25bf5ce814fff0a33b",
+    "meaning": "reuse canonical element-field and chain-entry identity for supported observers; per-assertion negative controls; correct sparse payload fixture; align current corpus consumers and nested docs to cache1.160"
   },
   "retained_policy_leaves": {
     "allow_attributes": 0,
@@ -28,25 +29,39 @@
     "full_policy": "FD045 aggregate ci-policy exit 0; exact current refresh pending"
   },
   "qualification": {
-    "status": "running locally on clean committed candidate",
-    "tool_session": 53125,
-    "sequence": [
-      "cfg authority controls",
-      "macro binding controls",
-      "reveal",
-      "full library",
-      "production return/sink controls and native paths",
-      "enum producer",
-      "retained CLI rerun",
-      "check-fast",
+    "status": "running locally on frozen current commit",
+    "tool_session": 48003,
+    "current_phase": "production and native-path controls compiling",
+    "prior_candidate": "3424553ce6b55732b3403fa327722b51a295f3b7",
+    "prior_exact_results": {
+      "cfg_controls": [
+        19,
+        0
+      ],
+      "macro_controls": [
+        33,
+        0
+      ],
+      "reveal": [
+        159,
+        0
+      ],
+      "full_library": {
+        "passed": 18080,
+        "failed": 6,
+        "ignored": 2
+      }
+    },
+    "prior_failures": "342455-full-library-failures.txt",
+    "current_six_repairs": "bounded array projection origin; assertion-local forwarding helper origin; synthetic payload positive/negative; current xtask/LSP corpus constants and nested rerun documentation",
+    "native_checks_pending": [
+      "focused/full runtime",
+      "native check-fast",
       "ci-policy",
       "goldens",
       "promotion honesty"
     ],
-    "current_phase": "cfg authority controls; default library test compilation in progress",
-    "prior_policy_candidate": "fd0457c610870c0b3b08e5f3fa17eadf24246573",
-    "prior_policy_exit": 0,
-    "remote_actions": "ordinary successor/evidence branch preparation only; no remote CI requested, merge/settings/release performed"
+    "remote_actions": "ordinary successor/evidence publication; no remote CI requested, protected merge, settings or release performed"
   },
   "history": {
     "public_source": "90d8cb0d33995ed3053b8ff85b0fe36024a9a64a",
@@ -61,7 +76,7 @@
     "release selection scope_pending"
   ],
   "status": "not fully qualified; no remote CI request, protected merge, settings change or release performed",
-  "subsequent_delta_review": "FD canonical cfg producer, 41 borrowed tree-index context and b135/342455 test-only lint deltas available for affected source review; prior independent review is not silently extended.",
+  "subsequent_delta_review": "Current 8f612 patch is available for affected review; previous acceptance is not extended to it.",
   "clippy_diagnostic": {
     "base": "b135d8cf382821bcd6deafff8ca50dc02547d852",
     "frozen_patch_sha256": "75deb16a077b004d5d53f8353b85599532e39afc17cf0902c5f2a4fcd235622d",

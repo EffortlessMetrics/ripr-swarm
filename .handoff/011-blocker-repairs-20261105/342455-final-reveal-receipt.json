@@ -1,0 +1,52 @@
+{
+  "stage": "final-reveal",
+  "candidate": "3424553ce6b55732b3403fa327722b51a295f3b7",
+  "tree": "6edd558d5ccccb6f2647442ef555721ac5711fdc",
+  "command": [
+    "cargo",
+    "--config",
+    "env.TMPDIR.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMPDIR.relative=false",
+    "--config",
+    "env.TMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TMP.relative=false",
+    "--config",
+    "env.TEMP.value=\"/dev/shm/ripr-011-qualification\"",
+    "--config",
+    "env.TEMP.relative=false",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "analysis::classify::reveal::tests::",
+    "--",
+    "--test-threads=1"
+  ],
+  "native_exit": 0,
+  "guard_stop": null,
+  "seconds": 10.01,
+  "counts": {
+    "passed": 159,
+    "failed": 0,
+    "ignored": 0,
+    "measured": 0,
+    "filtered": 17929
+  },
+  "log_sha256": "3f70181d518f6f021e65fe77d71b2669fbe7db6826a6d6dab8cbf8c9930c7816",
+  "peak_cgroup_memory_bytes": 1693765632,
+  "samples": [
+    {
+      "utc": "2026-11-05T08:45:09.363657+00:00",
+      "stage": "final-reveal",
+      "head": "3424553ce6b55732b3403fa327722b51a295f3b7",
+      "pid": 67095,
+      "elapsed": 0.0,
+      "cgroup_memory_bytes": 1693765632,
+      "workspace_free_bytes": 23048830976,
+      "temp_free_bytes": 9441329152
+    }
+  ]
+}

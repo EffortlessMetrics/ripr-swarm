@@ -1,0 +1,46 @@
+
+failures:
+
+---- analysis::classifier::evidence::tests::a_sibling_field_that_may_exit_keeps_return_value_weakly stdout ----
+
+thread 'analysis::classifier::evidence::tests::a_sibling_field_that_may_exit_keeps_return_value_weakly' (69055) panicked at crates/ripr/src/analysis/classifier/evidence.rs:3005:9:
+assertion `left == right` failed
+  left: WeaklyExposed
+ right: Exposed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- analysis::classifier::tests::parser_expression_confirms_payload_without_rewriting_emitted_probe stdout ----
+Error: "parser payload was not discriminated: Finding { id: \"probe:watchdog-reason\", canonical_gap: None, probe: Probe { id: ProbeId(\"probe:watchdog-reason\"), location: SourceLocation { file: \"/repo/ub-review/src/gate_watchdog.rs\", line: 190, column: 1 }, owner: Some(SymbolId(\"src/gate_watchdog.rs::classify_gate_watchdog\")), family: CallDeletion, delta: Effect, before: None, after: Some(\"watchdog_reason(\"), expression: \"watchdog_reason(\", expected_sinks: [], required_oracles: [] }, class: WeaklyExposed, ripr: RiprEvidence { reach: StageEvidence { state: Yes, confidence: Medium, summary: \"Related tests appear to reach classify_gate_watchdog: classify_gate_watchdog_reports_run_missing\" }, infect: StageEvidence { state: Yes, confidence: Medium, summary: \"Reachable tests can plausibly activate this changed behavior\" }, propagate: StageEvidence { state: Yes, confidence: Medium, summary: \"Changed behavior appears to influence call effect: watchdog_reason(\" }, reveal: RevealEvidence { observe: StageEvidence { state: Yes, confidence: Medium, summary: \"A related test observes a value or effect near the changed behavior\" }, discriminate: StageEvidence { state: Weak, confidence: Medium, summary: \"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)\" } } }, confidence: 0.92, confidence_basis: [], evidence: [\"A related test observes a value or effect near the changed behavior\", \"Changed behavior appears to influence call effect: watchdog_reason(\", \"Discriminator uncredited: strongest oracle reaches only through direct_owner_call linkage without sink-level evidence (identity_unresolved)\", \"Reachable tests can plausibly activate this changed behavior\", \"Related tests appear to reach classify_gate_watchdog: classify_gate_watchdog_reports_run_missing\"], missing: [\"No strong discriminator was detected\"], flow_sinks: [FlowSinkFact { kind: CallEffect, text: \"watchdog_reason(\", line: 190, owner: Some(SymbolId(\"src/gate_watchdog.rs::classify_gate_watchdog\")) }], activation: ActivationEvidence { observed_values: [ValueFact { line: 2, text: \"ensure!(reason.kind == \\\"run-missing\\\");\", value: \"\\\"run-missing\\\"\", context: AssertionArgument }], missing_discriminators: [] }, stop_reasons: [], related_tests_matched_total: Some(1), related_tests: [RelatedTest { name: \"classify_gate_watchdog_reports_run_missing\", file: \"src/tests/gate_watchdog_tests.rs\", line: 1, oracle: Some(\"ensure!(reason.kind == \\\"run-missing\\\");\"), oracle_kind: ExactValue, oracle_strength: Strong, relation_reason: Some(DirectOwnerCall), relation_confidence: Some(High), miss: None, role: Contributing, miss_support: None }], recommended_next_step: Some(\"Strengthen the related assertion so it discriminates the changed behavior.\"), language: None, language_status: None, owner_kind: None, static_limit_kind: None, changed_sink: None, observed_sink: None, oracle_alignment: None, alignment_reason: None, source_currentness: UnresolvedSubject, analysis_scope: Diff }"
+
+---- analysis::language::rust::proximity_reach_tests::proximity_graph_is_shared_across_changed_arms_cold_and_warm stdout ----
+
+thread 'analysis::language::rust::proximity_reach_tests::proximity_graph_is_shared_across_changed_arms_cold_and_warm' (82720) panicked at crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs:958:5:
+assertion `left == right` failed
+  left: WeaklyExposed
+ right: Exposed
+
+---- analysis::language::rust::proximity_reach_tests::proximity_graph_rebuilds_after_a_same_path_helper_edit stdout ----
+
+thread 'analysis::language::rust::proximity_reach_tests::proximity_graph_rebuilds_after_a_same_path_helper_edit' (82728) panicked at crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs:978:5:
+assertion `left == right` failed
+  left: WeaklyExposed
+ right: Exposed
+
+---- output::schemas::tests::corpus_consumer_versions_match_live_cache_identity stdout ----
+Error: "xtask projection must track live corpus generation 1.160, got 1.159"
+
+---- output::schemas::tests::rerun_example_nested_versions_match_live_cache_identity stdout ----
+Error: "input_fingerprint.schema_version must track CACHE_SCHEMA_VERSION 1.160, got Some(String(\"1.159\"))"
+
+
+failures:
+    analysis::classifier::evidence::tests::a_sibling_field_that_may_exit_keeps_return_value_weakly
+    analysis::classifier::tests::parser_expression_confirms_payload_without_rewriting_emitted_probe
+    analysis::language::rust::proximity_reach_tests::proximity_graph_is_shared_across_changed_arms_cold_and_warm
+    analysis::language::rust::proximity_reach_tests::proximity_graph_rebuilds_after_a_same_path_helper_edit
+    output::schemas::tests::corpus_consumer_versions_match_live_cache_identity
+    output::schemas::tests::rerun_example_nested_versions_match_live_cache_identity
+
+test result: FAILED. 18080 passed; 6 failed; 2 ignored; 0 measured; 0 filtered out; finished in 496.56s
+
+error: test failed, to rerun pass `-p ripr --lib`
