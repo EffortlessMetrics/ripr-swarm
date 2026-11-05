@@ -1,0 +1,8 @@
+xtask: check-changelog-fragments failed; see target/ripr/reports/changelog-fragments.md
+CHANGELOG.md: Unreleased entry `- `cargo xtask source-promotion verify` now verifies the staged public-to-swarm return preview (a `fast_forward` preflight: ordered parents `[P, S]`, tree equal to S's tree) and records the preflight `mode` in its receipt; `two_parent_join` verification is unchanged (#1627).` is corpus, Repo ops, or maintainer-tooling bookkeeping; move it under `### Internal / CI` instead of a user-facing heading
+CHANGELOG.md: Unreleased entry `- Tightened release distribution catalog admission so schema-2 RC/stable` names no issue, PR, or RIPR-SPEC; add `(#N)` or a RIPR-SPEC id
+CHANGELOG.md: Unreleased entry `- `cargo xtask source-promotion verify` now verifies the staged public-to-swarm` is corpus, Repo ops, or maintainer-tooling bookkeeping; move it under `### Internal / CI` instead of a user-facing heading
+CHANGELOG.md: Unreleased entry `- Reconcile 0.11 RC guidance with dated public tag/release state, historical` names no issue, PR, or RIPR-SPEC; add `(#N)` or a RIPR-SPEC id
+CHANGELOG.md Unreleased: entry `- Add `xtask release-final-server-subjects` to prepare the exact twelve existing` duplicates an entry in CHANGELOG.md Unreleased; keep one
+CHANGELOG.md Unreleased: entry `- `cargo xtask source-promotion verify` now verifies the staged public-to-swarm ` duplicates an entry in CHANGELOG.md Unreleased; keep one
+CHANGELOG.md Unreleased: entry `- Document staged public-to-swarm integration, qualification and return promotio` duplicates an entry in CHANGELOG.md Unreleased; keep one

@@ -1,0 +1,389 @@
+{
+  "status": "PRODUCER_VERIFIED",
+  "producer_input_staged_tree": "7f9a9c95d471b16aa7ad212ad3daddda95937471",
+  "producer_version": "ripr 0.11.0 (5cd7015ac7cf0260a888f05ad8952fcb50f5021c-dirty)",
+  "producer_binary_sha256": "9d59de4e3215919f3206e059ebd28c5006bb8b3ca4b45f8e52eb8ca06b60e785",
+  "producer_identity": "pre-generation staged source, not final release binary",
+  "schema": "1.160",
+  "observed_utc": "2026-11-05T05:29:30.654679+00:00",
+  "rows": [
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-activated-unsupported.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-activated-unsupported",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-activated-unsupported"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "e4246342bfe5c8a561f12162fce0b2c410d54ff393fcda512cc2bcfcf6096587",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-async-fn-activated-unsupported.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-entry.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-entry",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-entry"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "7d1ca686b8495954ec484591bd50741936f3d796b06403276ed9165a8bfb2b0d",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-async-fn-entry.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-intermediate.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-intermediate",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-intermediate"
+      ],
+      "exit": 0,
+      "seams": 8,
+      "sha256": "8a269562fd17713b7fb0203b6c7e866dd8ca5301a31502a18ebff803377a8469",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-async-fn-intermediate.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-last-hop.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-last-hop",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-last-hop"
+      ],
+      "exit": 0,
+      "seams": 7,
+      "sha256": "a2b4a19aec14545813e3e80f363d624dd79ece5cb8f07378b84354e10ea91217",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-async-fn-last-hop.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-entry.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-entry",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-entry"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "96639a27642d8f2073dac841848120be8110e786ccd9d546c48e62d6db13c480",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-async-fn-method-entry.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-method-last-hop.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-last-hop",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-method-last-hop"
+      ],
+      "exit": 0,
+      "seams": 7,
+      "sha256": "7fe1f4a64faba6e952dd2dd5d2798154224cf5dadd597bbcebb6c76788dfcc64",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-async-fn-method-last-hop.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-async-fn-operand.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-operand",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-async-fn-operand"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "77f7c956ab0bbe9248998c9a34122558ab71e7e9fcca20f8d4c81ff97c2701d4",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-async-fn-operand.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand-helper.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand-helper",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand-helper"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "a12339ecf2a603951192e96545e4f43efc45c48f70dd61691bbfda4e47cc97af",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-receiver-async-operand-helper.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-async-operand.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-async-operand"
+      ],
+      "exit": 0,
+      "seams": 4,
+      "sha256": "a51f23487b07332e3919a0c60f55f4fba2929e97998d828ada06bdc1d9229bb6",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-receiver-async-operand.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-dormant-body.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-dormant-body",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-dormant-body"
+      ],
+      "exit": 0,
+      "seams": 4,
+      "sha256": "9bae2cca18c966e5c12b36adcfedc728a72889dc671e58123ec4de8887b3d01f",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-receiver-dormant-body.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-foreign-helper.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-foreign-helper",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-foreign-helper"
+      ],
+      "exit": 0,
+      "seams": 6,
+      "sha256": "08cb765b1ee87a19a47dfb16a2682a2d9940833c2fe0fc0fc477cd0a687a852a",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-receiver-foreign-helper.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-free-helper-identity.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-free-helper-identity",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-free-helper-identity"
+      ],
+      "exit": 0,
+      "seams": 6,
+      "sha256": "3bcbde7f660a827a42e6daccb10a862813258565362843e5a74557ea1e70fce0",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-receiver-free-helper-identity.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-scope-shadow.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-scope-shadow",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-scope-shadow"
+      ],
+      "exit": 0,
+      "seams": 7,
+      "sha256": "5ade64de3f241afbfdc4ad6096b428c1de42cac9ab64344f36cbad97806c2ad8",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-receiver-helper-scope-shadow.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-helper-type-parameter.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-type-parameter",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-helper-type-parameter"
+      ],
+      "exit": 0,
+      "seams": 7,
+      "sha256": "c457359dd3243fb4ad38ea09857874c26ea26b38ab32a63bdc2c7ecf5cfcef07",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-receiver-helper-type-parameter.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-local-wrapper.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-local-wrapper",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-local-wrapper"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "61f15e9ceed59a8b7a3fa0df74fcd2de2e9587969937d3ac210c3a9f2a86504b",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-receiver-local-wrapper.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-macro-discard",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-macro-discard"
+      ],
+      "exit": 0,
+      "seams": 4,
+      "sha256": "207bb1173d7d0b8ad0ae870d27455a67ef9dd4a3f0692881ad64b839b2b5e917",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-receiver-macro-discard.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-module-type-shadow.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-module-type-shadow",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/inherent-receiver-module-type-shadow"
+      ],
+      "exit": 0,
+      "seams": 4,
+      "sha256": "c62809d02f28f87fd8d500de2149c12146c6a01dae9d842aae1d21e40b9a5007",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-inherent-receiver-module-type-shadow.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/adapter-fed-error",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/adapter-fed-error"
+      ],
+      "exit": 0,
+      "seams": 6,
+      "sha256": "ad43ce655b42abd101322e47ad4ba9c841b5cc685cfe3d52ec710f1b85a9597e",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-repo-exposure-adapter-fed-error.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/identical-inline-arms",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/identical-inline-arms"
+      ],
+      "exit": 0,
+      "seams": 4,
+      "sha256": "9eff266daded361e91d9258185c34339308a4212b0684354bd5adb357ccd919b",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-repo-exposure-identical-inline-arms.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/proximity-other-function",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/proximity-other-function"
+      ],
+      "exit": 0,
+      "seams": 5,
+      "sha256": "b3a2d00ab7ee0f5986b2d415d0ed49ae290b8b2e11e1759c6c0f5fe9abd0b23e",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-repo-exposure-proximity-other-function.json"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json",
+      "subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/uncalled-sibling",
+      "args": [
+        "/workspace/12010-proof/target/debug/ripr",
+        "check",
+        "--mode",
+        "draft",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/uncalled-sibling"
+      ],
+      "exit": 0,
+      "seams": 2,
+      "sha256": "5a293c559f44a85a49459477003c950a1077d164e8fc4d06a7e58b650758d99d",
+      "captured": "/workspace/011-integration-proof/report-generation/rust-repo-exposure-uncalled-sibling.json"
+    }
+  ]
+}

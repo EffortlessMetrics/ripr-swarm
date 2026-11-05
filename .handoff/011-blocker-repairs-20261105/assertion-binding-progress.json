@@ -60,6 +60,50 @@
         "compact": "0.162",
         "sharded": "0.162"
       }
+    },
+    "latest": {
+      "candidate": "dde1ced5d928068a2386ea070eef4c4c7e42377a",
+      "tree": "b3c8be5f981a35b4e72ba80883db63e9a9728516",
+      "branch": "successor/011-integration-20261105",
+      "review_base": "63d92bf3f8127f4c85f5419699dd63c314a4a2e8",
+      "delta": "integration-final-review-delta.patch",
+      "delta_sha256": "660fe7e6a01115e37746511294f3fcbae9c4edb55d21dcb7259ce4c5b6467ec0",
+      "delta_bytes": 12695,
+      "prior_compile": {
+        "source": "63d92bf3f8127f4c85f5419699dd63c314a4a2e8",
+        "native_exit": 101,
+        "reason": "test helper OwnerPinSyntax qualification; zero tests ran",
+        "log": "composed-63d-unit-compile-failure.log"
+      },
+      "prior_production": {
+        "source": "cbfd9d2df709275c57ff7d27d4b3f1cecd94436c",
+        "native_path_passed": 4,
+        "production_passed": 8,
+        "production_failed": 1,
+        "reason": "New observed-alias positive expected all field rows exposed but existing field confirmation declines alias; true ReturnValue row exposed. Replace with inert owned-copy control preserving direct field observation. Mutation negative controls already passed.",
+        "log": "composed-cbfd-production.log"
+      },
+      "current_proof": "nine production subjects plus native paths compiling; default-feature reveal and full harness follow sequentially on same binary",
+      "policy": {
+        "traceability": 0,
+        "changelog": 0,
+        "process": 0,
+        "tool_source": "pre-generation composed source; policy implementations unchanged in final delta, checks read repaired tree"
+      },
+      "current_source_sha": "f2fc5f15b",
+      "generated_outputs": {
+        "producer_staged_tree": "7f9a9c95d471b16aa7ad212ad3daddda95937471",
+        "producer_sha256": "9d59de4e3215919f3206e059ebd28c5006bb8b3ca4b45f8e52eb8ca06b60e785",
+        "reports": 21,
+        "golden_fixtures": 2,
+        "claim": "actual producer regeneration before intervening-let correction; retained under original identity, final goldens/honesty checks pending"
+      },
+      "status": "not qualified; no source attestation, CI request, merge or release performed",
+      "holds": [
+        "ordinary queue-only CI except approved one-PR history-sync qualification",
+        "promotion trust hold",
+        "release selection remains scope_pending"
+      ]
     }
   },
   "holds": [

@@ -1,0 +1,212 @@
+diff --git a/.ripr/traceability.d/12010-sink-identity.toml b/.ripr/traceability.d/12010-sink-identity.toml
+index 0b7c8fee5..c207c86bf 100644
+--- a/.ripr/traceability.d/12010-sink-identity.toml
++++ b/.ripr/traceability.d/12010-sink-identity.toml
+@@ -10,4 +10,6 @@ tests = [
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::persisted_effect_observer_retains_identity_without_lending_it_to_another_instance",
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::established_effect_carrier_binds_the_called_instance_only",
+   "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_fields_and_builders_keep_real_identity_and_reject_replaced_values",
++  "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_field_constructor_identity_respects_namespace",
++  "crates/ripr/tests/return_diagnostic_confirmation.rs::returned_field_identity_rejects_mutation_inside_let_initializers",
+ ]
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index 3148388f3..e1fc17235 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -21772,6 +21772,8 @@ outputs = [
+   "packaging/npm/README.md",
+ ]
+ metrics = ["selected_routes", "executed_routes", "failed_routes", "payload_sha256", "tarball_sha256", "stage_eligible", "selected_requests", "observed_requests"]
++
++[[behavior]]
+ id = "RIPR-SPEC-0410"
+ name = "First-hour repair funnel projection"
+ spec = "docs/specs/RIPR-SPEC-0410-first-hour-repair-funnel-projection.md"
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index bbffc9bd9..16bd14fc8 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2175,7 +2175,6 @@ qualification and publication histories.
+   no repair start). The first failing step, or a step that exits 0 without a
+   non-empty, parseable JSON artifact, stops it with exit 2 and no packet. The default stays analysis-free with an unchanged disclosure
+   (#11720, #11298).
+-- `cargo xtask source-promotion verify` now verifies the staged public-to-swarm return preview (a `fast_forward` preflight: ordered parents `[P, S]`, tree equal to S's tree) and records the preflight `mode` in its receipt; `two_parent_join` verification is unchanged (#1627).
+ - `ripr first-pr --run-chain` steps are bounded: 2 hours by default, set
+   `RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS` (whole seconds, `0` for no bound).
+   A step past its bound is terminated and named as `timed out after <N>
+@@ -2196,24 +2195,6 @@ qualification and publication histories.
+   `stop=` terminal line and a `next=` `ripr context` command. `--format json`
+   is refused with a pointer to `ripr context`, which stays JSON (#12104).
+ 
+-- Reconcile 0.11 RC guidance with dated public tag/release state, historical
+-  conditional RC1 authority and tentative next-cut intent. Require exact
+-  candidate-bound authority and qualification; ordinary source integration
+-  does not authorize a cut. (#1848, ripr)
+-
+-- Release workflow supply-chain hardening: `release-server-binaries.yml` now assembles the final subjects read-only, attests them with GitHub build provenance in a dedicated OIDC-only job, verifies every attestation, and only then uploads in a job that holds `contents: write` and no OIDC token; third-party actions in CI workflows are pinned to full commit SHAs and `badge-endpoints.yml` scopes its write permissions to its one job. This is a step toward #1502 and does not close it (no typed inventory/receipt yet).
+-
+-- Document staged public-to-swarm integration, qualification and return promotion;
+-  route agent guidance through the same runbook and identify the existing
+-  direct-J contract reconciliation without changing runtime gates (#1768).
+-
+-- Tightened release distribution catalog admission so schema-2 RC/stable catalogs must carry the canonical producer identity, and the Rust producer now rejects uppercase SHA-256 input before emitting a catalog that the closed VS Code parser would reject. (#1708, ripr)
+-
+-- Add `xtask release-final-server-subjects` to prepare the exact twelve existing
+-  server upload subjects from canonical assembler output. The nonpublishing
+-  inventory, provenance inputs and checksum list are bound by the terminal
+-  preparation receipt; rejection retains diagnostics without successful files.
+-  This does not attest, verify provenance, authorize uploads or close #1502.
+ [Full development diff since v0.10.0](https://github.com/EffortlessMetrics/ripr/compare/v0.10.0...main).
+ 
+ ### Distribution and installation
+@@ -2238,7 +2219,7 @@ qualification and publication histories.
+   packaging provenance. Qualification covers local/global/npm exec/npx installs
+   without lifecycle scripts; this does not itself publish npm or add platforms.
+   Use the scoped package after npm's unscoped-name rejection, retaining the
+-  installed `ripr` command and verifying scoped package paths during reinstall. (RIPR-SPEC-0370)
++  installed `ripr` command and verifying scoped package paths during reinstall. (RIPR-SPEC-0374)
+ 
+ - Prepare the first `ripr-rs` PyPI prerelease (`0.11.0a1`, native
+   `0.11.0-alpha.1`) as a native CLI wheel for Linux x86-64 with glibc 2.34 or
+@@ -2259,30 +2240,29 @@ qualification and publication histories.
+   Third-party actions in CI workflows are pinned to full commit SHAs, and
+   `badge-endpoints.yml` scopes its write permissions to its one job. This is a
+   step toward #1502 and does not close it (no typed inventory/receipt yet).
+-- Tightened release distribution catalog admission so schema-2 RC/stable
+-  catalogs must carry the canonical producer identity. The Rust producer now
+-  rejects uppercase SHA-256 input before emitting a catalog that the closed
+-  VS Code parser would reject.
+-- Add `xtask release-final-server-subjects` to prepare the exact twelve existing
+-  server upload subjects from canonical assembler output. The nonpublishing
+-  inventory, provenance inputs and checksum list are bound by the terminal
+-  preparation receipt; rejection retains diagnostics without successful files.
+-  This does not attest, verify provenance, authorize uploads or close #1502.
+ 
+-### Release coordination
++- Tightened release distribution catalog admission so schema-2 RC/stable catalogs must carry the canonical producer identity, and the Rust producer now rejects uppercase SHA-256 input before emitting a catalog that the closed VS Code parser would reject. (#1708, ripr)
++
++### Internal / CI
++
++- `cargo xtask source-promotion verify` now verifies the staged public-to-swarm return preview (a `fast_forward` preflight: ordered parents `[P, S]`, tree equal to S's tree) and records the preflight `mode` in its receipt; `two_parent_join` verification is unchanged (#1627).
+ 
+-- `cargo xtask source-promotion verify` now verifies the staged public-to-swarm
+-  return preview (a `fast_forward` preflight: ordered parents `[P, S]`, tree equal
+-  to S's tree) and records the preflight `mode` in its receipt;
+-  `two_parent_join` verification is unchanged (#1627).
+ - Reconcile 0.11 RC guidance with dated public tag/release state, historical
+   conditional RC1 authority and tentative next-cut intent. Require exact
+   candidate-bound authority and qualification; ordinary source integration
+-  does not authorize a cut.
++  does not authorize a cut. (#1848, ripr)
++
+ - Document staged public-to-swarm integration, qualification and return promotion;
+   route agent guidance through the same runbook and identify the existing
+   direct-J contract reconciliation without changing runtime gates (#1768).
+ 
++- Add `xtask release-final-server-subjects` to prepare the exact twelve existing
++  server upload subjects from canonical assembler output. The nonpublishing
++  inventory, provenance inputs and checksum list are bound by the terminal
++  preparation receipt; rejection retains diagnostics without successful files.
++  This does not attest, verify provenance, authorize uploads or close #1502.
++
++
+ ## 0.11.0 - Swarm promotion and fail-closed output hardening
+ 
+ Release date: staged (unreleased).
+diff --git a/crates/ripr/src/analysis/classify/builder_override.rs b/crates/ripr/src/analysis/classify/builder_override.rs
+index 387ebaf0d..1817d21ed 100644
+--- a/crates/ripr/src/analysis/classify/builder_override.rs
++++ b/crates/ripr/src/analysis/classify/builder_override.rs
+@@ -471,9 +471,12 @@ fn field_origin(
+                 if !mentions_identifier(statement.syntax(), &binding) {
+                     return true;
+                 }
+-                // Reading a binding into another owned value does not mutate it.
++                // A let initializer can also assign or call a mutating method.
++                // Only a direct alias or field read is an inert intervening read.
+                 if let ast::Stmt::LetStmt(statement) = statement {
+-                    return !borrows_mutably(statement.syntax(), &binding);
++                    return statement
++                        .initializer()
++                        .is_some_and(|expression| plain_binding_read(expression, &binding));
+                 }
+                 let ast::Stmt::ExprStmt(statement) = statement else {
+                     return false;
+@@ -497,6 +500,21 @@ fn field_origin(
+         _ => false,
+     }
+ }
++fn plain_binding_read(mut expression: ast::Expr, binding: &str) -> bool {
++    loop {
++        let next = match expression {
++            ast::Expr::PathExpr(path) => {
++                return single_identifier(&path).as_deref() == Some(binding);
++            }
++            ast::Expr::ParenExpr(paren) => paren.expr(),
++            ast::Expr::FieldExpr(field) => field.expr(),
++            _ => return false,
++        };
++        let Some(next) = next else { return false };
++        expression = next;
++    }
++}
++
+ fn discarded_method_keeps_scalar(index: &RustIndex, ty: &str, name: &str, field: &str) -> bool {
+     let Some(definition) = declared_once(index, ty) else {
+         return false;
+diff --git a/crates/ripr/src/analysis/classify/reveal.rs b/crates/ripr/src/analysis/classify/reveal.rs
+index b527d21d7..8f97e6f36 100644
+--- a/crates/ripr/src/analysis/classify/reveal.rs
++++ b/crates/ripr/src/analysis/classify/reveal.rs
+@@ -11632,7 +11632,7 @@ impl RetryBuilder { pub fn new()->Self { Self { attempts: 4, delay_ms: 100 } } p
+             let facts = crate::analysis::rust_index::summarize_file(test.file.clone(), source);
+             index.insert_file_only(test.file.clone(), facts);
+         }
+-        let syntax = super::OwnerPinSyntax::default();
++        let syntax = crate::analysis::classify::OwnerPinSyntax::default();
+         reveal_evidence_with_value_identity(probe, related, &|test, assertion| {
+             crate::analysis::classify::builder_override::owner_field_read_identity(
+                 probe, &index, test, assertion, &syntax,
+diff --git a/crates/ripr/tests/return_diagnostic_confirmation.rs b/crates/ripr/tests/return_diagnostic_confirmation.rs
+index ca35da34b..f298f3407 100644
+--- a/crates/ripr/tests/return_diagnostic_confirmation.rs
++++ b/crates/ripr/tests/return_diagnostic_confirmation.rs
+@@ -494,3 +494,38 @@ fn returned_field_constructor_identity_respects_namespace() -> Result<(), String
+     }
+     Ok(())
+ }
++
++#[test]
++fn returned_field_identity_rejects_mutation_inside_let_initializers() -> Result<(), String> {
++    let source = "#[derive(Clone, Copy)] pub struct Builder { pub attempts:u32 }\nimpl Builder {\n pub fn new()->Self {\n  Self { attempts:4 }\n }\n pub fn reset(&mut self) { self.attempts=4; }\n}\n";
++    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -4,1 +4,1 @@\n-  Self { attempts:3 }\n+  Self { attempts:4 }\n";
++    for (body, exposed) in [
++        (
++            "let mut item=Builder::new(); let _ignored={ item.attempts=4; 0 }; assert_eq!(item.attempts,4);",
++            false,
++        ),
++        (
++            "let mut item=Builder::new(); let _ignored=item.reset(); assert_eq!(item.attempts,4);",
++            false,
++        ),
++        (
++            "let item=Builder::new(); let _alias=item; assert_eq!(item.attempts,4);",
++            true,
++        ),
++        (
++            "let item=Builder::new(); let _snapshot=item.attempts; assert_eq!(item.attempts,4);",
++            true,
++        ),
++    ] {
++        let test = format!(
++            "use rust_catalog_description_structural_oracle::Builder;\n#[test]\nfn observes() {{\n {body}\n}}\n"
++        );
++        let report = check_report(source, &test, MANIFEST, diff)?;
++        let findings = report["findings"].as_array().ok_or("findings missing")?;
++        assert!(!findings.is_empty(), "{report}");
++        for finding in findings {
++            assert_eq!(finding["classification"] == "exposed", exposed, "{report}");
++        }
++    }
++    Ok(())
++}

@@ -1,0 +1,2 @@
+check-process-policy: pass (target/ripr/reports/process-policy.md)
+check-cli-exit-contract: pass (target/ripr/reports/cli-exit-contract.md)

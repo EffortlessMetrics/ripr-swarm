@@ -1,0 +1,2 @@
+xtask: check-traceability failed; see target/ripr/reports/traceability.md
+RIPR-SPEC-0374 exists in docs/specs but is missing from .ripr/traceability.toml

@@ -1,0 +1,18 @@
+{
+  "phase": "source assembly before generated-output refresh; not a release binary",
+  "base": "984c69a290486b1da9d91700a6f771045ab079e1",
+  "head": "5cd7015ac7cf0260a888f05ad8952fcb50f5021c",
+  "merge_source": "c57a6d90f34ed6fd32da6ca41ddbfacb25f3b570",
+  "staged_tree": "7f9a9c95d471b16aa7ad212ad3daddda95937471",
+  "code_frozen": true,
+  "outputs": "27 provisional output paths retained from destination pending real producer regeneration",
+  "build_command": "cargo build --locked -p ripr -p xtask",
+  "resource_admission": {
+    "free_disk_gib": 22,
+    "additional_budget_gib": 4,
+    "jobs": 1,
+    "shared_target": "/workspace/12010-proof/target",
+    "no_competing_build": true
+  },
+  "observed_utc": "2026-11-05T05:23:31.564629+00:00"
+}

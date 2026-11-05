@@ -1,0 +1,1 @@
+check-changelog-fragments: pass (target/ripr/reports/changelog-fragments.md)
