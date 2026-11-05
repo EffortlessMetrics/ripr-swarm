@@ -76,6 +76,11 @@ registration; the repository has not yet retained cold-session proof that
 either client completes the flow (tracked in #3092), so treat them as
 configuration, not a support claim.
 
+For Muse, use the [native RIPR package](../../plugins/muse/ripr/README.md).
+It declares the `core` MCP server and the `ripr-setup` and `ripr-repair`
+skills; its guide covers installation, explicit approval, updates, and
+starting a fresh session in the target repository.
+
 Every `ripr_refresh` result carries a top-level `fresh_for_working_tree`
 (`true` for a saved-worktree snapshot or a committed one with no uncommitted
 edits outside the analysis; `false` after a failed attempt or with edits the
@@ -251,6 +256,16 @@ runs no tests or verification and grants no execution or edit authority.
 | Resource template | `ripr://repair-attempt/{attempt_id}` |
 | Resource template | `ripr://receipt/{receipt_id}` |
 | Resource template | `ripr://repair-card/{canonical_id}` |
+
+The snapshot template accepts both the raw canonical id
+(`snapshot:sha256:<digest>`) and its URI-template expansion
+(`snapshot%3Asha256%3A<digest>`). Hex escapes may use either case. Only the
+captured id is decoded, once; the response echoes the original request URI.
+With a completed snapshot, double encoding, malformed escapes, non-UTF-8
+bytes and stale ids retain a typed `stale_snapshot` refusal with the current
+canonical identity and recovery. The namespace remains exact, and one literal
+trailing slash is tolerated. Pass raw canonical ids in JSON tool `snapshot_id`
+arguments; URI decoding applies only to resource reads (#13229).
 
 `ripr_workspace_status` and `ripr://workspace/status` return the same JSON
 document, schema `ripr-mcp-workspace-status-v1`. It wraps:
