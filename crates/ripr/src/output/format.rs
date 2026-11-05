@@ -23,9 +23,9 @@ pub enum OutputFormat {
     Github,
     /// SARIF 2.1.0 report for diff-scoped static exposure Findings.
     Sarif,
-    /// Minified, byte-bounded SARIF 2.1.0 report (#13195). Parsed values
-    /// match [`OutputFormat::Sarif`] until the `RIPR_SARIF_BYTES` budget
-    /// truncates trailing results, which the document discloses in-band.
+    /// Minified SARIF 2.1.0 report (#13195). Parsed values match
+    /// [`OutputFormat::Sarif`] exactly, including its
+    /// `RIPR_SARIF_RESULTS_BYTES` bound and disclosed truncation (#13102).
     SarifCompact,
     /// Native `ripr` badge JSON (snake_case wire shape with full counts,
     /// reason counts, and policy). Consumed by tools and CI artifacts.
@@ -79,8 +79,8 @@ pub enum OutputFormat {
     RepoExposureMd,
     /// SARIF 2.1.0 report for repo-scoped classified seam evidence.
     RepoSarif,
-    /// Minified, byte-bounded repo-scoped SARIF 2.1.0 report (#13195).
-    /// Same bound and in-band disclosure as [`OutputFormat::SarifCompact`].
+    /// Minified repo-scoped SARIF 2.1.0 report (#13195). Parsed values
+    /// match [`OutputFormat::RepoSarif`] exactly, bound included (#13102).
     RepoSarifCompact,
     /// Agent-ready seam packets per RIPR-SPEC-0005 - one
     /// `write_targeted_test` packet per headline-eligible classified

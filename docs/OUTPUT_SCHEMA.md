@@ -4037,13 +4037,12 @@ ripr check --format repo-sarif-compact
 ```
 
 `sarif-compact` and `repo-sarif-compact` (#13195) render the same documents
-minified, under a byte budget: `RIPR_SARIF_BYTES` (default 1,000,000;
-`0` removes the cap; an unparseable value fails the run). When the minified
-document exceeds the budget, trailing `results` are dropped until it fits
-and the run discloses the bound in `runs[].properties`: `run_status` becomes
-`limited_sarif_bound` and `output_bound` carries `bounded`, `max_output_bytes`,
-`results_total`, `results_retained`, and `results_omitted`. A bounded
-document stays valid SARIF 2.1.0 and is incomplete, never a clean run.
+minified: parsed values are identical to `sarif`/`repo-sarif`, including the
+`RIPR_SARIF_RESULTS_BYTES` results bound (#13102, default 1,000,000 pretty
+bytes; `0` removes the cap; an unparseable value fails the run) and its
+in-band disclosure (`limited_results_bound`, `document_complete: false`,
+`results_rendered`/`results_total`/`results_omitted`). A bounded document
+stays valid SARIF 2.1.0 and is incomplete, never a clean run.
 The pretty `sarif` and `repo-sarif` bytes are unchanged.
 
 `sarif` is the diff-scoped Finding SARIF surface. `repo-sarif` is the
